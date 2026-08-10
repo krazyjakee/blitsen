@@ -124,6 +124,36 @@ assert.deepEqual(globalThis.__blitsenTimerOrder.filter(entry => entry.startsWith
 assert(!globalThis.__blitsenTimerOrder.includes("cancelled"), "clearTimeout cancels the callback");
 delete globalThis.__blitsenTimerOrder;
 
+const eventSurface = JSON.parse(native.runBridgeHarness(
+  `<div id="event-surface"></div>`,
+  `{ const target = document.getElementById("event-surface");
+     const event = new Event("submit", { bubbles: true, cancelable: true });
+     if (event.type !== "submit" || event.target !== null || event.currentTarget !== null ||
+         event.eventPhase !== 0 || !event.bubbles || !event.cancelable || event.defaultPrevented ||
+         typeof event.timeStamp !== "number") throw new Error("Event property surface");
+     event.preventDefault();
+     if (!event.defaultPrevented) throw new Error("preventDefault");
+     const mouse = new MouseEvent("click", { clientX: 10, clientY: 11, offsetX: 2, offsetY: 3,
+       screenX: 50, screenY: 60, button: 1, buttons: 2, ctrlKey: true, shiftKey: true });
+     if (mouse.clientX !== 10 || mouse.clientY !== 11 || mouse.offsetX !== 2 || mouse.offsetY !== 3 ||
+         mouse.screenX !== 50 || mouse.screenY !== 60 || mouse.button !== 1 || mouse.buttons !== 2 ||
+         !mouse.ctrlKey || !mouse.shiftKey || mouse.altKey || mouse.metaKey) throw new Error("MouseEvent property surface");
+     const keyboard = new KeyboardEvent("keydown", { key: "A", code: "KeyA", repeat: true,
+       altKey: true, metaKey: true });
+     if (keyboard.key !== "A" || keyboard.code !== "KeyA" || !keyboard.repeat ||
+         keyboard.ctrlKey || keyboard.shiftKey || !keyboard.altKey || !keyboard.metaKey)
+       throw new Error("KeyboardEvent property surface");
+     const detail = { answer: 42 };
+     if (new CustomEvent("answer", { detail }).detail !== detail) throw new Error("CustomEvent detail");
+     for (const unsupported of ["pageX", "pageY", "which", "charCode", "relatedTarget", "isTrusted"])
+       if (unsupported in mouse || unsupported in keyboard || unsupported in event)
+         throw new Error("unsupported event property must be absent: " + unsupported);
+     target.setAttribute("data-events", "ok"); }`,
+  100,
+  60,
+));
+assert.equal(eventSurface.nodes.find(node => node.attributes.id === "event-surface").attributes["data-events"], "ok");
+
 const treeSnapshot = JSON.parse(native.runBridgeHarness(
   `<body><div id="a"><i id="one">one</i><i id="two">two</i></div><div id="b"></div></body>`,
   `{ const expect = (condition, message) => { if (!condition) throw new Error(message); };

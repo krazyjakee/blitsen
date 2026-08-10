@@ -44,6 +44,96 @@ const BOOTSTRAP: &str = r#"
     return animationFrames.size;
   };
 
+  const eventStates = new WeakMap();
+  const stateFor = event => {
+    const state = eventStates.get(event);
+    if (!state) throw new TypeError("Illegal invocation");
+    return state;
+  };
+
+  class Event {
+    constructor(type, options = {}) {
+      eventStates.set(this, {
+        type: String(type), target: null, currentTarget: null, eventPhase: 0,
+        bubbles: Boolean(options.bubbles), cancelable: Boolean(options.cancelable),
+        defaultPrevented: false, propagationStopped: false,
+        immediatePropagationStopped: false, passive: false,
+        timeStamp: performance.now(),
+      });
+    }
+    get type() { return stateFor(this).type; }
+    get target() { return stateFor(this).target; }
+    get currentTarget() { return stateFor(this).currentTarget; }
+    get eventPhase() { return stateFor(this).eventPhase; }
+    get bubbles() { return stateFor(this).bubbles; }
+    get cancelable() { return stateFor(this).cancelable; }
+    get defaultPrevented() { return stateFor(this).defaultPrevented; }
+    get timeStamp() { return stateFor(this).timeStamp; }
+    preventDefault() {
+      const state = stateFor(this);
+      if (state.cancelable && !state.passive) state.defaultPrevented = true;
+    }
+    stopPropagation() { stateFor(this).propagationStopped = true; }
+    stopImmediatePropagation() {
+      const state = stateFor(this);
+      state.propagationStopped = true;
+      state.immediatePropagationStopped = true;
+    }
+  }
+
+  class MouseEvent extends Event {
+    constructor(type, options = {}) {
+      super(type, options);
+      const numbers = ["clientX", "clientY", "offsetX", "offsetY", "screenX", "screenY", "button", "buttons"];
+      for (const property of numbers) Object.defineProperty(this, property, {
+        value: Number(options[property] ?? 0), enumerable: true,
+      });
+      for (const property of ["ctrlKey", "shiftKey", "altKey", "metaKey"]) Object.defineProperty(this, property, {
+        value: Boolean(options[property]), enumerable: true,
+      });
+    }
+  }
+
+  class KeyboardEvent extends Event {
+    constructor(type, options = {}) {
+      super(type, options);
+      Object.defineProperties(this, {
+        key: { value: String(options.key ?? ""), enumerable: true },
+        code: { value: String(options.code ?? ""), enumerable: true },
+        repeat: { value: Boolean(options.repeat), enumerable: true },
+        ctrlKey: { value: Boolean(options.ctrlKey), enumerable: true },
+        shiftKey: { value: Boolean(options.shiftKey), enumerable: true },
+        altKey: { value: Boolean(options.altKey), enumerable: true },
+        metaKey: { value: Boolean(options.metaKey), enumerable: true },
+      });
+    }
+  }
+
+  class CustomEvent extends Event {
+    constructor(type, options = {}) {
+      super(type, options);
+      Object.defineProperty(this, "detail", { value: options.detail ?? null, enumerable: true });
+    }
+  }
+
+  const eventInternals = Object.freeze({
+    state: stateFor,
+    begin(event, target, currentTarget, eventPhase, passive = false) {
+      const state = stateFor(event);
+      state.target ??= target;
+      state.currentTarget = currentTarget;
+      state.eventPhase = eventPhase;
+      state.passive = passive;
+      return state;
+    },
+    finish(event) {
+      const state = stateFor(event);
+      state.currentTarget = null;
+      state.eventPhase = 0;
+      state.passive = false;
+    },
+  });
+
   class Node {
     constructor() { throw new TypeError("Illegal constructor"); }
     appendChild(child) {
@@ -190,9 +280,11 @@ const BOOTSTRAP: &str = r#"
   const document = new Document();
   Object.assign(globalThis, {
     Node, Element, NodeList, Document, DOMTokenList, CSSStyleDeclaration, document,
+    Event, MouseEvent, KeyboardEvent, CustomEvent,
     requestAnimationFrame, cancelAnimationFrame,
     __blitsenAnimationFrameTick: animationFrameTick,
     __blitsenAnimationFramesPending: () => animationFrames.size > 0,
+    __blitsenEventInternals: eventInternals,
   });
   globalThis.window = globalThis;
   for (const key of ["location", "history", "navigator", "localStorage"]) {
