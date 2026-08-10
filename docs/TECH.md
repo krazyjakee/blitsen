@@ -1,4 +1,4 @@
-# Power — Technical Specification
+# Blitsen — Technical Specification
 
 **Status:** Draft v0.1
 **Date:** 2026-08-10
@@ -71,7 +71,7 @@ production native integration — `bun:ffi` remains marked experimental. Node-AP
 ABI-stable by design, which matters for the third-party addon story later.
 
 ```js
-import { Engine } from "power:native";   // a .node addon under the hood
+import { Engine } from "blitsen:native";   // a .node addon under the hood
 
 const app = new Engine();
 app.loadHTML("./index.html");
@@ -93,7 +93,7 @@ written an embedding layer.
 
 **Cost:** the full Bun runtime is in the export (~60–100 MB).
 
-### Phase 2 — Power is the host
+### Phase 2 — Blitsen is the host
 
 Bun demotes to toolchain. We embed JSC directly (`rusty_jsc`-style bindings or our own) and
 supply the runtime services the app actually needs — module loading against a pre-bundled
@@ -300,7 +300,7 @@ responsible for high-performance rendering.
 <div id="hud">
   <progress id="health" max="100" value="100"></progress>
 </div>
-<power-view id="view"></power-view>
+<blitsen-view id="view"></blitsen-view>
 ```
 
 - Blitz lays it out as a replaced element; layout gives it a rect and a z-position.
@@ -314,7 +314,7 @@ responsible for high-performance rendering.
 **Deliberately out of scope:** turning HTML elements into a 3D scene graph, or expressing
 real-time transform state through CSS. CSS is not a good channel for per-frame 3D state. An
 application that wants a scene graph brings one — through a native addon, WASM, or JS — and
-Power renders its output through the viewport. The runtime does not ship an ECS, a physics
+Blitsen renders its output through the viewport. The runtime does not ship an ECS, a physics
 engine, or a scene format.
 
 ---
@@ -349,7 +349,7 @@ service workers, `document.write`, quirks mode.
 ### Compatibility policy
 
 An unimplemented API is **absent** — the property does not exist — so feature detection works.
-Never a stub that resolves to nothing, and never a silent no-op. `power doctor` reports which
+Never a stub that resolves to nothing, and never a silent no-op. `blitsen doctor` reports which
 web APIs a bundle references but the target runtime does not provide, at build time.
 
 ---
@@ -398,12 +398,12 @@ can add without waiting for us.
 
 ## 10. Build and export pipeline
 
-**The input is a directory of static web output, not a source tree.** Power does not bundle,
+**The input is a directory of static web output, not a source tree.** Blitsen does not bundle,
 transpile or resolve modules for the application — the user's existing toolchain already did
-that, and duplicating it would make Power a competitor to Vite instead of a target for it.
+that, and duplicating it would make Blitsen a competitor to Vite instead of a target for it.
 
 ```
-        the user's existing build          Power's job starts here
+        the user's existing build          Blitsen's job starts here
    ┌──────────────────────────────┐   ┌────────────────────────────────┐
    src/ ──► vite/webpack/bun ──► dist/ ──► ① ingest ──► ⑤ package ──► MyApp.exe
                                   │
@@ -413,7 +413,7 @@ that, and duplicating it would make Power a competitor to Vite instead of a targ
 | Step | Action |
 | --- | --- |
 | ① **Ingest** | Walk the output directory from its HTML entrypoint. Resolve relative references; refuse absolute URLs that assume a web server root, with a clear error naming the file. |
-| ② **Scan** | Static analysis of the bundle for web API usage; anything the target runtime lacks is reported (`power doctor`, and as a build warning). |
+| ② **Scan** | Static analysis of the bundle for web API usage; anything the target runtime lacks is reported (`blitsen doctor`, and as a build warning). |
 | ③ **Collect** | Hash and collect assets. Embedded in the binary or laid out beside it, per config. |
 | ④ **Link** | Runtime + application bundle + assets → one executable. |
 | ⑤ **Package** | Icon, Windows manifest/version info, macOS `.app` bundle and `Info.plist`, code signing hooks. |
@@ -425,19 +425,19 @@ that, and duplicating it would make Power a competitor to Vite instead of a targ
 - **Phase 2** step ④ links our JSC-based runtime and appends the bundle as a binary section read
   at startup.
 
-Step ② is what keeps the drop-in promise honest. Because Power accepts arbitrary bundler output,
+Step ② is what keeps the drop-in promise honest. Because Blitsen accepts arbitrary bundler output,
 it will be handed code it cannot run; the failure must arrive at build time with a named API and
 file, not as a blank window at runtime.
 
 ### Optional build wrapping
 
-Config in `package.json` lets Power invoke the existing build first, so the user has one command:
+Config in `package.json` lets Blitsen invoke the existing build first, so the user has one command:
 
 ```json
-{ "power": { "build": "vite build", "output": "dist", "name": "My App" } }
+{ "blitsen": { "build": "vite build", "output": "dist", "name": "My App" } }
 ```
 
-Power shells out to `build`, then ingests `output`. It never inspects or configures the build
+Blitsen shells out to `build`, then ingests `output`. It never inspects or configures the build
 tool itself — that coupling is exactly what the design avoids.
 
 ### Development modes
@@ -445,8 +445,8 @@ tool itself — that coupling is exactly what the design avoids.
 Both skip ③–⑤ entirely.
 
 ```bash
-npx power .                        # ① directory mode: watch files, reload
-npx power http://localhost:5173    # ② proxy mode: load from a running dev server
+npx blitsen .                        # ① directory mode: watch files, reload
+npx blitsen http://localhost:5173    # ② proxy mode: load from a running dev server
 ```
 
 **Proxy mode is the strategically important one.** The runtime fetches the document and its
@@ -463,20 +463,20 @@ attempted — HMR is the user's bundler's job, and in proxy mode it already is.
 
 ## 11. Distribution and packaging
 
-Power ships as an **npm dev dependency that orchestrates a prebuilt native runtime**. The JS
+Blitsen ships as an **npm dev dependency that orchestrates a prebuilt native runtime**. The JS
 package contains no runtime; the runtime is a per-platform binary package resolved at install
 time.
 
 ```
-power                          ← thin JS: CLI, config, TypeScript definitions
-├── bin/power                     (dev · build · run · doctor)
+blitsen                        ← thin JS: CLI, config, TypeScript definitions
+├── bin/blitsen                  (dev · build · run · doctor)
 └── optionalDependencies:
-    ├── @power/win32-x64        ┐
-    ├── @power/win32-arm64      │
-    ├── @power/linux-x64        │  each contains one compiled binary:
-    ├── @power/linux-arm64      │    Rust host · Blitz · JS runtime ·
-    ├── @power/darwin-x64       │    DOM↔JS bridge · web APIs · winit/wgpu
-    └── @power/darwin-arm64     ┘
+    ├── @blitsen/win32-x64     ┐
+    ├── @blitsen/win32-arm64   │
+    ├── @blitsen/linux-x64     │  each contains one compiled binary:
+    ├── @blitsen/linux-arm64   │    Rust host · Blitz · JS runtime ·
+    ├── @blitsen/darwin-x64    │    DOM↔JS bridge · web APIs · winit/wgpu
+    └── @blitsen/darwin-arm64  ┘
 ```
 
 - `optionalDependencies` + `os`/`cpu` fields in each platform package's manifest means npm,
@@ -486,7 +486,7 @@ power                          ← thin JS: CLI, config, TypeScript definitions
   Install is a download.
 - The JS package carries the TypeScript definitions for the `native:` APIs, so editor
   completion works without the runtime being loadable in a browser context.
-- Cross-platform export (`power build --target win32-x64` from Linux) requires that target's
+- Cross-platform export (`blitsen build --target win32-x64` from Linux) requires that target's
   package, which the CLI can fetch on demand rather than at install.
 
 ### Consequence for the Phase 1 → Phase 2 transition
@@ -503,7 +503,7 @@ The `native:` specifier form is not resolvable by ordinary bundlers, which will 
 fail on it — a real problem for a design whose premise is that the user's bundler runs first and
 unmodified. Two mitigations, likely both:
 
-- Ship real module paths (`power/dialog`, `power/window`) that any bundler resolves today, with
+- Ship real module paths (`blitsen/dialog`, `blitsen/window`) that any bundler resolves today, with
   the package's browser/module field pointing at a stub that throws outside the runtime.
 - Provide optional bundler plugins that mark `native:*` external, for users who prefer that
   spelling.
@@ -567,8 +567,8 @@ Rules that, if broken, cost a rewrite rather than a refactor:
 4. **No web API is added without its absence being detectable.** Feature detection must work.
 5. **Nothing about games, scenes, ECS or physics enters the runtime.** The viewport element is
    the boundary; past it is application territory.
-6. **Power never bundles, transpiles or resolves the application's modules.** The input is built
-   static output. The moment Power owns any part of the user's build, it becomes a competitor to
+6. **Blitsen never bundles, transpiles or resolves the application's modules.** The input is built
+   static output. The moment Blitsen owns any part of the user's build, it becomes a competitor to
    Vite rather than a target for it, and the drop-in premise is gone.
 7. **The npm surface — CLI, config, package layout — is stable across the Phase 1 → Phase 2 host
    change.** Users must experience that migration as a smaller binary and nothing else.
