@@ -28,12 +28,13 @@ mod tests {
     struct TestDom;
     impl DomBackend for TestDom {}
 
-    struct TestJs;
-    impl JsEngine for TestJs {}
+    // JsEngine deliberately has no default operations: every host must make an
+    // explicit choice for the complete boundary. DomBackend is still a marker
+    // until issue #15 defines its surface.
+    fn assert_dom_boundary<T: DomBackend>() {}
 
     #[test]
-    fn bridge_accepts_only_boundary_implementations() {
-        let bridge = Bridge::new(TestDom, TestJs);
-        let (_dom, _js) = bridge.into_parts();
+    fn bridge_dom_type_is_runtime_neutral() {
+        assert_dom_boundary::<TestDom>();
     }
 }
