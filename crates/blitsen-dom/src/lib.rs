@@ -8,6 +8,228 @@ use std::error::Error;
 use std::fmt;
 use std::hash::Hash;
 
+/// Generational handle into a [`NodeArena`].
+///
+/// The slot selects storage and the generation prevents a stale handle from
+/// resolving to an unrelated node after that storage is reused.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct NodeId {
+    slot: u32,
+    generation: u32,
+}
+
+impl NodeId {
+    /// Creates a handle from its stable wire representation.
+    pub const fn new(slot: u32, generation: u32) -> Self {
+        Self { slot, generation }
+    }
+
+    /// Returns the arena slot.
+    pub const fn slot(self) -> u32 {
+        self.slot
+    }
+
+    /// Returns the slot generation.
+    pub const fn generation(self) -> u32 {
+        self.generation
+    }
+
+    /// Packs the handle for opaque storage in a JavaScript wrapper.
+    pub const fn to_u64(self) -> u64 {
+        (self.generation as u64) << 32 | self.slot as u64
+    }
+
+    /// Restores a handle previously produced by [`NodeId::to_u64`].
+    pub const fn from_u64(value: u64) -> Self {
+        Self {
+            slot: value as u32,
+            generation: (value >> 32) as u32,
+        }
+    }
+}
+
+#[derive(Debug)]
+struct NodeSlot<T> {
+    generation: u32,
+    value: Option<T>,
+    tree_owned: bool,
+    js_references: u32,
+}
+
+/// Owns backend node handles and coordinates tree and JavaScript lifetimes.
+///
+/// A connected tree node is tree-owned. Detaching it releases that ownership;
+/// it remains live only while one or more JavaScript wrappers retain it.
+#[derive(Debug)]
+pub struct NodeArena<T> {
+    slots: Vec<NodeSlot<T>>,
+    free: Vec<u32>,
+    len: usize,
+}
+
+impl<T> Default for NodeArena<T> {
+    fn default() -> Self {
+        Self {
+            slots: Vec::new(),
+            free: Vec::new(),
+            len: 0,
+        }
+    }
+}
+
+impl<T> NodeArena<T> {
+    /// Creates an empty arena.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Inserts a node initially owned by the document tree.
+    pub fn insert(&mut self, value: T) -> NodeId {
+        self.len += 1;
+        if let Some(slot_index) = self.free.pop() {
+            let slot = &mut self.slots[slot_index as usize];
+            debug_assert!(slot.value.is_none());
+            slot.generation = slot.generation.wrapping_add(1);
+            slot.value = Some(value);
+            slot.tree_owned = true;
+            slot.js_references = 0;
+            NodeId::new(slot_index, slot.generation)
+        } else {
+            let slot = u32::try_from(self.slots.len()).expect("node arena exhausted u32 slots");
+            self.slots.push(NodeSlot {
+                generation: 0,
+                value: Some(value),
+                tree_owned: true,
+                js_references: 0,
+            });
+            NodeId::new(slot, 0)
+        }
+    }
+
+    /// Returns the number of live nodes.
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    /// Reports whether the arena contains no live nodes.
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// Resolves a handle after validating both slot and generation.
+    pub fn get(&self, node: NodeId) -> Result<&T, DomError> {
+        self.valid_slot(node)?
+            .value
+            .as_ref()
+            .ok_or(DomError::StaleNode)
+    }
+
+    /// Mutably resolves a handle after validating both slot and generation.
+    pub fn get_mut(&mut self, node: NodeId) -> Result<&mut T, DomError> {
+        self.valid_slot_mut(node)?
+            .value
+            .as_mut()
+            .ok_or(DomError::StaleNode)
+    }
+
+    /// Adds one JavaScript wrapper reference to a live node.
+    pub fn retain_for_js(&mut self, node: NodeId) -> Result<(), DomError> {
+        let slot = self.valid_slot_mut(node)?;
+        slot.js_references = slot
+            .js_references
+            .checked_add(1)
+            .ok_or_else(|| DomError::Backend("JavaScript node reference count overflow".into()))?;
+        Ok(())
+    }
+
+    /// Releases one JavaScript wrapper reference.
+    ///
+    /// Returns `true` when this release collected a detached node.
+    pub fn release_from_js(&mut self, node: NodeId) -> Result<bool, DomError> {
+        let slot = self.valid_slot_mut(node)?;
+        slot.js_references = slot.js_references.checked_sub(1).ok_or_else(|| {
+            DomError::Backend("node has no JavaScript reference to release".into())
+        })?;
+        Ok(self.collect_if_unowned(node))
+    }
+
+    /// Marks a node as attached and therefore owned by the tree.
+    pub fn attach_to_tree(&mut self, node: NodeId) -> Result<(), DomError> {
+        self.valid_slot_mut(node)?.tree_owned = true;
+        Ok(())
+    }
+
+    /// Releases tree ownership after a node is detached.
+    ///
+    /// Returns `true` when no JavaScript wrapper retained the node and it was
+    /// collected immediately.
+    pub fn detach_from_tree(&mut self, node: NodeId) -> Result<bool, DomError> {
+        self.valid_slot_mut(node)?.tree_owned = false;
+        Ok(self.collect_if_unowned(node))
+    }
+
+    /// Explicitly destroys a node even if a stale JavaScript wrapper remains.
+    ///
+    /// This is used only by backend operations whose semantics drop storage;
+    /// ordinary DOM removal must use [`NodeArena::detach_from_tree`].
+    pub fn destroy(&mut self, node: NodeId) -> Result<T, DomError> {
+        self.valid_slot(node)?;
+        self.take_slot(node).ok_or(DomError::StaleNode)
+    }
+
+    /// Reports whether the tree currently owns a node.
+    pub fn is_tree_owned(&self, node: NodeId) -> Result<bool, DomError> {
+        Ok(self.valid_slot(node)?.tree_owned)
+    }
+
+    /// Returns the number of JavaScript wrappers retaining a node.
+    pub fn js_reference_count(&self, node: NodeId) -> Result<u32, DomError> {
+        Ok(self.valid_slot(node)?.js_references)
+    }
+
+    fn valid_slot(&self, node: NodeId) -> Result<&NodeSlot<T>, DomError> {
+        let slot = self
+            .slots
+            .get(node.slot as usize)
+            .ok_or(DomError::StaleNode)?;
+        if slot.generation != node.generation || slot.value.is_none() {
+            return Err(DomError::StaleNode);
+        }
+        Ok(slot)
+    }
+
+    fn valid_slot_mut(&mut self, node: NodeId) -> Result<&mut NodeSlot<T>, DomError> {
+        let slot = self
+            .slots
+            .get_mut(node.slot as usize)
+            .ok_or(DomError::StaleNode)?;
+        if slot.generation != node.generation || slot.value.is_none() {
+            return Err(DomError::StaleNode);
+        }
+        Ok(slot)
+    }
+
+    fn collect_if_unowned(&mut self, node: NodeId) -> bool {
+        let slot = &self.slots[node.slot as usize];
+        if slot.tree_owned || slot.js_references != 0 {
+            false
+        } else {
+            self.take_slot(node);
+            true
+        }
+    }
+
+    fn take_slot(&mut self, node: NodeId) -> Option<T> {
+        let slot = &mut self.slots[node.slot as usize];
+        let value = slot.value.take()?;
+        slot.tree_owned = false;
+        slot.js_references = 0;
+        self.free.push(node.slot);
+        self.len -= 1;
+        Some(value)
+    }
+}
+
 /// Namespace of an element or attribute name.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum Namespace {
@@ -281,5 +503,51 @@ mod tests {
     fn names_make_namespace_choice_explicit() {
         assert_eq!(DomName::html("div").namespace, Namespace::Html);
         assert_eq!(DomName::attribute("class").namespace, Namespace::None);
+    }
+
+    #[test]
+    fn reused_slots_reject_the_previous_generation() {
+        let mut arena = NodeArena::new();
+        let old = arena.insert("old");
+        assert_eq!(arena.destroy(old), Ok("old"));
+
+        let replacement = arena.insert("replacement");
+        assert_eq!(old.slot(), replacement.slot());
+        assert_ne!(old.generation(), replacement.generation());
+        assert_eq!(arena.get(old), Err(DomError::StaleNode));
+        assert_eq!(arena.get(replacement), Ok(&"replacement"));
+    }
+
+    #[test]
+    fn detached_nodes_live_only_while_javascript_retains_them() {
+        let mut arena = NodeArena::new();
+        let node = arena.insert(String::from("detached"));
+        arena.retain_for_js(node).unwrap();
+
+        assert!(!arena.detach_from_tree(node).unwrap());
+        assert_eq!(arena.get(node).unwrap(), "detached");
+        assert!(!arena.is_tree_owned(node).unwrap());
+        assert_eq!(arena.js_reference_count(node).unwrap(), 1);
+
+        assert!(arena.release_from_js(node).unwrap());
+        assert_eq!(arena.get(node), Err(DomError::StaleNode));
+    }
+
+    #[test]
+    fn explicitly_dropped_nodes_fail_cleanly_through_retained_handles() {
+        let mut arena = NodeArena::new();
+        let node = arena.insert(7);
+        arena.retain_for_js(node).unwrap();
+
+        assert_eq!(arena.destroy(node), Ok(7));
+        assert_eq!(arena.get(node), Err(DomError::StaleNode));
+        assert_eq!(arena.get_mut(node), Err(DomError::StaleNode));
+        assert_eq!(arena.detach_from_tree(node), Err(DomError::StaleNode));
+    }
+
+    #[test]
+    fn node_handles_have_a_stable_external_representation() {
+        let node = NodeId::new(123, 456);
+        assert_eq!(NodeId::from_u64(node.to_u64()), node);
     }
 }
