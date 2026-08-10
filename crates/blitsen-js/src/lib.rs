@@ -315,7 +315,11 @@ pub trait JsEngine {
 
     /// Evaluates a classic script with the supplied source identifier.
     fn evaluate_script(&mut self, source: &str, filename: &str) -> Result<Self::Value, JsError>;
-    /// Evaluates an ECMAScript module and returns its namespace object.
+    /// Starts ECMAScript module evaluation.
+    ///
+    /// Embedded engines may return the namespace directly. Hosts such as Bun
+    /// return the dynamic-import promise because Node-API cannot synchronously
+    /// drain the host's module graph.
     fn evaluate_module(&mut self, source: &str, identifier: &str) -> Result<Self::Value, JsError>;
     /// Runs queued microtasks to quiescence and returns the number processed.
     fn drain_microtasks(&mut self) -> Result<usize, JsError>;

@@ -12,10 +12,16 @@ publish.workspace = true
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+base64 = "0.22"
 blitsen-core = { path = "../blitsen-core" }
 blitsen-dom = { path = "../blitsen-dom" }
 blitsen-js = { path = "../blitsen-js" }
 blitsen-platform = { path = "../blitsen-platform" }
+napi = { version = "3.4", default-features = false, features = ["napi6"] }
+napi-derive = "3.3"
+
+[build-dependencies]
+napi-build = "2.2"
 
 [lints]
 workspace = true
