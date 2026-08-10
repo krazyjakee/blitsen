@@ -118,6 +118,38 @@ assert.equal(reflected.attributes.class, "active forced");
 assert.equal(reflected.attributes["data-attributes"], "ok");
 assert.equal(reflected.layout.width, 220, "class mutation triggers the real Blitz cascade");
 
+const styleSnapshot = JSON.parse(native.runBridgeHarness(
+  `<style>#styled { display:block; width:90px; height:10px }</style><div id="styled"></div>`,
+  `{ const element = document.getElementById("styled");
+     const style = element.style;
+     if (style.width !== "" || style.getPropertyValue("width") !== "") throw new Error("inline reads must exclude computed style");
+     style.left = "40px";
+     style.backgroundColor = "red";
+     style.cssFloat = "left";
+     style.setProperty("TOP", "12px");
+     if (style.left !== "40px") throw new Error("camelCase left: " + style.left);
+     if (style.getPropertyValue("background-color") !== "red") throw new Error("camelCase backgroundColor: " + style.getPropertyValue("background-color"));
+     if (style.cssFloat !== "left") throw new Error("cssFloat: " + style.cssFloat);
+     if (style.removeProperty("top") !== "12px" || style.getPropertyValue("top") !== "") throw new Error("removeProperty");
+     style.width = "10px";
+     style.width = "definitely-invalid";
+     if (style.width !== "10px") throw new Error("invalid values must preserve the old declaration");
+     const started = performance.now();
+     for (let index = 0; index < 1000; index++) style.height = (10 + index % 10) + "px";
+     element.setAttribute("data-style-call-us", String(Math.round((performance.now() - started) * 1000 / 1000)));
+     style.cssText = "left: 5px; color: green; width: definitely-invalid";
+     if (style.getPropertyValue("left") !== "5px" || style.getPropertyValue("color") !== "green" || style.getPropertyValue("width") !== "" || !style.cssText.includes("left: 5px"))
+       throw new Error("cssText get/set or invalid declaration filtering");
+     element.setAttribute("data-style", "ok"); }`,
+  320,
+  180,
+));
+const styled = styleSnapshot.nodes.find((node) => node.attributes.id === "styled");
+assert.equal(styled.attributes["data-style"], "ok");
+assert.match(styled.inline_style, /left:\s*5px/);
+assert.doesNotMatch(styled.inline_style, /definitely-invalid/);
+assert.equal(styled.layout.width, 90);
+
 const mutatedPng = Buffer.from(native.renderBridgeHarnessPng(
   `<style>#x { width: 180px; height: 80px; background: #ef4444 }</style><div id="x">old</div>`,
   `{ const painted = document.querySelector("#x");
@@ -134,4 +166,4 @@ const baselinePng = Buffer.from(native.renderBridgeHarnessPng(
 ), "base64");
 assert.deepEqual([...mutatedPng.subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10]);
 assert.notDeepEqual(mutatedPng, baselinePng, "post-mutation PNG differs from the parsed frame");
-console.log("bridge harness passed", process.platform, process.arch);
+console.log("bridge harness passed", process.platform, process.arch, `style=${styled.attributes["data-style-call-us"]}us/call`);

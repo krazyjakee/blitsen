@@ -126,9 +126,10 @@ const BOOTSTRAP: &str = r#"
 
   class CSSStyleDeclaration {
     constructor(element) { this._element = element; }
-    getPropertyValue(property) { return call("styleGet", this._element[handle], String(property)); }
-    setProperty(property, value) { call("styleSet", this._element[handle], String(property), String(value)); }
-    removeProperty(property) { return call("styleRemove", this._element[handle], String(property)); }
+    _name(property) { const name = String(property); return name.startsWith("--") ? name : name.toLowerCase(); }
+    getPropertyValue(property) { return call("styleGet", this._element[handle], this._name(property)); }
+    setProperty(property, value) { call("styleSet", this._element[handle], this._name(property), String(value)); }
+    removeProperty(property) { return call("styleRemove", this._element[handle], this._name(property)); }
     get cssText() { return call("styleText", this._element[handle]); }
     set cssText(value) { call("setStyleText", this._element[handle], String(value)); }
     _getJsProperty(property) { return call("styleGetJs", this._element[handle], property); }
