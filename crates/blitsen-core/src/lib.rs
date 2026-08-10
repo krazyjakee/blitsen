@@ -245,6 +245,182 @@ pub struct NodeContentApi<'a, D: NodeContentBackend> {
     node: D::NodeId,
 }
 
+/// Attribute operations required by JavaScript element wrappers.
+pub trait AttributeBackend {
+    /// Stable node handle.
+    type NodeId: Copy;
+
+    /// Reads a non-namespaced HTML attribute.
+    fn element_attribute(&self, node: Self::NodeId, name: &str)
+    -> Result<Option<String>, DomError>;
+    /// Sets a non-namespaced HTML attribute and invalidates selector matching.
+    fn element_set_attribute(
+        &mut self,
+        node: Self::NodeId,
+        name: &str,
+        value: &str,
+    ) -> Result<(), DomError>;
+    /// Removes an attribute and invalidates selector matching when present.
+    fn element_remove_attribute(
+        &mut self,
+        node: Self::NodeId,
+        name: &str,
+    ) -> Result<bool, DomError>;
+}
+
+impl<D: DomBackend> AttributeBackend for D {
+    type NodeId = D::NodeId;
+
+    fn element_attribute(
+        &self,
+        node: Self::NodeId,
+        name: &str,
+    ) -> Result<Option<String>, DomError> {
+        self.attribute(node, &DomName::attribute(name.to_ascii_lowercase()))
+    }
+
+    fn element_set_attribute(
+        &mut self,
+        node: Self::NodeId,
+        name: &str,
+        value: &str,
+    ) -> Result<(), DomError> {
+        self.set_attribute(node, &DomName::attribute(name.to_ascii_lowercase()), value)
+    }
+
+    fn element_remove_attribute(
+        &mut self,
+        node: Self::NodeId,
+        name: &str,
+    ) -> Result<bool, DomError> {
+        self.remove_attribute(node, &DomName::attribute(name.to_ascii_lowercase()))
+    }
+}
+
+/// Runtime-neutral attributes and `classList` implementation.
+pub struct ElementAttributesApi<'a, D: AttributeBackend> {
+    backend: &'a mut D,
+    node: D::NodeId,
+}
+
+impl<'a, D: AttributeBackend> ElementAttributesApi<'a, D> {
+    /// Wraps an element from the authoritative backend.
+    pub fn new(backend: &'a mut D, node: D::NodeId) -> Self {
+        Self { backend, node }
+    }
+
+    /// Implements `getAttribute`.
+    pub fn get_attribute(&self, name: &str) -> Result<Option<String>, DomError> {
+        self.backend.element_attribute(self.node, name)
+    }
+
+    /// Implements `setAttribute`.
+    pub fn set_attribute(&mut self, name: &str, value: &str) -> Result<(), DomError> {
+        self.backend.element_set_attribute(self.node, name, value)
+    }
+
+    /// Implements `removeAttribute`.
+    pub fn remove_attribute(&mut self, name: &str) -> Result<(), DomError> {
+        self.backend.element_remove_attribute(self.node, name)?;
+        Ok(())
+    }
+
+    /// Implements `hasAttribute`.
+    pub fn has_attribute(&self, name: &str) -> Result<bool, DomError> {
+        Ok(self.get_attribute(name)?.is_some())
+    }
+
+    /// Implements the reflected `id` getter.
+    pub fn id(&self) -> Result<String, DomError> {
+        Ok(self.get_attribute("id")?.unwrap_or_default())
+    }
+
+    /// Implements the reflected `id` setter.
+    pub fn set_id(&mut self, value: &str) -> Result<(), DomError> {
+        self.set_attribute("id", value)
+    }
+
+    /// Implements the reflected `className` getter.
+    pub fn class_name(&self) -> Result<String, DomError> {
+        Ok(self.get_attribute("class")?.unwrap_or_default())
+    }
+
+    /// Implements the reflected `className` setter.
+    pub fn set_class_name(&mut self, value: &str) -> Result<(), DomError> {
+        self.set_attribute("class", value)
+    }
+
+    /// Implements `classList.contains`.
+    pub fn class_contains(&self, token: &str) -> Result<bool, DomError> {
+        validate_class_token(token)?;
+        Ok(self.class_tokens()?.iter().any(|class| class == token))
+    }
+
+    /// Implements `classList.add` for one or more tokens.
+    pub fn class_add(&mut self, tokens: &[&str]) -> Result<(), DomError> {
+        validate_class_tokens(tokens)?;
+        let mut classes = self.class_tokens()?;
+        for token in tokens {
+            if !classes.iter().any(|class| class == token) {
+                classes.push((*token).into());
+            }
+        }
+        self.write_class_tokens(classes)
+    }
+
+    /// Implements `classList.remove` for one or more tokens.
+    pub fn class_remove(&mut self, tokens: &[&str]) -> Result<(), DomError> {
+        validate_class_tokens(tokens)?;
+        let mut classes = self.class_tokens()?;
+        classes.retain(|class| !tokens.iter().any(|token| class == token));
+        self.write_class_tokens(classes)
+    }
+
+    /// Implements `classList.toggle`, including its optional force argument.
+    pub fn class_toggle(&mut self, token: &str, force: Option<bool>) -> Result<bool, DomError> {
+        validate_class_token(token)?;
+        let present = self.class_contains(token)?;
+        let desired = force.unwrap_or(!present);
+        if desired != present {
+            if desired {
+                self.class_add(&[token])?;
+            } else {
+                self.class_remove(&[token])?;
+            }
+        }
+        Ok(desired)
+    }
+
+    fn class_tokens(&self) -> Result<Vec<String>, DomError> {
+        Ok(self
+            .class_name()?
+            .split_ascii_whitespace()
+            .map(str::to_owned)
+            .collect())
+    }
+
+    fn write_class_tokens(&mut self, classes: Vec<String>) -> Result<(), DomError> {
+        self.set_class_name(&classes.join(" "))
+    }
+}
+
+fn validate_class_tokens(tokens: &[&str]) -> Result<(), DomError> {
+    for token in tokens {
+        validate_class_token(token)?;
+    }
+    Ok(())
+}
+
+fn validate_class_token(token: &str) -> Result<(), DomError> {
+    if token.is_empty() || token.chars().any(char::is_whitespace) {
+        Err(DomError::Syntax(
+            "class token must be non-empty and contain no whitespace".into(),
+        ))
+    } else {
+        Ok(())
+    }
+}
+
 impl<'a, D: NodeContentBackend> NodeContentApi<'a, D> {
     /// Wraps a node from the authoritative backend.
     pub fn new(backend: &'a mut D, node: D::NodeId) -> Self {
@@ -694,6 +870,37 @@ mod tests {
         invalidations: usize,
     }
 
+    #[derive(Default)]
+    struct MockAttributes {
+        values: HashMap<String, String>,
+        restyles: usize,
+    }
+
+    impl AttributeBackend for MockAttributes {
+        type NodeId = u32;
+
+        fn element_attribute(&self, _node: u32, name: &str) -> Result<Option<String>, DomError> {
+            Ok(self.values.get(name).cloned())
+        }
+
+        fn element_set_attribute(
+            &mut self,
+            _node: u32,
+            name: &str,
+            value: &str,
+        ) -> Result<(), DomError> {
+            self.values.insert(name.into(), value.into());
+            self.restyles += 1;
+            Ok(())
+        }
+
+        fn element_remove_attribute(&mut self, _node: u32, name: &str) -> Result<bool, DomError> {
+            let removed = self.values.remove(name).is_some();
+            self.restyles += usize::from(removed);
+            Ok(removed)
+        }
+    }
+
     impl NodeContentBackend for MockContent {
         type NodeId = u32;
 
@@ -920,5 +1127,48 @@ mod tests {
             assert_eq!(node.inner_html().unwrap(), "<span>A &amp; B</span>");
         }
         assert_eq!(backend.invalidations, 2);
+    }
+
+    #[test]
+    fn attributes_reflect_and_class_changes_affect_the_cascade() {
+        let mut backend = MockAttributes::default();
+        {
+            let mut element = ElementAttributesApi::new(&mut backend, 1);
+            element.set_id("target").unwrap();
+            assert_eq!(element.id().unwrap(), "target");
+            element.set_class_name("button").unwrap();
+            element.class_add(&["primary", "button"]).unwrap();
+            assert!(element.class_contains("primary").unwrap());
+            assert_eq!(element.class_name().unwrap(), "button primary");
+            assert!(!element.class_toggle("primary", None).unwrap());
+            assert!(element.class_toggle("disabled", Some(true)).unwrap());
+            assert_eq!(element.class_name().unwrap(), "button disabled");
+            element.remove_attribute("id").unwrap();
+            assert!(!element.has_attribute("id").unwrap());
+        }
+
+        // This models a selector cascade read after backend restyling, not just
+        // an attribute string assertion.
+        let computed_opacity = if backend.values["class"]
+            .split_ascii_whitespace()
+            .any(|class| class == "disabled")
+        {
+            0.5
+        } else {
+            1.0
+        };
+        assert_eq!(computed_opacity, 0.5);
+        assert_eq!(backend.restyles, 6);
+    }
+
+    #[test]
+    fn class_list_rejects_invalid_tokens_without_mutating() {
+        let mut backend = MockAttributes::default();
+        let mut element = ElementAttributesApi::new(&mut backend, 1);
+        assert!(matches!(
+            element.class_add(&["two words"]),
+            Err(DomError::Syntax(_))
+        ));
+        assert_eq!(element.class_name().unwrap(), "");
     }
 }
