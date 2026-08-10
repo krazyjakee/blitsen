@@ -1,0 +1,23 @@
+{
+  "bun_drives_winit": true,
+  "expected_period_ms": 16.667,
+  "pump_samples": 628,
+  "paint_callbacks": 628,
+  "input_samples": 600,
+  "pump_interval_mean_ms": 16.07274872886762,
+  "pump_interval_stddev_ms": 0.0533132875346684,
+  "pump_interval_p50_ms": 16.062106,
+  "pump_interval_p95_ms": 16.078888,
+  "pump_interval_p99_ms": 16.413577,
+  "paint_interval_mean_ms": 16.072549392344506,
+  "paint_interval_stddev_ms": 0.05319854920566629,
+  "paint_interval_p50_ms": 16.062478000000002,
+  "paint_interval_p95_ms": 16.084028,
+  "paint_interval_p99_ms": 16.414629,
+  "input_to_paint_mean_ms": 8.16265213499999,
+  "input_to_paint_p50_ms": 8.19041,
+  "input_to_paint_p95_ms": 15.327983999999999,
+  "input_to_paint_p99_ms": 16.033576,
+  "input_to_paint_max_ms": 16.147937000000002,
+  "simulated_js_work_ms": 0
+}

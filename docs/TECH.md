@@ -136,18 +136,23 @@ defined point in the turn:
 
 Bun owns an event loop. winit owns an event loop. Both want to be the outer one.
 
-Options, to be settled by spike before M1:
+Options investigated by S1:
 
 1. **Drive winit from a JS callback** — pump winit with `ControlFlow::Poll` from a repeating
    task registered on Bun's loop. Simple; risks input latency and frame pacing jitter.
 2. **Drive Bun's loop from winit** — call into Node-API to advance the JS loop once per frame.
-   Better pacing; depends on how much of Bun's loop can be pumped externally.
+   Bun 1.3.14 on POSIX exposes no supported way to do this: `uv_run` aborts as unsupported and
+   the actual uSockets tick is private.
 3. **Two threads with a channel** — winit on the main thread (required on macOS), JS on
    another, all DOM mutation marshalled. Most robust, most overhead, and it breaks the
    single-context assumption above.
 
-Option 2 is preferred; option 1 is the fallback. **Spike S1 decides this, and the answer gates
-the frame-pacing target P4.**
+**S1 decision: option 1.** On Linux, Bun-driven non-blocking winit pumping sustained about 62
+paint callbacks per second with 0.053 ms interval standard deviation and p99 synthetic
+input-to-paint at 16.034 ms (600 samples). A 4 ms JS-work simulation produced the same result.
+Input, redraw and lifecycle work stays synchronous inside the winit pump. Option 3 remains the
+contingency if the full Pong workload or later Windows/macOS validation exceeds one frame. These
+are host-pacing measurements, not the final P4 renderer benchmark; see `spikes/s1/README.md`.
 
 ---
 
