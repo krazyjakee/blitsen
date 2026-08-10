@@ -12,11 +12,13 @@ try {
     ? fileURLToPath(configuredPath)
     : configuredPath ?? fileURLToPath(new URL("../native/blitsen.node", import.meta.url));
   const native = require(nativePath);
+  const engine = new native.Engine();
   runtime = {
     openDirectory(options) {
-      const engine = new native.Engine();
       return engine.openDirectory?.(options) ?? engine.loadHTML(options.entrypoint);
     },
+    pumpWindow: engine.pumpWindow ? () => engine.pumpWindow() : null,
+    waitForNextFrame: () => Bun.sleep(16),
   };
 } catch {}
 

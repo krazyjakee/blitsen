@@ -9,7 +9,7 @@ use std::path::Path;
 use std::ptr;
 use std::rc::Rc;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use anyrender::{PaintScene as _, render_to_buffer};
 use anyrender_vello_cpu::VelloCpuImageRenderer;
@@ -38,7 +38,8 @@ use serde::Serialize;
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
 use winit::event::{DeviceEvent, StartCause, WindowEvent};
-use winit::event_loop::ActiveEventLoop;
+use winit::event_loop::pump_events::EventLoopExtPumpEvents;
+use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::window::{WindowAttributes, WindowId};
 
 #[cfg(target_os = "macos")]
@@ -670,6 +671,7 @@ fn from_typed_array_type(kind: sys::napi_typedarray_type) -> Result<TypedArrayKi
 #[napi]
 pub struct Engine {
     runtime: RefCell<NodeApiEngine>,
+    session: RefCell<Option<WindowSession>>,
 }
 
 /// Options passed from directory-mode CLI to the native window.
@@ -743,6 +745,13 @@ struct WindowApplication<Rend: anyrender::WindowRenderer> {
     state: Rc<RefCell<WindowState>>,
     error: Rc<RefCell<Option<JsError>>>,
     started_at: Instant,
+}
+
+struct WindowSession {
+    runtime: tokio::runtime::Runtime,
+    event_loop: EventLoop,
+    application: WindowApplication<anyrender_vello::VelloWindowRenderer>,
+    error: Rc<RefCell<Option<JsError>>>,
 }
 
 impl<Rend: anyrender::WindowRenderer> WindowApplication<Rend> {
@@ -984,6 +993,7 @@ impl Engine {
     pub fn new(env: Env) -> Self {
         Self {
             runtime: RefCell::new(NodeApiEngine::new(env)),
+            session: RefCell::new(None),
         }
     }
 
@@ -1004,7 +1014,7 @@ impl Engine {
         Ok(source)
     }
 
-    /// Parses `index.html` and runs a native Blitz window until it closes.
+    /// Parses `index.html` and initializes a native Blitz window session.
     #[napi(js_name = "openDirectory")]
     pub fn open_directory(&self, options: OpenDirectoryOptions) -> napi::Result<()> {
         let started_at = Instant::now();
@@ -1018,7 +1028,7 @@ impl Engine {
             .enable_all()
             .build()
             .map_err(|error| napi::Error::new(Status::GenericFailure, error.to_string()))?;
-        let _guard = runtime.enter();
+        let guard = runtime.enter();
         let event_loop = create_default_event_loop();
         let (proxy, receiver) = BlitzShellProxy::new(event_loop.create_proxy());
         let net_provider = Arc::new(blitz::net::Provider::new(Some(Arc::new(proxy.clone()))));
@@ -1078,13 +1088,44 @@ impl Engine {
             error: Rc::clone(&window_error),
             started_at,
         };
-        event_loop
-            .run_app(application)
-            .map_err(|error| napi::Error::new(Status::GenericFailure, error.to_string()))?;
-        if let Some(error) = window_error.borrow_mut().take() {
-            return Err(napi_error(error));
+        if self.session.borrow().is_some() {
+            return Err(napi::Error::new(
+                Status::GenericFailure,
+                "a native window session is already open",
+            ));
         }
+        drop(guard);
+        *self.session.borrow_mut() = Some(WindowSession {
+            runtime,
+            event_loop,
+            application,
+            error: window_error,
+        });
         Ok(())
+    }
+
+    /// Advances winit once without blocking Bun's outer event loop.
+    #[napi(js_name = "pumpWindow")]
+    pub fn pump_window(&self) -> napi::Result<bool> {
+        let alive = {
+            let mut session = self.session.borrow_mut();
+            let session = session.as_mut().ok_or_else(|| {
+                napi::Error::new(Status::GenericFailure, "no native window session is open")
+            })?;
+            let _guard = session.runtime.enter();
+            session
+                .event_loop
+                .pump_app_events(Some(Duration::ZERO), &mut session.application);
+            if let Some(error) = session.error.borrow_mut().take() {
+                return Err(napi_error(error));
+            }
+            !session.application.inner.windows.is_empty()
+                || !session.application.inner.pending_windows.is_empty()
+        };
+        if !alive {
+            self.session.borrow_mut().take();
+        }
+        Ok(alive)
     }
 }
 

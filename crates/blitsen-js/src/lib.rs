@@ -4,6 +4,8 @@
 //! JavaScriptCore handles.  Bridge crates can therefore be compiled and tested
 //! without selecting a JavaScript host.
 
+pub mod timers;
+
 use std::error::Error;
 use std::fmt;
 
@@ -288,6 +290,20 @@ pub trait JsEngine {
         this: Option<&Self::Value>,
         arguments: &[Self::Value],
     ) -> Result<Self::Value, JsError>;
+    /// Invokes one host macrotask and performs its microtask checkpoint.
+    ///
+    /// Hosts with a dedicated callback primitive should override this method;
+    /// embedded engines may use the default call followed by an explicit drain.
+    fn call_macrotask(
+        &mut self,
+        function: &Self::Value,
+        this: Option<&Self::Value>,
+        arguments: &[Self::Value],
+    ) -> Result<Self::Value, JsError> {
+        let result = self.call(function, this, arguments)?;
+        self.drain_microtasks()?;
+        Ok(result)
+    }
 
     /// Registers a native constructor and prototype.
     fn register_class(

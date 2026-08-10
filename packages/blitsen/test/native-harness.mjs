@@ -99,6 +99,31 @@ assert.equal(animationTimestamps.length, 3);
 assert(animationTimestamps.every((timestamp, index) => index === 0 || timestamp > animationTimestamps[index - 1]),
   "animation timestamps are monotonic DOMHighResTimeStamp values");
 
+native.runBridgeHarness(
+  `<div></div>`,
+  `{ globalThis.__blitsenTimerOrder = [];
+     setTimeout((first, second) => {
+       __blitsenTimerOrder.push("timeout:" + first + ":" + second);
+       Promise.resolve().then(() => __blitsenTimerOrder.push("microtask"));
+     }, 0, "a", 2);
+     const cancelled = setTimeout(() => __blitsenTimerOrder.push("cancelled"), 0);
+     clearTimeout(cancelled);
+     let intervals = 0;
+     const interval = setInterval(() => {
+       __blitsenTimerOrder.push("interval:" + ++intervals);
+       if (intervals === 2) clearInterval(interval);
+     }, 2); }`,
+  100,
+  60,
+);
+await Bun.sleep(25);
+assert.deepEqual(globalThis.__blitsenTimerOrder.slice(0, 2), ["timeout:a:2", "microtask"],
+  "Bun timer arguments are forwarded and microtasks drain after the macrotask");
+assert.deepEqual(globalThis.__blitsenTimerOrder.filter(entry => entry.startsWith("interval")),
+  ["interval:1", "interval:2"], "intervals repeat and clearInterval stops them");
+assert(!globalThis.__blitsenTimerOrder.includes("cancelled"), "clearTimeout cancels the callback");
+delete globalThis.__blitsenTimerOrder;
+
 const treeSnapshot = JSON.parse(native.runBridgeHarness(
   `<body><div id="a"><i id="one">one</i><i id="two">two</i></div><div id="b"></div></body>`,
   `{ const expect = (condition, message) => { if (!condition) throw new Error(message); };

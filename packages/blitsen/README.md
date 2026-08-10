@@ -16,6 +16,10 @@ in a native window. Application export is not implemented yet. Follow developmen
 and read the feasibility results at
 [github.com/krazyjakee/blitsen](https://github.com/krazyjakee/blitsen).
 
+On Linux, Bun remains the JavaScript event-loop owner. The CLI yields between
+non-blocking native window pumps, preserving Bun's timer and promise-microtask
+semantics while rAF, layout, paint, and present stay synchronous inside a pump.
+
 Repository contributors can run the M1 interactive acceptance app on Linux,
 macOS, or Windows with:
 

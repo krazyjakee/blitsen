@@ -313,6 +313,13 @@ animation is a frame behind and games feel wrong.
 If a frame overruns budget, timers and rAF are not run twice to catch up; `dt` is passed
 honestly and the app decides.
 
+In Phase 1, Bun owns `setTimeout`, `setInterval`, cancellation, callback arguments and the
+microtask checkpoint after each timer macrotask. The CLI yields to Bun between non-blocking
+winit pumps, so expired timers and their promise jobs complete before the next pump invokes rAF.
+The engine-neutral fallback queue used by Phase 2 mirrors the browser's 4 ms minimum delay after
+five nested timers. Intervals rearm from the turn in which they actually ran and never burst to
+catch up after an overrun.
+
 ---
 
 ## 7. The native viewport element

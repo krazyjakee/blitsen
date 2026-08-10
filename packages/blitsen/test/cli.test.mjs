@@ -40,10 +40,36 @@ describe("directory CLI", () => {
   test("opens a resolved directory through the native runtime", async () => {
     const fixture = join(import.meta.dir, "../../../spikes/s7/fixture");
     let opened;
-    const runtime = { openDirectory: async (options) => { opened = options; } };
+    let pumps = 0;
+    const runtime = {
+      openDirectory: async (options) => { opened = options; },
+      pumpWindow: () => ++pumps < 3,
+      waitForNextFrame: async () => {},
+    };
     expect(await main([fixture, "--title", "Fixture"], console, runtime)).toBe(0);
     expect(opened.title).toBe("Fixture");
     expect(opened.entrypoint.endsWith("index.html")).toBeTrue();
+    expect(pumps).toBe(3);
+  });
+
+  test("yields timer macrotasks and microtasks before the next native pump", async () => {
+    const fixture = join(import.meta.dir, "../../../spikes/s7/fixture");
+    const order = [];
+    let pumps = 0;
+    const runtime = {
+      openDirectory: async () => {},
+      pumpWindow: () => {
+        order.push(`pump:${++pumps}`);
+        return pumps < 2;
+      },
+      waitForNextFrame: () => new Promise(resolve => setTimeout(() => {
+        order.push("timer");
+        Promise.resolve().then(() => order.push("microtask"));
+        resolve();
+      }, 0)),
+    };
+    expect(await main([fixture], console, runtime)).toBe(0);
+    expect(order).toEqual(["pump:1", "timer", "microtask", "pump:2"]);
   });
 
   test("reports missing entrypoints and unavailable native addons", async () => {

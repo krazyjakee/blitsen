@@ -87,6 +87,11 @@ export async function main(args, output = console, runtime = null) {
       throw new Error("native addon is unavailable; reinstall blitsen for this platform");
     }
     await runtime.openDirectory({ ...application, ...options });
+    if (runtime.pumpWindow) {
+      while (runtime.pumpWindow()) {
+        await (runtime.waitForNextFrame?.() ?? new Promise(resolve => setTimeout(resolve, 16)));
+      }
+    }
     return 0;
   } catch (error) {
     output.error(`blitsen: ${error.message}`);
