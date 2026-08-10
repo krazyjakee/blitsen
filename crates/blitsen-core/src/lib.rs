@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::hash::Hash;
 use std::rc::Rc;
 
-use blitsen_dom::DomBackend;
+use blitsen_dom::{DomBackend, DomError, DomName};
 use blitsen_js::{ExternalId, JsEngine, JsError};
 
 /// Weak-reference operations needed by the wrapper identity table.
@@ -26,6 +26,152 @@ pub trait WrapperEngine {
         &mut self,
         reference: &Self::WeakRef,
     ) -> Result<Option<Self::Value>, JsError>;
+}
+
+/// DOM operations needed by the JavaScript `document` object.
+///
+/// The blanket implementation delegates directly to [`DomBackend`], ensuring
+/// selector matching remains the renderer's implementation (Stylo for Blitz).
+pub trait DocumentBackend {
+    /// Stable node handle returned to wrappers.
+    type NodeId: Copy;
+
+    /// Queries the document for the first selector match.
+    fn document_query_selector(&self, selector: &str) -> Result<Option<Self::NodeId>, DomError>;
+    /// Queries the document for every selector match in tree order.
+    fn document_query_selector_all(&self, selector: &str) -> Result<Vec<Self::NodeId>, DomError>;
+    /// Looks up an exact element ID through the backend's maintained index.
+    fn document_get_element_by_id(&self, id: &str) -> Result<Option<Self::NodeId>, DomError>;
+    /// Creates a detached HTML element.
+    fn document_create_element(&mut self, local_name: &str) -> Result<Self::NodeId, DomError>;
+    /// Creates a detached text node.
+    fn document_create_text(&mut self, text: &str) -> Result<Self::NodeId, DomError>;
+    /// Returns the body element.
+    fn document_body(&self) -> Option<Self::NodeId>;
+    /// Returns the document element.
+    fn document_element(&self) -> Option<Self::NodeId>;
+}
+
+impl<D: DomBackend> DocumentBackend for D {
+    type NodeId = D::NodeId;
+
+    fn document_query_selector(&self, selector: &str) -> Result<Option<Self::NodeId>, DomError> {
+        self.query_selector(self.document(), selector)
+    }
+
+    fn document_query_selector_all(&self, selector: &str) -> Result<Vec<Self::NodeId>, DomError> {
+        self.query_selector_all(self.document(), selector)
+    }
+
+    fn document_get_element_by_id(&self, id: &str) -> Result<Option<Self::NodeId>, DomError> {
+        self.get_element_by_id(id)
+    }
+
+    fn document_create_element(&mut self, local_name: &str) -> Result<Self::NodeId, DomError> {
+        self.create_element(&DomName::html(local_name.to_ascii_lowercase()))
+    }
+
+    fn document_create_text(&mut self, text: &str) -> Result<Self::NodeId, DomError> {
+        self.create_text(text)
+    }
+
+    fn document_body(&self) -> Option<Self::NodeId> {
+        self.body()
+    }
+
+    fn document_element(&self) -> Option<Self::NodeId> {
+        self.document_element()
+    }
+}
+
+/// Static `NodeList` snapshot returned by `querySelectorAll` in v0.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StaticNodeList<N> {
+    nodes: Vec<N>,
+}
+
+impl<N> StaticNodeList<N> {
+    /// Creates a snapshot from nodes already in tree order.
+    pub fn new(nodes: Vec<N>) -> Self {
+        Self { nodes }
+    }
+
+    /// Returns the number of nodes in the snapshot.
+    pub fn len(&self) -> usize {
+        self.nodes.len()
+    }
+
+    /// Reports whether the snapshot contains no nodes.
+    pub fn is_empty(&self) -> bool {
+        self.nodes.is_empty()
+    }
+
+    /// Returns a node by zero-based index.
+    pub fn item(&self, index: usize) -> Option<&N> {
+        self.nodes.get(index)
+    }
+
+    /// Iterates over the snapshot in tree order.
+    pub fn iter(&self) -> impl ExactSizeIterator<Item = &N> {
+        self.nodes.iter()
+    }
+
+    /// Consumes the snapshot and returns its handles.
+    pub fn into_vec(self) -> Vec<N> {
+        self.nodes
+    }
+}
+
+/// Runtime-neutral implementation of the v0 JavaScript `document` surface.
+pub struct DocumentApi<'a, D> {
+    backend: &'a mut D,
+}
+
+impl<'a, D: DocumentBackend> DocumentApi<'a, D> {
+    /// Borrows the authoritative DOM backend as a document object.
+    pub fn new(backend: &'a mut D) -> Self {
+        Self { backend }
+    }
+
+    /// Implements `document.querySelector`.
+    pub fn query_selector(&self, selector: &str) -> Result<Option<D::NodeId>, DomError> {
+        self.backend.document_query_selector(selector)
+    }
+
+    /// Implements `document.querySelectorAll` as a static v0 snapshot.
+    pub fn query_selector_all(
+        &self,
+        selector: &str,
+    ) -> Result<StaticNodeList<D::NodeId>, DomError> {
+        self.backend
+            .document_query_selector_all(selector)
+            .map(StaticNodeList::new)
+    }
+
+    /// Implements `document.getElementById` without rebuilding an ID index.
+    pub fn get_element_by_id(&self, id: &str) -> Result<Option<D::NodeId>, DomError> {
+        self.backend.document_get_element_by_id(id)
+    }
+
+    /// Implements HTML `document.createElement`.
+    pub fn create_element(&mut self, local_name: &str) -> Result<D::NodeId, DomError> {
+        self.backend.document_create_element(local_name)
+    }
+
+    /// Implements `document.createTextNode`.
+    pub fn create_text_node(&mut self, text: &str) -> Result<D::NodeId, DomError> {
+        self.backend.document_create_text(text)
+    }
+
+    /// Implements `document.body`.
+    pub fn body(&self) -> Option<D::NodeId> {
+        self.backend.document_body()
+    }
+
+    /// Implements `document.documentElement`.
+    pub fn document_element(&self) -> Option<D::NodeId> {
+        self.backend.document_element()
+    }
 }
 
 impl<E: JsEngine> WrapperEngine for E {
@@ -194,6 +340,51 @@ mod tests {
 
     use super::*;
 
+    #[derive(Default)]
+    struct MockDocument {
+        next_node: u32,
+        matches: Vec<u32>,
+        queried_selectors: RefCell<Vec<String>>,
+    }
+
+    impl DocumentBackend for MockDocument {
+        type NodeId = u32;
+
+        fn document_query_selector(&self, selector: &str) -> Result<Option<u32>, DomError> {
+            self.queried_selectors.borrow_mut().push(selector.into());
+            Ok(self.matches.first().copied())
+        }
+
+        fn document_query_selector_all(&self, selector: &str) -> Result<Vec<u32>, DomError> {
+            self.queried_selectors.borrow_mut().push(selector.into());
+            Ok(self.matches.clone())
+        }
+
+        fn document_get_element_by_id(&self, id: &str) -> Result<Option<u32>, DomError> {
+            Ok((id == "target").then_some(2))
+        }
+
+        fn document_create_element(&mut self, local_name: &str) -> Result<u32, DomError> {
+            assert_eq!(local_name, "section");
+            self.next_node += 1;
+            Ok(self.next_node)
+        }
+
+        fn document_create_text(&mut self, text: &str) -> Result<u32, DomError> {
+            assert_eq!(text, "hello");
+            self.next_node += 1;
+            Ok(self.next_node)
+        }
+
+        fn document_body(&self) -> Option<u32> {
+            Some(10)
+        }
+
+        fn document_element(&self) -> Option<u32> {
+            Some(1)
+        }
+    }
+
     type MockFinalizer = Box<dyn FnOnce(ExternalId) + 'static>;
 
     struct MockObject {
@@ -295,5 +486,37 @@ mod tests {
             drop(wrapper);
         }
         assert!(table.is_empty());
+    }
+
+    #[test]
+    fn document_queries_delegate_and_nodelists_are_static() {
+        let mut backend = MockDocument {
+            matches: vec![2, 3],
+            ..Default::default()
+        };
+        let list = {
+            let document = DocumentApi::new(&mut backend);
+            assert_eq!(document.query_selector(".item").unwrap(), Some(2));
+            document.query_selector_all(".item").unwrap()
+        };
+        backend.matches.push(4);
+
+        assert_eq!(list.into_vec(), vec![2, 3]);
+        assert_eq!(
+            backend.queried_selectors.into_inner(),
+            vec![".item", ".item"]
+        );
+    }
+
+    #[test]
+    fn document_exposes_creation_and_root_elements() {
+        let mut backend = MockDocument::default();
+        let mut document = DocumentApi::new(&mut backend);
+
+        assert_eq!(document.create_element("section").unwrap(), 1);
+        assert_eq!(document.create_text_node("hello").unwrap(), 2);
+        assert_eq!(document.get_element_by_id("target").unwrap(), Some(2));
+        assert_eq!(document.body(), Some(10));
+        assert_eq!(document.document_element(), Some(1));
     }
 }

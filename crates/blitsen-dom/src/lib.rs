@@ -467,6 +467,8 @@ pub trait DomBackend {
         root: Self::NodeId,
         selector: &str,
     ) -> Result<Vec<Self::NodeId>, DomError>;
+    /// Returns the first element with the exact `id` attribute value.
+    fn get_element_by_id(&self, id: &str) -> Result<Option<Self::NodeId>, DomError>;
 
     /// Resolves pending style and layout work and returns a current snapshot.
     fn flush_layout(&mut self) -> Result<LayoutSnapshot, DomError>;
