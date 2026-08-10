@@ -1,0 +1,608 @@
+# Power — Technical Specification
+
+**Status:** Draft v0.1
+**Date:** 2026-08-10
+**Companion document:** `PRODUCT.md` (what and why; this document is how)
+
+---
+
+## 1. Architecture
+
+```
+        Application — static web output
+   index.html · assets/index.js · assets/index.css
+     (produced by the user's own build tool, §10)
+                       │
+   ────────────────────┼────────────────────────────
+                       ▼
+        ┌──────────────────────────────┐
+        │        JavaScriptCore        │   JS/TS execution, modules,
+        │      (hosted by Bun, P1)     │   async, timers, npm
+        └──────────────┬───────────────┘
+                       │
+                  ┌────▼─────┐
+                  │  BRIDGE  │   ← this project
+                  │          │
+                  │ window   │   JS object model over the DOM
+                  │ document │   event system
+                  │ Element  │   web API compatibility layer
+                  │ events   │   native: module namespace
+                  └────┬─────┘
+                       │
+        ┌──────────────▼───────────────┐
+        │            Blitz             │   HTML parse → DOM →
+        │  Stylo (CSS) · Taffy (layout)│   style → layout → paint
+        └──────────────┬───────────────┘
+                       │
+        ┌──────────────▼───────────────┐
+        │        Rust platform         │   wgpu · winit · audio ·
+        │                              │   input · net · fs · assets
+        └──────────────┬───────────────┘
+                       ▼
+                  Native window
+```
+
+The project **is the bridge**. Blitz supplies rendering; JSC supplies execution; the Rust
+platform layer supplies the OS. Everything novel lives between them.
+
+### Component ownership
+
+| Layer | Source | We own |
+| --- | --- | --- |
+| HTML parsing, DOM tree, CSS cascade, layout, paint | Blitz (Stylo, Taffy) | Upstream; patches where needed |
+| JS/TS execution, modules, npm resolution, event loop primitives | Bun / JavaScriptCore | Upstream; consumed via Node-API |
+| DOM ↔ JS bindings, event system, web API shims, `native:` modules | — | **Entirely ours** |
+| Windowing, GPU surface, input, audio, filesystem, networking | winit, wgpu, rodio/cpal, tokio | Thin Rust wrappers, ours |
+| Application bundling, transpilation, module resolution | The user's own tool (Vite, Webpack, Bun, …) | **Nothing. Deliberately not ours** (§16.6) |
+| Ingest, link, package, platform distribution | — | **Entirely ours** (§10, §11) |
+
+---
+
+## 2. Host model — and the phase reversal
+
+The instinct is to have Rust launch and embed a JS engine. **Phase 1 does the opposite**,
+because it removes almost all of the initial integration work.
+
+### Phase 1 — Bun is the host
+
+The entire Rust engine ships as a **Node-API addon** (`.node`) loaded directly into Bun. Bun
+implements most of Node-API, and Bun's own documentation recommends Node-API over `bun:ffi` for
+production native integration — `bun:ffi` remains marked experimental. Node-API is also
+ABI-stable by design, which matters for the third-party addon story later.
+
+```js
+import { Engine } from "power:native";   // a .node addon under the hood
+
+const app = new Engine();
+app.loadHTML("./index.html");
+```
+
+Bun and the Rust engine live in **one process**, sharing one thread for the main loop. There is
+no IPC, no serialisation boundary, no second runtime to synchronise.
+
+Bun already supports bundling native `.node` addons into compiled standalone executables, so
+even in Phase 1:
+
+```
+bun build --compile app.js --outfile my-app
+```
+
+produces a single file containing Bun/JSC, the Rust engine, Blitz, the app and its assets —
+with no Chromium, Electron or OS WebView. That is enough to hit M3 (Pong) without ever having
+written an embedding layer.
+
+**Cost:** the full Bun runtime is in the export (~60–100 MB).
+
+### Phase 2 — Power is the host
+
+Bun demotes to toolchain. We embed JSC directly (`rusty_jsc`-style bindings or our own) and
+supply the runtime services the app actually needs — module loading against a pre-bundled
+graph, timers, microtask draining — dropping the package manager, test runner, bundler,
+transpiler, CLI, dev server and installer from the shipped binary.
+
+**The bridge API must not change between phases.** Everything in §5–§9 is specified against a
+`JsEngine` trait with two implementations (Node-API-over-Bun, embedded-JSC). If Phase 1 code
+reaches for Bun-specific behaviour outside that trait, Phase 2 becomes a rewrite instead of a
+swap. This is the single most important structural constraint in the project.
+
+---
+
+## 3. Threading and event loop
+
+One OS thread owns the window, the DOM, and the JS context. Blitz's DOM is not thread-safe and
+JSC contexts are not freely shareable; fighting either is not worth it.
+
+```
+main thread
+  winit event loop
+    ├── OS input events        → queued
+    ├── JS event loop turn     → run macrotasks, drain microtasks
+    ├── rAF callbacks          → app mutates DOM / scene
+    ├── style + layout (dirty subtrees only)
+    ├── paint → wgpu submit
+    └── present
+```
+
+Work that must not block the frame goes off-thread and returns through a queue drained at a
+defined point in the turn:
+
+- **I/O, `fetch`, sockets, filesystem** — tokio runtime on a worker pool.
+- **Asset decode** (images, audio, fonts, glTF) — rayon pool; results uploaded on the main
+  thread.
+- **Web Workers** — separate JS contexts on their own threads, structured-clone message
+  passing only. No shared DOM access, exactly as on the web.
+
+### Event loop integration is the sharpest Phase 1 hazard
+
+Bun owns an event loop. winit owns an event loop. Both want to be the outer one.
+
+Options, to be settled by spike before M1:
+
+1. **Drive winit from a JS callback** — pump winit with `ControlFlow::Poll` from a repeating
+   task registered on Bun's loop. Simple; risks input latency and frame pacing jitter.
+2. **Drive Bun's loop from winit** — call into Node-API to advance the JS loop once per frame.
+   Better pacing; depends on how much of Bun's loop can be pumped externally.
+3. **Two threads with a channel** — winit on the main thread (required on macOS), JS on
+   another, all DOM mutation marshalled. Most robust, most overhead, and it breaks the
+   single-context assumption above.
+
+Option 2 is preferred; option 1 is the fallback. **Spike S1 decides this, and the answer gates
+the frame-pacing target P4.**
+
+---
+
+## 4. Blitz integration
+
+Blitz already provides an HTML parser, CSS engine, DOM, layout engine, window integration and
+renderer, and its plain `blitz` frontend accepts an HTML string directly. What it does not
+provide is interactivity — the interactive VirtualDOM/event path currently runs through
+Dioxus/RSX, and Blitz states it has no JavaScript bindings. That absence is precisely the gap
+this project fills.
+
+What we need from Blitz, in likely order of friction:
+
+| Need | Expected difficulty |
+| --- | --- |
+| Parse HTML → DOM, style, layout, paint | Available today |
+| Stable node handles that survive tree mutation | Medium — must confirm the handle model |
+| Imperative external mutation (insert, remove, set attribute, set style) with correct invalidation | **Hardest.** Blitz's mutation path is shaped for VirtualDOM diffs, not arbitrary external writes. |
+| Hit testing for pointer events | Likely available via layout tree |
+| Custom/native element with app-controlled painting | Blitz explicitly wants custom widgets and extensibility, so this fits its design |
+| Fine-grained invalidation (dirty only affected subtrees) | Medium; naive full relayout is the fallback for v0 |
+
+**Upstream contribution is expected**, not incidental. The bridge sits behind our own
+`DomBackend` trait so that upstream shape changes are absorbed in one place, and so that a
+patched Blitz fork can be swapped for upstream when features land.
+
+---
+
+## 5. The DOM ↔ JS bridge
+
+The core of the project. The goal is not spec completeness — it is that **the DOM feels real**
+to ordinary web code.
+
+### Object model
+
+Blitz owns the authoritative tree. JS gets handle objects, never copies.
+
+```
+JS side                     Rust side
+────────                    ─────────
+Element  ──┐
+Node     ──┼── NodeId(u32, generation) ──► Blitz DOM node
+Document ──┘
+```
+
+- A JS wrapper holds a generational `NodeId`. Generation counters make use-after-free a
+  catchable error rather than silent corruption of an unrelated node.
+- **Identity is preserved**: two lookups of the same node return the same JS object, so
+  `a === b` and `WeakMap` keying behave as authors expect. Implemented via a
+  `NodeId → JsWeakRef` table.
+- Wrappers are collected by JSC; a finalizer drops the table entry. The DOM node's lifetime is
+  the tree's, never JS's — a detached node stays alive only while JS references it.
+
+### v0 surface
+
+The minimum for the DOM to feel real:
+
+```
+window                    document
+  requestAnimationFrame     querySelector / querySelectorAll
+  addEventListener          getElementById
+  setTimeout / setInterval  createElement / createTextNode
+  innerWidth / innerHeight  body / documentElement
+
+Node / Element
+  appendChild · insertBefore · removeChild · remove · replaceWith
+  parentNode · childNodes · firstChild · nextSibling
+  textContent · innerHTML
+  getAttribute · setAttribute · removeAttribute
+  classList (add/remove/toggle/contains)
+  style (CSSStyleDeclaration, camelCase + setProperty)
+  addEventListener · removeEventListener · dispatchEvent
+  getBoundingClientRect
+```
+
+`innerHTML` requires the parser to be reachable as a fragment parser, not only at document
+load. Confirm early — a surprising amount of real-world JS depends on it.
+
+### Mutation and invalidation
+
+Every setter is a Rust call that mutates the Blitz tree and marks it dirty. No shadow tree, no
+diffing, no reconciliation on our side — the DOM is the single source of truth.
+
+```
+JS: el.style.left = "40px"
+      ↓ binding
+Rust: dom.set_inline_style(node, prop, value)
+      ↓
+mark node dirty (style) → ancestors dirty (layout)
+      ↓
+next frame: restyle + relayout dirty subtrees only
+```
+
+Reads that depend on layout (`getBoundingClientRect`, `offsetWidth`, `scrollTop`) force a
+synchronous layout flush if the tree is dirty — the same layout-thrashing hazard as the web,
+with the same fix (batch reads before writes). We do not attempt to hide it.
+
+### Event system
+
+```
+OS input (winit)
+   → hit test against the layout tree
+   → build the propagation path (root → target)
+   → capture phase, target, bubble phase
+   → JS listeners invoked at each step
+   → default action (focus change, scroll, text input) unless preventDefault()
+```
+
+v0 events: `click`, `mousedown`, `mouseup`, `mousemove`, `keydown`, `keyup`, `resize`, `load`.
+`Event`, `MouseEvent` and `KeyboardEvent` carry the properties authors actually read
+(`target`, `currentTarget`, `key`, `code`, `clientX/Y`, `button`, `preventDefault`,
+`stopPropagation`).
+
+A listener that throws must not corrupt dispatch: exceptions are caught per listener, reported,
+and dispatch continues — as on the web.
+
+---
+
+## 6. Frame pipeline
+
+```
+vsync / timer tick
+  │
+  ├─ drain OS input → dispatch DOM events
+  ├─ run expired timers, drain microtasks
+  ├─ run requestAnimationFrame callbacks   ← app mutates DOM here
+  ├─ restyle dirty nodes        (Stylo)
+  ├─ layout dirty subtrees      (Taffy)
+  ├─ paint → display list
+  ├─ record native viewport contents into the same frame
+  ├─ submit to wgpu
+  └─ present
+```
+
+`requestAnimationFrame` callbacks receive a `DOMHighResTimeStamp` measured from app start.
+Mutations made during rAF land in the frame being built, not the following one — otherwise
+animation is a frame behind and games feel wrong.
+
+If a frame overruns budget, timers and rAF are not run twice to catch up; `dt` is passed
+honestly and the app decides.
+
+---
+
+## 7. The native viewport element
+
+One custom element gives the app a GPU surface inside the layout, without making the DOM
+responsible for high-performance rendering.
+
+```html
+<div id="hud">
+  <progress id="health" max="100" value="100"></progress>
+</div>
+<power-view id="view"></power-view>
+```
+
+- Blitz lays it out as a replaced element; layout gives it a rect and a z-position.
+- Its contents are drawn by the app into a texture, composited into the same wgpu frame as the
+  painted DOM — one swapchain, one present, correct interleaving with DOM content above and
+  below it.
+- This is the seam through which `<canvas>`, WebGL and WebGPU later arrive. Get the compositing
+  correct once, and each of those is an API over an existing mechanism rather than a new
+  pipeline.
+
+**Deliberately out of scope:** turning HTML elements into a 3D scene graph, or expressing
+real-time transform state through CSS. CSS is not a good channel for per-frame 3D state. An
+application that wants a scene graph brings one — through a native addon, WASM, or JS — and
+Power renders its output through the viewport. The runtime does not ship an ECS, a physics
+engine, or a scene format.
+
+---
+
+## 8. Web API compatibility layer
+
+Each API is implemented as a JS-visible shim over a Rust crate. The renderer stays a renderer —
+Blitz's authors argue that things like WebSockets and `localStorage` should come from ordinary
+Rust crates rather than bloating the engine, which suits this structure exactly.
+
+| API | Tier | Backed by |
+| --- | --- | --- |
+| `requestAnimationFrame`, timers | v0 | frame loop |
+| DOM, CSSOM, events | v0 | bridge + Blitz |
+| `fetch`, `Headers`, `Request`, `Response` | v1 | reqwest / hyper (or Bun's, in Phase 1) |
+| `WebSocket` | v1 | tokio-tungstenite |
+| `Image`, `<img>` decode | v1 | image / resvg |
+| Web fonts, `@font-face` | v1 | Blitz font stack |
+| `Audio`, basic Web Audio | v1 | rodio / cpal |
+| `localStorage`, `sessionStorage` | v2 | SQLite or a keyed file store |
+| `Worker` | v2 | second JS context + channel |
+| Clipboard, drag & drop | v2 | arboard, winit |
+| `navigator.getGamepads` | v2 | gilrs |
+| Pointer lock, fullscreen | v2 | winit |
+| `<canvas>` 2D | later | vello / tiny-skia into the viewport |
+| WebGL / WebGPU | later | wgpu through the viewport |
+| WebRTC | later | webrtc-rs |
+
+Deliberately absent, with no plan: same-origin policy, CSP, cookies, history/navigation,
+service workers, `document.write`, quirks mode.
+
+### Compatibility policy
+
+An unimplemented API is **absent** — the property does not exist — so feature detection works.
+Never a stub that resolves to nothing, and never a silent no-op. `power doctor` reports which
+web APIs a bundle references but the target runtime does not provide, at build time.
+
+---
+
+## 9. Native API layer
+
+Capability the web does not have, under a namespace that makes the non-portability obvious at
+the import site:
+
+```js
+import { Window }    from "native:window";
+import { clipboard } from "native:clipboard";
+import { openFile }  from "native:dialog";
+import { app }       from "native:app";
+```
+
+| Module | Surface |
+| --- | --- |
+| `native:app` | argv, executable path, app-data paths, single-instance lock, restart, quit, suspend/resume, file associations and `myapp://` protocol handling |
+| `native:window` | create, resize, fullscreen, borderless, always-on-top, transparency, cursor control, monitor enumeration, DPI |
+| `native:dialog` | open/save file, folder picker, message box |
+| `native:clipboard` | text, images, arbitrary MIME |
+| `native:tray` | tray icon, context menu, application menu |
+| `native:notify` | desktop notifications |
+| `native:input` | raw keyboard/mouse state, gamepads, potentially raw HID |
+| `native:os` | CPU, memory, displays, username, platform, arch, battery, locale |
+| `native:fs` | watching, temp files, memory-mapped buffers (beyond `node:fs`) |
+| `native:net` | TCP/UDP sockets and listeners, beyond HTTP/WebSocket |
+
+Generic system access uses the interfaces that already exist rather than new names —
+`node:fs`, `node:child_process`, `node:net`, `bun:sqlite` — so existing packages work
+unmodified.
+
+**The escape hatch is a first-class feature.** `.node` addons load at runtime, so users write
+Rust/C/C++ extensions and import them directly. Node-API's ABI stability is what makes this a
+durable promise rather than a version-locked one.
+
+```js
+import physics from "./box2d.node";
+```
+
+This is why the runtime can afford to be unopinionated: anything we do not provide, the user
+can add without waiting for us.
+
+---
+
+## 10. Build and export pipeline
+
+**The input is a directory of static web output, not a source tree.** Power does not bundle,
+transpile or resolve modules for the application — the user's existing toolchain already did
+that, and duplicating it would make Power a competitor to Vite instead of a target for it.
+
+```
+        the user's existing build          Power's job starts here
+   ┌──────────────────────────────┐   ┌────────────────────────────────┐
+   src/ ──► vite/webpack/bun ──► dist/ ──► ① ingest ──► ⑤ package ──► MyApp.exe
+                                  │
+                     index.html · assets/index.js · assets/index.css · …
+```
+
+| Step | Action |
+| --- | --- |
+| ① **Ingest** | Walk the output directory from its HTML entrypoint. Resolve relative references; refuse absolute URLs that assume a web server root, with a clear error naming the file. |
+| ② **Scan** | Static analysis of the bundle for web API usage; anything the target runtime lacks is reported (`power doctor`, and as a build warning). |
+| ③ **Collect** | Hash and collect assets. Embedded in the binary or laid out beside it, per config. |
+| ④ **Link** | Runtime + application bundle + assets → one executable. |
+| ⑤ **Package** | Icon, Windows manifest/version info, macOS `.app` bundle and `Info.plist`, code signing hooks. |
+
+- **Phase 1** step ④ is `bun build --compile` with the Rust engine as an embedded `.node` addon.
+  Bun already compiles JS/TS — and HTML entrypoints — into standalone executables, so this path
+  mostly exists. Its output carries a full copy of the Bun runtime, which is the Phase 1 size
+  cost (PRODUCT.md §9).
+- **Phase 2** step ④ links our JSC-based runtime and appends the bundle as a binary section read
+  at startup.
+
+Step ② is what keeps the drop-in promise honest. Because Power accepts arbitrary bundler output,
+it will be handed code it cannot run; the failure must arrive at build time with a named API and
+file, not as a blank window at runtime.
+
+### Optional build wrapping
+
+Config in `package.json` lets Power invoke the existing build first, so the user has one command:
+
+```json
+{ "power": { "build": "vite build", "output": "dist", "name": "My App" } }
+```
+
+Power shells out to `build`, then ingests `output`. It never inspects or configures the build
+tool itself — that coupling is exactly what the design avoids.
+
+### Development modes
+
+Both skip ③–⑤ entirely.
+
+```bash
+npx power .                        # ① directory mode: watch files, reload
+npx power http://localhost:5173    # ② proxy mode: load from a running dev server
+```
+
+**Proxy mode is the strategically important one.** The runtime fetches the document and its
+subresources over HTTP from the user's own dev server, so Vite/Webpack HMR, source maps and the
+entire existing inner loop keep working — the native window simply replaces the browser tab.
+This requires `fetch` and a module loader that can resolve over HTTP, which is a real constraint
+on when it can ship (a v1 concern, not v0).
+
+Directory mode reload granularity: CSS swaps live via re-cascade with no reload; HTML and JS
+restart the JS context and reparse the document. Preserving JS state across reload is not
+attempted — HMR is the user's bundler's job, and in proxy mode it already is.
+
+---
+
+## 11. Distribution and packaging
+
+Power ships as an **npm dev dependency that orchestrates a prebuilt native runtime**. The JS
+package contains no runtime; the runtime is a per-platform binary package resolved at install
+time.
+
+```
+power                          ← thin JS: CLI, config, TypeScript definitions
+├── bin/power                     (dev · build · run · doctor)
+└── optionalDependencies:
+    ├── @power/win32-x64        ┐
+    ├── @power/win32-arm64      │
+    ├── @power/linux-x64        │  each contains one compiled binary:
+    ├── @power/linux-arm64      │    Rust host · Blitz · JS runtime ·
+    ├── @power/darwin-x64       │    DOM↔JS bridge · web APIs · winit/wgpu
+    └── @power/darwin-arm64     ┘
+```
+
+- `optionalDependencies` + `os`/`cpu` fields in each platform package's manifest means npm,
+  pnpm, yarn and Bun each install **only** the host's binary. This is the same mechanism esbuild
+  and swc use, and it is well-supported across package managers.
+- **No postinstall compile step, no Rust toolchain requirement** (product requirement P9).
+  Install is a download.
+- The JS package carries the TypeScript definitions for the `native:` APIs, so editor
+  completion works without the runtime being loadable in a browser context.
+- Cross-platform export (`power build --target win32-x64` from Linux) requires that target's
+  package, which the CLI can fetch on demand rather than at install.
+
+### Consequence for the Phase 1 → Phase 2 transition
+
+This packaging boundary is what makes the host-model change (§2) invisible to users. In Phase 1
+the platform package contains Bun-plus-addon; in Phase 2 it contains our own JSC-based runtime.
+The npm package, the CLI, the config format and the user's `package.json` are identical across
+that change. **The size claim improves and nothing else moves.** That is a strong argument for
+building the distribution layer early rather than treating it as a shipping concern.
+
+### Native API resolution
+
+The `native:` specifier form is not resolvable by ordinary bundlers, which will try to bundle or
+fail on it — a real problem for a design whose premise is that the user's bundler runs first and
+unmodified. Two mitigations, likely both:
+
+- Ship real module paths (`power/dialog`, `power/window`) that any bundler resolves today, with
+  the package's browser/module field pointing at a stub that throws outside the runtime.
+- Provide optional bundler plugins that mark `native:*` external, for users who prefer that
+  spelling.
+
+Generic system access needs neither: `node:fs`, `node:child_process` and `bun:sqlite` are already
+understood by the ecosystem, and in Phase 1 they come free from Bun's Node compatibility — Bun
+implements roughly 95% of Node-API, which is also what makes the addon strategy in §2 viable.
+
+---
+
+## 14. Testing
+
+Interactive verification is the user's job; everything below runs headless in CI.
+
+- **Layout conformance** — a corpus of HTML/CSS cases rendered headless to PNG, compared against
+  golden images per platform. Guards product requirement P6 (cross-platform identical layout),
+  the main advantage over WebView-based tools. Seeded from a targeted subset of WPT reftests
+  for the CSS features actually claimed.
+- **Bridge unit tests** — DOM operations driven from JS, asserted against the Rust tree state.
+- **Event dispatch tests** — synthetic events injected at the bridge boundary (below the OS), so
+  propagation order, `preventDefault` and `stopPropagation` are testable without touching a real
+  input device.
+- **Frame determinism** — record/replay of an input trace at a fixed timestep, producing a
+  deterministic frame hash sequence.
+- **Size regression** — every CI build records the bare-app size for each platform and fails on
+  regression beyond a threshold. Product requirement P1 is enforced here or nowhere.
+- **Startup benchmark** — cold start to first frame, tracked per commit (P2).
+
+---
+
+## 15. Spikes to run before committing
+
+These are the load-bearing unknowns. Each is small, and each can invalidate a chunk of the plan.
+
+| # | Question | Kills / changes what |
+| --- | --- | --- |
+| **S0** | Compile JSC + Blitz into one binary. What does it actually weigh, stripped, with LTO? | The entire Phase 2 size budget, and the headline product claim. Run first. |
+| **S1** | Can Bun's event loop be pumped externally from winit at frame rate, without input latency or pacing jitter? | §3 host model; possibly forces a two-thread design. |
+| **S2** | Does Blitz tolerate arbitrary external DOM mutation with correct invalidation, or is its mutation path VirtualDOM-shaped only? | §5 — the core bridge. May force upstream work or a fork. |
+| **S3** | Can a Rust Node-API addon reliably own a winit window inside a Bun process on all three platforms? (macOS main-thread window requirements are the hazard.) | Phase 1 entirely. |
+| **S4** | Is Blitz's HTML parser reachable as a fragment parser for `innerHTML`? | §5 surface completeness. |
+| **S5** | Can an app-rendered wgpu texture composite into Blitz's paint output in one frame, correctly z-interleaved? | §7 viewport, and everything canvas/WebGL later depends on. |
+| **S6** | Take an unmodified `vite build` output from a real React app and render it. How much of its CSS does Blitz get right, and what breaks first? | §10 ingest and the entire drop-in premise. Cheap to run today with Blitz alone — **no bridge required** — which makes it the best early read on feasibility. |
+| **S7** | Can the runtime load a document and its module graph over HTTP from a running dev server? | §10 proxy mode, the cheapest adoption on-ramp. |
+
+**S0, S2 and S6 are the three that can end the project as specified.** S6 is the cheapest of
+them by a wide margin — it needs no bridge, no JS engine and no bindings, only Blitz and a real
+app's build output — so run it first even though it is numbered later.
+
+---
+
+## 16. Structural constraints
+
+Rules that, if broken, cost a rewrite rather than a refactor:
+
+1. **All JS engine access goes through the `JsEngine` trait.** No Bun-specific behaviour leaks
+   into bridge code. This is what makes Phase 2 a swap.
+2. **All DOM access goes through the `DomBackend` trait.** Blitz is a dependency, not an
+   assumption.
+3. **The bridge never keeps a shadow copy of the tree.** One source of truth, always Blitz's.
+4. **No web API is added without its absence being detectable.** Feature detection must work.
+5. **Nothing about games, scenes, ECS or physics enters the runtime.** The viewport element is
+   the boundary; past it is application territory.
+6. **Power never bundles, transpiles or resolves the application's modules.** The input is built
+   static output. The moment Power owns any part of the user's build, it becomes a competitor to
+   Vite rather than a target for it, and the drop-in premise is gone.
+7. **The npm surface — CLI, config, package layout — is stable across the Phase 1 → Phase 2 host
+   change.** Users must experience that migration as a smaller binary and nothing else.
+
+---
+
+## 17. Open technical questions
+
+1. **JSC acquisition for Phase 2** — vendor WebKit's JSC, use an existing Rust binding, or
+   extract Bun's build? Each has a very different maintenance cost.
+2. **Module resolution in the shipped binary** — pre-bundled single graph (simplest), or a
+   runtime resolver against embedded files (supports dynamic `import()`)?
+3. **Multi-window JS contexts** — one shared context or one per window? Shared is simpler and
+   matches the single-thread model; isolated is safer and matches the web.
+4. **DOM property access cost** — is a Rust call per property read fast enough under JSC, or do
+   hot properties need caching on the JS wrapper with invalidation?
+5. **Text input and IME** — a large, easily underestimated surface; where does it live?
+6. **Accessibility** — Blitz's AccessKit story, and whether v0 can defer it. Deferring has a
+   real cost for the dashboard/tooling audience.
+7. **Font fallback and shaping** across platforms without pulling in a large font stack.
+8. **Hot reload state** — accept full restart, or attempt module-level replacement? Largely moot
+   in proxy mode, where the user's own HMR handles it.
+9. **Absolute-path assets.** Bundler output routinely references `/assets/index.js`, assuming a
+   server root. Rewrite at ingest, or serve the embedded bundle through an internal origin so
+   absolute paths resolve unchanged? The latter is more faithful and probably necessary for
+   frameworks with a configurable base path.
+10. **Client-side routers.** History API and `location` are on the "deliberately absent" list
+    (§8), but React Router and equivalents are ubiquitous in exactly the apps being courted.
+    Reconsider: a minimal in-memory `history` may be a v1 requirement rather than a "later".
+11. **Binary size vs. platform package count** — six prebuilt runtimes to build, sign, notarise
+    and publish per release. What is the CI cost, and can it be cut with cross-compilation?
+12. **Runtime version pinning** — does the platform package version lock to the JS package
+    exactly, and what happens when an app's saved export config outlives a runtime release?
+
+---
+
+*Superseded document: `FIRST.md` (retained in git history at commit `d32f5e3`).*
