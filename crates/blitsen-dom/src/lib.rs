@@ -440,6 +440,11 @@ pub trait DomBackend {
         node: Self::NodeId,
         property: &str,
     ) -> Result<Option<String>, DomError>;
+    /// Serializes the complete inline declaration block.
+    fn inline_style_text(&self, node: Self::NodeId) -> Result<String, DomError>;
+    /// Parses and replaces the complete inline declaration block. Invalid
+    /// declarations are ignored according to CSS parsing rules.
+    fn set_inline_style_text(&mut self, node: Self::NodeId, css: &str) -> Result<(), DomError>;
 
     /// Returns concatenated descendant text using DOM `textContent` semantics.
     fn text_content(&self, node: Self::NodeId) -> Result<String, DomError>;
