@@ -3,7 +3,7 @@
 mod dom_bridge;
 
 use std::cell::RefCell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::ffi::c_void;
 use std::path::Path;
 use std::ptr;
@@ -37,9 +37,13 @@ use peniko::{Fill, kurbo::Rect};
 use serde::Serialize;
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
-use winit::event::{DeviceEvent, StartCause, WindowEvent};
+use winit::event::{
+    ButtonSource, DeviceEvent, ElementState, MouseButton, MouseScrollDelta, PointerSource,
+    StartCause, WindowEvent,
+};
 use winit::event_loop::pump_events::EventLoopExtPumpEvents;
 use winit::event_loop::{ActiveEventLoop, EventLoop};
+use winit::keyboard::ModifiersState;
 use winit::window::{WindowAttributes, WindowId};
 
 #[cfg(target_os = "macos")]
@@ -745,6 +749,49 @@ struct WindowApplication<Rend: anyrender::WindowRenderer> {
     state: Rc<RefCell<WindowState>>,
     error: Rc<RefCell<Option<JsError>>>,
     started_at: Instant,
+    document: Rc<RefCell<BlitzDom>>,
+    pending_mouse_input: Vec<(WindowId, PendingMouseInput)>,
+    pointer_positions: HashMap<WindowId, (f64, f64)>,
+    mouse_down_targets: HashMap<u16, NodeId>,
+    mouse_buttons: u16,
+    modifiers: ModifiersState,
+}
+
+#[derive(Clone, Copy)]
+enum PendingMouseInput {
+    Move {
+        physical_x: f64,
+        physical_y: f64,
+    },
+    Button {
+        physical_x: f64,
+        physical_y: f64,
+        button: MouseButton,
+        state: ElementState,
+    },
+    Wheel {
+        delta_x: f64,
+        delta_y: f64,
+    },
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MouseEventInit {
+    bubbles: bool,
+    cancelable: bool,
+    client_x: f64,
+    client_y: f64,
+    offset_x: f32,
+    offset_y: f32,
+    screen_x: f64,
+    screen_y: f64,
+    button: u16,
+    buttons: u16,
+    ctrl_key: bool,
+    shift_key: bool,
+    alt_key: bool,
+    meta_key: bool,
 }
 
 struct WindowSession {
@@ -754,7 +801,256 @@ struct WindowSession {
     error: Rc<RefCell<Option<JsError>>>,
 }
 
+fn dom_mouse_button(button: MouseButton) -> u16 {
+    match button {
+        MouseButton::Left => 0,
+        MouseButton::Middle => 1,
+        MouseButton::Right => 2,
+        MouseButton::Back => 3,
+        MouseButton::Forward => 4,
+        other => other as u16,
+    }
+}
+
+fn dom_mouse_button_mask(button: MouseButton) -> u16 {
+    match button {
+        MouseButton::Left => 1,
+        MouseButton::Right => 2,
+        MouseButton::Middle => 4,
+        MouseButton::Back => 8,
+        MouseButton::Forward => 16,
+        other => 1_u16
+            .checked_shl(u32::from(dom_mouse_button(other)))
+            .unwrap_or(0),
+    }
+}
+
+fn css_pointer_coordinates(
+    physical_x: f64,
+    physical_y: f64,
+    scale: f64,
+    screen_origin_x: f64,
+    screen_origin_y: f64,
+) -> (f64, f64, f64, f64) {
+    let client_x = physical_x / scale;
+    let client_y = physical_y / scale;
+    (
+        client_x,
+        client_y,
+        screen_origin_x + client_x,
+        screen_origin_y + client_y,
+    )
+}
+
 impl<Rend: anyrender::WindowRenderer> WindowApplication<Rend> {
+    fn queue_mouse_input(&mut self, window_id: WindowId, event: &WindowEvent) -> bool {
+        let input = match event {
+            WindowEvent::PointerMoved {
+                position,
+                source: PointerSource::Mouse,
+                ..
+            } => {
+                self.pointer_positions
+                    .insert(window_id, (position.x, position.y));
+                self.pending_mouse_input.retain(|(queued_window, input)| {
+                    *queued_window != window_id || !matches!(input, PendingMouseInput::Move { .. })
+                });
+                PendingMouseInput::Move {
+                    physical_x: position.x,
+                    physical_y: position.y,
+                }
+            }
+            WindowEvent::PointerButton {
+                position,
+                button: ButtonSource::Mouse(button),
+                state,
+                ..
+            } => {
+                self.pointer_positions
+                    .insert(window_id, (position.x, position.y));
+                PendingMouseInput::Button {
+                    physical_x: position.x,
+                    physical_y: position.y,
+                    button: *button,
+                    state: *state,
+                }
+            }
+            WindowEvent::MouseWheel { delta, .. } => {
+                let (delta_x, delta_y) = match delta {
+                    MouseScrollDelta::LineDelta(x, y) => {
+                        (f64::from(*x) * 40.0, f64::from(*y) * 40.0)
+                    }
+                    MouseScrollDelta::PixelDelta(position) => (position.x, position.y),
+                };
+                PendingMouseInput::Wheel { delta_x, delta_y }
+            }
+            WindowEvent::ModifiersChanged(modifiers) => {
+                self.modifiers = modifiers.state();
+                return false;
+            }
+            _ => return false,
+        };
+        self.pending_mouse_input.push((window_id, input));
+        true
+    }
+
+    fn dispatch_mouse_event(
+        &self,
+        event_type: &str,
+        target: NodeId,
+        init: &MouseEventInit,
+    ) -> Result<bool, JsError> {
+        let event_type =
+            serde_json::to_string(event_type).map_err(|error| JsError::new(error.to_string()))?;
+        let target = serde_json::to_string(&DomRuntime::serialize_handle(target))
+            .map_err(|error| JsError::new(error.to_string()))?;
+        let init = serde_json::to_string(init).map_err(|error| JsError::new(error.to_string()))?;
+        let mut engine = NodeApiEngine::new(Env::from_raw(self.env));
+        let result = engine.evaluate_script(
+            &format!("globalThis.__blitsenDispatchMouseEvent({event_type}, {target}, {init})"),
+            "blitsen:native-mouse-event",
+        )?;
+        engine.to_boolean(&result)
+    }
+
+    fn drain_mouse_input(&mut self, window_id: WindowId) {
+        if self.error.borrow().is_some() {
+            return;
+        }
+        let mut inputs = Vec::new();
+        self.pending_mouse_input.retain(|(queued_window, input)| {
+            if *queued_window == window_id {
+                inputs.push(*input);
+                false
+            } else {
+                true
+            }
+        });
+        if inputs.is_empty() {
+            return;
+        }
+        let Some((scale, screen_origin_x, screen_origin_y)) =
+            self.inner.windows.get(&window_id).map(|view| {
+                let scale = f64::from(view.doc.inner().viewport().hidpi_scale);
+                let origin = view.window.outer_position().unwrap_or_default();
+                (
+                    scale,
+                    f64::from(origin.x) / scale,
+                    f64::from(origin.y) / scale,
+                )
+            })
+        else {
+            return;
+        };
+
+        for input in inputs {
+            let (physical_x, physical_y, event_type, button, wheel_delta) = match input {
+                PendingMouseInput::Move {
+                    physical_x,
+                    physical_y,
+                } => (physical_x, physical_y, "mousemove", 0, None),
+                PendingMouseInput::Button {
+                    physical_x,
+                    physical_y,
+                    button,
+                    state,
+                } => {
+                    let mask = dom_mouse_button_mask(button);
+                    match state {
+                        ElementState::Pressed => self.mouse_buttons |= mask,
+                        ElementState::Released => self.mouse_buttons &= !mask,
+                    }
+                    (
+                        physical_x,
+                        physical_y,
+                        if state == ElementState::Pressed {
+                            "mousedown"
+                        } else {
+                            "mouseup"
+                        },
+                        dom_mouse_button(button),
+                        None,
+                    )
+                }
+                PendingMouseInput::Wheel { delta_x, delta_y } => {
+                    let (physical_x, physical_y) = self
+                        .pointer_positions
+                        .get(&window_id)
+                        .copied()
+                        .unwrap_or_default();
+                    (physical_x, physical_y, "wheel", 0, Some((delta_x, delta_y)))
+                }
+            };
+            let (client_x, client_y, screen_x, screen_y) = css_pointer_coordinates(
+                physical_x,
+                physical_y,
+                scale,
+                screen_origin_x,
+                screen_origin_y,
+            );
+            let hit = (|| {
+                let snapshot = self.document.borrow_mut().flush_layout()?;
+                self.document
+                    .borrow()
+                    .hit_test(client_x as f32, client_y as f32, snapshot)
+            })();
+            let hit = match hit {
+                Ok(Some(hit)) => hit,
+                Ok(None) => continue,
+                Err(error) => {
+                    *self.error.borrow_mut() = Some(JsError::new(error.to_string()));
+                    return;
+                }
+            };
+            let init = MouseEventInit {
+                bubbles: true,
+                cancelable: true,
+                client_x,
+                client_y,
+                offset_x: hit.offset_x,
+                offset_y: hit.offset_y,
+                screen_x,
+                screen_y,
+                button,
+                buttons: self.mouse_buttons,
+                ctrl_key: self.modifiers.control_key(),
+                shift_key: self.modifiers.shift_key(),
+                alt_key: self.modifiers.alt_key(),
+                meta_key: self.modifiers.meta_key(),
+            };
+            let default_allowed = match self.dispatch_mouse_event(event_type, hit.target, &init) {
+                Ok(allowed) => allowed,
+                Err(error) => {
+                    *self.error.borrow_mut() = Some(error);
+                    return;
+                }
+            };
+            if default_allowed && let Some((delta_x, delta_y)) = wheel_delta {
+                self.document.borrow_mut().document_mut().scroll_node_by(
+                    hit.target,
+                    -delta_x,
+                    -delta_y,
+                    |_| {},
+                );
+            }
+            if let PendingMouseInput::Button { button, state, .. } = input {
+                let button_id = dom_mouse_button(button);
+                if state == ElementState::Pressed {
+                    self.mouse_down_targets.insert(button_id, hit.target);
+                } else {
+                    let down_target = self.mouse_down_targets.remove(&button_id);
+                    if button == MouseButton::Left
+                        && down_target == Some(hit.target)
+                        && let Err(error) = self.dispatch_mouse_event("click", hit.target, &init)
+                    {
+                        *self.error.borrow_mut() = Some(error);
+                        return;
+                    }
+                }
+            }
+        }
+    }
+
     fn animation_frames_pending(&self) -> bool {
         if self.error.borrow().is_some() {
             return false;
@@ -872,17 +1168,24 @@ impl<Rend: anyrender::WindowRenderer> ApplicationHandler for WindowApplication<R
         window_id: WindowId,
         event: WindowEvent,
     ) {
+        let queued_mouse_input = self.queue_mouse_input(window_id, &event);
         let viewport_changed = matches!(
             &event,
             WindowEvent::SurfaceResized(_) | WindowEvent::ScaleFactorChanged { .. }
         );
         let redraw = matches!(&event, WindowEvent::RedrawRequested);
+        if redraw {
+            self.drain_mouse_input(window_id);
+        }
         let animation_pending = redraw && self.run_animation_frame();
         self.inner.window_event(event_loop, window_id, event);
         if viewport_changed {
             self.sync_native_window(window_id);
         }
         if animation_pending && let Some(view) = self.inner.windows.get(&window_id) {
+            view.window.request_redraw();
+        }
+        if queued_mouse_input && let Some(view) = self.inner.windows.get(&window_id) {
             view.window.request_redraw();
         }
     }
@@ -1074,7 +1377,7 @@ impl Engine {
             .with_title(options.title)
             .with_surface_size(LogicalSize::new(options.width, options.height));
         let window = WindowConfig::with_attributes(
-            Box::new(SharedBlitzDocument(document)),
+            Box::new(SharedBlitzDocument(Rc::clone(&document))),
             renderer,
             attributes,
         );
@@ -1087,6 +1390,12 @@ impl Engine {
             state: window_state,
             error: Rc::clone(&window_error),
             started_at,
+            document,
+            pending_mouse_input: Vec::new(),
+            pointer_positions: HashMap::new(),
+            mouse_down_targets: HashMap::new(),
+            mouse_buttons: 0,
+            modifiers: ModifiersState::empty(),
         };
         if self.session.borrow().is_some() {
             return Err(napi::Error::new(
@@ -1777,5 +2086,19 @@ mod tests {
             let error = validate_local_assets(&invalid, &root, &entrypoint).unwrap_err();
             assert!(error.message().contains(expected), "{}", error.message());
         }
+    }
+
+    #[test]
+    fn mouse_coordinates_and_button_masks_match_dom_conventions() {
+        assert_eq!(dom_mouse_button(MouseButton::Left), 0);
+        assert_eq!(dom_mouse_button(MouseButton::Middle), 1);
+        assert_eq!(dom_mouse_button(MouseButton::Right), 2);
+        assert_eq!(dom_mouse_button_mask(MouseButton::Left), 1);
+        assert_eq!(dom_mouse_button_mask(MouseButton::Right), 2);
+        assert_eq!(dom_mouse_button_mask(MouseButton::Middle), 4);
+        assert_eq!(
+            css_pointer_coordinates(300.0, 180.0, 2.0, 40.0, 30.0),
+            (150.0, 90.0, 190.0, 120.0)
+        );
     }
 }

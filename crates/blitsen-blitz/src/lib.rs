@@ -19,6 +19,9 @@ use style::computed_values::pointer_events::T as PointerEvents;
 use style::computed_values::visibility::T as Visibility;
 use style::values::computed::Overflow;
 
+type HitCandidate = (Vec<i32>, usize, f32, f32);
+type RankedHit = (Vec<i32>, usize, usize, NodeId, f32, f32);
+
 fn compare_stacking_paths(left: &[i32], right: &[i32]) -> Ordering {
     (0..left.len().max(right.len()))
         .find_map(|index| {
@@ -138,7 +141,7 @@ impl BlitzDom {
         target: NodeId,
         viewport_x: f32,
         viewport_y: f32,
-    ) -> Result<Option<(Vec<i32>, usize)>, DomError> {
+    ) -> Result<Option<HitCandidate>, DomError> {
         let mut chain = vec![target];
         while let Some(parent) = self.parent(*chain.last().expect("target starts chain"))? {
             chain.push(parent);
@@ -192,7 +195,7 @@ impl BlitzDom {
         let interactive = target
             .primary_styles()
             .is_some_and(|styles| styles.clone_pointer_events() != PointerEvents::None);
-        Ok((inside && interactive).then_some((stacking_path, depth)))
+        Ok((inside && interactive).then_some((stacking_path, depth, x, y)))
     }
 
     fn ensure_element(&self, node: NodeId) -> Result<(), DomError> {
@@ -755,16 +758,18 @@ impl DomBackend for BlitzDom {
         if snapshot.revision() != self.revision || self.flushed_revision != self.revision {
             return Err(DomError::LayoutNotFlushed);
         }
-        let mut best: Option<(Vec<i32>, usize, usize, NodeId)> = None;
+        let mut best: Option<RankedHit> = None;
         for (order, node) in self
             .query_selector_all(self.document(), "*")?
             .into_iter()
             .enumerate()
         {
-            let Some((stacking_path, depth)) = self.hit_candidate(node, x, y)? else {
+            let Some((stacking_path, depth, offset_x, offset_y)) =
+                self.hit_candidate(node, x, y)?
+            else {
                 continue;
             };
-            let candidate = (stacking_path, order, depth, node);
+            let candidate = (stacking_path, order, depth, node, offset_x, offset_y);
             if best.as_ref().is_none_or(|current| {
                 compare_stacking_paths(&candidate.0, &current.0)
                     .then_with(|| candidate.1.cmp(&current.1))
@@ -774,7 +779,7 @@ impl DomBackend for BlitzDom {
                 best = Some(candidate);
             }
         }
-        let Some((_, _, _, target)) = best else {
+        let Some((_, _, _, target, offset_x, offset_y)) = best else {
             return Ok(None);
         };
         let mut path = vec![target];
@@ -782,7 +787,12 @@ impl DomBackend for BlitzDom {
             path.push(parent);
         }
         path.reverse();
-        Ok(Some(HitTest { target, path }))
+        Ok(Some(HitTest {
+            target,
+            path,
+            offset_x,
+            offset_y,
+        }))
     }
 }
 

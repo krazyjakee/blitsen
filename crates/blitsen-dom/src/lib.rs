@@ -405,12 +405,16 @@ pub struct Rect {
 }
 
 /// Result of resolving a viewport point against the laid-out document.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct HitTest<N> {
     /// Deepest interactive DOM node at the point.
     pub target: N,
     /// Connected propagation path in root-to-target order.
     pub path: Vec<N>,
+    /// Horizontal CSS-pixel coordinate within the target border box.
+    pub offset_x: f32,
+    /// Vertical CSS-pixel coordinate within the target border box.
+    pub offset_y: f32,
 }
 
 impl Rect {

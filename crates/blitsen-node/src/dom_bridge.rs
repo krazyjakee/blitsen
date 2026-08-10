@@ -216,6 +216,9 @@ const BOOTSTRAP: &str = r#"
     }
   };
 
+  const dispatchMouseEvent = (type, rawHandle, init) =>
+    wrap(String(rawHandle)).dispatchEvent(new MouseEvent(String(type), init));
+
   class EventTarget {
     addEventListener(type, callback, options = false) {
       if (!validListener(callback)) return;
@@ -392,6 +395,7 @@ const BOOTSTRAP: &str = r#"
     __blitsenAnimationFrameTick: animationFrameTick,
     __blitsenAnimationFramesPending: () => animationFrames.size > 0,
     __blitsenEventInternals: eventInternals,
+    __blitsenDispatchMouseEvent: dispatchMouseEvent,
   });
   globalThis.window = globalThis;
   for (const key of ["location", "history", "navigator", "localStorage"]) {

@@ -280,7 +280,7 @@ OS input (winit)
    → default action (focus change, scroll, text input) unless preventDefault()
 ```
 
-v0 events: `click`, `mousedown`, `mouseup`, `mousemove`, `keydown`, `keyup`, `resize`, `load`.
+v0 events: `click`, `mousedown`, `mouseup`, `mousemove`, `wheel`, `keydown`, `keyup`, `resize`, `load`.
 `Event`, `MouseEvent` and `KeyboardEvent` carry the properties authors actually read
 (`target`, `currentTarget`, `key`, `code`, `clientX/Y`, `button`, `preventDefault`,
 `stopPropagation`).
@@ -291,6 +291,11 @@ and dispatch continues — as on the web.
 `addEventListener` accepts `capture`, `once`, and `passive`. Passive listeners are tracked and
 cannot cancel an event; Blitsen does not currently use the flag for browser-style scrolling
 latency optimization.
+
+Native pointer coordinates are converted from physical pixels to CSS pixels using the current
+window scale. High-frequency `mousemove` input is coalesced to the latest position once per frame.
+`mouseenter`, `mouseleave`, `mouseover`, and `mouseout` are deferred to v1; v0 uses bubbling
+`mousemove` plus hit testing. An uncancelled `wheel` scrolls the nearest scrollable ancestor.
 
 ---
 
