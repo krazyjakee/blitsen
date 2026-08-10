@@ -1,5 +1,6 @@
 //! Runtime-neutral bridge between a DOM backend and JavaScript engine.
 
+pub mod events;
 pub mod frame;
 
 use std::cell::{Cell, RefCell};
