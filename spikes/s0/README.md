@@ -1,8 +1,9 @@
 # S0 — JSC + Blitz single-binary size
 
-Status: Linux x64 measured; initial macOS arm64 and Windows x64 measurements are
-defined in `.github/workflows/s0-size.yml` but have not run because GitHub rejected
-the jobs at scheduling time for an account billing/spending-limit problem.
+Status: concluded from the Linux x64 measurement. The initial macOS arm64 and
+Windows x64 measurements are explicitly deferred; the user accepted Linux-only
+evidence for this feasibility decision on 2026-08-10. A rerunnable workflow remains
+in `.github/workflows/s0-size.yml` for later platform measurements.
 
 ## Result
 
@@ -99,8 +100,8 @@ restart in-process.
 | Platform | Stripped + LTO installed | gzip -9 | State |
 |---|---:|---:|---|
 | Linux x64 | 52,480,904 B | 24,076,701 B | measured locally |
-| macOS arm64 | pending | pending | workflow could not be scheduled |
-| Windows x64 | pending | pending | workflow could not be scheduled |
+| macOS arm64 | deferred | deferred | outside the agreed S0 scope for now |
+| Windows x64 | deferred | deferred | outside the agreed S0 scope for now |
 
 The Windows result remains especially important because PRODUCT P5 makes it the
 priority target for size claims. Do not infer either pending number from archive
