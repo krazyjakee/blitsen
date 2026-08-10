@@ -1,5 +1,7 @@
 //! Runtime-neutral bridge between a DOM backend and JavaScript engine.
 
+pub mod frame;
+
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::hash::Hash;
