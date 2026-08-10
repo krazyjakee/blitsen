@@ -1,0 +1,19 @@
+{
+  "lockfileVersion": 1,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "blitsen-workspace",
+    },
+    "packages/blitsen": {
+      "name": "blitsen",
+      "version": "0.0.0",
+      "bin": {
+        "blitsen": "bin/blitsen.mjs",
+      },
+    },
+  },
+  "packages": {
+    "blitsen": ["blitsen@workspace:packages/blitsen"],
+  }
+}

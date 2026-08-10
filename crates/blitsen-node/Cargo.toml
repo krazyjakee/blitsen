@@ -1,0 +1,21 @@
+[package]
+name = "blitsen-node"
+description = "Phase 1 Node-API addon host for Blitsen"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+blitsen-core = { path = "../blitsen-core" }
+blitsen-dom = { path = "../blitsen-dom" }
+blitsen-js = { path = "../blitsen-js" }
+blitsen-platform = { path = "../blitsen-platform" }
+
+[lints]
+workspace = true

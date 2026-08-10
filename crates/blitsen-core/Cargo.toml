@@ -1,0 +1,16 @@
+[package]
+name = "blitsen-core"
+description = "Runtime-neutral DOM and JavaScript bridge for Blitsen"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+blitsen-dom = { path = "../blitsen-dom" }
+blitsen-js = { path = "../blitsen-js" }
+
+[lints]
+workspace = true

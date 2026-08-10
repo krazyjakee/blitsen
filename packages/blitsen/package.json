@@ -1,0 +1,27 @@
+{
+  "name": "blitsen",
+  "version": "0.0.0",
+  "description": "Native runtime CLI and types for Blitsen",
+  "private": true,
+  "type": "module",
+  "license": "MIT OR Apache-2.0",
+  "bin": {
+    "blitsen": "bin/blitsen.mjs"
+  },
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "import": "./index.mjs"
+    }
+  },
+  "types": "./index.d.ts",
+  "files": [
+    "bin",
+    "index.d.ts",
+    "index.mjs",
+    "src"
+  ],
+  "scripts": {
+    "test": "bun test"
+  }
+}

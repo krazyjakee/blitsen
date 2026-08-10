@@ -1,0 +1,11 @@
+{
+  "name": "blitsen-workspace",
+  "private": true,
+  "packageManager": "bun@1.3.14",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "check": "bun test packages/blitsen"
+  }
+}

@@ -1,0 +1,24 @@
+[workspace]
+members = [
+    "crates/blitsen-core",
+    "crates/blitsen-dom",
+    "crates/blitsen-js",
+    "crates/blitsen-node",
+    "crates/blitsen-platform",
+]
+exclude = ["spikes/*"]
+resolver = "2"
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.89"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/krazyjakee/blitsen"
+publish = false
+
+[workspace.lints.rust]
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
