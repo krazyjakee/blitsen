@@ -101,7 +101,7 @@ const animation = JSON.parse(native.runAnimationHarness(
 const animatedFrames = animation.map(frame => frame.nodes.find(node => node.attributes.id === "animated"));
 assert.deepEqual(animatedFrames.map(node => node.attributes["data-frame"]), ["1", "2", "3"],
   "callbacks registered during rAF wait for the next frame");
-assert.deepEqual(animatedFrames.map(node => node.layout.x), [10, 20, 30],
+assert.deepEqual(animatedFrames.map(node => node.layout.x), [18, 28, 38],
   "rAF mutations land in each frame being built");
 const animationTimestamps = animatedFrames.at(-1).attributes["data-times"].split(",").map(Number);
 assert.equal(animationTimestamps.length, 3);
@@ -466,4 +466,41 @@ const baselinePng = Buffer.from(native.renderBridgeHarnessPng(
 ), "base64");
 assert.deepEqual([...mutatedPng.subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10]);
 assert.notDeepEqual(mutatedPng, baselinePng, "post-mutation PNG differs from the parsed frame");
+
+const layoutReads = JSON.parse(native.runBridgeHarness(
+  `<style>
+     #metrics { position:absolute; left:11px; top:13px; box-sizing:content-box;
+       width:100px; height:50px; padding:10px; border:5px solid; overflow:auto }
+     #overflow { width:300px; height:200px }
+   </style>
+   <div id="metrics"><div id="overflow"></div></div>`,
+  `{ const metrics = document.getElementById("metrics");
+     metrics.style.width = "140px";
+     const rect = metrics.getBoundingClientRect();
+     if (JSON.stringify(rect.toJSON()) !== JSON.stringify({
+       x: 19, y: 21, width: 170, height: 80, top: 21, right: 189, bottom: 101, left: 19,
+     })) throw new Error("getBoundingClientRect returned stale or incorrect geometry: " + JSON.stringify(rect));
+     if (metrics.offsetWidth !== 170 || metrics.offsetHeight !== 80 ||
+         metrics.clientWidth !== 160 || metrics.clientHeight !== 70)
+       throw new Error("offset/client metrics: " + [metrics.offsetWidth, metrics.offsetHeight,
+         metrics.clientWidth, metrics.clientHeight].join(","));
+     metrics.scrollLeft = 25;
+     metrics.scrollTop = 35;
+     if (metrics.scrollLeft !== 25 || metrics.scrollTop !== 35)
+       throw new Error("scroll offset get/set");
+     metrics.style.width = "150px";
+     if (metrics.offsetWidth !== 180) throw new Error("second forced layout returned stale width");
+     if (__blitsenForcedLayoutsThisFrame() !== 2)
+       throw new Error("forced synchronous layout counter");
+     __blitsenAnimationFrameTick(0);
+     if (__blitsenForcedLayoutsThisFrame() !== 0)
+       throw new Error("forced synchronous layout counter did not reset at the frame boundary");
+     metrics.setAttribute("data-layout-reads", "ok"); }`,
+  400,
+  260,
+));
+const metricsNode = layoutReads.nodes.find(node => node.attributes.id === "metrics");
+assert.equal(metricsNode.attributes["data-layout-reads"], "ok");
+assert.equal(metricsNode.scroll_x, 25);
+assert.equal(metricsNode.scroll_y, 35);
 console.log("bridge harness passed", process.platform, process.arch, `style=${styled.attributes["data-style-call-us"]}us/call`);

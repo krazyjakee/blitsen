@@ -20,6 +20,11 @@ const BOOTSTRAP: &str = r#"
   let nextAnimationFrameId = 1;
   let animationFrames = new Map();
   let runningAnimationFrames = null;
+  let forcedLayoutsThisFrame = 0;
+  const recordForcedLayout = result => {
+    if (result.forced) forcedLayoutsThisFrame++;
+    return result;
+  };
 
   const requestAnimationFrame = callback => {
     if (typeof callback !== "function") throw new TypeError("requestAnimationFrame callback must be a function");
@@ -41,6 +46,9 @@ const BOOTSTRAP: &str = r#"
       catch (error) { console.error("Uncaught exception in requestAnimationFrame callback", error); }
     }
     runningAnimationFrames = null;
+    if (__blitsenDevLayoutWarnings && forcedLayoutsThisFrame > 0)
+      console.warn(`Blitsen: ${forcedLayoutsThisFrame} forced synchronous layout(s) in this frame`);
+    forcedLayoutsThisFrame = 0;
     return animationFrames.size;
   };
 
@@ -376,6 +384,27 @@ const BOOTSTRAP: &str = r#"
     }
     get innerHTML() { return call("innerHTML", this[handle]); }
     set innerHTML(value) { call("setInnerHTML", this[handle], String(value)); }
+    getBoundingClientRect() {
+      const { x, y, width, height } = recordForcedLayout(call("layoutMetrics", this[handle]));
+      return Object.freeze({
+        x, y, width, height, top: y, right: x + width, bottom: y + height, left: x,
+        toJSON() { return { x, y, width, height, top: y, right: x + width, bottom: y + height, left: x }; },
+      });
+    }
+    get offsetWidth() { return recordForcedLayout(call("layoutMetrics", this[handle])).offsetWidth; }
+    get offsetHeight() { return recordForcedLayout(call("layoutMetrics", this[handle])).offsetHeight; }
+    get clientWidth() { return recordForcedLayout(call("layoutMetrics", this[handle])).clientWidth; }
+    get clientHeight() { return recordForcedLayout(call("layoutMetrics", this[handle])).clientHeight; }
+    get scrollLeft() { return recordForcedLayout(call("layoutMetrics", this[handle])).scrollLeft; }
+    set scrollLeft(value) {
+      const number = Number(value);
+      recordForcedLayout(call("setScroll", this[handle], "left", String(Number.isNaN(number) ? 0 : number)));
+    }
+    get scrollTop() { return recordForcedLayout(call("layoutMetrics", this[handle])).scrollTop; }
+    set scrollTop(value) {
+      const number = Number(value);
+      recordForcedLayout(call("setScroll", this[handle], "top", String(Number.isNaN(number) ? 0 : number)));
+    }
     focus() { if (isFocusable(this)) setFocus(this); }
     blur() { if (activeElement === this) setFocus(document.body); }
   }
@@ -466,6 +495,7 @@ const BOOTSTRAP: &str = r#"
     requestAnimationFrame, cancelAnimationFrame,
     __blitsenAnimationFrameTick: animationFrameTick,
     __blitsenAnimationFramesPending: () => animationFrames.size > 0,
+    __blitsenForcedLayoutsThisFrame: () => forcedLayoutsThisFrame,
     __blitsenEventInternals: eventInternals,
     __blitsenDispatchMouseEvent: dispatchMouseEvent,
     __blitsenDispatchMouseEventTo: (type, target, init = {}) => {
@@ -563,6 +593,11 @@ pub(super) fn install(
         }),
     )?;
     engine.set_global("__blitsenScrollDefault", &default_scroll_function)?;
+    let dev_layout_warnings = std::env::var("BLITSEN_DEV_LAYOUT_WARNINGS").is_ok_and(|value| {
+        !value.is_empty() && value != "0" && !value.eq_ignore_ascii_case("false")
+    });
+    let dev_layout_warnings = engine.boolean(dev_layout_warnings);
+    engine.set_global("__blitsenDevLayoutWarnings", &dev_layout_warnings)?;
     engine.evaluate_script(BOOTSTRAP, "blitsen:dom-bootstrap")?;
 
     let document = engine.evaluate_script("globalThis.document", "blitsen:document-value")?;
@@ -672,6 +707,44 @@ fn dispatch(runtime: &DomRuntime, operation: &str, arguments: &[String]) -> Resu
             dom.get_element_by_id(bridge_arg(arguments, 0, "id")?)
                 .map_err(dom_error)?,
         )),
+        "layoutMetrics" => {
+            let forced = dom.layout_is_dirty();
+            let node = handle(runtime, arguments, 0)?;
+            let snapshot = dom.flush_layout().map_err(dom_error)?;
+            let metrics = dom.layout_metrics(node, snapshot).map_err(dom_error)?;
+            Ok(json!({
+                "forced": forced,
+                "x": metrics.rect.x,
+                "y": metrics.rect.y,
+                "width": metrics.rect.width,
+                "height": metrics.rect.height,
+                "offsetWidth": metrics.offset_width,
+                "offsetHeight": metrics.offset_height,
+                "clientWidth": metrics.client_width,
+                "clientHeight": metrics.client_height,
+                "scrollLeft": metrics.scroll_left,
+                "scrollTop": metrics.scroll_top,
+            }))
+        }
+        "setScroll" => {
+            let forced = dom.layout_is_dirty();
+            let node = handle(runtime, arguments, 0)?;
+            let axis = bridge_arg(arguments, 1, "scroll axis")?;
+            let value = bridge_arg(arguments, 2, "scroll value")?
+                .parse::<f64>()
+                .map_err(|_| JsError::new("invalid scroll value"))?;
+            let snapshot = dom.flush_layout().map_err(dom_error)?;
+            match axis {
+                "left" => dom
+                    .set_scroll_offset(node, Some(value), None, snapshot)
+                    .map_err(dom_error)?,
+                "top" => dom
+                    .set_scroll_offset(node, None, Some(value), snapshot)
+                    .map_err(dom_error)?,
+                _ => return Err(JsError::new("invalid scroll axis")),
+            }
+            Ok(json!({ "forced": forced }))
+        }
         "createElement" => {
             let name = bridge_arg(arguments, 0, "element name")?;
             if name.is_empty()

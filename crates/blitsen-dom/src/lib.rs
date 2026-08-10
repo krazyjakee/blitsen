@@ -404,6 +404,25 @@ pub struct Rect {
     pub height: f32,
 }
 
+/// CSSOM box and scroll measurements from one validated layout snapshot.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct LayoutMetrics {
+    /// Viewport-relative border box.
+    pub rect: Rect,
+    /// Rounded border-box width.
+    pub offset_width: f64,
+    /// Rounded border-box height.
+    pub offset_height: f64,
+    /// Rounded padding-box width excluding any reserved scrollbar gutter.
+    pub client_width: f64,
+    /// Rounded padding-box height excluding any reserved scrollbar gutter.
+    pub client_height: f64,
+    /// Current element scroll offsets.
+    pub scroll_left: f64,
+    /// Current vertical element scroll offset.
+    pub scroll_top: f64,
+}
+
 /// Result of resolving a viewport point against the laid-out document.
 #[derive(Clone, Debug, PartialEq)]
 pub struct HitTest<N> {
@@ -599,9 +618,25 @@ pub trait DomBackend {
 
     /// Resolves pending style and layout work and returns a current snapshot.
     fn flush_layout(&mut self) -> Result<LayoutSnapshot, DomError>;
+    /// Reports whether a layout-dependent read would force synchronous work.
+    fn layout_is_dirty(&self) -> bool;
     /// Returns border-box geometry after validating a layout snapshot.
     fn bounding_rect(&self, node: Self::NodeId, snapshot: LayoutSnapshot)
     -> Result<Rect, DomError>;
+    /// Returns CSSOM box and scroll measurements from a validated snapshot.
+    fn layout_metrics(
+        &self,
+        node: Self::NodeId,
+        snapshot: LayoutSnapshot,
+    ) -> Result<LayoutMetrics, DomError>;
+    /// Sets one or both scroll axes without bubbling into an ancestor scroller.
+    fn set_scroll_offset(
+        &mut self,
+        node: Self::NodeId,
+        left: Option<f64>,
+        top: Option<f64>,
+        snapshot: LayoutSnapshot,
+    ) -> Result<(), DomError>;
     /// Returns the topmost node and its propagation path after validating layout.
     fn hit_test(
         &self,

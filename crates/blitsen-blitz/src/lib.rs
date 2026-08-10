@@ -10,7 +10,8 @@ use std::sync::Arc;
 
 use blitsen_dom::{
     DomBackend, DomError, DomName, FrameInvalidation, HitTest, InvalidationMetrics,
-    InvalidationMode, InvalidationTracker, LayoutSnapshot, Namespace, NodeKind, Rect,
+    InvalidationMode, InvalidationTracker, LayoutMetrics, LayoutSnapshot, Namespace, NodeKind,
+    Rect,
 };
 use blitz::dom::{DocumentConfig, LocalName, NodeData, NodeId, QualName, ns};
 use blitz::html::{HtmlDocument, HtmlProvider};
@@ -736,17 +737,137 @@ impl DomBackend for BlitzDom {
         Ok(LayoutSnapshot::new(self.revision))
     }
 
+    fn layout_is_dirty(&self) -> bool {
+        self.flushed_revision != self.revision
+    }
+
     fn bounding_rect(&self, node: NodeId, snapshot: LayoutSnapshot) -> Result<Rect, DomError> {
         if snapshot.revision() != self.revision || self.flushed_revision != self.revision {
             return Err(DomError::LayoutNotFlushed);
         }
-        let layout = self.node(node)?.final_layout();
-        Ok(Rect {
-            x: layout.location.x,
-            y: layout.location.y,
-            width: layout.size.width,
-            height: layout.size.height,
+        let element = self.node(node)?;
+        let rect = if let Some(rect) = self.document.get_client_bounding_rect(node) {
+            Rect {
+                x: rect.x as f32,
+                y: rect.y as f32,
+                width: rect.width as f32,
+                height: rect.height as f32,
+            }
+        } else {
+            let position = element.absolute_position(0.0, 0.0);
+            let layout = element.unrounded_layout();
+            Rect {
+                x: position.x - self.document.viewport_scroll().x as f32,
+                y: position.y - self.document.viewport_scroll().y as f32,
+                width: layout.size.width,
+                height: layout.size.height,
+            }
+        };
+        Ok(rect)
+    }
+
+    fn layout_metrics(
+        &self,
+        node: NodeId,
+        snapshot: LayoutSnapshot,
+    ) -> Result<LayoutMetrics, DomError> {
+        let rect = self.bounding_rect(node, snapshot)?;
+        let element = self.node(node)?;
+        let layout = element.unrounded_layout();
+        let scroll = if self
+            .document
+            .try_root_element()
+            .is_some_and(|root| root.id == node)
+        {
+            self.document.viewport_scroll()
+        } else {
+            *element.scroll_offset()
+        };
+        Ok(LayoutMetrics {
+            rect,
+            offset_width: f64::from(layout.size.width.round()),
+            offset_height: f64::from(layout.size.height.round()),
+            client_width: f64::from(
+                (layout.size.width
+                    - layout.border.left
+                    - layout.border.right
+                    - layout.scrollbar_size.width)
+                    .max(0.0)
+                    .round(),
+            ),
+            client_height: f64::from(
+                (layout.size.height
+                    - layout.border.top
+                    - layout.border.bottom
+                    - layout.scrollbar_size.height)
+                    .max(0.0)
+                    .round(),
+            ),
+            scroll_left: scroll.x,
+            scroll_top: scroll.y,
         })
+    }
+
+    fn set_scroll_offset(
+        &mut self,
+        node: NodeId,
+        left: Option<f64>,
+        top: Option<f64>,
+        snapshot: LayoutSnapshot,
+    ) -> Result<(), DomError> {
+        if snapshot.revision() != self.revision || self.flushed_revision != self.revision {
+            return Err(DomError::LayoutNotFlushed);
+        }
+        if self
+            .document
+            .try_root_element()
+            .is_some_and(|root| root.id == node)
+        {
+            let current = self.document.viewport_scroll();
+            let desired_x = left.unwrap_or(current.x);
+            let desired_y = top.unwrap_or(current.y);
+            self.document
+                .scroll_viewport_by(current.x - desired_x, current.y - desired_y);
+            return Ok(());
+        }
+
+        let element = self
+            .document
+            .get_node_mut(node)
+            .ok_or(DomError::StaleNode)?;
+        let layout = element.final_layout();
+        let max_x = f64::from(layout.scroll_width());
+        let max_y = f64::from(layout.scroll_height());
+        let (can_scroll_x, can_scroll_y) = element
+            .primary_styles()
+            .map(|styles| {
+                (
+                    matches!(
+                        styles.clone_overflow_x(),
+                        Overflow::Hidden | Overflow::Scroll | Overflow::Auto
+                    ),
+                    matches!(
+                        styles.clone_overflow_y(),
+                        Overflow::Hidden | Overflow::Scroll | Overflow::Auto
+                    ),
+                )
+            })
+            .unwrap_or_default();
+        if let Some(left) = left {
+            element.scroll_offset_mut().x = if can_scroll_x {
+                left.clamp(0.0, max_x)
+            } else {
+                0.0
+            };
+        }
+        if let Some(top) = top {
+            element.scroll_offset_mut().y = if can_scroll_y {
+                top.clamp(0.0, max_y)
+            } else {
+                0.0
+            };
+        }
+        Ok(())
     }
 
     fn hit_test(

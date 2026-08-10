@@ -269,6 +269,11 @@ Reads that depend on layout (`getBoundingClientRect`, `offsetWidth`, `scrollTop`
 synchronous layout flush if the tree is dirty — the same layout-thrashing hazard as the web,
 with the same fix (batch reads before writes). We do not attempt to hide it.
 
+The v0 bridge exposes `getBoundingClientRect`, `offsetWidth`/`offsetHeight`,
+`clientWidth`/`clientHeight`, and readable/writable `scrollLeft`/`scrollTop`. Scroll setters clamp
+the requested element without bubbling into an ancestor. Forced flushes are counted until the
+next frame boundary; setting `BLITSEN_DEV_LAYOUT_WARNINGS=1` prints that count once per frame.
+
 ### Event system
 
 ```
