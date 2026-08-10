@@ -17,6 +17,8 @@ try {
     openDirectory(options) {
       return engine.openDirectory?.(options) ?? engine.loadHTML(options.entrypoint);
     },
+    reloadCSS: engine.reloadCSS ? file => engine.reloadCSS(file) : null,
+    reloadDirectory: engine.reloadDirectory ? () => engine.reloadDirectory() : null,
     pumpWindow: engine.pumpWindow ? () => engine.pumpWindow() : null,
     waitForNextFrame: () => Bun.sleep(16),
   };

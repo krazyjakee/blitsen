@@ -28,6 +28,9 @@ try {
 assert(scriptError, "broken external script throws");
 assert.match(String(scriptError.stack ?? scriptError), /intentional script fixture failure/);
 assert.match(String(scriptError.stack ?? scriptError), /broken\.js/);
+await Bun.sleep(15);
+assert.equal(globalThis.__blitsenDisposedTimerRan, undefined,
+  "document reload cancels timers owned by the previous context");
 const snapshot = JSON.parse(native.runBridgeHarness(
   `<style>#x { display:block; width:100px; height:20px }</style><div id="x">old</div>`,
   `{ if (window !== globalThis || window.document !== document || innerWidth !== 320 || innerHeight !== 180 || devicePixelRatio !== 1)

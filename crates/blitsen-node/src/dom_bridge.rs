@@ -16,6 +16,36 @@ const BOOTSTRAP: &str = r#"
 (() => {
   const testHarness = Boolean(globalThis.__blitsenTestHarness);
   delete globalThis.__blitsenTestHarness;
+  const hostSetTimeout = globalThis.setTimeout.bind(globalThis);
+  const hostClearTimeout = globalThis.clearTimeout.bind(globalThis);
+  const hostSetInterval = globalThis.setInterval.bind(globalThis);
+  const hostClearInterval = globalThis.clearInterval.bind(globalThis);
+  const contextTimeouts = new Set();
+  const contextIntervals = new Set();
+  const setTimeout = (callback, delay = 0, ...args) => {
+    if (typeof callback !== "function") throw new TypeError("setTimeout callback must be a function");
+    let id;
+    id = hostSetTimeout((...values) => {
+      contextTimeouts.delete(id);
+      callback(...values);
+    }, delay, ...args);
+    contextTimeouts.add(id);
+    return id;
+  };
+  const clearTimeout = id => {
+    contextTimeouts.delete(id);
+    hostClearTimeout(id);
+  };
+  const setInterval = (callback, delay = 0, ...args) => {
+    if (typeof callback !== "function") throw new TypeError("setInterval callback must be a function");
+    const id = hostSetInterval(callback, delay, ...args);
+    contextIntervals.add(id);
+    return id;
+  };
+  const clearInterval = id => {
+    contextIntervals.delete(id);
+    hostClearInterval(id);
+  };
   const call = (operation, ...args) =>
     JSON.parse(__blitsenDomCall(operation, ...args.map(value => String(value))));
   const handle = Symbol("Blitsen node handle");
@@ -495,6 +525,7 @@ const BOOTSTRAP: &str = r#"
     EventTarget, Node, Element, NodeList, Document, DOMTokenList, CSSStyleDeclaration, document,
     Event, MouseEvent, KeyboardEvent, CustomEvent,
     requestAnimationFrame, cancelAnimationFrame,
+    setTimeout, clearTimeout, setInterval, clearInterval,
     __blitsenAnimationFrameTick: animationFrameTick,
     __blitsenAnimationFramesPending: () => animationFrames.size > 0,
     __blitsenForcedLayoutsThisFrame: () => forcedLayoutsThisFrame,
@@ -502,6 +533,18 @@ const BOOTSTRAP: &str = r#"
     __blitsenDispatchMouseEvent: dispatchMouseEvent,
     __blitsenDispatchKeyboardEvent: dispatchKeyboardEvent,
     __blitsenDispatchLifecycleEvent: dispatchLifecycleEvent,
+    __blitsenDisposeContext: () => {
+      for (const id of contextTimeouts) hostClearTimeout(id);
+      for (const id of contextIntervals) hostClearInterval(id);
+      contextTimeouts.clear();
+      contextIntervals.clear();
+      animationFrames.clear();
+      runningAnimationFrames?.clear();
+      Object.assign(globalThis, {
+        setTimeout: hostSetTimeout, clearTimeout: hostClearTimeout,
+        setInterval: hostSetInterval, clearInterval: hostClearInterval,
+      });
+    },
   };
   if (testHarness) globals.__blitsenInjectMouseEvent = (type, target, init = {}) => {
     if (!(target instanceof Node)) throw new TypeError("mouse event target must be a Node");

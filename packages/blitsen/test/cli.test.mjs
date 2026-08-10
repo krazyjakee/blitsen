@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
-import { main, parseArgs, resolveApplication, resolveAsset } from "../src/cli.mjs";
+import { createReloadCoordinator, main, parseArgs, resolveApplication, resolveAsset } from "../src/cli.mjs";
 
 function capture() {
   const lines = [];
@@ -70,6 +70,29 @@ describe("directory CLI", () => {
     };
     expect(await main([fixture], console, runtime)).toBe(0);
     expect(order).toEqual(["pump:1", "timer", "microtask", "pump:2"]);
+  });
+
+  test("debounces CSS swaps and escalates mixed batches to one document reload", async () => {
+    const calls = [];
+    const coordinator = createReloadCoordinator({
+      reloadCSS: async file => calls.push(["css", file]),
+      reloadDirectory: async () => calls.push(["document"]),
+    }, console, 5);
+    coordinator.notify("styles/app.css");
+    coordinator.notify("styles/app.css");
+    coordinator.notify("styles/theme.CSS");
+    await Bun.sleep(15);
+    await coordinator.settled();
+    expect(calls).toEqual([["css", "styles/app.css"], ["css", "styles/theme.CSS"]]);
+
+    coordinator.notify("styles/app.css");
+    coordinator.notify("src/app.js");
+    coordinator.notify("index.html");
+    await Bun.sleep(15);
+    await coordinator.settled();
+    expect(calls.at(-1)).toEqual(["document"]);
+    expect(calls.filter(call => call[0] === "document")).toHaveLength(1);
+    coordinator.close();
   });
 
   test("reports missing entrypoints and unavailable native addons", async () => {

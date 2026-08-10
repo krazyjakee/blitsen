@@ -3,6 +3,9 @@
   <body>
     <div id="script-target" data-order=""></div>
     <script>
+      const __blitsenReloadScoped = "first-document";
+      globalThis.__blitsenReloadLeak = true;
+      setTimeout(() => { globalThis.__blitsenDisposedTimerRan = true; }, 5);
       {
         if ("__blitsenInjectMouseEvent" in globalThis) {
           throw new Error("test-only event injection leaked into a shipped window");

@@ -1,6 +1,6 @@
 import { access, realpath } from "node:fs/promises";
-import { constants } from "node:fs";
-import { join, relative, resolve } from "node:path";
+import { constants, watch as watchFs } from "node:fs";
+import { extname, join, normalize, relative, resolve } from "node:path";
 
 const HELP = `Usage: blitsen <directory> [options]
 
@@ -71,6 +71,53 @@ export async function resolveAsset(root, fromFile, specifier) {
   return asset;
 }
 
+export function createReloadCoordinator(runtime, output = console, debounceMs = 100) {
+  let pending = new Set();
+  let timer = null;
+  let closed = false;
+  let reloads = Promise.resolve();
+  const flush = () => {
+    timer = null;
+    const changed = pending;
+    pending = new Set();
+    if (changed.size === 0 || closed) return;
+    reloads = reloads.then(async () => {
+      if ([...changed].every(file => extname(file).toLowerCase() === ".css")) {
+        for (const file of changed) await runtime.reloadCSS(file);
+      } else {
+        await runtime.reloadDirectory();
+      }
+    }).catch(error => output.error(`blitsen: reload failed: ${error.message}`));
+  };
+  return {
+    notify(file) {
+      if (closed || !file) return;
+      pending.add(normalize(String(file)));
+      if (timer !== null) clearTimeout(timer);
+      timer = setTimeout(flush, debounceMs);
+    },
+    close() {
+      closed = true;
+      pending.clear();
+      if (timer !== null) clearTimeout(timer);
+      timer = null;
+    },
+    settled() { return reloads; },
+  };
+}
+
+export function watchApplication(root, runtime, output = console, debounceMs = 100) {
+  const coordinator = createReloadCoordinator(runtime, output, debounceMs);
+  const watcher = watchFs(root, { recursive: true }, (_event, file) => coordinator.notify(file));
+  watcher.on("error", error => output.error(`blitsen: watcher failed: ${error.message}`));
+  return {
+    close() {
+      watcher.close();
+      coordinator.close();
+    },
+  };
+}
+
 export async function main(args, output = console, runtime = null) {
   try {
     const options = parseArgs(args);
@@ -87,10 +134,17 @@ export async function main(args, output = console, runtime = null) {
       throw new Error("native addon is unavailable; reinstall blitsen for this platform");
     }
     await runtime.openDirectory({ ...application, ...options });
-    if (runtime.pumpWindow) {
-      while (runtime.pumpWindow()) {
-        await (runtime.waitForNextFrame?.() ?? new Promise(resolve => setTimeout(resolve, 16)));
+    const watcher = runtime.reloadCSS && runtime.reloadDirectory
+      ? watchApplication(application.root, runtime, output)
+      : null;
+    try {
+      if (runtime.pumpWindow) {
+        while (runtime.pumpWindow()) {
+          await (runtime.waitForNextFrame?.() ?? new Promise(resolve => setTimeout(resolve, 16)));
+        }
       }
+    } finally {
+      watcher?.close();
     }
     return 0;
   } catch (error) {

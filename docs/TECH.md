@@ -520,7 +520,11 @@ v1 web-platform surface. Directory mode is the v0 path; see `spikes/s7/README.md
 
 Directory mode reload granularity: CSS swaps live via re-cascade with no reload; HTML and JS
 restart the JS context and reparse the document. Preserving JS state across reload is not
-attempted — HMR is the user's bundler's job, and in proxy mode it already is.
+attempted — HMR is the user's bundler's job, and in proxy mode it already is. The directory
+watcher waits for 100 ms of quiet before acting, deduplicates paths, reloads a CSS-only batch
+through Blitz's linked-stylesheet hook, and escalates any mixed or non-CSS batch to one document
+replacement in the existing native window. Replacing a document discards its DOM listeners,
+rAF callbacks, timers, configurable globals, and local module cache before its scripts run again.
 
 ---
 

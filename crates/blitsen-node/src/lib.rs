@@ -18,7 +18,7 @@ use blitsen_blitz::BlitzDom;
 use blitsen_core::{
     DocumentScript, ScriptDocument, WindowState, WrapperTable, execute_collected_document_scripts,
 };
-use blitsen_dom::{DomBackend, DomError};
+use blitsen_dom::{DomBackend, DomError, DomName};
 use blitsen_js::{
     ExternalId, JsEngine, JsError, JsType, LoopTurn, NativeCall, NativeCallback, NativeClass,
     NativeMethod, TypedArray, TypedArrayKind,
@@ -571,6 +571,15 @@ impl JsEngine for NodeApiEngine {
 
     fn evaluate_script(&mut self, source: &str, filename: &str) -> Result<Self::Value, JsError> {
         let source = format!("{source}\n//# sourceURL={filename}");
+        let source = if !filename.starts_with("blitsen:")
+            && (Path::new(filename).is_absolute() || filename.contains("#script-"))
+        {
+            let source =
+                serde_json::to_string(&source).map_err(|error| JsError::new(error.to_string()))?;
+            format!("(0, eval)({source})")
+        } else {
+            source
+        };
         self.env
             .run_script::<_, Unknown<'static>>(source)
             .map_err(js_error)
@@ -680,6 +689,7 @@ pub struct Engine {
 
 /// Options passed from directory-mode CLI to the native window.
 #[napi(object)]
+#[derive(Clone)]
 pub struct OpenDirectoryOptions {
     /// Canonical application root.
     pub root: String,
@@ -830,6 +840,7 @@ struct WindowSession {
     event_loop: EventLoop,
     application: WindowApplication<anyrender_vello::VelloWindowRenderer>,
     error: Rc<RefCell<Option<JsError>>>,
+    options: OpenDirectoryOptions,
 }
 
 fn dom_mouse_button(button: MouseButton) -> u16 {
@@ -1504,6 +1515,7 @@ impl Engine {
     /// Parses `index.html` and initializes a native Blitz window session.
     #[napi(js_name = "openDirectory")]
     pub fn open_directory(&self, options: OpenDirectoryOptions) -> napi::Result<()> {
+        let session_options = options.clone();
         let started_at = Instant::now();
         let source = std::fs::read_to_string(&options.entrypoint).map_err(|error| {
             napi::Error::new(
@@ -1595,8 +1607,149 @@ impl Engine {
             event_loop,
             application,
             error: window_error,
+            options: session_options,
         });
         Ok(())
+    }
+
+    /// Re-parses the directory entrypoint and replaces the document in the existing window.
+    #[napi(js_name = "reloadDirectory")]
+    pub fn reload_directory(&self) -> napi::Result<()> {
+        let mut session_ref = self.session.borrow_mut();
+        let session = session_ref.as_mut().ok_or_else(|| {
+            napi::Error::new(Status::GenericFailure, "no native window session is open")
+        })?;
+        let _guard = session.runtime.enter();
+        let options = session.options.clone();
+        let source = std::fs::read_to_string(&options.entrypoint).map_err(|error| {
+            napi::Error::new(
+                Status::GenericFailure,
+                format!("could not read {}: {error}", options.entrypoint),
+            )
+        })?;
+        let window_id = session
+            .application
+            .inner
+            .windows
+            .keys()
+            .copied()
+            .next()
+            .ok_or_else(|| {
+                napi::Error::new(Status::GenericFailure, "native window is not ready")
+            })?;
+        let viewport = session.application.inner.windows[&window_id]
+            .doc
+            .inner()
+            .viewport()
+            .clone();
+        let scale = f64::from(viewport.hidpi_scale);
+        let logical = winit::dpi::PhysicalSize::new(viewport.window_size.0, viewport.window_size.1)
+            .to_logical::<u32>(scale);
+        let proxy = session.application.inner.proxy.clone();
+        let net_provider = Arc::new(blitz::net::Provider::new(Some(Arc::new(proxy))));
+        let dom_runtime = DomRuntime::new(BlitzDom::from_html(
+            &source,
+            DocumentConfig {
+                base_url: Some(format!("file://{}/", options.root.replace(' ', "%20"))),
+                net_provider: Some(net_provider as Arc<dyn NetProvider>),
+                viewport: Some(viewport),
+                ..Default::default()
+            },
+        ));
+        let document = dom_runtime.document();
+        validate_local_assets(
+            &document.borrow(),
+            Path::new(&options.root),
+            Path::new(&options.entrypoint),
+        )
+        .map_err(napi_error)?;
+        let scripts = document.borrow().document_scripts().map_err(dom_error)?;
+        let window_state = execute_window_scripts(
+            &mut self.runtime.borrow_mut(),
+            dom_runtime,
+            scripts,
+            &options.entrypoint,
+            logical.width,
+            logical.height,
+        )?;
+        document.borrow_mut().flush_layout().map_err(dom_error)?;
+
+        let view = session
+            .application
+            .inner
+            .windows
+            .get_mut(&window_id)
+            .expect("window id was read from this map");
+        view.replace_document(Box::new(SharedBlitzDocument(Rc::clone(&document))), false);
+        let application = &mut session.application;
+        application.state = window_state;
+        application.document = document;
+        application.started_at = Instant::now();
+        application.pending_mouse_input.clear();
+        application.pending_keyboard_input.clear();
+        application.pointer_positions.clear();
+        application.mouse_down_targets.clear();
+        application.mouse_buttons = 0;
+        application.load_dispatched = false;
+        Ok(())
+    }
+
+    /// Reloads a linked CSS file into the current document without rerunning JavaScript.
+    #[napi(js_name = "reloadCSS")]
+    pub fn reload_css(&self, file: String) -> napi::Result<bool> {
+        let mut session_ref = self.session.borrow_mut();
+        let session = session_ref.as_mut().ok_or_else(|| {
+            napi::Error::new(Status::GenericFailure, "no native window session is open")
+        })?;
+        let _guard = session.runtime.enter();
+        let root = Path::new(&session.options.root);
+        let changed = root.join(&file).canonicalize().map_err(|error| {
+            napi::Error::new(
+                Status::GenericFailure,
+                format!("could not reload CSS file {file}: {error}"),
+            )
+        })?;
+        if !changed.starts_with(root) {
+            return Err(napi::Error::new(
+                Status::GenericFailure,
+                format!("CSS reload escaped application directory: {file}"),
+            ));
+        }
+        let href_name = DomName::attribute("href");
+        let rel_name = DomName::attribute("rel");
+        let hrefs = {
+            let document = session.application.document.borrow();
+            document
+                .query_selector_all(document.document(), "link[href]")
+                .map_err(dom_error)?
+                .into_iter()
+                .filter_map(|node| {
+                    let rel = document.attribute(node, &rel_name).ok().flatten()?;
+                    if !rel
+                        .split_ascii_whitespace()
+                        .any(|value| value.eq_ignore_ascii_case("stylesheet"))
+                    {
+                        return None;
+                    }
+                    let href = document.attribute(node, &href_name).ok().flatten()?;
+                    let local = href.split(['?', '#']).next().unwrap_or_default();
+                    root.join(local)
+                        .canonicalize()
+                        .ok()
+                        .filter(|candidate| *candidate == changed)
+                        .map(|_| href)
+                })
+                .collect::<Vec<_>>()
+        };
+        for href in &hrefs {
+            session
+                .application
+                .document
+                .borrow_mut()
+                .document_mut()
+                .reload_resource_by_href(href);
+        }
+        Ok(!hrefs.is_empty())
     }
 
     /// Advances winit once without blocking Bun's outer event loop.
@@ -1705,8 +1858,42 @@ fn execute_window_scripts(
     width: u32,
     height: u32,
 ) -> napi::Result<Rc<RefCell<WindowState>>> {
+    let module_root = Path::new(entrypoint)
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .to_string_lossy();
+    let module_root = serde_json::to_string(&module_root)
+        .map_err(|error| napi_error(JsError::new(error.to_string())))?;
+    let cleanup = r#"(() => {
+              globalThis.__blitsenDisposeContext?.();
+              const baseline = globalThis.__blitsenRuntimeBaseline;
+              if (baseline) for (const key of Reflect.ownKeys(globalThis)) {
+                if (!baseline.has(key)) try { delete globalThis[key]; } catch {}
+              }
+              const reloadRoot = __BLITSEN_RELOAD_ROOT__;
+              const reloadRequire = process.getBuiltinModule("module").createRequire(reloadRoot + "/index.html");
+              for (const cached of Object.keys(reloadRequire.cache ?? {})) {
+                if (cached === reloadRoot || cached.startsWith(reloadRoot + "/")) delete reloadRequire.cache[cached];
+              }
+            })()"#
+    .replace("__BLITSEN_RELOAD_ROOT__", &module_root);
+    engine
+        .evaluate_script(&cleanup, "blitsen:dispose-document-context")
+        .map_err(napi_error)?;
     let window_state =
         dom_bridge::install(engine, runtime, width, height, 1.0, false).map_err(napi_error)?;
+    engine
+        .evaluate_script(
+            r#"(() => {
+              if (!globalThis.__blitsenRuntimeBaseline) {
+                const baseline = new Set(Reflect.ownKeys(globalThis));
+                Object.defineProperty(globalThis, "__blitsenRuntimeBaseline", { value: baseline });
+                baseline.add("__blitsenRuntimeBaseline");
+              }
+            })()"#,
+            "blitsen:capture-runtime-globals",
+        )
+        .map_err(napi_error)?;
     execute_collected_document_scripts(scripts, engine, Path::new(entrypoint))
         .map_err(napi_error)?;
     engine
