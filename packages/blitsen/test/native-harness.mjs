@@ -183,16 +183,27 @@ assert.match(styled.inline_style, /left:\s*5px/);
 assert.doesNotMatch(styled.inline_style, /definitely-invalid/);
 assert.equal(styled.layout.width, 90);
 
+const acceptanceHtml =
+  `<style>#x { width: 180px; height: 80px; background: #ef4444 }</style><div id="x">old</div>`;
+const acceptanceScript = `{ const painted = document.querySelector("#x");
+  painted.textContent = "hi";
+  painted.style.backgroundColor = "#22c55e"; }`;
+const paintedSnapshot = JSON.parse(native.runBridgeHarness(
+  acceptanceHtml,
+  acceptanceScript,
+  320,
+  180,
+));
+const green = paintedSnapshot.paint_colors.find((color) => color.rgba === "#22c55eff");
+assert(green?.pixels > 10_000, "post-mutation frame paints the expected green panel");
 const mutatedPng = Buffer.from(native.renderBridgeHarnessPng(
-  `<style>#x { width: 180px; height: 80px; background: #ef4444 }</style><div id="x">old</div>`,
-  `{ const painted = document.querySelector("#x");
-     painted.textContent = "hi";
-     painted.style.backgroundColor = "#22c55e"; }`,
+  acceptanceHtml,
+  acceptanceScript,
   320,
   180,
 ), "base64");
 const baselinePng = Buffer.from(native.renderBridgeHarnessPng(
-  `<style>#x { width: 180px; height: 80px; background: #ef4444 }</style><div id="x">old</div>`,
+  acceptanceHtml,
   ``,
   320,
   180,

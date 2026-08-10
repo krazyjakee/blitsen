@@ -37,6 +37,7 @@
     "src"
   ],
   "scripts": {
+    "example:hello": "bun test/run-hello-dom.mjs",
     "test": "bun test",
     "test:native": "bun test/run-native-harness.mjs"
   },

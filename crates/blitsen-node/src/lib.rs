@@ -692,6 +692,7 @@ pub struct OpenDirectoryOptions {
 struct HarnessSnapshot {
     nodes: Vec<HarnessNode>,
     invalidation: HarnessInvalidation,
+    paint_colors: Vec<HarnessPaintColor>,
 }
 
 #[derive(Serialize)]
@@ -699,6 +700,12 @@ struct HarnessInvalidation {
     restyled_nodes: usize,
     relaid_out_nodes: usize,
     full_document: bool,
+}
+
+#[derive(Serialize)]
+struct HarnessPaintColor {
+    rgba: String,
+    pixels: usize,
 }
 
 #[derive(Serialize)]
@@ -1212,6 +1219,29 @@ fn snapshot_and_render(
         width,
         height,
     );
+    let mut paint_colors = BTreeMap::<[u8; 4], usize>::new();
+    for pixel in pixels.chunks_exact(4) {
+        *paint_colors
+            .entry([pixel[0], pixel[1], pixel[2], pixel[3]])
+            .or_default() += 1;
+    }
+    let mut paint_colors: Vec<_> = paint_colors
+        .into_iter()
+        .map(|(rgba, pixels)| HarnessPaintColor {
+            rgba: format!(
+                "#{:02x}{:02x}{:02x}{:02x}",
+                rgba[0], rgba[1], rgba[2], rgba[3]
+            ),
+            pixels,
+        })
+        .collect();
+    paint_colors.sort_unstable_by(|left, right| {
+        right
+            .pixels
+            .cmp(&left.pixels)
+            .then_with(|| left.rgba.cmp(&right.rgba))
+    });
+    paint_colors.truncate(16);
     let mut png = Vec::new();
     {
         let mut encoder = png::Encoder::new(&mut png, width, height);
@@ -1228,6 +1258,7 @@ fn snapshot_and_render(
         HarnessSnapshot {
             nodes,
             invalidation,
+            paint_colors,
         },
         png,
     ))

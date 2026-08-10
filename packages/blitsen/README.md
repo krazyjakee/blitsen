@@ -16,5 +16,14 @@ in a native window. Application export is not implemented yet. Follow developmen
 and read the feasibility results at
 [github.com/krazyjakee/blitsen](https://github.com/krazyjakee/blitsen).
 
+Repository contributors can run the M1 interactive acceptance app on Linux,
+macOS, or Windows with:
+
+```sh
+bun run --cwd packages/blitsen example:hello
+```
+
+The expected result is a resizable native window with a green panel reading `hi`.
+
 Blitsen is an independent project built on Blitz. It is not an official
 DioxusLabs project and is not endorsed by DioxusLabs.
