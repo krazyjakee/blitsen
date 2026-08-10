@@ -3,10 +3,157 @@
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::hash::Hash;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use blitsen_dom::{DomBackend, DomError, DomName};
 use blitsen_js::{ExternalId, JsEngine, JsError};
+
+/// Minimal script-element view provided by the authoritative DOM backend.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DocumentScript {
+    /// Inline source text.
+    pub source: String,
+    /// Optional local `src` attribute.
+    pub src: Option<String>,
+    /// Raw `type` attribute.
+    pub script_type: Option<String>,
+    /// Whether `async` was present.
+    pub async_attribute: bool,
+    /// Whether `defer` was present.
+    pub defer_attribute: bool,
+}
+
+/// DOM access needed to collect scripts without copying the tree.
+pub trait ScriptDocument {
+    /// Returns script elements in document order.
+    fn document_scripts(&self) -> Result<Vec<DocumentScript>, DomError>;
+}
+
+impl<D: DomBackend> ScriptDocument for D {
+    fn document_scripts(&self) -> Result<Vec<DocumentScript>, DomError> {
+        self.query_selector_all(self.document(), "script")?
+            .into_iter()
+            .map(|node| {
+                Ok(DocumentScript {
+                    source: self.text_content(node)?,
+                    src: self.attribute(node, &DomName::attribute("src"))?,
+                    script_type: self.attribute(node, &DomName::attribute("type"))?,
+                    async_attribute: self
+                        .attribute(node, &DomName::attribute("async"))?
+                        .is_some(),
+                    defer_attribute: self
+                        .attribute(node, &DomName::attribute("defer"))?
+                        .is_some(),
+                })
+            })
+            .collect()
+    }
+}
+
+/// Evaluation operations used by the document script runner.
+pub trait ScriptEngine {
+    /// Engine-specific evaluation result.
+    type Value;
+    /// Evaluates a classic script.
+    fn run_classic(&mut self, source: &str, identifier: &str) -> Result<Self::Value, JsError>;
+    /// Starts module evaluation.
+    fn run_module(&mut self, source: &str, identifier: &str) -> Result<Self::Value, JsError>;
+}
+
+impl<J: JsEngine> ScriptEngine for J {
+    type Value = J::Value;
+
+    fn run_classic(&mut self, source: &str, identifier: &str) -> Result<Self::Value, JsError> {
+        self.evaluate_script(source, identifier)
+    }
+
+    fn run_module(&mut self, source: &str, identifier: &str) -> Result<Self::Value, JsError> {
+        self.evaluate_module(source, identifier)
+    }
+}
+
+/// Executes document scripts after parsing in strict document order.
+///
+/// v0 deliberately treats `async` and `defer` as document-order execution at
+/// this post-parse checkpoint. This deterministic subset preserves dependency
+/// order until networking and incremental parsing are introduced.
+pub fn execute_document_scripts<D, J>(
+    document: &D,
+    engine: &mut J,
+    entrypoint: &Path,
+) -> Result<Vec<J::Value>, JsError>
+where
+    D: ScriptDocument,
+    J: ScriptEngine,
+{
+    let scripts = document
+        .document_scripts()
+        .map_err(|error| JsError::new(error.to_string()))?;
+    let root = entrypoint.parent().unwrap_or_else(|| Path::new("."));
+    let mut results = Vec::with_capacity(scripts.len());
+    for (index, script) in scripts.into_iter().enumerate() {
+        let module = script
+            .script_type
+            .as_deref()
+            .is_some_and(|kind| kind.eq_ignore_ascii_case("module"));
+        if script.script_type.as_deref().is_some_and(|kind| {
+            !kind.is_empty()
+                && !kind.eq_ignore_ascii_case("module")
+                && !kind.eq_ignore_ascii_case("text/javascript")
+                && !kind.eq_ignore_ascii_case("application/javascript")
+        }) {
+            continue;
+        }
+        let (source, identifier) = if let Some(src) = script.src {
+            let path = resolve_local_script(root, &src)?;
+            let source = std::fs::read_to_string(&path).map_err(|error| {
+                JsError::new(format!("could not read script {}: {error}", path.display()))
+            })?;
+            (source, path.to_string_lossy().into_owned())
+        } else {
+            (
+                script.source,
+                format!("{}#script-{}", entrypoint.display(), index + 1),
+            )
+        };
+        let result = if module {
+            engine.run_module(&source, &identifier)
+        } else {
+            engine.run_classic(&source, &identifier)
+        }
+        .map_err(|error| {
+            if error.stack().is_some() {
+                error
+            } else {
+                JsError::new(format!("{identifier}: {}", error.message()))
+            }
+        })?;
+        results.push(result);
+    }
+    Ok(results)
+}
+
+fn resolve_local_script(root: &Path, src: &str) -> Result<PathBuf, JsError> {
+    if src.starts_with('/') || src.contains("://") {
+        return Err(JsError::new(format!(
+            "script src must be relative to the entrypoint: {src}"
+        )));
+    }
+    let root = root
+        .canonicalize()
+        .map_err(|error| JsError::new(format!("could not resolve {}: {error}", root.display())))?;
+    let path = root
+        .join(src)
+        .canonicalize()
+        .map_err(|error| JsError::new(format!("could not resolve script {src}: {error}")))?;
+    if !path.starts_with(&root) {
+        return Err(JsError::new(format!(
+            "script src escapes the application directory: {src}"
+        )));
+    }
+    Ok(path)
+}
 
 /// Viewport-backed properties exposed on the JavaScript `window` object.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -1081,6 +1228,35 @@ mod tests {
         invalidations: usize,
     }
 
+    struct MockScripts(Vec<DocumentScript>);
+
+    impl ScriptDocument for MockScripts {
+        fn document_scripts(&self) -> Result<Vec<DocumentScript>, DomError> {
+            Ok(self.0.clone())
+        }
+    }
+
+    #[derive(Default)]
+    struct RecordingScriptEngine {
+        evaluations: Vec<(String, String, String)>,
+    }
+
+    impl ScriptEngine for RecordingScriptEngine {
+        type Value = usize;
+
+        fn run_classic(&mut self, source: &str, identifier: &str) -> Result<usize, JsError> {
+            self.evaluations
+                .push(("classic".into(), source.into(), identifier.into()));
+            Ok(self.evaluations.len())
+        }
+
+        fn run_module(&mut self, source: &str, identifier: &str) -> Result<usize, JsError> {
+            self.evaluations
+                .push(("module".into(), source.into(), identifier.into()));
+            Ok(self.evaluations.len())
+        }
+    }
+
     #[derive(Default)]
     struct MockAttributes {
         values: HashMap<String, String>,
@@ -1468,5 +1644,65 @@ mod tests {
         assert_eq!(window.device_pixel_ratio(), 2.0);
         window.resize(1024, 768);
         assert_eq!((window.width(), window.height()), (1024, 768));
+    }
+
+    #[test]
+    fn document_scripts_run_in_order_with_local_module_identity() {
+        let fixture =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../spikes/s7/fixture/index.html");
+        let document = MockScripts(vec![
+            DocumentScript {
+                source: "globalThis.first = true".into(),
+                src: None,
+                script_type: None,
+                async_attribute: false,
+                defer_attribute: false,
+            },
+            DocumentScript {
+                source: String::new(),
+                src: Some("src/math.js".into()),
+                script_type: Some("module".into()),
+                async_attribute: true,
+                defer_attribute: false,
+            },
+            DocumentScript {
+                source: "ignored".into(),
+                src: None,
+                script_type: Some("application/json".into()),
+                async_attribute: false,
+                defer_attribute: false,
+            },
+        ]);
+        let mut engine = RecordingScriptEngine::default();
+        assert_eq!(
+            execute_document_scripts(&document, &mut engine, &fixture).unwrap(),
+            vec![1, 2]
+        );
+        assert_eq!(engine.evaluations[0].0, "classic");
+        assert!(engine.evaluations[0].2.ends_with("index.html#script-1"));
+        assert_eq!(engine.evaluations[1].0, "module");
+        assert!(engine.evaluations[1].2.ends_with("src/math.js"));
+        assert!(!engine.evaluations[1].1.is_empty());
+    }
+
+    #[test]
+    fn document_scripts_reject_server_root_and_remote_sources() {
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixture/index.html");
+        for src in ["/assets/app.js", "https://example.com/app.js"] {
+            let document = MockScripts(vec![DocumentScript {
+                source: String::new(),
+                src: Some(src.into()),
+                script_type: None,
+                async_attribute: false,
+                defer_attribute: false,
+            }]);
+            let error = execute_document_scripts(
+                &document,
+                &mut RecordingScriptEngine::default(),
+                &fixture,
+            )
+            .unwrap_err();
+            assert!(error.message().contains("must be relative"));
+        }
     }
 }

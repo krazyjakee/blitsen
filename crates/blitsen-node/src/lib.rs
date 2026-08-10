@@ -533,6 +533,14 @@ impl JsEngine for NodeApiEngine {
     }
 
     fn evaluate_module(&mut self, source: &str, identifier: &str) -> Result<Self::Value, JsError> {
+        let path = Path::new(identifier);
+        if path.is_absolute() && path.is_file() {
+            let specifier = format!("file://{}", identifier.replace(' ', "%20"));
+            return self.evaluate_script(
+                &format!("import({specifier:?})"),
+                "blitsen:external-module-loader",
+            );
+        }
         let source = format!("{source}\n//# sourceURL={identifier}");
         let encoded = base64::engine::general_purpose::STANDARD.encode(source);
         self.evaluate_script(
