@@ -37,7 +37,8 @@
     "src"
   ],
   "scripts": {
-    "test": "bun test"
+    "test": "bun test",
+    "test:native": "bun test/run-native-harness.mjs"
   },
   "publishConfig": {
     "access": "public"

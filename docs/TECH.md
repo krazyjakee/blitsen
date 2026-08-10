@@ -544,7 +544,10 @@ implements roughly 95% of Node-API, which is also what makes the addon strategy 
 
 ## 14. Testing
 
-Interactive verification is the user's job; everything below runs headless in CI.
+Interactive verification is the user's job; everything below is designed to run headlessly.
+GitHub-hosted CI is deliberately disabled. Run the cross-platform bridge suite locally with
+`bun run --cwd packages/blitsen test:native`; it builds and stages the platform's addon before
+executing the same native assertions on Linux, macOS, or Windows.
 
 - **Layout conformance** — a corpus of HTML/CSS cases rendered headless to PNG, compared against
   golden images per platform. Guards product requirement P6 (cross-platform identical layout),
