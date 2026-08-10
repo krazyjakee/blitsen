@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { main } from "../src/cli.mjs";
+import { join } from "node:path";
+import { main, parseArgs, resolveApplication, resolveAsset } from "../src/cli.mjs";
 
 function capture() {
   const lines = [];
@@ -12,16 +13,42 @@ function capture() {
   };
 }
 
-describe("CLI skeleton", () => {
-  test("prints help", () => {
+describe("directory CLI", () => {
+  test("prints help", async () => {
     const { lines, output } = capture();
-    expect(main(["--help"], output)).toBe(0);
-    expect(lines[0][1]).toContain("Usage: blitsen");
+    expect(await main(["--help"], output)).toBe(0);
+    expect(lines[0][1]).toContain("Usage: blitsen <directory>");
   });
 
-  test("fails clearly for unimplemented commands", () => {
+  test("parses native window flags", () => {
+    expect(parseArgs(["app", "--width", "1024", "--height", "720", "--title", "Demo"]))
+      .toEqual({ directory: "app", width: 1024, height: 720, title: "Demo" });
+    expect(() => parseArgs(["app", "--width", "nope"])).toThrow("positive integer");
+  });
+
+  test("resolves an index and relative assets", async () => {
+    const fixture = join(import.meta.dir, "../../../spikes/s7/fixture");
+    const app = await resolveApplication(fixture);
+    expect(app.entrypoint.endsWith("fixture/index.html")).toBeTrue();
+    expect((await resolveAsset(app.root, app.entrypoint, "src/main.js")).endsWith("src/main.js"))
+      .toBeTrue();
+    await expect(resolveAsset(app.root, app.entrypoint, "/src/main.js")).rejects.toThrow(
+      "must be relative",
+    );
+  });
+
+  test("opens a resolved directory through the native runtime", async () => {
+    const fixture = join(import.meta.dir, "../../../spikes/s7/fixture");
+    let opened;
+    const runtime = { openDirectory: async (options) => { opened = options; } };
+    expect(await main([fixture, "--title", "Fixture"], console, runtime)).toBe(0);
+    expect(opened.title).toBe("Fixture");
+    expect(opened.entrypoint.endsWith("index.html")).toBeTrue();
+  });
+
+  test("reports missing entrypoints and unavailable native addons", async () => {
     const { lines, output } = capture();
-    expect(main(["build", "dist"], output)).toBe(1);
-    expect(lines).toEqual([["err", "blitsen: build is not implemented yet"]]);
+    expect(await main([import.meta.dir], output, {})).toBe(1);
+    expect(lines[0][1]).toContain("missing or unreadable entrypoint");
   });
 });

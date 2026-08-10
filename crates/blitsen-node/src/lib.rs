@@ -4,6 +4,7 @@ use std::cell::RefCell;
 use std::ffi::c_void;
 use std::path::Path;
 use std::ptr;
+use std::sync::Arc;
 
 use base64::Engine as _;
 use blitsen_core::WindowState;
@@ -11,9 +12,15 @@ use blitsen_js::{
     ExternalId, JsEngine, JsError, JsType, LoopTurn, NativeCall, NativeCallback, NativeClass,
     NativeMethod, TypedArray, TypedArrayKind,
 };
+use blitz::dom::DocumentConfig;
+use blitz::html::HtmlDocument;
+use blitz::shell::{BlitzApplication, BlitzShellProxy, WindowConfig, create_default_event_loop};
+use blitz::traits::net::NetProvider;
 use napi::bindgen_prelude::{FromNapiValue, Unknown};
 use napi::{Env, JsValue, Status, ValueType, sys};
 use napi_derive::napi;
+use winit::dpi::LogicalSize;
+use winit::window::WindowAttributes;
 
 /// Stable addon name used by packaging and smoke tests.
 pub const ADDON_NAME: &str = "blitsen-node";
@@ -617,6 +624,23 @@ pub struct Engine {
     runtime: RefCell<NodeApiEngine>,
 }
 
+/// Options passed from directory-mode CLI to the native window.
+#[napi(object)]
+pub struct OpenDirectoryOptions {
+    /// Canonical application root.
+    pub root: String,
+    /// Canonical `index.html` path.
+    pub entrypoint: String,
+    /// Initial logical width.
+    pub width: u32,
+    /// Initial logical height.
+    pub height: u32,
+    /// Native title-bar text.
+    pub title: String,
+    /// Original directory argument, retained for diagnostics.
+    pub directory: String,
+}
+
 #[napi]
 impl Engine {
     /// Creates an engine in the current Bun/Node-API environment.
@@ -642,6 +666,43 @@ impl Engine {
         // decorative; document installation follows in issues #23 and #24.
         let _ = self.runtime.borrow_mut().undefined();
         Ok(source)
+    }
+
+    /// Parses `index.html` and runs a native Blitz window until it closes.
+    #[napi(js_name = "openDirectory")]
+    pub fn open_directory(&self, options: OpenDirectoryOptions) -> napi::Result<()> {
+        let source = std::fs::read_to_string(&options.entrypoint).map_err(|error| {
+            napi::Error::new(
+                Status::GenericFailure,
+                format!("could not read {}: {error}", options.entrypoint),
+            )
+        })?;
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .map_err(|error| napi::Error::new(Status::GenericFailure, error.to_string()))?;
+        let _guard = runtime.enter();
+        let event_loop = create_default_event_loop();
+        let (proxy, receiver) = BlitzShellProxy::new(event_loop.create_proxy());
+        let net_provider = Arc::new(blitz::net::Provider::new(Some(Arc::new(proxy.clone()))));
+        let document = HtmlDocument::from_html(
+            &source,
+            DocumentConfig {
+                base_url: Some(format!("file://{}/", options.root.replace(' ', "%20"))),
+                net_provider: Some(net_provider as Arc<dyn NetProvider>),
+                ..Default::default()
+            },
+        );
+        let renderer = anyrender_vello::VelloWindowRenderer::new();
+        let attributes = WindowAttributes::default()
+            .with_title(options.title)
+            .with_surface_size(LogicalSize::new(options.width, options.height));
+        let window = WindowConfig::with_attributes(Box::new(document), renderer, attributes);
+        let mut application = BlitzApplication::new(proxy, receiver);
+        application.add_window(window);
+        event_loop
+            .run_app(application)
+            .map_err(|error| napi::Error::new(Status::GenericFailure, error.to_string()))
     }
 }
 
