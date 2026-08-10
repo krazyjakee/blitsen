@@ -278,6 +278,52 @@ const keyboardDispatch = JSON.parse(native.runBridgeHarness(
 ));
 assert.equal(keyboardDispatch.nodes.find(node => node.attributes.id === "first-key").attributes["data-keyboard"], "ok");
 
+const defaultActions = JSON.parse(native.runBridgeHarness(
+  `<style>
+     #scroller { width:120px; height:60px; overflow:auto }
+     #content { height:300px }
+   </style>
+   <div id="scroller"><div id="content"><button id="focusable"><span id="click-target">target</span></button></div></div>
+   <button id="cancelled"><span id="cancel-target">cancel</span></button>`,
+  `{ const clickTarget = document.getElementById("click-target");
+     const focusable = document.getElementById("focusable");
+     let focusDuringBubble;
+     window.addEventListener("click", () => { focusDuringBubble = document.activeElement; });
+     __blitsenDispatchMouseEventTo("click", clickTarget, { bubbles: true, cancelable: true });
+     if (focusDuringBubble !== document.body || document.activeElement !== focusable)
+       throw new Error("click focus must follow bubbling and choose the nearest focusable ancestor");
+
+     focusable.blur();
+     const cancelTarget = document.getElementById("cancel-target");
+     cancelTarget.addEventListener("click", event => event.preventDefault());
+     __blitsenDispatchMouseEventTo("click", cancelTarget, { bubbles: true, cancelable: true });
+     if (document.activeElement !== document.body) throw new Error("preventDefault click focus");
+
+     __blitsenDispatchMouseEventTo("wheel", clickTarget,
+       { bubbles: true, cancelable: true, deltaY: 40 });
+     const cancelWheel = event => event.preventDefault();
+     clickTarget.addEventListener("wheel", cancelWheel);
+     __blitsenDispatchMouseEventTo("wheel", clickTarget,
+       { bubbles: true, cancelable: true, deltaY: 40 });
+     clickTarget.removeEventListener("wheel", cancelWheel);
+
+     focusable.focus();
+     __blitsenDispatchKeyboardEvent("keydown", { bubbles: true, cancelable: true,
+       key: "ArrowDown", code: "ArrowDown" });
+     const cancelKey = event => event.preventDefault();
+     focusable.addEventListener("keydown", cancelKey);
+     __blitsenDispatchKeyboardEvent("keydown", { bubbles: true, cancelable: true,
+       key: "ArrowDown", code: "ArrowDown" });
+     focusable.removeEventListener("keydown", cancelKey);
+     document.getElementById("scroller").setAttribute("data-defaults", "ok"); }`,
+  200,
+  120,
+));
+const defaultScroller = defaultActions.nodes.find(node => node.attributes.id === "scroller");
+assert.equal(defaultScroller.attributes["data-defaults"], "ok");
+assert.equal(defaultScroller.scroll_y, 80,
+  "wheel and keyboard scroll the nearest ancestor while prevented defaults do nothing");
+
 const treeSnapshot = JSON.parse(native.runBridgeHarness(
   `<body><div id="a"><i id="one">one</i><i id="two">two</i></div><div id="b"></div></body>`,
   `{ const expect = (condition, message) => { if (!condition) throw new Error(message); };

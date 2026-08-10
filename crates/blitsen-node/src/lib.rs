@@ -723,6 +723,8 @@ struct HarnessNode {
     text_content: String,
     attributes: BTreeMap<String, String>,
     inline_style: String,
+    scroll_x: f64,
+    scroll_y: f64,
     layout: HarnessLayout,
 }
 
@@ -801,6 +803,8 @@ struct MouseEventInit {
     screen_y: f64,
     button: u16,
     buttons: u16,
+    delta_x: f64,
+    delta_y: f64,
     ctrl_key: bool,
     shift_key: bool,
     alt_key: bool,
@@ -1146,25 +1150,16 @@ impl<Rend: anyrender::WindowRenderer> WindowApplication<Rend> {
                 screen_y,
                 button,
                 buttons: self.mouse_buttons,
+                delta_x: wheel_delta.map_or(0.0, |delta| delta.0),
+                delta_y: wheel_delta.map_or(0.0, |delta| delta.1),
                 ctrl_key: self.modifiers.control_key(),
                 shift_key: self.modifiers.shift_key(),
                 alt_key: self.modifiers.alt_key(),
                 meta_key: self.modifiers.meta_key(),
             };
-            let default_allowed = match self.dispatch_mouse_event(event_type, hit.target, &init) {
-                Ok(allowed) => allowed,
-                Err(error) => {
-                    *self.error.borrow_mut() = Some(error);
-                    return;
-                }
-            };
-            if default_allowed && let Some((delta_x, delta_y)) = wheel_delta {
-                self.document.borrow_mut().document_mut().scroll_node_by(
-                    hit.target,
-                    -delta_x,
-                    -delta_y,
-                    |_| {},
-                );
+            if let Err(error) = self.dispatch_mouse_event(event_type, hit.target, &init) {
+                *self.error.borrow_mut() = Some(error);
+                return;
             }
             if let PendingMouseInput::Button { button, state, .. } = input {
                 let button_id = dom_mouse_button(button);
@@ -1826,6 +1821,7 @@ fn snapshot_and_render(
             .collect::<BTreeMap<_, _>>();
         let layout = document.bounding_rect(id, snapshot).map_err(dom_error)?;
         let inline_style = document.inline_style_text(id).map_err(dom_error)?;
+        let scroll = *node.scroll_offset();
         nodes.push(HarnessNode {
             handle: id.as_u64(),
             parent: node.parent.map(|parent| parent.as_u64()),
@@ -1833,6 +1829,8 @@ fn snapshot_and_render(
             text_content: document.text_content(id).map_err(dom_error)?,
             inline_style,
             attributes,
+            scroll_x: scroll.x,
+            scroll_y: scroll.y,
             layout: HarnessLayout {
                 x: layout.x,
                 y: layout.y,

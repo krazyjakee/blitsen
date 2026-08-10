@@ -296,6 +296,9 @@ Native pointer coordinates are converted from physical pixels to CSS pixels usin
 window scale. High-frequency `mousemove` input is coalesced to the latest position once per frame.
 `mouseenter`, `mouseleave`, `mouseover`, and `mouseout` are deferred to v1; v0 uses bubbling
 `mousemove` plus hit testing. An uncancelled `wheel` scrolls the nearest scrollable ancestor.
+Uncancelled arrow, Page Up/Down, Home/End, and Space keydowns scroll from the active element and
+bubble through the same ancestor-scrolling path. All of these defaults run only after propagation
+has finished, so any non-passive listener on the path can suppress them with `preventDefault()`.
 
 `document.activeElement` initially resolves to `body`. An uncancelled click focuses the nearest
 enabled form control, link, or element with a nonnegative `tabindex`; Tab and Shift+Tab traverse

@@ -84,7 +84,8 @@ const BOOTSTRAP: &str = r#"
   class MouseEvent extends Event {
     constructor(type, options = {}) {
       super(type, options);
-      const numbers = ["clientX", "clientY", "offsetX", "offsetY", "screenX", "screenY", "button", "buttons"];
+      const numbers = ["clientX", "clientY", "offsetX", "offsetY", "screenX", "screenY",
+        "button", "buttons", "deltaX", "deltaY"];
       for (const property of numbers) Object.defineProperty(this, property, {
         value: Number(options[property] ?? 0), enumerable: true,
       });
@@ -251,8 +252,11 @@ const BOOTSTRAP: &str = r#"
   };
   const dispatchMouseEvent = (type, rawHandle, init) => {
     const target = wrap(String(rawHandle));
-    const allowed = target.dispatchEvent(new MouseEvent(String(type), init));
+    const event = new MouseEvent(String(type), init);
+    const allowed = target.dispatchEvent(event);
     if (type === "click" && allowed) focusNearest(target);
+    if (type === "wheel" && allowed)
+      __blitsenScrollDefault(String(target[handle]), String(-event.deltaX), String(-event.deltaY));
     return allowed;
   };
   const dispatchKeyboardEvent = (type, init) => {
@@ -260,6 +264,15 @@ const BOOTSTRAP: &str = r#"
     const target = activeElement ?? document.body ?? document;
     const allowed = target.dispatchEvent(event);
     if (type === "keydown" && init.key === "Tab" && allowed) moveFocus(Boolean(init.shiftKey));
+    if (type === "keydown" && allowed && target instanceof Node && !event.ctrlKey && !event.altKey && !event.metaKey) {
+      const page = Math.max(1, innerHeight * 0.9);
+      const delta = {
+        ArrowLeft: [-40, 0], ArrowRight: [40, 0], ArrowUp: [0, -40], ArrowDown: [0, 40],
+        PageUp: [0, -page], PageDown: [0, page], Home: [0, -1e9], End: [0, 1e9],
+        " ": [0, event.shiftKey ? -page : page],
+      }[event.key];
+      if (delta) __blitsenScrollDefault(String(target[handle]), String(-delta[0]), String(-delta[1]));
+    }
     return allowed;
   };
   const dispatchLifecycleEvent = type => {
@@ -455,6 +468,10 @@ const BOOTSTRAP: &str = r#"
     __blitsenAnimationFramesPending: () => animationFrames.size > 0,
     __blitsenEventInternals: eventInternals,
     __blitsenDispatchMouseEvent: dispatchMouseEvent,
+    __blitsenDispatchMouseEventTo: (type, target, init = {}) => {
+      if (!(target instanceof Node)) throw new TypeError("mouse event target must be a Node");
+      return dispatchMouseEvent(String(type), target[handle], init);
+    },
     __blitsenDispatchKeyboardEvent: dispatchKeyboardEvent,
     __blitsenDispatchLifecycleEvent: dispatchLifecycleEvent,
   });
@@ -523,6 +540,29 @@ pub(super) fn install(
         }),
     )?;
     engine.set_global("__blitsenDomCall", &call_function)?;
+    let default_scroll_runtime = runtime.clone();
+    let default_scroll_function = engine.define_function(
+        "__blitsenScrollDefault",
+        Box::new(move |call| {
+            let handle = argument(&call.arguments, 0, "scroll target")?;
+            let delta_x = argument(&call.arguments, 1, "horizontal scroll delta")?
+                .parse::<f64>()
+                .map_err(|_| JsError::new("invalid horizontal scroll delta"))?;
+            let delta_y = argument(&call.arguments, 2, "vertical scroll delta")?
+                .parse::<f64>()
+                .map_err(|_| JsError::new("invalid vertical scroll delta"))?;
+            let node = default_scroll_runtime.resolve_handle(&handle)?;
+            let mut document = default_scroll_runtime.document.borrow_mut();
+            document
+                .flush_layout()
+                .map_err(|error| JsError::new(error.to_string()))?;
+            document
+                .document_mut()
+                .scroll_node_by(node, delta_x, delta_y, |_| {});
+            Ok(call.this)
+        }),
+    )?;
+    engine.set_global("__blitsenScrollDefault", &default_scroll_function)?;
     engine.evaluate_script(BOOTSTRAP, "blitsen:dom-bootstrap")?;
 
     let document = engine.evaluate_script("globalThis.document", "blitsen:document-value")?;
