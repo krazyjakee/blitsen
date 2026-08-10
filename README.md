@@ -4,8 +4,9 @@ Blitsen is an experimental native runtime for applications built from static
 HTML, CSS, and JavaScript output. It combines JavaScriptCore with Blitz's native
 HTML/CSS renderer; it does not embed Chromium or an operating-system WebView.
 
-The project is pre-alpha and the feasibility milestone is still in progress.
-See the [product specification](docs/PRODUCT.md),
+The project is pre-alpha. Its Linux x64 feasibility review concluded **go,
+re-scoped**; Windows and macOS validation is deferred. See the
+[M0 decision](docs/M0.md), [product specification](docs/PRODUCT.md),
 [technical specification](docs/TECH.md), and
 [licensing/export requirements](docs/LICENSING.md).
 

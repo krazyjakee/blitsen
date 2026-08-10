@@ -67,10 +67,10 @@ That distinction drives every scoping decision:
 | --- | --- | --- | --- | --- |
 | Renderer you control & ship | ✗ | ✓ | ✗ | ✓ |
 | Consistent across OS versions | ✗ | ✓ | ✗ | ✓ |
-| Bare app size | n/a | ~150–250 MB | ~5–15 MB | **target ~30–50 MB** |
+| Bare app size | n/a | ~150–250 MB | ~5–15 MB | **budget pending full-host measurement** |
 | Full OS access | ✗ | ✓ | ✓ | ✓ |
 | npm ecosystem | ✓ | ✓ | ✓ | ✓ |
-| Adopt without restructuring the project | n/a | partial | partial | ✓ (one dev dependency) |
+| Adopt without restructuring the project | n/a | partial | partial | compatible apps: one dev dependency |
 | Web spec completeness | ✓✓✓ | ✓✓✓ | ✓✓✓ | partial, by design |
 
 Honest statement of the trade: **Blitsen will render less of the web than a browser does.** It
@@ -106,10 +106,11 @@ browser engine.
    execution, native rendering and native packaging. The application supplies architecture,
    libraries, physics, state management, networking and rendering technique. A game, a
    dashboard, an editor and a kiosk are all just applications.
-2. **Drop into existing projects; never ask for a rewrite.** Blitsen is an export target that
-   consumes static web output, not a framework you start a project in. The developer keeps their
-   bundler, their framework and their dev loop. Adoption cost is one dev dependency and one
-   script line — and abandonment cost is deleting them.
+2. **Target existing projects, with compatibility stated up front.** Blitsen is an export target
+   that consumes static web output, not a framework you start a project in. The developer keeps
+   their bundler and framework. For applications inside the published compatibility profile,
+   adoption is one dev dependency and one script line; `blitsen doctor` must name unsupported
+   features before export.
 3. **Web-standard API before bespoke API.** If the web already names a thing, use that name and
    that shape. Invent new surface only where the web has no answer (the OS).
 4. **Partial is fine; incoherent is not.** An unimplemented API should be absent and documented
@@ -335,7 +336,7 @@ provide — so the answer for any given project is mechanical, not guesswork.
 
 | # | Requirement | Target | Notes |
 | --- | --- | --- | --- |
-| P1 | Bare exported app size | ≤ 50 MB installed, ≤ 30 MB compressed | Prototype may be 80–120 MB; see §9. |
+| P1 | Bare exported app size | Numeric budget pending a production-shaped Linux host; materially below an equivalent Electron export | S0 disproved the original ≤50 MB installed target; see §9. |
 | P2 | Cold start to first frame | < 500 ms on mid-range hardware | Should beat Electron decisively or the pitch weakens. |
 | P3 | Idle RAM, bare app | < 100 MB | |
 | P4 | Sustained frame rate | 60 fps for a moderate 2D scene | Measured with the Pong acceptance build. |
@@ -345,38 +346,31 @@ provide — so the answer for any given project is mechanical, not guesswork.
 | P7 | npm compatibility | Pure-JS packages install and import unmodified | Native Node addons: best-effort. |
 | P8 | No runtime dependency on an installed browser or WebView | Absolute | |
 | P9 | Install | `npm i -D blitsen` fetches only the host platform's runtime | No Rust toolchain, no compile step, no postinstall build. |
-| P10 | Adoption cost | One dev dependency + one script line, zero source changes, for an app already building to static output | The core adoption claim; measured against real React/Vue/Svelte projects. |
+| P10 | Adoption cost | One dev dependency + one script line, zero source changes, for an app already building to static output **and inside the published compatibility profile** | `blitsen doctor` must identify unsupported web APIs and renderer features. |
 
 ---
 
 ## 9. Size budget as a product commitment
 
-Size is the headline claim, so it is tracked as a product metric, not left to the build.
+Size remains a product metric, but M0 invalidated the original Phase 2 estimate.
 
 ```
-Phase 1 — prototype, full Bun runtime embedded
-  Bun / JSC runtime            ~60–100 MB
-  Blitz + Stylo + Taffy + window ~5–15 MB
-  bridge                        ~1–5 MB
-  app code                       tiny
-  ────────────────────────────────────────
-  bare app                    ~70–120 MB
+S3 Phase 1 prototype, full Bun runtime embedded (Linux x64)
+  compiled executable          105,814,144 B  measured
 
-Phase 2 — Bun becomes toolchain only; ship a purpose-built JSC runtime
-  JSC + required runtime        ~15–30 MB   (unmeasured)
-  Blitz + native rendering       ~5–15 MB   (unmeasured)
-  web compatibility layer        ~1–5 MB
-  app HTML/CSS/JS               usually <5 MB
-  ────────────────────────────────────────
-  bare app                     ~25–50 MB
-
-Phase 3 — LTO, stripping, feature gating
-  bare app                     ~20–40 MB
+S0 Phase 2 floor, stripped + LTO (Linux x64)
+  JSC + Blitz only              52,480,904 B  measured
+  gzip -9                       24,076,701 B  measured
+  host + bridge + loader + GPU           TBD
+  app + packaging                       TBD
+  ─────────────────────────────────────────
+  production bare app          budget pending
 ```
 
-**These are engineering targets, not measurements.** The Phase 2 and 3 numbers depend on a JSC
-+ Blitz build that does not yet exist; establishing the true floor is an early milestone
-(TECH.md §15). Public size claims are made only from measured builds.
+The S0 floor already exceeds the old 25–50 MB installed estimate before production services or
+application code. That estimate and the derived 20–40 MB Phase 3 estimate are withdrawn. The
+fallback positioning is “still far below Electron”; a numeric target and public claim require a
+complete, measured host. Installed and compressed sizes are always reported separately.
 
 The key architectural consequence, which belongs in the product spec because it defines what
 the user installs: **Bun is the toolchain; JavaScriptCore is the runtime.** The exported app
@@ -387,8 +381,9 @@ installer. It needs JavaScript execution.
 
 ## 10. Acceptance milestones
 
-**M0 — Feasibility spike.** JSC and Blitz compile and link into one binary; measured size
-recorded. This either confirms or kills the Phase 2 budget.
+**M0 — Feasibility spike: complete, go/re-scope.** JSC and Blitz compile and link into one
+binary. The core Linux architecture survived, while the 25–50 MB budget and unrestricted
+drop-in claim did not. See [the M0 decision](M0.md).
 
 **M1 — Hello, DOM.** An `index.html` renders in a native window, a `<script>` runs,
 `document.querySelector("#x").textContent = "hi"` visibly updates the screen.
@@ -402,9 +397,10 @@ JS relayouts correctly.
 toolchain installed. **This is the architecture proof** — the point at which the project is
 demonstrably real.
 
-**M3b — Drop-in.** An unmodified, existing Vite + React app is exported with nothing but
-`npm i -D blitsen` and `blitsen build dist`, and runs. This proves the adoption claim (P10)
-independently of the architecture claim, and is the milestone most likely to attract users.
+**M3b — Compatible adoption.** An unmodified, existing Vite + React app inside Blitsen's
+published compatibility profile is exported with nothing but `npm i -D blitsen` and
+`blitsen build dist`, and runs. This proves P10 independently of the architecture claim;
+applications outside the profile receive actionable `doctor` diagnostics.
 
 **M4 — Ships.** `npm i -D blitsen` resolves the correct runtime on all six platform targets,
 `blitsen build` produces distributable artifacts, and a non-trivial third-party app (an editor or
@@ -419,7 +415,7 @@ dashboard) is built by someone who is not us.
 | Blitz's DOM is not designed for external mutation at JS frequency | High — undermines the core bridge | Spike first (M1). Upstream contribution may be required; Blitz already intends to support custom widgets and extensibility. |
 | Blitz is pre-alpha; CSS coverage may not survive contact with real framework CSS | High — a drop-in exporter that renders real apps wrong is worse than one that refuses them | Golden-image corpus built from actual React/Vue/Svelte output early, not synthetic cases. Treat CSS gaps as upstream contributions. |
 | "Drop-in" invites projects the runtime cannot yet render (Three.js, canvas-heavy apps) | Medium — disappointed first impressions | `blitsen doctor` reports unsupported API usage before the user hits it at runtime; capability tiers published prominently. |
-| Phase 2 size target proves unreachable; JSC alone is bigger than hoped | High — weakens the headline claim | M0 measures it before anything is promised. Fallback positioning: still far below Electron. |
+| The original Phase 2 size target is unreachable; the measured floor is already 52.48 MB | High — removes the numeric headline | Withdraw the 25–50 MB claim. Measure the complete host, set a platform budget, and use only the fallback positioning: materially below Electron. |
 | Partial web platform frustrates users who expect browser parity | Medium | Documented capability tiers; absent APIs absent, never half-working. Positioning never says "browser". |
 | Upstream churn in Blitz or Bun | Medium | Pin versions; keep the bridge behind our own interface so upstream shape changes are contained. |
 | Effort scale — this is a multi-year systems project | High | Ruthless v0. Pong, then re-evaluate. |

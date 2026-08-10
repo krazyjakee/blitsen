@@ -435,9 +435,8 @@ that, and duplicating it would make Blitsen a competitor to Vite instead of a ta
 - **Phase 2** step ④ links our JSC-based runtime and appends the bundle as a binary section read
   at startup.
 
-Step ② is what keeps the drop-in promise honest. Because Blitsen accepts arbitrary bundler output,
-it will be handed code it cannot run; the failure must arrive at build time with a named API and
-file, not as a blank window at runtime.
+Step ② keeps the compatibility promise honest. Blitsen will be handed output it cannot run; the
+failure must arrive at build time with a named API and file, not as a blank window at runtime.
 
 ### Optional build wrapping
 
@@ -508,8 +507,9 @@ blitsen                        ← thin JS: CLI, config, TypeScript definitions
 This packaging boundary is what makes the host-model change (§2) invisible to users. In Phase 1
 the platform package contains Bun-plus-addon; in Phase 2 it contains our own JSC-based runtime.
 The npm package, the CLI, the config format and the user's `package.json` are identical across
-that change. **The size claim improves and nothing else moves.** That is a strong argument for
-building the distribution layer early rather than treating it as a shipping concern.
+that change. The host transition is still expected to reduce size, but M0 disproved the original
+25–50 MB target; both installed executable and shipped dynamic-library size must be remeasured.
+Keeping the distribution boundary stable remains a strong argument for building it early.
 
 ### Native API resolution
 
@@ -542,15 +542,16 @@ Interactive verification is the user's job; everything below runs headless in CI
   input device.
 - **Frame determinism** — record/replay of an input trace at a fixed timestep, producing a
   deterministic frame hash sequence.
-- **Size regression** — every CI build records the bare-app size for each platform and fails on
-  regression beyond a threshold. Product requirement P1 is enforced here or nowhere.
+- **Size regression** — the local release verification records bare-app size and fails on
+  regression beyond a threshold. Restore this check to automation only when CI is re-enabled.
 - **Startup benchmark** — cold start to first frame, tracked per commit (P2).
 
 ---
 
-## 15. Spikes to run before committing
+## 15. Feasibility spikes
 
-These are the load-bearing unknowns. Each is small, and each can invalidate a chunk of the plan.
+All eight spikes were completed on Linux x64. The consolidated outcome is **go, re-scoped**;
+see [the M0 decision](M0.md). Windows and macOS validation is deferred.
 
 | # | Question | Kills / changes what |
 | --- | --- | --- |
@@ -563,9 +564,9 @@ These are the load-bearing unknowns. Each is small, and each can invalidate a ch
 | **S6** | Take an unmodified `vite build` output from a real React app and render it. How much of its CSS does Blitz get right, and what breaks first? | §10 ingest and the entire drop-in premise. Cheap to run today with Blitz alone — **no bridge required** — which makes it the best early read on feasibility. |
 | **S7** | Can the runtime load a document and its module graph over HTTP from a running dev server? | §10 proxy mode, the cheapest adoption on-ramp. |
 
-**S0, S2 and S6 are the three that can end the project as specified.** S6 is the cheapest of
-them by a wide margin — it needs no bridge, no JS engine and no bindings, only Blitz and a real
-app's build output — so run it first even though it is numbered later.
+S0 killed the original 25–50 MB estimate, S2 validated bridge-driven mutation without a fork,
+and S6 narrowed the unrestricted drop-in claim to a documented compatibility profile. The
+remaining spikes validated the Linux host architecture while identifying bounded upstream work.
 
 ---
 
@@ -581,9 +582,9 @@ Rules that, if broken, cost a rewrite rather than a refactor:
 4. **No web API is added without its absence being detectable.** Feature detection must work.
 5. **Nothing about games, scenes, ECS or physics enters the runtime.** The viewport element is
    the boundary; past it is application territory.
-6. **Blitsen never bundles, transpiles or resolves the application's modules.** The input is built
-   static output. The moment Blitsen owns any part of the user's build, it becomes a competitor to
-   Vite rather than a target for it, and the drop-in premise is gone.
+6. **Blitsen never bundles or transpiles the application.** The input is built static output.
+   The runtime may load its already-built module graph, but the moment Blitsen owns the user's
+   source build it becomes a competitor to Vite rather than a target for it.
 7. **The npm surface — CLI, config, package layout — is stable across the Phase 1 → Phase 2 host
    change.** Users must experience that migration as a smaller binary and nothing else.
 

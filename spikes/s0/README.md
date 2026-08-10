@@ -2,8 +2,8 @@
 
 Status: concluded from the Linux x64 measurement. The initial macOS arm64 and
 Windows x64 measurements are explicitly deferred; the user accepted Linux-only
-evidence for this feasibility decision on 2026-08-10. A rerunnable workflow remains
-in `.github/workflows/s0-size.yml` for later platform measurements.
+evidence for this feasibility decision on 2026-08-10. The local reproduction script
+remains available; repository CI workflows were removed at the user's request.
 
 ## Result
 
