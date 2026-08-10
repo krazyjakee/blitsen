@@ -6,6 +6,7 @@ use std::path::Path;
 use std::ptr;
 
 use base64::Engine as _;
+use blitsen_core::WindowState;
 use blitsen_js::{
     ExternalId, JsEngine, JsError, JsType, LoopTurn, NativeCall, NativeCallback, NativeClass,
     NativeMethod, TypedArray, TypedArrayKind,
@@ -709,6 +710,36 @@ pub fn node_api_smoke(env: Env) -> napi::Result<bool> {
         .and_then(|value| engine.to_string(&value))
         .map_err(napi_error)?;
     if global_result != "visible" {
+        return Ok(false);
+    }
+
+    let document = engine.object().map_err(napi_error)?;
+    let mut window_state = WindowState::new(800, 600, 2.0);
+    let window = window_state
+        .install(&mut engine, &document)
+        .map_err(napi_error)?;
+    let window_check = engine
+        .evaluate_script(
+            "window === globalThis && window.document !== undefined && innerWidth === 800 && innerHeight === 600 && devicePixelRatio === 2 && !('location' in window) && !('history' in window) && !('navigator' in window) && !('localStorage' in window)",
+            "window-smoke.js",
+        )
+        .and_then(|value| engine.to_boolean(&value))
+        .map_err(napi_error)?;
+    if !window_check {
+        return Ok(false);
+    }
+    window_state.resize(1024, 768);
+    window_state
+        .sync(&mut engine, &window)
+        .map_err(napi_error)?;
+    let resized = engine
+        .evaluate_script(
+            "innerWidth === 1024 && innerHeight === 768",
+            "resize-smoke.js",
+        )
+        .and_then(|value| engine.to_boolean(&value))
+        .map_err(napi_error)?;
+    if !resized {
         return Ok(false);
     }
 
