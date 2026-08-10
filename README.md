@@ -10,6 +10,10 @@ re-scoped**; Windows and macOS validation is deferred. See the
 [technical specification](docs/TECH.md), and
 [licensing/export requirements](docs/LICENSING.md).
 
+Input, animation and restyle are proven together on Linux x64 by
+[`examples/interactive`](examples/interactive), whose gate drives the document through the same
+coordinate hit test the native window uses. See the [M2 acceptance evidence](docs/M2.md).
+
 The Linux x64 architecture proof is now complete: [`examples/pong`](examples/pong) is a
 three-file, two-player Pong app that runs at 60 Hz from a single Phase 1 executable. See the
 [M3 acceptance evidence](docs/M3.md). Phase 1 exports are not yet cleared for redistribution.

@@ -38,9 +38,11 @@
   ],
   "scripts": {
     "example:hello": "bun test/run-hello-dom.mjs",
+    "example:interactive": "bun test/run-interactive.mjs",
     "example:pong": "bun test/run-pong.mjs",
     "test": "bun test",
     "test:native": "bun test/run-native-harness.mjs",
+    "test:m2": "bun test/run-m2.mjs",
     "test:m3b": "bun test/run-m3b.mjs",
     "test:standalone": "bun test/run-standalone.mjs"
   },

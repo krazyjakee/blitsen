@@ -329,6 +329,7 @@ dependencies = [
  "blitsen-js",
  "blitsen-platform",
  "blitz",
+ "data-url",
  "napi",
  "napi-build",
  "napi-derive",

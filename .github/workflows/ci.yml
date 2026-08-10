@@ -63,4 +63,6 @@ jobs:
             libx11-dev libxcursor-dev libxi-dev libxrandr-dev
       - run: bun install --frozen-lockfile
       - run: bun run --cwd packages/blitsen test:native
+      - run: bun run --cwd packages/blitsen test:m2
       - run: bun run --cwd packages/blitsen test:standalone
+      - run: bun run --cwd packages/blitsen test:m3b

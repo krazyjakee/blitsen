@@ -433,20 +433,27 @@ import { app }       from "native:app";
 
 | Module | Surface |
 | --- | --- |
-| `native:app` | argv, executable path, app-data paths, single-instance lock, restart, quit, suspend/resume, file associations and `myapp://` protocol handling |
+| `native:app` | app-data/cache/config paths, single-instance lock, restart, quit request, suspend/resume, file associations and `myapp://` protocol handling |
 | `native:window` | create, resize, fullscreen, borderless, always-on-top, transparency, cursor control, monitor enumeration, DPI |
 | `native:dialog` | open/save file, folder picker, message box |
 | `native:clipboard` | text, images, arbitrary MIME |
 | `native:tray` | tray icon, context menu, application menu |
 | `native:notify` | desktop notifications |
 | `native:input` | raw keyboard/mouse state, gamepads, potentially raw HID |
-| `native:os` | CPU, memory, displays, username, platform, arch, battery, locale |
-| `native:fs` | watching, temp files, memory-mapped buffers (beyond `node:fs`) |
-| `native:net` | TCP/UDP sockets and listeners, beyond HTTP/WebSocket |
+| `native:os` | displays, battery, locale, idle time |
 
-Generic system access uses the interfaces that already exist rather than new names —
-`node:fs`, `node:child_process`, `node:net`, `bun:sqlite` — so existing packages work
-unmodified.
+**The rule: `native:` is additive, never a superset.** Anything the Node surface already names
+keeps its Node name — `process.argv`, `process.execPath`, `process.exit`, `node:os` for CPU /
+memory / platform / arch / username, `node:fs`, `node:child_process`, `node:net`, `node:dgram`,
+`bun:sqlite`. A `native:` module exists only for capability that has no Node spelling at all. This
+is what keeps existing packages working unmodified, and it is why there is no `native:fs` or
+`native:net`: filesystem watching is `node:fs.watch` and raw sockets are `node:net`/`node:dgram`.
+Where a genuine gap remains (memory-mapped buffers, raw HID), it gets a narrowly named module of
+its own rather than a parallel re-spelling of a module Bun already ships.
+
+The rule also has a Phase 2 cost argument behind it. When the embedded-JSC host replaces Bun
+(§3), every Node module the design leans on becomes ours to supply — deferred work, not avoided
+work. A `native:` module that duplicates one is that work done twice.
 
 **The escape hatch is a first-class feature.** `.node` addons load at runtime, so users write
 Rust/C/C++ extensions and import them directly. Node-API's ABI stability is what makes this a

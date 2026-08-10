@@ -262,6 +262,10 @@ import fs from "node:fs";
 import { spawn } from "node:child_process";
 ```
 
+The two never overlap. `native:` covers only what has no Node spelling at all — windows, trays,
+dialogs, clipboard. Files, processes, sockets and process metadata keep their Node names, so
+existing packages work unmodified.
+
 Plus the unlimited escape hatch:
 
 ```js
@@ -391,9 +395,10 @@ drop-in claim did not. See [the M0 decision](M0.md).
 **M1 — Hello, DOM: complete.** An `index.html` renders in a native window, a `<script>` runs,
 `document.querySelector("#x").textContent = "hi"` visibly updates the screen.
 
-**M2 — Interactive: complete.** Click and keyboard events dispatch to JS listeners with correct
-propagation; `requestAnimationFrame` drives a smooth animation; style and class mutation from
-JS relayouts correctly.
+**M2 — Interactive: complete on Linux x64.** Click and keyboard events dispatch to JS listeners
+with correct propagation; `requestAnimationFrame` drives a smooth animation; style and class
+mutation from JS relayouts correctly. Input enters through the same hit test the native window
+uses. See [the M2 acceptance evidence](M2.md).
 
 **M3 — Pong: complete on Linux x64.** A complete playable Pong exists as nothing but `index.html`, `style.css` and
 `game.js`, holds 60 fps, and runs from a single exported executable on a machine with no

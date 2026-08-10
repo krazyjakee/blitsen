@@ -657,6 +657,22 @@ const BOOTSTRAP: &str = r#"
     if (!(target instanceof Node)) throw new TypeError("mouse event target must be a Node");
     return dispatchMouseEvent(String(type), target[handle], init);
   };
+  // Injects at viewport coordinates the way the native window does: hit test the
+  // laid-out tree first, then dispatch at whatever that resolves to. Harness-only,
+  // so tests exercise the same path as real input rather than picking a target.
+  if (testHarness) globals.__blitsenInjectPointerAt = (type, clientX, clientY, init = {}) => {
+    const hit = call("hitTest", Number(clientX), Number(clientY));
+    if (!hit) return null;
+    const allowed = dispatchMouseEvent(String(type), hit.target, {
+      bubbles: true, cancelable: true,
+      clientX: Number(clientX), clientY: Number(clientY),
+      screenX: Number(clientX), screenY: Number(clientY),
+      offsetX: hit.offsetX, offsetY: hit.offsetY,
+      button: 0, buttons: type === "mousedown" ? 1 : 0,
+      ...init,
+    });
+    return { allowed, target: wrap(hit.target), path: hit.path.map(wrap) };
+  };
   Object.assign(globalThis, globals);
   globalThis.window = globalThis;
   for (const key of ["location", "history", "navigator", "localStorage"]) {
@@ -881,6 +897,26 @@ fn dispatch(runtime: &DomRuntime, operation: &str, arguments: &[String]) -> Resu
                 "scrollLeft": metrics.scroll_left,
                 "scrollTop": metrics.scroll_top,
             }))
+        }
+        "hitTest" => {
+            let x = bridge_arg(arguments, 0, "hit-test x")?
+                .parse::<f32>()
+                .map_err(|_| JsError::new("invalid hit-test x"))?;
+            let y = bridge_arg(arguments, 1, "hit-test y")?
+                .parse::<f32>()
+                .map_err(|_| JsError::new("invalid hit-test y"))?;
+            let snapshot = dom.flush_layout().map_err(dom_error)?;
+            Ok(match dom.hit_test(x, y, snapshot).map_err(dom_error)? {
+                None => Value::Null,
+                Some(hit) => json!({
+                    "target": DomRuntime::serialize_handle(hit.target),
+                    "path": hit.path.into_iter()
+                        .map(DomRuntime::serialize_handle)
+                        .collect::<Vec<_>>(),
+                    "offsetX": hit.offset_x,
+                    "offsetY": hit.offset_y,
+                }),
+            })
         }
         "setScroll" => {
             let forced = dom.layout_is_dirty();

@@ -28,7 +28,7 @@ use blitz::dom::{
 };
 use blitz::paint::paint_scene;
 use blitz::shell::{BlitzApplication, BlitzShellProxy, WindowConfig, create_default_event_loop};
-use blitz::traits::net::NetProvider;
+use blitz::traits::net::{Bytes, NetHandler, NetProvider};
 use blitz::traits::shell::{ColorScheme, Viewport};
 use napi::bindgen_prelude::{FromNapiValue, Unknown};
 use napi::{Env, JsValue, Status, ValueType, sys};
@@ -1580,6 +1580,7 @@ impl Engine {
             &options.entrypoint,
             options.width,
             options.height,
+            false,
         )?;
         drop(engine);
         document.borrow_mut().flush_layout().map_err(dom_error)?;
@@ -1680,6 +1681,7 @@ impl Engine {
             &options.entrypoint,
             logical.width,
             logical.height,
+            false,
         )?;
         document.borrow_mut().flush_layout().map_err(dom_error)?;
 
@@ -1866,6 +1868,7 @@ fn execute_window_scripts(
     entrypoint: &str,
     width: u32,
     height: u32,
+    test_harness: bool,
 ) -> napi::Result<Rc<RefCell<WindowState>>> {
     let module_root = Path::new(entrypoint)
         .parent()
@@ -1889,8 +1892,8 @@ fn execute_window_scripts(
     engine
         .evaluate_script(&cleanup, "blitsen:dispose-document-context")
         .map_err(napi_error)?;
-    let window_state =
-        dom_bridge::install(engine, runtime, width, height, 1.0, false).map_err(napi_error)?;
+    let window_state = dom_bridge::install(engine, runtime, width, height, 1.0, test_harness)
+        .map_err(napi_error)?;
     engine
         .evaluate_script(
             r#"(() => {
@@ -2102,6 +2105,44 @@ fn snapshot_and_render(
     ))
 }
 
+/// Resolves `file:` and `data:` subresources synchronously, on the calling thread.
+///
+/// The windowed host answers subresource requests through the winit event loop, which
+/// a headless harness does not run. Without a provider the document parses with its
+/// external stylesheets missing, so every layout assertion silently measures unstyled
+/// boxes. This one hands the bytes back before `fetch` returns, so style is complete
+/// by the time parsing finishes.
+struct LocalNetProvider;
+
+impl NetProvider for LocalNetProvider {
+    fn fetch(
+        &self,
+        _doc_id: usize,
+        request: blitz::traits::net::Request,
+        handler: Box<dyn NetHandler>,
+    ) {
+        let url = request.url.as_str().to_string();
+        let bytes = match request.url.scheme() {
+            "file" => request
+                .url
+                .to_file_path()
+                .ok()
+                .and_then(|path| std::fs::read(path).ok()),
+            "data" => data_url::DataUrl::process(&url)
+                .ok()
+                .and_then(|data| data.decode_to_vec().ok())
+                .map(|(bytes, _)| bytes),
+            // Remote subresources are refused rather than fetched: an offline harness
+            // that silently skipped them would report a different layout than a machine
+            // that could reach the network.
+            _ => None,
+        };
+        if let Some(bytes) = bytes {
+            handler.bytes(url, Bytes::from(bytes));
+        }
+    }
+}
+
 fn execute_document_harness(
     env: Env,
     entrypoint: &Path,
@@ -2119,6 +2160,7 @@ fn execute_document_harness(
         &source,
         DocumentConfig {
             base_url: Some(format!("file://{}/", root.display())),
+            net_provider: Some(Arc::new(LocalNetProvider) as Arc<dyn NetProvider>),
             viewport: Some(Viewport::new(width, height, 1.0, ColorScheme::Light)),
             ..Default::default()
         },
@@ -2133,6 +2175,9 @@ fn execute_document_harness(
         &entrypoint.to_string_lossy(),
         width,
         height,
+        // Mirrors a shipped window exactly, injection surface included, so the
+        // fixture guard against test-only globals leaking stays meaningful.
+        false,
     )?;
     engine
         .evaluate_script(
@@ -2165,6 +2210,7 @@ fn execute_document_animation_harness(
         &source,
         DocumentConfig {
             base_url: Some(format!("file://{}/", root.display())),
+            net_provider: Some(Arc::new(LocalNetProvider) as Arc<dyn NetProvider>),
             viewport: Some(Viewport::new(width, height, 1.0, ColorScheme::Light)),
             ..Default::default()
         },
@@ -2179,6 +2225,7 @@ fn execute_document_animation_harness(
         &entrypoint.to_string_lossy(),
         width,
         height,
+        true,
     )?;
     engine
         .evaluate_script(
