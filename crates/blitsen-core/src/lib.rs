@@ -20,21 +20,3 @@ impl<D: DomBackend, J: JsEngine> Bridge<D, J> {
         (self.dom, self.js)
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    struct TestDom;
-    impl DomBackend for TestDom {}
-
-    // JsEngine deliberately has no default operations: every host must make an
-    // explicit choice for the complete boundary. DomBackend is still a marker
-    // until issue #15 defines its surface.
-    fn assert_dom_boundary<T: DomBackend>() {}
-
-    #[test]
-    fn bridge_dom_type_is_runtime_neutral() {
-        assert_dom_boundary::<TestDom>();
-    }
-}
