@@ -1,0 +1,2150 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Blitsen — Product Specification</title>
+<style>
+/* ─────────────────────────────────────────────────────────────
+   Blitsen — Product Specification
+   Datasheet treatment: grey card, ultramarine ink, mono display.
+   ───────────────────────────────────────────────────────────── */
+
+:root {
+  color-scheme: light;
+
+  --paper:        #E7E6E1;
+  --raised:       #F3F2EE;
+  --sunken:       #DEDDD7;
+  --ink:          #16171A;
+  --ink-soft:     #5B5D63;
+  --ink-faint:    #86878C;
+  --rule:         #CBC9C2;
+  --rule-soft:    #DAD8D1;
+  --accent:       #2B44C7;
+  --accent-deep:  #1E31A0;
+  --accent-wash:  #DCE0F8;
+  --accent-line:  #A9B4EE;
+
+  --sev-high:     #A62A1E;
+  --sev-high-bg:  #F2DAD6;
+  --sev-med:      #7A5A05;
+  --sev-med-bg:   #EDE5CE;
+  --ok:           #1E6B4A;
+  --ok-bg:        #D7E7DE;
+
+  --s1: #2B44C7;   /* JS runtime      */
+  --s2: #C2571F;   /* renderer        */
+  --s3: #00907B;   /* bridge          */
+  --s4: #7D6A08;   /* app code        */
+
+  --shadow: 0 1px 0 rgba(22,23,26,.05);
+
+  --font-mono: ui-monospace, "SFMono-Regular", "JetBrains Mono", "Cascadia Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace;
+  --font-serif: "Iowan Old Style", Charter, "Palatino Linotype", Palatino, Georgia, "Liberation Serif", "DejaVu Serif", serif;
+
+  --measure: 67ch;
+  --rail: 15.5rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+
+    --paper:        #16171A;
+    --raised:       #1E2024;
+    --sunken:       #101114;
+    --ink:          #E9E8E3;
+    --ink-soft:     #9B9DA4;
+    --ink-faint:    #74767D;
+    --rule:         #2E3138;
+    --rule-soft:    #24262B;
+    --accent:       #7B92FF;
+    --accent-deep:  #A5B4FF;
+    --accent-wash:  #1E2445;
+    --accent-line:  #3A4470;
+
+    --sev-high:     #EE8471;
+    --sev-high-bg:  #3A1F1B;
+    --sev-med:      #D6A63C;
+    --sev-med-bg:   #33290F;
+    --ok:           #58BF92;
+    --ok-bg:        #122C22;
+
+    --s1: #6E86F2;
+    --s2: #D9713F;
+    --s3: #1E9C8A;
+    --s4: #B4901A;
+
+    --shadow: 0 1px 0 rgba(0,0,0,.35);
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --paper:        #16171A;
+  --raised:       #1E2024;
+  --sunken:       #101114;
+  --ink:          #E9E8E3;
+  --ink-soft:     #9B9DA4;
+  --ink-faint:    #74767D;
+  --rule:         #2E3138;
+  --rule-soft:    #24262B;
+  --accent:       #7B92FF;
+  --accent-deep:  #A5B4FF;
+  --accent-wash:  #1E2445;
+  --accent-line:  #3A4470;
+
+  --sev-high:     #EE8471;
+  --sev-high-bg:  #3A1F1B;
+  --sev-med:      #D6A63C;
+  --sev-med-bg:   #33290F;
+  --ok:           #58BF92;
+  --ok-bg:        #122C22;
+
+  --s1: #6E86F2;
+  --s2: #D9713F;
+  --s3: #1E9C8A;
+  --s4: #B4901A;
+
+  --shadow: 0 1px 0 rgba(0,0,0,.35);
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-serif);
+  font-size: 1.0625rem;
+  line-height: 1.62;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+::selection { background: var(--accent-wash); color: var(--ink); }
+
+a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: .2em; }
+a:hover { color: var(--accent-deep); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 2px; }
+
+/* ── page frame ─────────────────────────────────────────────── */
+
+.sheet {
+  max-width: 84rem;
+  margin: 0 auto;
+  padding: 0 clamp(1.1rem, 4vw, 3.5rem) 6rem;
+}
+
+/* ── masthead ───────────────────────────────────────────────── */
+
+.masthead { padding: clamp(2.5rem, 6vw, 4.5rem) 0 0; }
+
+.ticks {
+  display: block;
+  width: 100%;
+  height: 14px;
+  color: var(--rule);
+  margin-bottom: 1.6rem;
+}
+
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: .7rem;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  margin: 0 0 1.1rem;
+}
+
+.wordmark {
+  font-family: var(--font-mono);
+  font-size: clamp(3rem, 12vw, 7.5rem);
+  font-weight: 600;
+  letter-spacing: -.055em;
+  line-height: .92;
+  margin: 0;
+  text-wrap: balance;
+}
+.wordmark .dot { color: var(--accent); }
+
+.deck {
+  font-size: clamp(1.15rem, 2.4vw, 1.55rem);
+  line-height: 1.4;
+  max-width: 40ch;
+  margin: 1.4rem 0 0;
+  color: var(--ink);
+  text-wrap: balance;
+}
+.deck b { font-weight: 600; }
+
+.pitch {
+  margin: 2.6rem 0 0;
+  padding: 1.4rem 0 1.4rem 1.6rem;
+  border-left: 3px solid var(--accent);
+  font-size: clamp(1.05rem, 2vw, 1.3rem);
+  line-height: 1.45;
+  max-width: 46ch;
+  text-wrap: balance;
+}
+.pitch cite {
+  display: block;
+  font-family: var(--font-mono);
+  font-style: normal;
+  font-size: .7rem;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  margin-top: .9rem;
+}
+
+.colophon {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+  gap: 0;
+  margin: 3.2rem 0 0;
+  border-top: 1px solid var(--ink);
+  border-bottom: 1px solid var(--rule);
+}
+.colophon div {
+  padding: .85rem 1rem .95rem 0;
+  border-right: 1px solid var(--rule-soft);
+}
+.colophon div:last-child { border-right: 0; }
+.colophon dt {
+  font-family: var(--font-mono);
+  font-size: .64rem;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  margin: 0 0 .3rem;
+}
+.colophon dd {
+  font-family: var(--font-mono);
+  font-size: .87rem;
+  margin: 0;
+  color: var(--ink);
+}
+
+/* ── two-column body ────────────────────────────────────────── */
+
+.layout {
+  display: grid;
+  grid-template-columns: var(--rail) minmax(0, 1fr);
+  gap: clamp(2rem, 5vw, 4.5rem);
+  margin-top: clamp(3rem, 7vw, 5rem);
+  align-items: start;
+}
+@media (max-width: 62rem) {
+  .layout { grid-template-columns: minmax(0, 1fr); gap: 2rem; }
+}
+
+/* ── contents rail ──────────────────────────────────────────── */
+
+.rail { position: sticky; top: 1.75rem; }
+@media (max-width: 62rem) {
+  .rail {
+    position: static;
+    border: 1px solid var(--rule);
+    padding: 1.1rem 1.2rem;
+    background: var(--raised);
+  }
+}
+.rail h2 {
+  font-family: var(--font-mono);
+  font-size: .64rem;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  margin: 0 0 .85rem;
+  padding-bottom: .6rem;
+  border-bottom: 1px solid var(--rule);
+}
+.rail ol { list-style: none; margin: 0; padding: 0; }
+.rail li { margin: 0; }
+.rail a {
+  display: grid;
+  grid-template-columns: 1.9rem 1fr;
+  gap: .1rem;
+  padding: .3rem 0;
+  font-family: var(--font-mono);
+  font-size: .78rem;
+  line-height: 1.35;
+  color: var(--ink-soft);
+  text-decoration: none;
+  border-left: 2px solid transparent;
+  padding-left: .55rem;
+  transition: color .15s, border-color .15s;
+}
+.rail a:hover { color: var(--ink); }
+.rail a .n { color: var(--ink-faint); }
+.rail a[aria-current="true"] {
+  color: var(--accent);
+  border-left-color: var(--accent);
+}
+.rail a[aria-current="true"] .n { color: var(--accent); }
+
+/* ── article ────────────────────────────────────────────────── */
+
+.doc { min-width: 0; }
+.doc > section { margin: 0 0 clamp(3.2rem, 7vw, 5rem); scroll-margin-top: 1.5rem; }
+.doc p, .doc ul, .doc ol, .doc figure, .doc .block { max-width: var(--measure); }
+
+h2.sec {
+  display: grid;
+  grid-template-columns: 3.2rem 1fr;
+  align-items: baseline;
+  gap: 0;
+  font-family: var(--font-serif);
+  font-weight: 600;
+  font-size: clamp(1.5rem, 3vw, 2rem);
+  line-height: 1.18;
+  letter-spacing: -.015em;
+  margin: 0 0 1.4rem;
+  padding-bottom: .9rem;
+  border-bottom: 1px solid var(--ink);
+  text-wrap: balance;
+}
+h2.sec .n {
+  font-family: var(--font-mono);
+  font-size: .78rem;
+  font-weight: 500;
+  letter-spacing: .06em;
+  color: var(--accent);
+  transform: translateY(-.15em);
+}
+@media (max-width: 34rem) {
+  h2.sec { grid-template-columns: 2.4rem 1fr; }
+}
+
+h3.sub {
+  font-family: var(--font-mono);
+  font-size: .74rem;
+  font-weight: 600;
+  letter-spacing: .15em;
+  text-transform: uppercase;
+  color: var(--ink);
+  margin: 2.6rem 0 .9rem;
+}
+h3.sub::before {
+  content: "";
+  display: inline-block;
+  width: .8rem;
+  height: 1px;
+  background: var(--accent);
+  vertical-align: .28em;
+  margin-right: .55rem;
+}
+
+.doc p { margin: 0 0 1.05rem; }
+.doc p.lead { font-size: 1.15rem; line-height: 1.55; }
+strong { font-weight: 600; }
+em { font-style: italic; }
+
+code, kbd, samp {
+  font-family: var(--font-mono);
+  font-size: .845em;
+  background: var(--sunken);
+  border: 1px solid var(--rule-soft);
+  border-radius: 3px;
+  padding: .08em .34em;
+}
+
+/* ── lists ──────────────────────────────────────────────────── */
+
+ul.plain, ol.plain { padding-left: 1.15rem; }
+ul.plain li, ol.plain li { margin: 0 0 .7rem; padding-left: .3rem; }
+ul.plain li::marker { color: var(--accent); }
+ol.plain li::marker { font-family: var(--font-mono); font-size: .82em; color: var(--accent); }
+
+ul.strike { list-style: none; padding: 0; margin: 0; }
+ul.strike li {
+  display: grid;
+  grid-template-columns: 1.5rem 1fr;
+  gap: .3rem;
+  margin: 0 0 .6rem;
+  color: var(--ink-soft);
+}
+ul.strike li::before {
+  content: "✗";
+  font-family: var(--font-mono);
+  color: var(--sev-high);
+  font-size: .9rem;
+}
+ul.strike li > span { display: block; }
+
+/* numbered principles */
+ol.principles { list-style: none; counter-reset: p; margin: 0; padding: 0; }
+ol.principles > li {
+  counter-increment: p;
+  display: grid;
+  grid-template-columns: 2.6rem 1fr;
+  gap: .2rem;
+  padding: 1rem 0;
+  border-top: 1px solid var(--rule-soft);
+}
+ol.principles > li:first-child { border-top: 1px solid var(--rule); }
+ol.principles > li::before {
+  content: counter(p, decimal-leading-zero);
+  font-family: var(--font-mono);
+  font-size: .74rem;
+  color: var(--accent);
+  padding-top: .38em;
+  letter-spacing: .05em;
+}
+
+/* ── callouts ───────────────────────────────────────────────── */
+
+.callout {
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--accent);
+  background: var(--raised);
+  padding: 1.05rem 1.25rem;
+  margin: 1.6rem 0;
+  max-width: var(--measure);
+}
+.callout p:last-child { margin-bottom: 0; }
+.callout .tag {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: .64rem;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  margin-bottom: .5rem;
+}
+.callout.warn { border-left-color: var(--sev-high); }
+.callout.warn .tag { color: var(--sev-high); }
+
+/* ── code ───────────────────────────────────────────────────── */
+
+.code {
+  position: relative;
+  margin: 1.3rem 0;
+  border: 1px solid var(--rule);
+  background: var(--raised);
+  box-shadow: var(--shadow);
+  max-width: min(100%, 43rem);
+}
+.code .lang {
+  font-family: var(--font-mono);
+  font-size: .6rem;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  padding: .45rem .9rem .4rem;
+  border-bottom: 1px solid var(--rule-soft);
+  background: var(--sunken);
+}
+.code pre {
+  margin: 0;
+  padding: .95rem 1.1rem 1.05rem;
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: .82rem;
+  line-height: 1.65;
+  tab-size: 2;
+}
+.code pre code { background: none; border: 0; padding: 0; font-size: inherit; }
+.c-cmt { color: var(--ink-faint); }
+.c-key { color: var(--accent); }
+.c-str { color: var(--s3); }
+.c-dim { color: var(--ink-soft); }
+
+/* ── tables ─────────────────────────────────────────────────── */
+
+.tablewrap {
+  overflow-x: auto;
+  margin: 1.4rem 0;
+  border-bottom: 1px solid var(--rule);
+}
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: .93rem;
+  min-width: 32rem;
+}
+thead th {
+  font-family: var(--font-mono);
+  font-size: .63rem;
+  font-weight: 600;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  text-align: left;
+  padding: 0 .9rem .6rem 0;
+  border-bottom: 1px solid var(--ink);
+  vertical-align: bottom;
+}
+tbody td, tbody th {
+  text-align: left;
+  font-weight: 400;
+  padding: .75rem .9rem .75rem 0;
+  border-bottom: 1px solid var(--rule-soft);
+  vertical-align: top;
+}
+tbody tr:last-child td, tbody tr:last-child th { border-bottom: 0; }
+tbody tr:hover { background: var(--raised); }
+th:last-child, td:last-child { padding-right: 0; }
+.num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: .84rem; white-space: nowrap; }
+.mono { font-family: var(--font-mono); font-size: .84rem; }
+.id {
+  font-family: var(--font-mono);
+  font-size: .74rem;
+  letter-spacing: .06em;
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+/* comparison matrix */
+.matrix { min-width: 40rem; }
+.matrix th.col-us, .matrix td.col-us {
+  background: var(--accent-wash);
+  padding-left: .9rem;
+  padding-right: .9rem;
+}
+.matrix th.col-us {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+.matrix tbody tr:hover td.col-us { background: var(--accent-wash); }
+.matrix td { font-family: var(--font-mono); font-size: .8rem; }
+.matrix th[scope="row"] { font-family: var(--font-serif); font-size: .93rem; }
+.yes { color: var(--ok); font-size: .95rem; }
+.no  { color: var(--ink-faint); font-size: .95rem; }
+.matrix td.col-us .yes { color: var(--accent); font-weight: 600; }
+
+/* chips */
+.chip {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: .62rem;
+  letter-spacing: .13em;
+  text-transform: uppercase;
+  padding: .22em .5em .18em;
+  border-radius: 2px;
+  white-space: nowrap;
+}
+.chip.high { background: var(--sev-high-bg); color: var(--sev-high); }
+.chip.med  { background: var(--sev-med-bg);  color: var(--sev-med); }
+.chip.ok   { background: var(--ok-bg);       color: var(--ok); }
+.chip.open { background: var(--sunken);      color: var(--ink-soft); border: 1px solid var(--rule); }
+
+/* ── audience tiers ─────────────────────────────────────────── */
+
+.tiers { display: grid; gap: 0; margin: 1.4rem 0 1.6rem; max-width: var(--measure); }
+.tier {
+  display: grid;
+  grid-template-columns: 6.5rem 1fr;
+  gap: 1rem;
+  padding: 1.15rem 0;
+  border-top: 1px solid var(--rule-soft);
+}
+.tier:first-child { border-top: 1px solid var(--ink); }
+.tier:last-child { border-bottom: 1px solid var(--rule-soft); }
+.tier .rank {
+  font-family: var(--font-mono);
+  font-size: .64rem;
+  letter-spacing: .15em;
+  text-transform: uppercase;
+  color: var(--accent);
+  padding-top: .35em;
+}
+.tier h4 { margin: 0 0 .35rem; font-size: 1.02rem; font-weight: 600; }
+.tier p { margin: 0; color: var(--ink-soft); font-size: .96rem; }
+@media (max-width: 34rem) {
+  .tier { grid-template-columns: 1fr; gap: .35rem; }
+}
+
+/* ── defect cards (§2) ──────────────────────────────────────── */
+
+.defects {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: 1px;
+  background: var(--rule);
+  border: 1px solid var(--rule);
+  margin: 1.5rem 0;
+  max-width: 58rem;
+}
+.defect { background: var(--paper); padding: 1.1rem 1.2rem 1.25rem; }
+.defect h4 {
+  font-family: var(--font-mono);
+  font-size: .74rem;
+  letter-spacing: .06em;
+  margin: 0 0 .6rem;
+  color: var(--ink);
+}
+.defect .label {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: .58rem;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  color: var(--sev-high);
+  margin-bottom: .35rem;
+}
+.defect p { margin: 0; font-size: .93rem; color: var(--ink-soft); line-height: 1.5; }
+
+/* ── tier ladder (§7) ───────────────────────────────────────── */
+
+.ladder { margin: 1.5rem 0; max-width: 58rem; }
+.rung {
+  display: grid;
+  grid-template-columns: 7rem 1fr;
+  gap: 1.2rem;
+  padding: 1.1rem 0;
+  border-top: 1px solid var(--rule-soft);
+}
+.rung:first-child { border-top: 1px solid var(--ink); }
+.rung:last-child { border-bottom: 1px solid var(--rule-soft); }
+.rung .v {
+  font-family: var(--font-mono);
+  font-size: .95rem;
+  font-weight: 600;
+  color: var(--accent);
+  letter-spacing: -.01em;
+}
+.rung .v small {
+  display: block;
+  font-size: .6rem;
+  font-weight: 400;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  margin-top: .25rem;
+}
+.rung .apis { margin: 0; font-family: var(--font-mono); font-size: .82rem; line-height: 1.85; color: var(--ink-soft); }
+.rung .apis b { color: var(--ink); font-weight: 500; }
+@media (max-width: 34rem) {
+  .rung { grid-template-columns: 1fr; gap: .5rem; }
+}
+
+/* ── milestones (§10) ───────────────────────────────────────── */
+
+.milestones { margin: 1.5rem 0; max-width: var(--measure); }
+.ms {
+  display: grid;
+  grid-template-columns: 4.2rem 1fr;
+  gap: 1.1rem;
+  padding: 1.15rem 0 1.25rem;
+  border-top: 1px solid var(--rule-soft);
+  position: relative;
+}
+.ms:first-child { border-top: 1px solid var(--ink); }
+.ms:last-child { border-bottom: 1px solid var(--ink); }
+.ms .code-id {
+  font-family: var(--font-mono);
+  font-size: .95rem;
+  font-weight: 600;
+  color: var(--ink-faint);
+  letter-spacing: -.01em;
+}
+.ms h4 { margin: 0 0 .35rem; font-size: 1rem; font-weight: 600; }
+.ms p { margin: 0; font-size: .96rem; color: var(--ink-soft); }
+.ms.proof { background: var(--accent-wash); margin-inline: -1rem; padding-inline: 1rem; }
+.ms.proof .code-id { color: var(--accent); }
+.ms.proof p { color: var(--ink); }
+@media (max-width: 40rem) {
+  .ms { grid-template-columns: 3.4rem 1fr; gap: .7rem; }
+  .ms.proof { margin-inline: 0; padding-inline: .7rem; }
+}
+
+/* ── figures & diagrams ─────────────────────────────────────── */
+
+figure.fig {
+  margin: 1.9rem 0;
+  max-width: 58rem;
+  border: 1px solid var(--rule);
+  background: var(--raised);
+  box-shadow: var(--shadow);
+}
+figure.fig .canvas { padding: 1.4rem 1.2rem .6rem; overflow-x: auto; }
+figure.fig svg { display: block; width: 100%; height: auto; min-width: 30rem; color: var(--ink); }
+figure.fig figcaption {
+  font-family: var(--font-mono);
+  font-size: .7rem;
+  line-height: 1.6;
+  color: var(--ink-soft);
+  padding: .8rem 1.2rem 1rem;
+  border-top: 1px solid var(--rule-soft);
+}
+figure.fig figcaption b { color: var(--ink); font-weight: 500; }
+
+.svg-box { fill: var(--paper); stroke: currentColor; stroke-width: 1; }
+.svg-box-accent { fill: var(--accent-wash); stroke: var(--accent); stroke-width: 1.5; }
+.svg-label { font-family: var(--font-mono); font-size: 12px; fill: var(--ink); }
+.svg-label-sm { font-family: var(--font-mono); font-size: 10.5px; fill: var(--ink-soft); letter-spacing: .04em; }
+.svg-head { font-family: var(--font-mono); font-size: 10.5px; fill: var(--ink-faint); letter-spacing: .16em; }
+.svg-line { stroke: currentColor; stroke-width: 1; fill: none; }
+.svg-line-accent { stroke: var(--accent); stroke-width: 1.5; fill: none; }
+.svg-blocked { stroke: var(--sev-high); stroke-width: 1.5; stroke-dasharray: 5 4; fill: none; }
+.svg-dim { opacity: .42; }
+
+/* ── file tree ──────────────────────────────────────────────── */
+
+.tree {
+  font-family: var(--font-mono);
+  white-space: pre;
+  font-size: .82rem;
+  line-height: 1.75;
+  border: 1px solid var(--rule);
+  background: var(--raised);
+  padding: 1rem 1.2rem;
+  margin: 1.3rem 0;
+  overflow-x: auto;
+  max-width: 30rem;
+  color: var(--ink-soft);
+}
+.tree b { color: var(--ink); font-weight: 500; }
+
+/* ── size chart (§9) ────────────────────────────────────────── */
+
+.chart {
+  margin: 1.8rem 0;
+  max-width: 58rem;
+  border: 1px solid var(--rule);
+  background: var(--raised);
+  box-shadow: var(--shadow);
+}
+.chart .chart-head {
+  padding: 1.1rem 1.3rem .9rem;
+  border-bottom: 1px solid var(--rule-soft);
+  display: flex;
+  flex-wrap: wrap;
+  gap: .8rem 1.4rem;
+  align-items: baseline;
+  justify-content: space-between;
+}
+.chart .chart-title {
+  font-family: var(--font-mono);
+  font-size: .68rem;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  margin: 0;
+}
+.legend { display: flex; flex-wrap: wrap; gap: .4rem 1rem; margin: 0; padding: 0; list-style: none; }
+.legend li {
+  display: flex;
+  align-items: center;
+  gap: .4rem;
+  font-family: var(--font-mono);
+  font-size: .68rem;
+  color: var(--ink-soft);
+}
+.legend .sw { width: 10px; height: 10px; border-radius: 2px; flex: none; }
+.sw1 { background: var(--s1); } .sw2 { background: var(--s2); }
+.sw3 { background: var(--s3); } .sw4 { background: var(--s4); }
+
+.plot { padding: 1.5rem 1.3rem 1.1rem; position: relative; }
+.grid-lines {
+  position: absolute;
+  inset: 1.5rem 1.3rem 2.6rem;
+  pointer-events: none;
+}
+.grid-lines span {
+  position: absolute;
+  top: 0; bottom: 0;
+  width: 1px;
+  background: var(--rule-soft);
+}
+.row { position: relative; margin-bottom: 1.9rem; }
+.row:last-of-type { margin-bottom: .6rem; }
+.row .row-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: .5rem .8rem;
+  margin-bottom: .5rem;
+}
+.row .phase {
+  font-family: var(--font-mono);
+  font-size: .74rem;
+  font-weight: 600;
+  color: var(--ink);
+  letter-spacing: .04em;
+}
+.row .phase-note { font-size: .86rem; color: var(--ink-soft); }
+.row .total {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: .78rem;
+  color: var(--accent);
+  margin-left: auto;
+  white-space: nowrap;
+}
+.bar { display: flex; gap: 2px; height: 22px; position: relative; }
+.seg {
+  height: 100%;
+  min-width: 3px;
+  position: relative;
+  border-radius: 0;
+  cursor: default;
+  transition: filter .15s;
+}
+.seg:first-child { border-radius: 2px 0 0 2px; }
+.seg:last-child { border-radius: 0 4px 4px 0; }
+.seg:only-child { border-radius: 2px 4px 4px 2px; }
+.seg:hover { filter: brightness(1.12); }
+.seg1 { background: var(--s1); } .seg2 { background: var(--s2); }
+.seg3 { background: var(--s3); } .seg4 { background: var(--s4); }
+.segN { background: var(--ink-faint); }
+
+.seg .tip {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 8px);
+  transform: translateX(-50%);
+  background: var(--ink);
+  color: var(--paper);
+  font-family: var(--font-mono);
+  font-size: .68rem;
+  line-height: 1.4;
+  padding: .35rem .5rem;
+  border-radius: 3px;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .12s;
+  z-index: 5;
+}
+.seg:hover .tip, .seg:focus-visible .tip { opacity: 1; }
+
+.whisker { position: relative; height: 16px; margin-top: 5px; }
+.whisker .span {
+  position: absolute;
+  top: 7px;
+  height: 1px;
+  background: var(--ink-faint);
+}
+.whisker .cap {
+  position: absolute;
+  top: 3px;
+  width: 1px;
+  height: 9px;
+  background: var(--ink-faint);
+}
+.whisker .rng {
+  position: absolute;
+  top: 0;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: .64rem;
+  color: var(--ink-faint);
+  white-space: nowrap;
+  padding-left: .5rem;
+}
+.axis { position: relative; height: 1.5rem; border-top: 1px solid var(--rule); margin-top: .3rem; }
+.axis span {
+  position: absolute;
+  top: .35rem;
+  white-space: nowrap;
+  transform: translateX(-50%);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: .64rem;
+  color: var(--ink-faint);
+}
+.axis span:first-child { transform: none; }
+
+@media (prefers-reduced-motion: no-preference) {
+  .bar .seg { animation: grow .7s cubic-bezier(.2,.7,.3,1) backwards; transform-origin: left center; }
+  @keyframes grow { from { transform: scaleX(0); } to { transform: none; } }
+}
+
+/* ── capability listing (§6) ────────────────────────────────── */
+
+.caps { display: grid; gap: 0; margin: 1.4rem 0; max-width: var(--measure); }
+.cap {
+  display: grid;
+  grid-template-columns: 9.5rem 1fr;
+  gap: 1rem;
+  padding: .85rem 0;
+  border-top: 1px solid var(--rule-soft);
+  align-items: baseline;
+}
+.cap:first-child { border-top: 1px solid var(--rule); }
+.cap:last-child { border-bottom: 1px solid var(--rule-soft); }
+.cap .k { font-family: var(--font-mono); font-size: .74rem; letter-spacing: .04em; color: var(--accent); }
+.cap .v { font-size: .95rem; color: var(--ink-soft); }
+@media (max-width: 34rem) { .cap { grid-template-columns: 1fr; gap: .2rem; } }
+
+/* ── open questions (§12) ───────────────────────────────────── */
+
+.questions { list-style: none; margin: 1.4rem 0; padding: 0; max-width: var(--measure); counter-reset: q; }
+.questions > li {
+  counter-increment: q;
+  display: grid;
+  grid-template-columns: 2.4rem 1fr;
+  gap: .4rem;
+  padding: 1.05rem 0;
+  border-top: 1px solid var(--rule-soft);
+}
+.questions > li:first-child { border-top: 1px solid var(--ink); }
+.questions > li:last-child { border-bottom: 1px solid var(--ink); }
+.questions > li::before {
+  content: "Q" counter(q);
+  font-family: var(--font-mono);
+  font-size: .7rem;
+  color: var(--ink-faint);
+  padding-top: .3em;
+}
+.questions h4 {
+  margin: 0 0 .3rem;
+  font-size: .98rem;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: .6rem;
+  flex-wrap: wrap;
+}
+.questions p { margin: 0; font-size: .94rem; color: var(--ink-soft); }
+.questions .settled h4 { color: var(--ink-soft); }
+.questions .settled h4 .t { text-decoration: line-through; text-decoration-color: var(--ink-faint); }
+
+/* ── footer ─────────────────────────────────────────────────── */
+
+.colophon-end {
+  margin-top: clamp(3rem, 8vw, 5rem);
+  padding-top: 1.2rem;
+  border-top: 1px solid var(--ink);
+  font-family: var(--font-mono);
+  font-size: .7rem;
+  line-height: 1.8;
+  color: var(--ink-faint);
+  display: flex;
+  flex-wrap: wrap;
+  gap: .4rem 2rem;
+  justify-content: space-between;
+}
+
+@media print {
+  .rail { display: none; }
+  .layout { grid-template-columns: 1fr; }
+  body { background: #fff; color: #000; }
+}
+</style>
+</head>
+<body>
+
+<div class="sheet">
+
+  <!-- ══ MASTHEAD ══════════════════════════════════════════════ -->
+  <header class="masthead">
+    <svg class="ticks" viewBox="0 0 1200 14" preserveAspectRatio="none" aria-hidden="true" focusable="false">
+      <g stroke="currentColor" stroke-width="1">
+        <line x1="0" y1="13.5" x2="1200" y2="13.5"></line>
+        <g>
+          <line x1="0.5" y1="0" x2="0.5" y2="14"></line>
+          <line x1="100.5" y1="7" x2="100.5" y2="14"></line>
+          <line x1="200.5" y1="7" x2="200.5" y2="14"></line>
+          <line x1="300.5" y1="3" x2="300.5" y2="14"></line>
+          <line x1="400.5" y1="7" x2="400.5" y2="14"></line>
+          <line x1="500.5" y1="7" x2="500.5" y2="14"></line>
+          <line x1="600.5" y1="3" x2="600.5" y2="14"></line>
+          <line x1="700.5" y1="7" x2="700.5" y2="14"></line>
+          <line x1="800.5" y1="7" x2="800.5" y2="14"></line>
+          <line x1="900.5" y1="3" x2="900.5" y2="14"></line>
+          <line x1="1000.5" y1="7" x2="1000.5" y2="14"></line>
+          <line x1="1100.5" y1="7" x2="1100.5" y2="14"></line>
+          <line x1="1199.5" y1="0" x2="1199.5" y2="14"></line>
+        </g>
+      </g>
+    </svg>
+
+    <p class="eyebrow">Product Specification · Draft v0.1</p>
+    <h1 class="wordmark">Blitsen<span class="dot">.</span></h1>
+
+    <p class="deck">
+      A <b>browserless implementation of enough of the web platform</b> to run HTML, CSS and
+      JavaScript applications as native desktop executables.
+    </p>
+
+    <blockquote class="pitch">
+      Write an app in HTML, CSS and TypeScript. Ship a native executable. No browser included.
+      <cite>The one-sentence pitch for the README</cite>
+    </blockquote>
+
+    <dl class="colophon">
+      <div><dt>Status</dt><dd>Draft v0.1</dd></div>
+      <div><dt>Date</dt><dd>2026-08-10</dd></div>
+      <div><dt>npm package</dt><dd>blitsen</dd></div>
+      <div><dt>CLI</dt><dd>blitsen</dd></div>
+      <div><dt>Platform scope</dt><dd>@blitsen/*</dd></div>
+    </dl>
+  </header>
+
+  <div class="layout">
+
+    <!-- ══ CONTENTS ═══════════════════════════════════════════ -->
+    <nav class="rail" aria-label="Contents">
+      <h2>Contents</h2>
+      <ol>
+        <li><a href="#s1"><span class="n">01</span><span>What it is</span></a></li>
+        <li><a href="#s2"><span class="n">02</span><span>The problem</span></a></li>
+        <li><a href="#s3"><span class="n">03</span><span>Positioning</span></a></li>
+        <li><a href="#s4"><span class="n">04</span><span>Who it is for</span></a></li>
+        <li><a href="#s5"><span class="n">05</span><span>Principles</span></a></li>
+        <li><a href="#s6"><span class="n">06</span><span>Developer experience</span></a></li>
+        <li><a href="#s7"><span class="n">07</span><span>Scope by tier</span></a></li>
+        <li><a href="#s8"><span class="n">08</span><span>Requirements</span></a></li>
+        <li><a href="#s9"><span class="n">09</span><span>Size budget</span></a></li>
+        <li><a href="#s10"><span class="n">10</span><span>Milestones</span></a></li>
+        <li><a href="#s11"><span class="n">11</span><span>Risks</span></a></li>
+        <li><a href="#s12"><span class="n">12</span><span>Open questions</span></a></li>
+      </ol>
+    </nav>
+
+    <!-- ══ DOCUMENT ═══════════════════════════════════════════ -->
+    <article class="doc">
+
+      <!-- ── 1 ────────────────────────────────────────────── -->
+      <section id="s1">
+        <h2 class="sec"><span class="n">01</span><span>What it is</span></h2>
+        <p class="lead">
+          Blitsen is a browserless implementation of enough of the web platform to run HTML/CSS/JS
+          applications as native desktop executables.
+        </p>
+        <p>
+          HTML, CSS and JavaScript in. A single native binary out. No Chromium, no Electron, no OS
+          WebView.
+        </p>
+      </section>
+
+      <!-- ── 2 ────────────────────────────────────────────── -->
+      <section id="s2">
+        <h2 class="sec"><span class="n">02</span><span>The problem</span></h2>
+        <p>
+          Developers who want to build a desktop application with web technology have three options
+          today, and all three have a defect that the other two do not.
+        </p>
+
+        <div class="defects">
+          <div class="defect">
+            <span class="label">Defect</span>
+            <h4>Electron / NW.js</h4>
+            <p>
+              Ships an entire Chromium + Node stack per app. Hundreds of MB, heavy RAM baseline,
+              slow cold start.
+            </p>
+          </div>
+          <div class="defect">
+            <span class="label">Defect</span>
+            <h4>Tauri / WebView-based</h4>
+            <p>
+              Small binary, but rendering is delegated to whatever WebView the OS happens to have.
+              Behaviour differs per platform and per OS version, and the app inherits the browser
+              sandbox and its update schedule.
+            </p>
+          </div>
+          <div class="defect">
+            <span class="label">Defect</span>
+            <h4>Native toolkits</h4>
+            <p>
+              Qt, GTK, egui, Godot. Consistent and small, but abandons the web programming model,
+              the CSS layout engine, and the npm ecosystem entirely.
+            </p>
+          </div>
+        </div>
+
+        <div class="callout">
+          <span class="tag">The gap</span>
+          <p>
+            <strong>A rendering engine you ship and control, at a size that isn't absurd, that
+            still speaks HTML/CSS/JS and still reaches the OS.</strong>
+          </p>
+        </div>
+
+        <p>The pieces to fill that gap now exist independently and have not been joined:</p>
+
+        <div class="caps">
+          <div class="cap">
+            <span class="k">Blitz</span>
+            <span class="v">
+              DioxusLabs. Natively renders HTML and CSS in Rust — real HTML parser, Stylo CSS
+              engine, DOM, Taffy layout, painting, windowing. Its plain HTML frontend already
+              accepts an HTML string directly. What it lacks is interactivity: it has no JavaScript
+              bindings, and the interactive path currently runs through Dioxus/RSX instead.
+            </span>
+          </div>
+          <div class="cap">
+            <span class="k">JavaScriptCore</span>
+            <span class="v">
+              As shipped and driven by Bun. Provides JS/TS execution, the module system, npm
+              resolution, async, timers, and a native-addon interface.
+            </span>
+          </div>
+        </div>
+
+        <p>
+          Blitsen is principally <strong>the layer that joins them</strong>: the DOM ↔ JS bridge,
+          the web API compatibility surface, and the packaging story.
+        </p>
+      </section>
+
+      <!-- ── 3 ────────────────────────────────────────────── -->
+      <section id="s3">
+        <h2 class="sec"><span class="n">03</span><span>Positioning</span></h2>
+        <p>
+          Blitsen is <strong>not a browser</strong> and does not aspire to be one. It is a native
+          application runtime that happens to use the web platform as its UI and rendering model.
+        </p>
+        <p>That distinction drives every scoping decision:</p>
+        <ul class="plain">
+          <li>
+            No same-origin policy, no sandbox, no permission prompts by default. The application is
+            trusted native software, not an untrusted document.
+          </li>
+          <li>
+            No obligation to implement a web API just because browsers have one. Coverage is chosen
+            by demand, not by specification completeness.
+          </li>
+          <li>
+            Missing platform pieces are supplied by ordinary Rust crates rather than being absorbed
+            into the renderer — the same philosophy Blitz's authors state for things like
+            WebSockets and <code>localStorage</code>.
+          </li>
+        </ul>
+
+        <div class="tablewrap">
+          <table class="matrix">
+            <caption class="visually-hidden" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);">Blitsen compared with browsers, Electron and Tauri</caption>
+            <thead>
+              <tr>
+                <th scope="col"></th>
+                <th scope="col">Browser</th>
+                <th scope="col">Electron</th>
+                <th scope="col">Tauri</th>
+                <th scope="col" class="col-us">Blitsen</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <th scope="row">Renderer you control &amp; ship</th>
+                <td><span class="no">✗</span></td>
+                <td><span class="yes">✓</span></td>
+                <td><span class="no">✗</span></td>
+                <td class="col-us"><span class="yes">✓</span></td>
+              </tr>
+              <tr>
+                <th scope="row">Consistent across OS versions</th>
+                <td><span class="no">✗</span></td>
+                <td><span class="yes">✓</span></td>
+                <td><span class="no">✗</span></td>
+                <td class="col-us"><span class="yes">✓</span></td>
+              </tr>
+              <tr>
+                <th scope="row">Bare app size</th>
+                <td class="num">n/a</td>
+                <td class="num">~150–250 MB</td>
+                <td class="num">~5–15 MB</td>
+                <td class="col-us num"><strong>target ~30–50 MB</strong></td>
+              </tr>
+              <tr>
+                <th scope="row">Full OS access</th>
+                <td><span class="no">✗</span></td>
+                <td><span class="yes">✓</span></td>
+                <td><span class="yes">✓</span></td>
+                <td class="col-us"><span class="yes">✓</span></td>
+              </tr>
+              <tr>
+                <th scope="row">npm ecosystem</th>
+                <td><span class="yes">✓</span></td>
+                <td><span class="yes">✓</span></td>
+                <td><span class="yes">✓</span></td>
+                <td class="col-us"><span class="yes">✓</span></td>
+              </tr>
+              <tr>
+                <th scope="row">Adopt without restructuring the project</th>
+                <td class="num">n/a</td>
+                <td class="num">partial</td>
+                <td class="num">partial</td>
+                <td class="col-us"><span class="yes">✓</span> <span class="num">one dev dependency</span></td>
+              </tr>
+              <tr>
+                <th scope="row">Web spec completeness</th>
+                <td><span class="yes">✓✓✓</span></td>
+                <td><span class="yes">✓✓✓</span></td>
+                <td><span class="yes">✓✓✓</span></td>
+                <td class="col-us num">partial, by design</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="callout warn">
+          <span class="tag">Honest statement of the trade</span>
+          <p>
+            <strong>Blitsen will render less of the web than a browser does.</strong> It wins on
+            binary size versus Electron and on consistency and control versus Tauri, and it loses on
+            spec coverage against all three. An app targeting Blitsen is authored against Blitsen,
+            not ported blind from the web.
+          </p>
+        </div>
+      </section>
+
+      <!-- ── 4 ────────────────────────────────────────────── -->
+      <section id="s4">
+        <h2 class="sec"><span class="n">04</span><span>Who it is for</span></h2>
+
+        <div class="tiers">
+          <div class="tier">
+            <span class="rank">Primary</span>
+            <div>
+              <h4>The desktop app author who already thinks in web</h4>
+              <p>
+                Editors, dashboards, media tools, launchers, kiosk and signage software, internal
+                tooling. They want CSS layout and npm, and they resent shipping Chromium to get it.
+              </p>
+            </div>
+          </div>
+          <div class="tier">
+            <span class="rank">Secondary</span>
+            <div>
+              <h4>The 2D game developer</h4>
+              <p>
+                A game is one thing somebody builds with Blitsen, not the product's definition. But
+                it is the sharpest proof: it demands a real frame loop, real input latency, and real
+                GPU output, so it validates the architecture harder than a settings dialog does.
+              </p>
+            </div>
+          </div>
+          <div class="tier">
+            <span class="rank">Tertiary</span>
+            <div>
+              <h4>The native developer who wants a UI layer</h4>
+              <p>
+                Has Rust/C++ that does the real work; wants HTML/CSS for the front of it and a
+                stable native addon boundary rather than an IPC protocol to a browser process.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div class="callout warn">
+          <span class="tag">Explicitly not for</span>
+          <p>
+            Anyone who needs to render arbitrary third-party web content. Use a browser engine.
+          </p>
+        </div>
+      </section>
+
+      <!-- ── 5 ────────────────────────────────────────────── -->
+      <section id="s5">
+        <h2 class="sec"><span class="n">05</span><span>Product principles</span></h2>
+        <ol class="principles">
+          <li>
+            <div>
+              <strong>The runtime decides as little as possible.</strong> Blitsen supplies the web
+              platform, native execution, native rendering and native packaging. The application
+              supplies architecture, libraries, physics, state management, networking and rendering
+              technique. A game, a dashboard, an editor and a kiosk are all just applications.
+            </div>
+          </li>
+          <li>
+            <div>
+              <strong>Drop into existing projects; never ask for a rewrite.</strong> Blitsen is an
+              export target that consumes static web output, not a framework you start a project in.
+              The developer keeps their bundler, their framework and their dev loop. Adoption cost is
+              one dev dependency and one script line — and abandonment cost is deleting them.
+            </div>
+          </li>
+          <li>
+            <div>
+              <strong>Web-standard API before bespoke API.</strong> If the web already names a thing,
+              use that name and that shape. Invent new surface only where the web has no answer
+              (the OS).
+            </div>
+          </li>
+          <li>
+            <div>
+              <strong>Partial is fine; incoherent is not.</strong> An unimplemented API should be
+              absent and documented as absent, never present-and-subtly-wrong.
+            </div>
+          </li>
+          <li>
+            <div>
+              <strong>Always an escape hatch.</strong> Anything the runtime does not provide can be
+              reached through a native addon. Users are never blocked waiting on us.
+            </div>
+          </li>
+          <li>
+            <div>
+              <strong>Size is a feature.</strong> Every megabyte in the export is a product decision,
+              and gets justified.
+            </div>
+          </li>
+        </ol>
+      </section>
+
+      <!-- ── 6 ────────────────────────────────────────────── -->
+      <section id="s6">
+        <h2 class="sec"><span class="n">06</span><span>Developer experience</span></h2>
+
+        <h3 class="sub">An export target, not a framework to start projects in</h3>
+        <p>
+          The distribution model is a <strong>dev dependency that acts as a native export
+          toolchain</strong>, while the application stays an ordinary web project. Nothing about the
+          project's shape, bundler or framework is prescribed.
+        </p>
+
+        <div class="code">
+          <div class="lang">bash</div>
+          <pre><code><span class="c-key">npm</span> install -D blitsen</code></pre>
+        </div>
+
+        <p>An existing project is unchanged:</p>
+
+        <div class="tree"><b>my-app/</b>
+├── package.json
+├── index.html
+├── src/
+│   ├── main.ts
+│   └── style.css
+└── node_modules/</div>
+
+        <p>It gains one script:</p>
+
+        <div class="code">
+          <div class="lang">package.json</div>
+          <pre><code>{
+  <span class="c-str">"scripts"</span>: {
+    <span class="c-str">"dev"</span>: <span class="c-str">"vite"</span>,
+    <span class="c-str">"build"</span>: <span class="c-str">"vite build"</span>,
+    <span class="c-str">"native"</span>: <span class="c-str">"blitsen build ./dist"</span>
+  }
+}</code></pre>
+        </div>
+
+        <div class="code">
+          <div class="lang">bash</div>
+          <pre><code><span class="c-key">npm</span> run build     <span class="c-cmt"># existing toolchain produces static output</span>
+<span class="c-key">npm</span> run native    <span class="c-cmt"># static output → native/MyApp.exe</span></code></pre>
+        </div>
+
+        <div class="callout">
+          <span class="tag">The single most important product decision in this document</span>
+          <p>
+            <strong>The input to Blitsen is a directory of static web output</strong>, which makes it
+            bundler- and framework-agnostic by construction.
+          </p>
+        </div>
+
+        <div class="code">
+          <div class="lang">bash</div>
+          <pre><code>vite build &amp;&amp; <span class="c-key">blitsen</span> build dist      <span class="c-cmt"># React, Vue, Svelte, Solid, …</span>
+webpack &amp;&amp; <span class="c-key">blitsen</span> build dist
+bun build &amp;&amp; <span class="c-key">blitsen</span> build dist
+<span class="c-key">blitsen</span> build .                       <span class="c-cmt"># vanilla HTML, no build step at all</span></code></pre>
+        </div>
+
+        <p>
+          Three.js, Phaser, Pixi, jQuery, HTMX — the exporter does not care what produced the files
+          or what they import, <strong>provided the web APIs those libraries need are implemented by
+          the runtime.</strong> That proviso is the real compatibility boundary, and it is a runtime
+          question (§7), never an exporter question.
+        </p>
+
+        <figure class="fig">
+          <div class="canvas">
+            <svg viewBox="0 0 900 250" role="img"
+                 aria-label="The export pipeline: an existing project is built by its existing build tool into static web output, which blitsen build links together with the native runtime to produce MyApp.exe.">
+              <defs>
+                <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                  <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"></path>
+                </marker>
+                <marker id="ar-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                  <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--accent)"></path>
+                </marker>
+              </defs>
+
+              <text class="svg-head" x="20" y="26">UNCHANGED BY BLITSEN</text>
+              <line class="svg-line svg-dim" x1="20" y1="38" x2="520" y2="38" stroke-dasharray="3 3"></line>
+              <text class="svg-head" x="560" y="26" fill="var(--accent)">ADDED BY BLITSEN</text>
+              <line class="svg-line-accent svg-dim" x1="560" y1="38" x2="880" y2="38" stroke-dasharray="3 3"></line>
+
+              <rect class="svg-box" x="20" y="70" width="140" height="52" rx="2"></rect>
+              <text class="svg-label" x="90" y="94" text-anchor="middle">your project</text>
+              <text class="svg-label-sm" x="90" y="110" text-anchor="middle">html · css · ts</text>
+
+              <line class="svg-line" x1="166" y1="96" x2="194" y2="96" marker-end="url(#ar)"></line>
+
+              <rect class="svg-box" x="200" y="70" width="140" height="52" rx="2"></rect>
+              <text class="svg-label" x="270" y="94" text-anchor="middle">your build tool</text>
+              <text class="svg-label-sm" x="270" y="110" text-anchor="middle">vite · webpack · bun</text>
+
+              <line class="svg-line" x1="346" y1="96" x2="374" y2="96" marker-end="url(#ar)"></line>
+
+              <rect class="svg-box" x="380" y="70" width="140" height="52" rx="2"></rect>
+              <text class="svg-label" x="450" y="94" text-anchor="middle">static output</text>
+              <text class="svg-label-sm" x="450" y="110" text-anchor="middle">dist/</text>
+
+              <line class="svg-line-accent" x1="526" y1="96" x2="554" y2="96" marker-end="url(#ar-a)"></line>
+
+              <rect class="svg-box-accent" x="560" y="70" width="140" height="52" rx="2"></rect>
+              <text class="svg-label" x="630" y="94" text-anchor="middle" fill="var(--accent)">blitsen build</text>
+              <text class="svg-label-sm" x="630" y="110" text-anchor="middle">embed + link</text>
+
+              <line class="svg-line-accent" x1="706" y1="96" x2="734" y2="96" marker-end="url(#ar-a)"></line>
+
+              <rect class="svg-box" x="740" y="70" width="140" height="52" rx="2" stroke-width="1.5"></rect>
+              <text class="svg-label" x="810" y="94" text-anchor="middle">MyApp.exe</text>
+              <text class="svg-label-sm" x="810" y="110" text-anchor="middle">one binary</text>
+
+              <rect class="svg-box" x="560" y="176" width="140" height="52" rx="2"></rect>
+              <text class="svg-label" x="630" y="200" text-anchor="middle">native runtime</text>
+              <text class="svg-label-sm" x="630" y="216" text-anchor="middle">JSC + Blitz</text>
+              <line class="svg-line-accent" x1="630" y1="170" x2="630" y2="130" marker-end="url(#ar-a)"></line>
+              <text class="svg-label-sm" x="644" y="154">shipped by us</text>
+            </svg>
+          </div>
+          <figcaption>
+            <b>Figure 1 — Where Blitsen attaches.</b> Everything left of the divide is the project the
+            developer already has; the only new edge is <code>dist/</code> flowing into an exporter that
+            links it against a runtime we ship. Nothing upstream of that arrow changes.
+          </figcaption>
+        </figure>
+
+        <h3 class="sub">Optionally, wrap the build too</h3>
+        <p>Configuration can absorb the existing build command so there is one step:</p>
+
+        <div class="code">
+          <div class="lang">package.json</div>
+          <pre><code>{
+  <span class="c-str">"blitsen"</span>: {
+    <span class="c-str">"build"</span>: <span class="c-str">"vite build"</span>,
+    <span class="c-str">"output"</span>: <span class="c-str">"dist"</span>,
+    <span class="c-str">"name"</span>: <span class="c-str">"My App"</span>
+  }
+}</code></pre>
+        </div>
+
+        <div class="code">
+          <div class="lang">bash</div>
+          <pre><code>npx <span class="c-key">blitsen</span> build</code></pre>
+        </div>
+
+        <h3 class="sub">Development</h3>
+        <p>No export needed while developing:</p>
+
+        <div class="code">
+          <div class="lang">bash</div>
+          <pre><code>npx <span class="c-key">blitsen</span> .                          <span class="c-cmt"># open index.html in a native window</span>
+npx <span class="c-key">blitsen</span> http://localhost:5173      <span class="c-cmt"># point at a running Vite dev server</span></code></pre>
+        </div>
+
+        <p>
+          The second form matters: developers keep their existing dev server, HMR and tooling exactly
+          as they are, and simply see the result in the native runtime instead of a browser.
+          Production export then consumes the same tool's static output. Nothing about the inner loop
+          changes.
+        </p>
+
+        <h3 class="sub">Application code</h3>
+        <p>Ordinary web code, ordinary npm:</p>
+
+        <div class="code">
+          <div class="lang">javascript</div>
+          <pre><code><span class="c-key">import</span> Matter <span class="c-key">from</span> <span class="c-str">"matter-js"</span>;
+<span class="c-key">import</span> { vec3 } <span class="c-key">from</span> <span class="c-str">"gl-matrix"</span>;
+
+document.querySelector(<span class="c-str">"#score"</span>).textContent = score;
+
+requestAnimationFrame(<span class="c-key">function</span> update(t) {
+  <span class="c-cmt">// ...</span>
+  requestAnimationFrame(update);
+});</code></pre>
+        </div>
+
+        <p>Plus OS capability the browser cannot give, under a clearly-marked namespace:</p>
+
+        <div class="code">
+          <div class="lang">javascript</div>
+          <pre><code><span class="c-key">import</span> { openFile } <span class="c-key">from</span> <span class="c-str">"native:dialog"</span>;
+<span class="c-key">import</span> { clipboard } <span class="c-key">from</span> <span class="c-str">"native:clipboard"</span>;
+<span class="c-key">import</span> { Window } <span class="c-key">from</span> <span class="c-str">"native:window"</span>;
+
+<span class="c-key">const</span> path = <span class="c-key">await</span> openFile();
+<span class="c-key">await</span> clipboard.writeText(<span class="c-str">"hello"</span>);
+<span class="c-key">const</span> tools = <span class="c-key">new</span> Window({ width: 800, height: 600, html: <span class="c-str">"./tools.html"</span> });</code></pre>
+        </div>
+
+        <p>Plus generic system access through the interfaces that already exist:</p>
+
+        <div class="code">
+          <div class="lang">javascript</div>
+          <pre><code><span class="c-key">import</span> fs <span class="c-key">from</span> <span class="c-str">"node:fs"</span>;
+<span class="c-key">import</span> { spawn } <span class="c-key">from</span> <span class="c-str">"node:child_process"</span>;</code></pre>
+        </div>
+
+        <p>Plus the unlimited escape hatch:</p>
+
+        <div class="code">
+          <div class="lang">javascript</div>
+          <pre><code><span class="c-key">import</span> physics <span class="c-key">from</span> <span class="c-str">"./box2d.node"</span>;</code></pre>
+        </div>
+
+        <h3 class="sub">The capability story, stated plainly</h3>
+
+        <figure class="fig">
+          <div class="canvas">
+            <svg viewBox="0 0 900 340" role="img"
+                 aria-label="Comparison: in a browser, HTML CSS and JS stop at a sandbox boundary and cannot reach the filesystem, processes, sockets, native libraries or addons. In Blitsen the same HTML CSS and JS reach all five directly.">
+              <defs>
+                <marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+                  <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--accent)"></path>
+                </marker>
+              </defs>
+
+              <line class="svg-line svg-dim" x1="440" y1="10" x2="440" y2="330" stroke-dasharray="2 5"></line>
+
+              <text class="svg-head" x="30" y="24">BROWSER</text>
+              <text class="svg-head" x="490" y="24" fill="var(--accent)">BLITSEN</text>
+
+              <rect class="svg-box" x="30" y="40" width="330" height="46" rx="2"></rect>
+              <text class="svg-label" x="195" y="69" text-anchor="middle">HTML + CSS + JS</text>
+
+              <rect class="svg-box-accent" x="490" y="40" width="330" height="46" rx="2"></rect>
+              <text class="svg-label" x="655" y="69" text-anchor="middle">HTML + CSS + JS</text>
+
+              <line class="svg-line" x1="195" y1="86" x2="195" y2="132"></line>
+              <line class="svg-blocked" x1="40" y1="140" x2="350" y2="140"></line>
+              <text class="svg-label-sm" x="195" y="160" text-anchor="middle" fill="var(--sev-high)">sandbox boundary</text>
+
+              <g class="svg-dim">
+                <text class="svg-label" x="60" y="196">filesystem</text>
+                <text class="svg-label" x="60" y="224">processes</text>
+                <text class="svg-label" x="60" y="252">sockets</text>
+                <text class="svg-label" x="60" y="280">native libraries</text>
+                <text class="svg-label" x="60" y="308">Rust / C / C++ addons</text>
+                <text class="svg-label" x="40" y="196" fill="var(--sev-high)">✗</text>
+                <text class="svg-label" x="40" y="224" fill="var(--sev-high)">✗</text>
+                <text class="svg-label" x="40" y="252" fill="var(--sev-high)">✗</text>
+                <text class="svg-label" x="40" y="280" fill="var(--sev-high)">✗</text>
+                <text class="svg-label" x="40" y="308" fill="var(--sev-high)">✗</text>
+              </g>
+
+              <path class="svg-line-accent" d="M 545 86 L 545 192 M 545 192 L 585 192" marker-end="url(#ar2)"></path>
+              <path class="svg-line-accent" d="M 545 192 L 545 220 L 585 220" marker-end="url(#ar2)"></path>
+              <path class="svg-line-accent" d="M 545 220 L 545 248 L 585 248" marker-end="url(#ar2)"></path>
+              <path class="svg-line-accent" d="M 545 248 L 545 276 L 585 276" marker-end="url(#ar2)"></path>
+              <path class="svg-line-accent" d="M 545 276 L 545 304 L 585 304" marker-end="url(#ar2)"></path>
+
+              <text class="svg-label" x="600" y="196">filesystem</text>
+              <text class="svg-label" x="600" y="224">processes</text>
+              <text class="svg-label" x="600" y="252">sockets</text>
+              <text class="svg-label" x="600" y="280">native libraries</text>
+              <text class="svg-label" x="600" y="308">Rust / C / C++ addons</text>
+            </svg>
+          </div>
+          <figcaption>
+            <b>Figure 2 — The same five capabilities, on both sides of the line.</b> The application code
+            is identical; what differs is that Blitsen has no boundary to stop at, because the app is
+            trusted native software rather than an untrusted document.
+          </figcaption>
+        </figure>
+      </section>
+
+      <!-- ── 7 ────────────────────────────────────────────── -->
+      <section id="s7">
+        <h2 class="sec"><span class="n">07</span><span>Scope by tier</span></h2>
+        <p>
+          Availability is incremental. A browser having an API does not oblige Blitsen to ship it.
+        </p>
+
+        <div class="ladder">
+          <div class="rung">
+            <span class="v">v0<small>Proves the architecture</small></span>
+            <p class="apis">
+              <b>HTML</b> · <b>CSS</b> · <b>DOM</b> · JS/TS execution · events ·
+              <b>requestAnimationFrame</b> · setTimeout / setInterval · mouse · keyboard ·
+              one native viewport element backed by the GPU
+            </p>
+          </div>
+          <div class="rung">
+            <span class="v">v1<small>Real apps possible</small></span>
+            <p class="apis">
+              <b>fetch</b> · <b>WebSocket</b> · images · web fonts · audio playback ·
+              the first <b>native:</b> modules (dialog, clipboard, window, app)
+            </p>
+          </div>
+          <div class="rung">
+            <span class="v">v2<small>Real apps comfortable</small></span>
+            <p class="apis">
+              <b>localStorage</b> · Workers · clipboard events · drag &amp; drop
+              (with real filesystem paths, not browser <b>File</b> abstractions) ·
+              gamepads · tray / menu · notifications
+            </p>
+          </div>
+          <div class="rung">
+            <span class="v">Later<small>As demand justifies</small></span>
+            <p class="apis">
+              &lt;canvas&gt; 2D · WebGL / WebGPU · WebRTC · anything else earning its size
+            </p>
+          </div>
+        </div>
+
+        <h3 class="sub">The compatibility boundary is the runtime, never the exporter</h3>
+        <p>
+          Because the exporter takes static web output, “does React work?” is never a question about
+          the exporter. It is always: <strong>does the runtime implement the web APIs that this code
+          path touches?</strong>
+        </p>
+
+        <div class="tablewrap">
+          <table>
+            <thead>
+              <tr>
+                <th scope="col">Library</th>
+                <th scope="col">Gated on</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="mono">React, Vue, Svelte, Solid, HTMX, jQuery</td>
+                <td>v0 DOM + events. These are the target of v0.</td>
+              </tr>
+              <tr>
+                <td class="mono">Pixi, Phaser, Three.js</td>
+                <td><code>&lt;canvas&gt;</code> / WebGL — the “later” tier. Not v0 or v1.</td>
+              </tr>
+              <tr>
+                <td class="mono">State, utility, data libraries (lodash, zustand, …)</td>
+                <td>Nothing. Plain JS runs today.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p>
+          This is worth stating loudly because it sets honest expectations: a DOM-driven React
+          dashboard is an early target, while a Three.js scene waits on WebGL. Blitz is also still
+          pre-alpha and deliberately does not implement the whole browser platform, so the near-term
+          boundary is tighter than the tier list's endpoint suggests.
+        </p>
+
+        <div class="callout">
+          <span class="tag">Mechanical, not guesswork</span>
+          <p>
+            <code>blitsen doctor</code> reports which web APIs a built bundle references that the
+            runtime does not provide — so the answer for any given project is mechanical, not
+            guesswork.
+          </p>
+        </div>
+
+        <h3 class="sub">Non-goals</h3>
+        <ul class="strike">
+          <li><span>Rendering arbitrary websites, or passing the web platform test suite.</span></li>
+          <li><span>A same-origin policy, CSP, or any sandbox for first-party application code.</span></li>
+          <li><span>Legacy layout quirks, <code>document.write</code>, or the quirks-mode parser path.</span></li>
+          <li><span>An opinionated UI framework, component model, or state library of our own.</span></li>
+          <li><span>A mobile or console target in the initial phases.</span></li>
+          <li>
+            <span>
+              Prescribing how anything is drawn inside the app. CSS transforms, a physics library, a
+              WASM build of Box2D, a native addon and (eventually) <code>&lt;canvas&gt;</code> are all
+              equally valid.
+            </span>
+          </li>
+        </ul>
+      </section>
+
+      <!-- ── 8 ────────────────────────────────────────────── -->
+      <section id="s8">
+        <h2 class="sec"><span class="n">08</span><span>Product requirements</span></h2>
+
+        <div class="tablewrap">
+          <table>
+            <thead>
+              <tr>
+                <th scope="col">#</th>
+                <th scope="col">Requirement</th>
+                <th scope="col">Target</th>
+                <th scope="col">Notes</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="id">P1</td>
+                <th scope="row">Bare exported app size</th>
+                <td class="num">≤ 50 MB installed<br>≤ 30 MB compressed</td>
+                <td>Prototype may be 80–120 MB; see §9.</td>
+              </tr>
+              <tr>
+                <td class="id">P2</td>
+                <th scope="row">Cold start to first frame</th>
+                <td class="num">&lt; 500 ms</td>
+                <td>On mid-range hardware. Should beat Electron decisively or the pitch weakens.</td>
+              </tr>
+              <tr>
+                <td class="id">P3</td>
+                <th scope="row">Idle RAM, bare app</th>
+                <td class="num">&lt; 100 MB</td>
+                <td></td>
+              </tr>
+              <tr>
+                <td class="id">P4</td>
+                <th scope="row">Sustained frame rate</th>
+                <td class="num">60 fps</td>
+                <td>For a moderate 2D scene. Measured with the Pong acceptance build.</td>
+              </tr>
+              <tr>
+                <td class="id">P5</td>
+                <th scope="row">Platforms, initial</th>
+                <td class="num">win x64<br>linux x64<br>darwin arm64</td>
+                <td>Windows is the priority target for size claims.</td>
+              </tr>
+              <tr>
+                <td class="id">P5b</td>
+                <th scope="row">Platforms, full matrix</th>
+                <td class="num">win32 x64/arm64<br>linux x64/arm64<br>darwin x64/arm64</td>
+                <td>One npm platform package each (TECH.md §11).</td>
+              </tr>
+              <tr>
+                <td class="id">P6</td>
+                <th scope="row">Render consistency</th>
+                <td class="num">byte-identical</td>
+                <td>Layout across platforms for the test corpus. The core advantage over WebView-based tools.</td>
+              </tr>
+              <tr>
+                <td class="id">P7</td>
+                <th scope="row">npm compatibility</th>
+                <td class="num">unmodified</td>
+                <td>Pure-JS packages install and import unmodified. Native Node addons: best-effort.</td>
+              </tr>
+              <tr>
+                <td class="id">P8</td>
+                <th scope="row">No runtime dependency on an installed browser or WebView</th>
+                <td class="num">absolute</td>
+                <td></td>
+              </tr>
+              <tr>
+                <td class="id">P9</td>
+                <th scope="row">Install</th>
+                <td class="num">host platform only</td>
+                <td><code>npm i -D blitsen</code> fetches only the host platform's runtime. No Rust toolchain, no compile step, no postinstall build.</td>
+              </tr>
+              <tr>
+                <td class="id">P10</td>
+                <th scope="row">Adoption cost</th>
+                <td class="num">1 dependency<br>1 script line<br>0 source changes</td>
+                <td>For an app already building to static output. The core adoption claim; measured against real React/Vue/Svelte projects.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ── 9 ────────────────────────────────────────────── -->
+      <section id="s9">
+        <h2 class="sec"><span class="n">09</span><span>Size budget as a product commitment</span></h2>
+        <p>
+          Size is the headline claim, so it is tracked as a product metric, not left to the build.
+        </p>
+
+        <div class="chart">
+          <div class="chart-head">
+            <p class="chart-title">Bare app size by phase · megabytes</p>
+            <ul class="legend">
+              <li><span class="sw sw1"></span>JS runtime</li>
+              <li><span class="sw sw2"></span>Renderer</li>
+              <li><span class="sw sw3"></span>Bridge / compat layer</li>
+              <li><span class="sw sw4"></span>App code</li>
+            </ul>
+          </div>
+
+          <div class="plot">
+            <div class="grid-lines" aria-hidden="true">
+              <span style="left:19.23%"></span>
+              <span style="left:38.46%"></span>
+              <span style="left:57.69%"></span>
+              <span style="left:76.92%"></span>
+              <span style="left:96.15%"></span>
+            </div>
+
+            <!-- Phase 1 -->
+            <div class="row">
+              <div class="row-head">
+                <span class="phase">Phase 1</span>
+                <span class="phase-note">Prototype — full Bun runtime embedded</span>
+                <span class="total">70–120 MB</span>
+              </div>
+              <div class="bar">
+                <div class="seg seg1" style="width:61.54%" tabindex="0" role="img" aria-label="Bun / JSC runtime, 60 to 100 megabytes">
+                  <span class="tip">Bun / JSC runtime · 60–100 MB</span>
+                </div>
+                <div class="seg seg2" style="width:7.69%" tabindex="0" role="img" aria-label="Blitz, Stylo, Taffy and windowing, 5 to 15 megabytes">
+                  <span class="tip">Blitz + Stylo + Taffy + window · 5–15 MB</span>
+                </div>
+                <div class="seg seg3" style="width:2.31%" tabindex="0" role="img" aria-label="Bridge, 1 to 5 megabytes">
+                  <span class="tip">bridge · 1–5 MB</span>
+                </div>
+                <div class="seg seg4" style="width:0.77%" tabindex="0" role="img" aria-label="App code, tiny">
+                  <span class="tip">app code · tiny</span>
+                </div>
+              </div>
+              <div class="whisker" aria-hidden="true">
+                <span class="span" style="left:53.85%;width:38.46%"></span>
+                <span class="cap" style="left:53.85%"></span>
+                <span class="cap" style="left:92.31%"></span>
+                <span class="rng" style="left:92.31%">stated range</span>
+              </div>
+            </div>
+
+            <!-- Phase 2 -->
+            <div class="row">
+              <div class="row-head">
+                <span class="phase">Phase 2</span>
+                <span class="phase-note">Bun becomes toolchain only; purpose-built JSC runtime</span>
+                <span class="total">25–50 MB</span>
+              </div>
+              <div class="bar">
+                <div class="seg seg1" style="width:17.31%" tabindex="0" role="img" aria-label="JSC and required runtime, 15 to 30 megabytes, unmeasured">
+                  <span class="tip">JSC + required runtime · 15–30 MB</span>
+                </div>
+                <div class="seg seg2" style="width:7.69%" tabindex="0" role="img" aria-label="Blitz and native rendering, 5 to 15 megabytes, unmeasured">
+                  <span class="tip">Blitz + native rendering · 5–15 MB</span>
+                </div>
+                <div class="seg seg3" style="width:2.31%" tabindex="0" role="img" aria-label="Web compatibility layer, 1 to 5 megabytes">
+                  <span class="tip">web compatibility layer · 1–5 MB</span>
+                </div>
+                <div class="seg seg4" style="width:1.92%" tabindex="0" role="img" aria-label="App HTML, CSS and JS, usually under 5 megabytes">
+                  <span class="tip">app HTML/CSS/JS · usually &lt;5 MB</span>
+                </div>
+              </div>
+              <div class="whisker" aria-hidden="true">
+                <span class="span" style="left:19.23%;width:19.23%"></span>
+                <span class="cap" style="left:19.23%"></span>
+                <span class="cap" style="left:38.46%"></span>
+              </div>
+            </div>
+
+            <!-- Phase 3 -->
+            <div class="row">
+              <div class="row-head">
+                <span class="phase">Phase 3</span>
+                <span class="phase-note">LTO, stripping, feature gating</span>
+                <span class="total">20–40 MB</span>
+              </div>
+              <div class="bar">
+                <div class="seg segN" style="width:23.08%" tabindex="0" role="img" aria-label="Bare app total, 20 to 40 megabytes; composition not yet apportioned">
+                  <span class="tip">bare app · 20–40 MB · composition not apportioned</span>
+                </div>
+              </div>
+              <div class="whisker" aria-hidden="true">
+                <span class="span" style="left:15.38%;width:15.38%"></span>
+                <span class="cap" style="left:15.38%"></span>
+                <span class="cap" style="left:30.77%"></span>
+              </div>
+            </div>
+
+            <div class="axis" aria-hidden="true">
+              <span style="left:0">0</span>
+              <span style="left:19.23%">25</span>
+              <span style="left:38.46%">50</span>
+              <span style="left:57.69%">75</span>
+              <span style="left:76.92%">100</span>
+              <span style="left:96.15%">125 MB</span>
+            </div>
+          </div>
+        </div>
+
+        <p class="mono" style="font-size:.72rem;color:var(--ink-faint);max-width:58rem;margin:-.6rem 0 1.6rem">
+          Bars are drawn at the midpoint of each component's estimate; the rule beneath each bar marks
+          the stated low–high range for the bare app. Exact figures below.
+        </p>
+
+        <div class="tablewrap">
+          <table>
+            <thead>
+              <tr>
+                <th scope="col">Phase</th>
+                <th scope="col">Component</th>
+                <th scope="col">Estimate</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr><td class="mono">1</td><th scope="row">Bun / JSC runtime</th><td class="num">~60–100 MB</td></tr>
+              <tr><td class="mono">1</td><th scope="row">Blitz + Stylo + Taffy + window</th><td class="num">~5–15 MB</td></tr>
+              <tr><td class="mono">1</td><th scope="row">bridge</th><td class="num">~1–5 MB</td></tr>
+              <tr><td class="mono">1</td><th scope="row">app code</th><td class="num">tiny</td></tr>
+              <tr><td class="mono">1</td><th scope="row"><strong>bare app</strong></th><td class="num"><strong>~70–120 MB</strong></td></tr>
+              <tr><td class="mono">2</td><th scope="row">JSC + required runtime</th><td class="num">~15–30 MB <span style="color:var(--ink-faint)">(unmeasured)</span></td></tr>
+              <tr><td class="mono">2</td><th scope="row">Blitz + native rendering</th><td class="num">~5–15 MB <span style="color:var(--ink-faint)">(unmeasured)</span></td></tr>
+              <tr><td class="mono">2</td><th scope="row">web compatibility layer</th><td class="num">~1–5 MB</td></tr>
+              <tr><td class="mono">2</td><th scope="row">app HTML/CSS/JS</th><td class="num">usually &lt;5 MB</td></tr>
+              <tr><td class="mono">2</td><th scope="row"><strong>bare app</strong></th><td class="num"><strong>~25–50 MB</strong></td></tr>
+              <tr><td class="mono">3</td><th scope="row"><strong>bare app</strong></th><td class="num"><strong>~20–40 MB</strong></td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="callout warn">
+          <span class="tag">Read this before quoting a number</span>
+          <p>
+            <strong>These are engineering targets, not measurements.</strong> The Phase 2 and 3
+            numbers depend on a JSC + Blitz build that does not yet exist; establishing the true
+            floor is an early milestone (TECH.md §15). Public size claims are made only from measured
+            builds.
+          </p>
+        </div>
+
+        <p>
+          The key architectural consequence, which belongs in the product spec because it defines what
+          the user installs: <strong>Bun is the toolchain; JavaScriptCore is the runtime.</strong> The
+          exported app does not need Bun's package manager, test runner, bundler, transpiler, CLI, dev
+          server or installer. It needs JavaScript execution.
+        </p>
+      </section>
+
+      <!-- ── 10 ───────────────────────────────────────────── -->
+      <section id="s10">
+        <h2 class="sec"><span class="n">10</span><span>Acceptance milestones</span></h2>
+
+        <div class="milestones">
+          <div class="ms">
+            <span class="code-id">M0</span>
+            <div>
+              <h4>Feasibility spike</h4>
+              <p>
+                JSC and Blitz compile and link into one binary; measured size recorded. This either
+                confirms or kills the Phase 2 budget.
+              </p>
+            </div>
+          </div>
+          <div class="ms">
+            <span class="code-id">M1</span>
+            <div>
+              <h4>Hello, DOM</h4>
+              <p>
+                An <code>index.html</code> renders in a native window, a <code>&lt;script&gt;</code>
+                runs, and <code>document.querySelector("#x").textContent = "hi"</code> visibly updates
+                the screen.
+              </p>
+            </div>
+          </div>
+          <div class="ms">
+            <span class="code-id">M2</span>
+            <div>
+              <h4>Interactive</h4>
+              <p>
+                Click and keyboard events dispatch to JS listeners with correct propagation;
+                <code>requestAnimationFrame</code> drives a smooth animation; style and class mutation
+                from JS relayouts correctly.
+              </p>
+            </div>
+          </div>
+          <div class="ms proof">
+            <span class="code-id">M3</span>
+            <div>
+              <h4>Pong <span class="chip ok">Architecture proof</span></h4>
+              <p>
+                A complete playable Pong exists as nothing but <code>index.html</code>,
+                <code>style.css</code> and <code>game.js</code>, holds 60 fps, and runs from a single
+                exported executable on a machine with no toolchain installed. This is the point at
+                which the project is demonstrably real.
+              </p>
+            </div>
+          </div>
+          <div class="ms proof">
+            <span class="code-id">M3b</span>
+            <div>
+              <h4>Drop-in <span class="chip ok">Adoption proof</span></h4>
+              <p>
+                An unmodified, existing Vite + React app is exported with nothing but
+                <code>npm i -D blitsen</code> and <code>blitsen build dist</code>, and runs. This
+                proves the adoption claim (P10) independently of the architecture claim, and is the
+                milestone most likely to attract users.
+              </p>
+            </div>
+          </div>
+          <div class="ms">
+            <span class="code-id">M4</span>
+            <div>
+              <h4>Ships</h4>
+              <p>
+                <code>npm i -D blitsen</code> resolves the correct runtime on all six platform
+                targets, <code>blitsen build</code> produces distributable artifacts, and a
+                non-trivial third-party app — an editor or dashboard — is built by someone who is
+                not us.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── 11 ───────────────────────────────────────────── -->
+      <section id="s11">
+        <h2 class="sec"><span class="n">11</span><span>Risks</span></h2>
+
+        <div class="tablewrap">
+          <table>
+            <thead>
+              <tr>
+                <th scope="col">Risk</th>
+                <th scope="col">Impact</th>
+                <th scope="col">Response</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <th scope="row">Blitz's DOM is not designed for external mutation at JS frequency</th>
+                <td><span class="chip high">High</span><br><span class="mono" style="color:var(--ink-faint)">undermines the core bridge</span></td>
+                <td>Spike first (M1). Upstream contribution may be required; Blitz already intends to support custom widgets and extensibility.</td>
+              </tr>
+              <tr>
+                <th scope="row">Blitz is pre-alpha; CSS coverage may not survive contact with real framework CSS</th>
+                <td><span class="chip high">High</span><br><span class="mono" style="color:var(--ink-faint)">a drop-in exporter that renders real apps wrong is worse than one that refuses them</span></td>
+                <td>Golden-image corpus built from actual React/Vue/Svelte output early, not synthetic cases. Treat CSS gaps as upstream contributions.</td>
+              </tr>
+              <tr>
+                <th scope="row">“Drop-in” invites projects the runtime cannot yet render (Three.js, canvas-heavy apps)</th>
+                <td><span class="chip med">Medium</span><br><span class="mono" style="color:var(--ink-faint)">disappointed first impressions</span></td>
+                <td><code>blitsen doctor</code> reports unsupported API usage before the user hits it at runtime; capability tiers published prominently.</td>
+              </tr>
+              <tr>
+                <th scope="row">Phase 2 size target proves unreachable; JSC alone is bigger than hoped</th>
+                <td><span class="chip high">High</span><br><span class="mono" style="color:var(--ink-faint)">weakens the headline claim</span></td>
+                <td>M0 measures it before anything is promised. Fallback positioning: still far below Electron.</td>
+              </tr>
+              <tr>
+                <th scope="row">Partial web platform frustrates users who expect browser parity</th>
+                <td><span class="chip med">Medium</span></td>
+                <td>Documented capability tiers; absent APIs absent, never half-working. Positioning never says “browser”.</td>
+              </tr>
+              <tr>
+                <th scope="row">Upstream churn in Blitz or Bun</th>
+                <td><span class="chip med">Medium</span></td>
+                <td>Pin versions; keep the bridge behind our own interface so upstream shape changes are contained.</td>
+              </tr>
+              <tr>
+                <th scope="row">Effort scale — this is a multi-year systems project</th>
+                <td><span class="chip high">High</span></td>
+                <td>Ruthless v0. Pong, then re-evaluate.</td>
+              </tr>
+              <tr>
+                <th scope="row">No sandbox by default</th>
+                <td><span class="chip med">Medium</span></td>
+                <td>Explicit product stance: apps are trusted native software. Must be stated prominently, never discovered.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ── 12 ───────────────────────────────────────────── -->
+      <section id="s12">
+        <h2 class="sec"><span class="n">12</span><span>Open questions</span></h2>
+
+        <ol class="questions">
+          <li class="settled">
+            <div>
+              <h4><span class="t">Name</span> <span class="chip ok">Settled — Blitsen</span></h4>
+              <p>
+                Outstanding registration work before anything is published: claim <code>blitsen</code>
+                on npm and the <code>@blitsen</code> scope (the scope matters most — the platform
+                packages depend on it), plus <code>blitsen</code> on crates.io and a domain. Note the
+                name's proximity to Blitz, the upstream renderer. That is a fair signal of what the
+                project is built on, but it should never be allowed to imply that Blitsen is an
+                official DioxusLabs project — worth a line in the README, and worth care if the two
+                are ever discussed together upstream.
+              </p>
+            </div>
+          </li>
+          <li>
+            <div>
+              <h4>Licence <span class="chip open">Open</span></h4>
+              <p>
+                And whether JSC's licensing constrains the export model for closed-source apps.
+              </p>
+            </div>
+          </li>
+          <li class="settled">
+            <div>
+              <h4><span class="t">Distribution</span> <span class="chip ok">Settled</span></h4>
+              <p>
+                npm dev dependency with per-platform runtime packages (§6, TECH.md §11).
+              </p>
+            </div>
+          </li>
+          <li>
+            <div>
+              <h4>Do multiple windows share one JS context? <span class="chip open">Open</span></h4>
+              <p>Or do they get isolated ones?</p>
+            </div>
+          </li>
+          <li>
+            <div>
+              <h4>Is TypeScript first-class? <span class="chip open">Open</span></h4>
+              <p>
+                Mostly moot under the export model — the user's existing bundler handles TS before
+                Blitsen sees the output. Still open for the no-build-step path.
+              </p>
+            </div>
+          </li>
+          <li>
+            <div>
+              <h4>Where do assets live in the exported binary? <span class="chip open">Open</span></h4>
+              <p>Embedded, side-loaded, or either.</p>
+            </div>
+          </li>
+          <li>
+            <div>
+              <h4>Does the dev-server mode ship in v0? <span class="chip open">Open</span></h4>
+              <p>
+                It is the cheapest possible adoption on-ramp (<code>blitsen http://localhost:5173</code>)
+                and may be worth pulling forward ahead of export.
+              </p>
+            </div>
+          </li>
+          <li>
+            <div>
+              <h4>Native API imports <span class="chip open">Open</span></h4>
+              <p>
+                <code>native:dialog</code> (bare specifier, needs runtime resolver support in every
+                bundler) or <code>blitsen/dialog</code> (a real npm path that any bundler already
+                resolves)? The latter is likely more compatible; the former reads better. Possibly
+                both.
+              </p>
+            </div>
+          </li>
+        </ol>
+      </section>
+
+      <footer class="colophon-end">
+        <span>Blitsen · Product Specification · Draft v0.1 · 2026-08-10</span>
+        <span>Superseded document: FIRST.md — retained in git history at commit d32f5e3</span>
+      </footer>
+
+    </article>
+  </div>
+</div>
+
+<script>
+(function () {
+  var links = Array.prototype.slice.call(document.querySelectorAll('.rail a'));
+  var map = {};
+  links.forEach(function (a) { map[a.getAttribute('href').slice(1)] = a; });
+  var sections = Array.prototype.slice.call(document.querySelectorAll('.doc > section'));
+  if (!sections.length || !('IntersectionObserver' in window)) return;
+
+  var visible = {};
+  var io = new IntersectionObserver(function (entries) {
+    entries.forEach(function (e) { visible[e.target.id] = e.isIntersecting; });
+    var current = null;
+    for (var i = 0; i < sections.length; i++) {
+      if (visible[sections[i].id]) { current = sections[i].id; break; }
+    }
+    links.forEach(function (a) { a.removeAttribute('aria-current'); });
+    if (current && map[current]) map[current].setAttribute('aria-current', 'true');
+  }, { rootMargin: '-10% 0px -70% 0px', threshold: 0 });
+
+  sections.forEach(function (s) { io.observe(s); });
+})();
+</script>
+
+</body>
+</html>
