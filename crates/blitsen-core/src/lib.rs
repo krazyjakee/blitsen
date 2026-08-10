@@ -127,6 +127,153 @@ pub struct DocumentApi<'a, D> {
     backend: &'a mut D,
 }
 
+/// Authoritative-tree operations needed by JavaScript `Node` wrappers.
+pub trait NodeTreeBackend {
+    /// Stable node handle.
+    type NodeId: Copy + Eq;
+
+    /// Appends a node, moving it from an existing parent first.
+    fn node_append(&mut self, parent: Self::NodeId, child: Self::NodeId) -> Result<(), DomError>;
+    /// Inserts a node before an optional child of `parent`.
+    fn node_insert_before(
+        &mut self,
+        parent: Self::NodeId,
+        child: Self::NodeId,
+        reference: Option<Self::NodeId>,
+    ) -> Result<(), DomError>;
+    /// Detaches a node.
+    fn node_remove(&mut self, node: Self::NodeId) -> Result<(), DomError>;
+    /// Replaces a node in its current parent.
+    fn node_replace(
+        &mut self,
+        old: Self::NodeId,
+        replacement: Self::NodeId,
+    ) -> Result<(), DomError>;
+    /// Returns a node's parent.
+    fn node_parent(&self, node: Self::NodeId) -> Result<Option<Self::NodeId>, DomError>;
+    /// Returns a static snapshot of a node's children.
+    fn node_children(&self, node: Self::NodeId) -> Result<Vec<Self::NodeId>, DomError>;
+    /// Returns a node's next sibling.
+    fn node_next_sibling(&self, node: Self::NodeId) -> Result<Option<Self::NodeId>, DomError>;
+}
+
+impl<D: DomBackend> NodeTreeBackend for D {
+    type NodeId = D::NodeId;
+
+    fn node_append(&mut self, parent: Self::NodeId, child: Self::NodeId) -> Result<(), DomError> {
+        self.append_child(parent, child)
+    }
+
+    fn node_insert_before(
+        &mut self,
+        parent: Self::NodeId,
+        child: Self::NodeId,
+        reference: Option<Self::NodeId>,
+    ) -> Result<(), DomError> {
+        self.insert_before(parent, child, reference)
+    }
+
+    fn node_remove(&mut self, node: Self::NodeId) -> Result<(), DomError> {
+        self.remove(node)
+    }
+
+    fn node_replace(
+        &mut self,
+        old: Self::NodeId,
+        replacement: Self::NodeId,
+    ) -> Result<(), DomError> {
+        self.replace(old, replacement)
+    }
+
+    fn node_parent(&self, node: Self::NodeId) -> Result<Option<Self::NodeId>, DomError> {
+        self.parent(node)
+    }
+
+    fn node_children(&self, node: Self::NodeId) -> Result<Vec<Self::NodeId>, DomError> {
+        self.children(node)
+    }
+
+    fn node_next_sibling(&self, node: Self::NodeId) -> Result<Option<Self::NodeId>, DomError> {
+        self.next_sibling(node)
+    }
+}
+
+/// Runtime-neutral implementation of JavaScript node mutation and traversal.
+pub struct NodeTreeApi<'a, D: NodeTreeBackend> {
+    backend: &'a mut D,
+    node: D::NodeId,
+}
+
+impl<'a, D: NodeTreeBackend> NodeTreeApi<'a, D> {
+    /// Wraps one handle from the authoritative backend tree.
+    pub fn new(backend: &'a mut D, node: D::NodeId) -> Self {
+        Self { backend, node }
+    }
+
+    /// Returns this wrapper's node handle.
+    pub fn node_id(&self) -> D::NodeId {
+        self.node
+    }
+
+    /// Implements `appendChild` and returns the appended node.
+    pub fn append_child(&mut self, child: D::NodeId) -> Result<D::NodeId, DomError> {
+        self.backend.node_append(self.node, child)?;
+        Ok(child)
+    }
+
+    /// Implements `insertBefore` and returns the inserted node.
+    pub fn insert_before(
+        &mut self,
+        child: D::NodeId,
+        reference: Option<D::NodeId>,
+    ) -> Result<D::NodeId, DomError> {
+        self.backend
+            .node_insert_before(self.node, child, reference)?;
+        Ok(child)
+    }
+
+    /// Implements `removeChild`, rejecting a node owned by another parent.
+    pub fn remove_child(&mut self, child: D::NodeId) -> Result<D::NodeId, DomError> {
+        if self.backend.node_parent(child)? != Some(self.node) {
+            return Err(DomError::NotFound);
+        }
+        self.backend.node_remove(child)?;
+        Ok(child)
+    }
+
+    /// Implements `Node.remove()`.
+    pub fn remove(&mut self) -> Result<(), DomError> {
+        self.backend.node_remove(self.node)
+    }
+
+    /// Implements the one-node v0 form of `replaceWith`.
+    pub fn replace_with(&mut self, replacement: D::NodeId) -> Result<(), DomError> {
+        self.backend.node_replace(self.node, replacement)
+    }
+
+    /// Implements `parentNode`.
+    pub fn parent_node(&self) -> Result<Option<D::NodeId>, DomError> {
+        self.backend.node_parent(self.node)
+    }
+
+    /// Implements `childNodes` as a snapshot for the current bridge turn.
+    pub fn child_nodes(&self) -> Result<StaticNodeList<D::NodeId>, DomError> {
+        self.backend
+            .node_children(self.node)
+            .map(StaticNodeList::new)
+    }
+
+    /// Implements `firstChild`.
+    pub fn first_child(&self) -> Result<Option<D::NodeId>, DomError> {
+        Ok(self.backend.node_children(self.node)?.first().copied())
+    }
+
+    /// Implements `nextSibling`.
+    pub fn next_sibling(&self) -> Result<Option<D::NodeId>, DomError> {
+        self.backend.node_next_sibling(self.node)
+    }
+}
+
 impl<'a, D: DocumentBackend> DocumentApi<'a, D> {
     /// Borrows the authoritative DOM backend as a document object.
     pub fn new(backend: &'a mut D) -> Self {
@@ -334,6 +481,7 @@ impl<D: DomBackend, J: JsEngine> Bridge<D, J> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
     use std::rc::{Rc, Weak};
 
     use blitsen_dom::NodeId;
@@ -382,6 +530,93 @@ mod tests {
 
         fn document_element(&self) -> Option<u32> {
             Some(1)
+        }
+    }
+
+    #[derive(Default)]
+    struct MockTree {
+        parents: HashMap<u32, u32>,
+        children: HashMap<u32, Vec<u32>>,
+    }
+
+    impl MockTree {
+        fn detach(&mut self, node: u32) {
+            if let Some(parent) = self.parents.remove(&node) {
+                self.children
+                    .get_mut(&parent)
+                    .unwrap()
+                    .retain(|id| *id != node);
+            }
+        }
+    }
+
+    impl NodeTreeBackend for MockTree {
+        type NodeId = u32;
+
+        fn node_append(&mut self, parent: u32, child: u32) -> Result<(), DomError> {
+            self.detach(child);
+            self.parents.insert(child, parent);
+            self.children.entry(parent).or_default().push(child);
+            Ok(())
+        }
+
+        fn node_insert_before(
+            &mut self,
+            parent: u32,
+            child: u32,
+            reference: Option<u32>,
+        ) -> Result<(), DomError> {
+            if let Some(reference) = reference
+                && self.parents.get(&reference) != Some(&parent)
+            {
+                return Err(DomError::NotFound);
+            }
+            self.detach(child);
+            let children = self.children.entry(parent).or_default();
+            let index = reference
+                .map(|reference| children.iter().position(|id| *id == reference).unwrap())
+                .unwrap_or(children.len());
+            children.insert(index, child);
+            self.parents.insert(child, parent);
+            Ok(())
+        }
+
+        fn node_remove(&mut self, node: u32) -> Result<(), DomError> {
+            self.detach(node);
+            Ok(())
+        }
+
+        fn node_replace(&mut self, old: u32, replacement: u32) -> Result<(), DomError> {
+            let parent = self.parents.get(&old).copied().ok_or(DomError::NotFound)?;
+            self.detach(replacement);
+            let index = self.children[&parent]
+                .iter()
+                .position(|id| *id == old)
+                .unwrap();
+            self.detach(old);
+            self.children
+                .get_mut(&parent)
+                .unwrap()
+                .insert(index, replacement);
+            self.parents.insert(replacement, parent);
+            Ok(())
+        }
+
+        fn node_parent(&self, node: u32) -> Result<Option<u32>, DomError> {
+            Ok(self.parents.get(&node).copied())
+        }
+
+        fn node_children(&self, node: u32) -> Result<Vec<u32>, DomError> {
+            Ok(self.children.get(&node).cloned().unwrap_or_default())
+        }
+
+        fn node_next_sibling(&self, node: u32) -> Result<Option<u32>, DomError> {
+            let Some(parent) = self.parents.get(&node) else {
+                return Ok(None);
+            };
+            let children = &self.children[parent];
+            let index = children.iter().position(|id| *id == node).unwrap();
+            Ok(children.get(index + 1).copied())
         }
     }
 
@@ -518,5 +753,45 @@ mod tests {
         assert_eq!(document.get_element_by_id("target").unwrap(), Some(2));
         assert_eq!(document.body(), Some(10));
         assert_eq!(document.document_element(), Some(1));
+    }
+
+    #[test]
+    fn node_mutations_update_the_authoritative_tree() {
+        let mut tree = MockTree::default();
+        {
+            let mut root = NodeTreeApi::new(&mut tree, 1);
+            root.append_child(2).unwrap();
+            root.append_child(3).unwrap();
+            root.insert_before(4, Some(3)).unwrap();
+            assert_eq!(root.child_nodes().unwrap().into_vec(), vec![2, 4, 3]);
+            assert_eq!(root.first_child().unwrap(), Some(2));
+        }
+        assert_eq!(
+            NodeTreeApi::new(&mut tree, 4).next_sibling().unwrap(),
+            Some(3)
+        );
+
+        // Moving an already-parented node detaches it first.
+        NodeTreeApi::new(&mut tree, 5).append_child(4).unwrap();
+        assert_eq!(tree.children.get(&1).unwrap(), &vec![2, 3]);
+        assert_eq!(tree.children.get(&5).unwrap(), &vec![4]);
+
+        NodeTreeApi::new(&mut tree, 1).remove_child(2).unwrap();
+        assert!(!tree.parents.contains_key(&2));
+        NodeTreeApi::new(&mut tree, 1).append_child(6).unwrap();
+        NodeTreeApi::new(&mut tree, 6).replace_with(7).unwrap();
+        assert_eq!(tree.children.get(&1).unwrap(), &vec![3, 7]);
+        assert!(!tree.parents.contains_key(&6));
+    }
+
+    #[test]
+    fn remove_child_rejects_a_node_from_another_parent() {
+        let mut tree = MockTree::default();
+        NodeTreeApi::new(&mut tree, 2).append_child(3).unwrap();
+        assert_eq!(
+            NodeTreeApi::new(&mut tree, 1).remove_child(3),
+            Err(DomError::NotFound)
+        );
+        assert_eq!(tree.parents.get(&3), Some(&2));
     }
 }
