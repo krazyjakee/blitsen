@@ -21,6 +21,8 @@ blitsen-platform = { path = "../blitsen-platform" }
 blitz = { git = "https://github.com/DioxusLabs/blitz", rev = "1efe22d2524d71ede5b94592204c21f0de644219" }
 napi = { version = "3.4", default-features = false, features = ["napi6"] }
 napi-derive = "3.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 tokio = { version = "1.42", features = ["rt-multi-thread"] }
 winit = "=0.31.0-beta.2"
 

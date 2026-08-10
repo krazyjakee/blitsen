@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  bridge:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-14]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.89.0"
+          components: rustfmt, clippy
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - name: Linux window dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libwayland-dev libxkbcommon-x11-dev libx11-xcb-dev
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
+      - run: bun test packages/blitsen
+      - run: cargo build -p blitsen-node
+      - name: Stage native addon (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          if [[ "$RUNNER_OS" == "macOS" ]]; then suffix=dylib; else suffix=so; fi
+          cp "target/debug/libblitsen_node.$suffix" target/debug/blitsen.node
+      - name: Stage native addon (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Copy-Item target/debug/blitsen_node.dll target/debug/blitsen.node
+      - run: bun packages/blitsen/test/native-harness.mjs "${{ github.workspace }}/target/debug/blitsen.node"

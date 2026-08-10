@@ -1,9 +1,11 @@
 //! Bun-loadable Node-API addon and JavaScript-engine implementation.
 
 use std::cell::RefCell;
+use std::collections::BTreeMap;
 use std::ffi::c_void;
 use std::path::Path;
 use std::ptr;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use base64::Engine as _;
@@ -16,14 +18,22 @@ use blitz::dom::DocumentConfig;
 use blitz::html::HtmlDocument;
 use blitz::shell::{BlitzApplication, BlitzShellProxy, WindowConfig, create_default_event_loop};
 use blitz::traits::net::NetProvider;
+use blitz::traits::shell::{ColorScheme, Viewport};
 use napi::bindgen_prelude::{FromNapiValue, Unknown};
 use napi::{Env, JsValue, Status, ValueType, sys};
 use napi_derive::napi;
+use serde::Serialize;
 use winit::dpi::LogicalSize;
 use winit::window::WindowAttributes;
 
 /// Stable addon name used by packaging and smoke tests.
 pub const ADDON_NAME: &str = "blitsen-node";
+
+fn callback_string(value: &Unknown<'static>) -> Result<String, JsError> {
+    let value = value.value();
+    // SAFETY: callback arguments are live handles in their originating env.
+    unsafe { String::from_napi_value(value.env, value.value) }.map_err(js_error)
+}
 
 fn js_error(error: napi::Error) -> JsError {
     JsError::new(error.reason)
@@ -641,6 +651,30 @@ pub struct OpenDirectoryOptions {
     pub directory: String,
 }
 
+#[derive(Serialize)]
+struct HarnessSnapshot {
+    nodes: Vec<HarnessNode>,
+}
+
+#[derive(Serialize)]
+struct HarnessNode {
+    handle: u64,
+    parent: Option<u64>,
+    tag: String,
+    text_content: String,
+    attributes: BTreeMap<String, String>,
+    inline_style: String,
+    layout: HarnessLayout,
+}
+
+#[derive(Serialize)]
+struct HarnessLayout {
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+}
+
 #[napi]
 impl Engine {
     /// Creates an engine in the current Bun/Node-API environment.
@@ -704,6 +738,193 @@ impl Engine {
             .run_app(application)
             .map_err(|error| napi::Error::new(Status::GenericFailure, error.to_string()))
     }
+}
+
+/// Boots Blitz headlessly, runs JavaScript DOM mutations, and returns the Rust
+/// tree state as JSON for cross-platform CI assertions.
+#[napi]
+pub fn run_bridge_harness(
+    env: Env,
+    html: String,
+    script: String,
+    width: Option<u32>,
+    height: Option<u32>,
+) -> napi::Result<String> {
+    let document = Rc::new(RefCell::new(HtmlDocument::from_html(
+        &html,
+        DocumentConfig {
+            viewport: Some(Viewport::new(
+                width.unwrap_or(800),
+                height.unwrap_or(600),
+                1.0,
+                ColorScheme::Light,
+            )),
+            ..Default::default()
+        },
+    )));
+    document.borrow_mut().resolve(0.0);
+    let mut engine = NodeApiEngine::new(env);
+
+    let text_document = Rc::clone(&document);
+    let set_text = engine
+        .define_function(
+            "__blitsenSetText",
+            Box::new(move |call| {
+                let selector = callback_string(
+                    call.arguments
+                        .first()
+                        .ok_or_else(|| JsError::new("missing selector"))?,
+                )?;
+                let value = callback_string(
+                    call.arguments
+                        .get(1)
+                        .ok_or_else(|| JsError::new("missing text value"))?,
+                )?;
+                let mut document = text_document.borrow_mut();
+                let node = document
+                    .query_selector(&selector)
+                    .map_err(|error| JsError::new(format!("{error:?}")))?
+                    .ok_or_else(|| JsError::new(format!("selector matched no node: {selector}")))?;
+                let mut mutation = document.mutate();
+                mutation.remove_and_drop_all_children(node);
+                if !value.is_empty() {
+                    let text = mutation.create_text_node(&value);
+                    mutation.append_children(node, &[text]);
+                }
+                Ok(call.this)
+            }),
+        )
+        .map_err(napi_error)?;
+    engine
+        .set_global("__blitsenSetText", &set_text)
+        .map_err(napi_error)?;
+
+    let attr_document = Rc::clone(&document);
+    let set_attribute = engine
+        .define_function(
+            "__blitsenSetAttribute",
+            Box::new(move |call| {
+                let selector = callback_string(&call.arguments[0])?;
+                let name = callback_string(&call.arguments[1])?;
+                let value = callback_string(&call.arguments[2])?;
+                let mut document = attr_document.borrow_mut();
+                let node = document
+                    .query_selector(&selector)
+                    .map_err(|error| JsError::new(format!("{error:?}")))?
+                    .ok_or_else(|| JsError::new(format!("selector matched no node: {selector}")))?;
+                document.mutate().set_attribute(
+                    node,
+                    blitz::dom::QualName::new(
+                        None,
+                        blitz::dom::ns!(),
+                        blitz::dom::LocalName::from(name),
+                    ),
+                    &value,
+                );
+                Ok(call.this)
+            }),
+        )
+        .map_err(napi_error)?;
+    engine
+        .set_global("__blitsenSetAttribute", &set_attribute)
+        .map_err(napi_error)?;
+
+    let style_document = Rc::clone(&document);
+    let set_style = engine
+        .define_function(
+            "__blitsenSetStyle",
+            Box::new(move |call| {
+                let selector = callback_string(&call.arguments[0])?;
+                let property = callback_string(&call.arguments[1])?;
+                let value = callback_string(&call.arguments[2])?;
+                let mut document = style_document.borrow_mut();
+                let node = document
+                    .query_selector(&selector)
+                    .map_err(|error| JsError::new(format!("{error:?}")))?
+                    .ok_or_else(|| JsError::new(format!("selector matched no node: {selector}")))?;
+                document.mutate().set_style_property(
+                    node,
+                    &blitsen_core::js_property_to_css(&property),
+                    &value,
+                );
+                Ok(call.this)
+            }),
+        )
+        .map_err(napi_error)?;
+    engine
+        .set_global("__blitsenSetStyle", &set_style)
+        .map_err(napi_error)?;
+
+    engine
+        .evaluate_script(
+            r#"
+            globalThis.document = {
+              querySelector(selector) {
+                const element = {
+                  set textContent(value) { __blitsenSetText(selector, String(value)); },
+                  setAttribute(name, value) { __blitsenSetAttribute(selector, String(name), String(value)); }
+                };
+                element.style = new Proxy({}, {
+                  set(_target, property, value) {
+                    __blitsenSetStyle(selector, String(property), String(value));
+                    return true;
+                  }
+                });
+                return element;
+              }
+            };
+            "#,
+            "blitsen:harness-bootstrap",
+        )
+        .and_then(|_| engine.evaluate_script(&script, "harness-script.js"))
+        .map_err(napi_error)?;
+    document.borrow_mut().resolve(0.0);
+
+    let document = document.borrow();
+    let ids = document
+        .query_selector_all("*")
+        .map_err(|error| napi::Error::new(Status::GenericFailure, format!("{error:?}")))?;
+    let mut nodes = Vec::with_capacity(ids.len());
+    for id in ids {
+        let node = document.get_node(id).ok_or_else(|| {
+            napi::Error::new(Status::GenericFailure, "Blitz returned a stale node")
+        })?;
+        let Some(element) = node.element_data() else {
+            continue;
+        };
+        let attributes = element
+            .attrs()
+            .iter()
+            .map(|attribute| {
+                (
+                    attribute.name.local.to_string(),
+                    attribute.value.to_string(),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        let layout = node.final_layout();
+        let inline_style = element
+            .style_attribute
+            .as_ref()
+            .map(|style| format!("{style:?}"))
+            .unwrap_or_default();
+        nodes.push(HarnessNode {
+            handle: id.as_u64(),
+            parent: node.parent.map(|parent| parent.as_u64()),
+            tag: element.name.local.to_string(),
+            text_content: node.text_content(),
+            inline_style,
+            attributes,
+            layout: HarnessLayout {
+                x: layout.location.x,
+                y: layout.location.y,
+                width: layout.size.width,
+                height: layout.size.height,
+            },
+        });
+    }
+    serde_json::to_string(&HarnessSnapshot { nodes })
+        .map_err(|error| napi::Error::new(Status::GenericFailure, error.to_string()))
 }
 
 /// Runs the load-bearing Node-API subset used by the trait implementation.
