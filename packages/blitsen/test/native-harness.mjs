@@ -19,6 +19,14 @@ assert.equal(scriptTarget.attributes["data-order"], "inline,async,defer,module,i
 assert.match(scriptTarget.attributes["data-module-url"], /module\.js$/);
 assert.equal(scriptTarget.attributes["data-dom-content-loaded"], "interactive");
 assert.equal(scriptTarget.attributes["data-load"], "complete");
+const interactiveSnapshot = JSON.parse(native.runDocumentScriptsHarness(
+  join(import.meta.dir, "../../../examples/interactive/index.html"),
+  960,
+  640,
+));
+const interactiveDemo = interactiveSnapshot.nodes.find(node => node.attributes.id === "demo");
+assert.equal(interactiveDemo.attributes["data-ready"], "true",
+  "interactive acceptance example installs its event and animation script");
 let scriptError;
 try {
   native.runDocumentScriptsHarness(join(scriptFixture, "error.html"), 320, 180);

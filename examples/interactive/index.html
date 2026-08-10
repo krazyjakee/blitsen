@@ -1,0 +1,35 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Blitsen Interactive</title>
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <main id="demo" class="demo" data-ready="false">
+      <header>
+        <div class="visual-title"><span class="mark"></span><span class="title-line long"></span><span class="title-line"></span></div>
+        <p class="eyebrow">M2 / INTERACTIVE</p>
+        <h1>One frame, all the way through.</h1>
+        <p class="intro">Click the control, then use ← → or Space. Native input propagates through
+          the DOM, JavaScript mutates layout, and requestAnimationFrame paints the result.</p>
+      </header>
+
+      <section id="stage" class="stage">
+        <div class="track"><div id="orb" class="orb"></div></div>
+        <button id="control" type="button">
+          <span class="control-light"></span>
+          <span id="control-label">Click to expand</span>
+          <span class="key-hint">← &nbsp; SPACE &nbsp; →</span>
+        </button>
+      </section>
+
+      <section class="readout">
+        <div><span class="meter input-meter"></span><span class="label">INPUT</span><strong id="input-state">waiting for click</strong></div>
+        <div><span class="meter event-meter"></span><span class="label">PROPAGATION</span><strong id="event-order">—</strong></div>
+        <div><span class="meter layout-meter"></span><span class="label">LAYOUT</span><strong id="layout-state">compact</strong></div>
+      </section>
+    </main>
+    <script src="./app.js"></script>
+  </body>
+</html>
