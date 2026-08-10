@@ -17,6 +17,32 @@ const BOOTSTRAP: &str = r#"
   const call = (operation, ...args) =>
     JSON.parse(__blitsenDomCall(operation, ...args.map(value => String(value))));
   const handle = Symbol("Blitsen node handle");
+  let nextAnimationFrameId = 1;
+  let animationFrames = new Map();
+  let runningAnimationFrames = null;
+
+  const requestAnimationFrame = callback => {
+    if (typeof callback !== "function") throw new TypeError("requestAnimationFrame callback must be a function");
+    const id = nextAnimationFrameId++;
+    animationFrames.set(id, callback);
+    return id;
+  };
+  const cancelAnimationFrame = id => {
+    animationFrames.delete(Number(id));
+    runningAnimationFrames?.delete(Number(id));
+  };
+  const animationFrameTick = timestamp => {
+    const callbacks = animationFrames;
+    animationFrames = new Map();
+    runningAnimationFrames = callbacks;
+    for (const [id, callback] of callbacks) {
+      if (!callbacks.has(id)) continue;
+      try { callback(Number(timestamp)); }
+      catch (error) { console.error("Uncaught exception in requestAnimationFrame callback", error); }
+    }
+    runningAnimationFrames = null;
+    return animationFrames.size;
+  };
 
   class Node {
     constructor() { throw new TypeError("Illegal constructor"); }
@@ -162,7 +188,12 @@ const BOOTSTRAP: &str = r#"
   }
 
   const document = new Document();
-  Object.assign(globalThis, { Node, Element, NodeList, Document, DOMTokenList, CSSStyleDeclaration, document });
+  Object.assign(globalThis, {
+    Node, Element, NodeList, Document, DOMTokenList, CSSStyleDeclaration, document,
+    requestAnimationFrame, cancelAnimationFrame,
+    __blitsenAnimationFrameTick: animationFrameTick,
+    __blitsenAnimationFramesPending: () => animationFrames.size > 0,
+  });
   globalThis.window = globalThis;
   for (const key of ["location", "history", "navigator", "localStorage"]) {
     try { delete globalThis[key]; } catch {}

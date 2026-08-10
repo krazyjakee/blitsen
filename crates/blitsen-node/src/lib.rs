@@ -9,6 +9,7 @@ use std::path::Path;
 use std::ptr;
 use std::rc::Rc;
 use std::sync::Arc;
+use std::time::Instant;
 
 use anyrender::{PaintScene as _, render_to_buffer};
 use anyrender_vello_cpu::VelloCpuImageRenderer;
@@ -741,9 +742,54 @@ struct WindowApplication<Rend: anyrender::WindowRenderer> {
     env: sys::napi_env,
     state: Rc<RefCell<WindowState>>,
     error: Rc<RefCell<Option<JsError>>>,
+    started_at: Instant,
 }
 
 impl<Rend: anyrender::WindowRenderer> WindowApplication<Rend> {
+    fn animation_frames_pending(&self) -> bool {
+        if self.error.borrow().is_some() {
+            return false;
+        }
+        let result = (|| {
+            let mut engine = NodeApiEngine::new(Env::from_raw(self.env));
+            let pending = engine.evaluate_script(
+                "globalThis.__blitsenAnimationFramesPending()",
+                "blitsen:animation-frame-pending",
+            )?;
+            engine.to_boolean(&pending)
+        })();
+        match result {
+            Ok(pending) => pending,
+            Err(error) => {
+                *self.error.borrow_mut() = Some(error);
+                false
+            }
+        }
+    }
+
+    fn run_animation_frame(&self) -> bool {
+        if self.error.borrow().is_some() {
+            return false;
+        }
+        let timestamp = self.started_at.elapsed().as_secs_f64() * 1_000.0;
+        let result = (|| {
+            let mut engine = NodeApiEngine::new(Env::from_raw(self.env));
+            let pending = engine.evaluate_script(
+                &format!("globalThis.__blitsenAnimationFrameTick({timestamp})"),
+                "blitsen:animation-frame-tick",
+            )?;
+            engine.drain_microtasks()?;
+            Ok(engine.to_number(&pending)? > 0.0)
+        })();
+        match result {
+            Ok(pending) => pending,
+            Err(error) => {
+                *self.error.borrow_mut() = Some(error);
+                false
+            }
+        }
+    }
+
     fn sync_window(&self, width: u32, height: u32, device_pixel_ratio: f64) {
         if self.error.borrow().is_some() {
             return;
@@ -821,9 +867,14 @@ impl<Rend: anyrender::WindowRenderer> ApplicationHandler for WindowApplication<R
             &event,
             WindowEvent::SurfaceResized(_) | WindowEvent::ScaleFactorChanged { .. }
         );
+        let redraw = matches!(&event, WindowEvent::RedrawRequested);
+        let animation_pending = redraw && self.run_animation_frame();
         self.inner.window_event(event_loop, window_id, event);
         if viewport_changed {
             self.sync_native_window(window_id);
+        }
+        if animation_pending && let Some(view) = self.inner.windows.get(&window_id) {
+            view.window.request_redraw();
         }
     }
 
@@ -838,6 +889,11 @@ impl<Rend: anyrender::WindowRenderer> ApplicationHandler for WindowApplication<R
 
     fn about_to_wait(&mut self, event_loop: &dyn ActiveEventLoop) {
         self.inner.about_to_wait(event_loop);
+        if self.animation_frames_pending() {
+            for view in self.inner.windows.values() {
+                view.window.request_redraw();
+            }
+        }
     }
 
     fn suspended(&mut self, event_loop: &dyn ActiveEventLoop) {
@@ -951,6 +1007,7 @@ impl Engine {
     /// Parses `index.html` and runs a native Blitz window until it closes.
     #[napi(js_name = "openDirectory")]
     pub fn open_directory(&self, options: OpenDirectoryOptions) -> napi::Result<()> {
+        let started_at = Instant::now();
         let source = std::fs::read_to_string(&options.entrypoint).map_err(|error| {
             napi::Error::new(
                 Status::GenericFailure,
@@ -1019,6 +1076,7 @@ impl Engine {
             env: raw_env,
             state: window_state,
             error: Rc::clone(&window_error),
+            started_at,
         };
         event_loop
             .run_app(application)
@@ -1143,6 +1201,45 @@ fn execute_bridge_harness(
         .evaluate_script(&script, "harness-script.js")
         .map_err(napi_error)?;
     snapshot_and_render(document, width, height)
+}
+
+fn execute_animation_harness(
+    env: Env,
+    html: String,
+    script: String,
+    frames: u32,
+    width: u32,
+    height: u32,
+) -> napi::Result<Vec<HarnessSnapshot>> {
+    let runtime = DomRuntime::new(BlitzDom::from_html(
+        &html,
+        DocumentConfig {
+            viewport: Some(Viewport::new(width, height, 1.0, ColorScheme::Light)),
+            ..Default::default()
+        },
+    ));
+    let document = runtime.document();
+    document.borrow_mut().flush_layout().map_err(dom_error)?;
+    let mut engine = NodeApiEngine::new(env);
+    let _window_state =
+        dom_bridge::install(&mut engine, runtime, width, height, 1.0).map_err(napi_error)?;
+    engine
+        .evaluate_script(&script, "animation-harness-script.js")
+        .map_err(napi_error)?;
+
+    let mut snapshots = Vec::with_capacity(frames as usize);
+    for frame in 1..=frames {
+        let timestamp = f64::from(frame) * (1_000.0 / 60.0);
+        engine
+            .evaluate_script(
+                &format!("globalThis.__blitsenAnimationFrameTick({timestamp})"),
+                "blitsen:animation-harness-tick",
+            )
+            .and_then(|_| engine.drain_microtasks().map(|_| ()))
+            .map_err(napi_error)?;
+        snapshots.push(snapshot_and_render(Rc::clone(&document), width, height)?.0);
+    }
+    Ok(snapshots)
 }
 
 fn snapshot_and_render(
@@ -1311,6 +1408,35 @@ pub fn run_bridge_harness(
 ) -> napi::Result<String> {
     let (snapshot, _) = execute_bridge_harness(env, html, script, width, height)?;
     serde_json::to_string(&snapshot)
+        .map_err(|error| napi::Error::new(Status::GenericFailure, error.to_string()))
+}
+
+/// Advances a document through a deterministic sequence of animation frames.
+#[napi]
+pub fn run_animation_harness(
+    env: Env,
+    html: String,
+    script: String,
+    frames: Option<u32>,
+    width: Option<u32>,
+    height: Option<u32>,
+) -> napi::Result<String> {
+    let frames = frames.unwrap_or(3);
+    if frames > 10_000 {
+        return Err(napi::Error::new(
+            Status::InvalidArg,
+            "animation harness is limited to 10000 frames",
+        ));
+    }
+    let snapshots = execute_animation_harness(
+        env,
+        html,
+        script,
+        frames,
+        width.unwrap_or(800),
+        height.unwrap_or(600),
+    )?;
+    serde_json::to_string(&snapshots)
         .map_err(|error| napi::Error::new(Status::GenericFailure, error.to_string()))
 }
 

@@ -69,6 +69,36 @@ const created = snapshot.nodes.find((node) => node.attributes.id === "created");
 assert(created, "document-created element reached the Rust tree");
 assert.equal(created.text_content, "new");
 
+const animation = JSON.parse(native.runAnimationHarness(
+  `<style>#animated { position:absolute; left:0; top:0; width:20px; height:20px; background:red }</style><div id="animated"></div>`,
+  `{ const animated = document.getElementById("animated");
+     const timestamps = [];
+     let count = 0;
+     const cancelled = requestAnimationFrame(() => { throw new Error("cancelAnimationFrame failed"); });
+     cancelAnimationFrame(cancelled);
+     const step = timestamp => {
+       timestamps.push(timestamp);
+       count++;
+       animated.style.left = (count * 10) + "px";
+       animated.setAttribute("data-frame", String(count));
+       animated.setAttribute("data-times", timestamps.join(","));
+       if (count < 3) requestAnimationFrame(step);
+     };
+     requestAnimationFrame(step); }`,
+  3,
+  100,
+  60,
+));
+const animatedFrames = animation.map(frame => frame.nodes.find(node => node.attributes.id === "animated"));
+assert.deepEqual(animatedFrames.map(node => node.attributes["data-frame"]), ["1", "2", "3"],
+  "callbacks registered during rAF wait for the next frame");
+assert.deepEqual(animatedFrames.map(node => node.layout.x), [10, 20, 30],
+  "rAF mutations land in each frame being built");
+const animationTimestamps = animatedFrames.at(-1).attributes["data-times"].split(",").map(Number);
+assert.equal(animationTimestamps.length, 3);
+assert(animationTimestamps.every((timestamp, index) => index === 0 || timestamp > animationTimestamps[index - 1]),
+  "animation timestamps are monotonic DOMHighResTimeStamp values");
+
 const treeSnapshot = JSON.parse(native.runBridgeHarness(
   `<body><div id="a"><i id="one">one</i><i id="two">two</i></div><div id="b"></div></body>`,
   `{ const expect = (condition, message) => { if (!condition) throw new Error(message); };
