@@ -204,6 +204,74 @@ pub struct NodeTreeApi<'a, D: NodeTreeBackend> {
     node: D::NodeId,
 }
 
+/// Text and HTML operations required by JavaScript node wrappers.
+pub trait NodeContentBackend {
+    /// Stable node handle.
+    type NodeId: Copy;
+
+    /// Reads concatenated descendant text.
+    fn content_text(&self, node: Self::NodeId) -> Result<String, DomError>;
+    /// Replaces children with one text node (or none for an empty string).
+    fn content_set_text(&mut self, node: Self::NodeId, text: &str) -> Result<(), DomError>;
+    /// Serializes child nodes to HTML.
+    fn content_inner_html(&self, node: Self::NodeId) -> Result<String, DomError>;
+    /// Contextually parses and adopts replacement child nodes.
+    fn content_set_inner_html(&mut self, node: Self::NodeId, html: &str) -> Result<(), DomError>;
+}
+
+impl<D: DomBackend> NodeContentBackend for D {
+    type NodeId = D::NodeId;
+
+    fn content_text(&self, node: Self::NodeId) -> Result<String, DomError> {
+        self.text_content(node)
+    }
+
+    fn content_set_text(&mut self, node: Self::NodeId, text: &str) -> Result<(), DomError> {
+        self.set_text_content(node, text)
+    }
+
+    fn content_inner_html(&self, node: Self::NodeId) -> Result<String, DomError> {
+        self.inner_html(node)
+    }
+
+    fn content_set_inner_html(&mut self, node: Self::NodeId, html: &str) -> Result<(), DomError> {
+        self.set_inner_html(node, html)
+    }
+}
+
+/// Runtime-neutral `textContent` and `innerHTML` implementation.
+pub struct NodeContentApi<'a, D: NodeContentBackend> {
+    backend: &'a mut D,
+    node: D::NodeId,
+}
+
+impl<'a, D: NodeContentBackend> NodeContentApi<'a, D> {
+    /// Wraps a node from the authoritative backend.
+    pub fn new(backend: &'a mut D, node: D::NodeId) -> Self {
+        Self { backend, node }
+    }
+
+    /// Implements the `textContent` getter.
+    pub fn text_content(&self) -> Result<String, DomError> {
+        self.backend.content_text(self.node)
+    }
+
+    /// Implements the `textContent` setter.
+    pub fn set_text_content(&mut self, text: &str) -> Result<(), DomError> {
+        self.backend.content_set_text(self.node, text)
+    }
+
+    /// Implements the `innerHTML` getter.
+    pub fn inner_html(&self) -> Result<String, DomError> {
+        self.backend.content_inner_html(self.node)
+    }
+
+    /// Implements the `innerHTML` setter through the backend fragment parser.
+    pub fn set_inner_html(&mut self, html: &str) -> Result<(), DomError> {
+        self.backend.content_set_inner_html(self.node, html)
+    }
+}
+
 impl<'a, D: NodeTreeBackend> NodeTreeApi<'a, D> {
     /// Wraps one handle from the authoritative backend tree.
     pub fn new(backend: &'a mut D, node: D::NodeId) -> Self {
@@ -620,6 +688,45 @@ mod tests {
         }
     }
 
+    struct MockContent {
+        text: String,
+        html: String,
+        invalidations: usize,
+    }
+
+    impl NodeContentBackend for MockContent {
+        type NodeId = u32;
+
+        fn content_text(&self, _node: u32) -> Result<String, DomError> {
+            Ok(self.text.clone())
+        }
+
+        fn content_set_text(&mut self, _node: u32, text: &str) -> Result<(), DomError> {
+            self.text = text.into();
+            self.html = if text.is_empty() {
+                String::new()
+            } else {
+                text.replace('&', "&amp;").replace('<', "&lt;")
+            };
+            self.invalidations += 1;
+            Ok(())
+        }
+
+        fn content_inner_html(&self, _node: u32) -> Result<String, DomError> {
+            Ok(self.html.clone())
+        }
+
+        fn content_set_inner_html(&mut self, _node: u32, html: &str) -> Result<(), DomError> {
+            self.html = html.into();
+            self.text = html
+                .replace("<span>", "")
+                .replace("</span>", "")
+                .replace("&amp;", "&");
+            self.invalidations += 1;
+            Ok(())
+        }
+    }
+
     type MockFinalizer = Box<dyn FnOnce(ExternalId) + 'static>;
 
     struct MockObject {
@@ -793,5 +900,25 @@ mod tests {
             Err(DomError::NotFound)
         );
         assert_eq!(tree.parents.get(&3), Some(&2));
+    }
+
+    #[test]
+    fn text_and_html_replace_children_and_invalidate() {
+        let mut backend = MockContent {
+            text: "AB".into(),
+            html: "<b>A</b><i>B</i>".into(),
+            invalidations: 0,
+        };
+        {
+            let mut node = NodeContentApi::new(&mut backend, 1);
+            assert_eq!(node.text_content().unwrap(), "AB");
+            assert_eq!(node.inner_html().unwrap(), "<b>A</b><i>B</i>");
+            node.set_text_content("a < b & c").unwrap();
+            assert_eq!(node.inner_html().unwrap(), "a &lt; b &amp; c");
+            node.set_inner_html("<span>A &amp; B</span>").unwrap();
+            assert_eq!(node.text_content().unwrap(), "A & B");
+            assert_eq!(node.inner_html().unwrap(), "<span>A &amp; B</span>");
+        }
+        assert_eq!(backend.invalidations, 2);
     }
 }

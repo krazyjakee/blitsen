@@ -454,6 +454,11 @@ pub trait DomBackend {
         context: Self::NodeId,
         html: &str,
     ) -> Result<Vec<Self::NodeId>, DomError>;
+    /// Serializes a node's children as HTML.
+    fn inner_html(&self, node: Self::NodeId) -> Result<String, DomError>;
+    /// Contextually parses HTML and replaces a node's children with the
+    /// adopted fragment.
+    fn set_inner_html(&mut self, node: Self::NodeId, html: &str) -> Result<(), DomError>;
 
     /// Returns the first matching descendant, or `None`.
     fn query_selector(
