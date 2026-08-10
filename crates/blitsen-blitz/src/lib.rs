@@ -8,8 +8,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use blitsen_dom::{
-    DomBackend, DomError, DomName, FrameInvalidation, InvalidationMode, InvalidationTracker,
-    LayoutSnapshot, Namespace, NodeKind, Rect,
+    DomBackend, DomError, DomName, FrameInvalidation, InvalidationMetrics, InvalidationMode,
+    InvalidationTracker, LayoutSnapshot, Namespace, NodeKind, Rect,
 };
 use blitz::dom::{DocumentConfig, LocalName, NodeData, NodeId, QualName, ns};
 use blitz::html::{HtmlDocument, HtmlProvider};
@@ -20,6 +20,8 @@ pub struct BlitzDom {
     revision: u64,
     flushed_revision: u64,
     invalidation: InvalidationTracker<NodeId>,
+    last_invalidation_metrics: InvalidationMetrics,
+    last_frame_was_full_document: bool,
     js_references: HashMap<NodeId, u32>,
 }
 
@@ -33,11 +35,18 @@ impl BlitzDom {
     /// Wraps an existing Blitz document and installs the fragment parser.
     pub fn new(mut document: HtmlDocument) -> Self {
         document.set_html_parser_provider(Arc::new(HtmlProvider));
+        let invalidation_mode = if document.incremental_layout() {
+            InvalidationMode::FineGrained
+        } else {
+            InvalidationMode::FullDocumentFallback
+        };
         Self {
             document,
             revision: 0,
             flushed_revision: u64::MAX,
-            invalidation: InvalidationTracker::new(InvalidationMode::FineGrained),
+            invalidation: InvalidationTracker::new(invalidation_mode),
+            last_invalidation_metrics: InvalidationMetrics::default(),
+            last_frame_was_full_document: false,
             js_references: HashMap::new(),
         }
     }
@@ -88,7 +97,18 @@ impl BlitzDom {
 
     /// Drains observable invalidation work for the next frame.
     pub fn take_frame_invalidation(&mut self) -> FrameInvalidation<NodeId> {
-        self.invalidation.take_frame(self.document.tree().len())
+        let frame = self.invalidation.take_frame(self.document.tree().len());
+        self.last_invalidation_metrics = frame.metrics;
+        self.last_frame_was_full_document = frame.full_document;
+        frame
+    }
+
+    /// Returns the restyle/relayout scope consumed by the latest layout flush.
+    pub fn last_frame_invalidation(&self) -> (InvalidationMetrics, bool) {
+        (
+            self.last_invalidation_metrics,
+            self.last_frame_was_full_document,
+        )
     }
 
     fn node(&self, node: NodeId) -> Result<&blitz::dom::Node, DomError> {
@@ -627,6 +647,7 @@ impl DomBackend for BlitzDom {
     }
 
     fn flush_layout(&mut self) -> Result<LayoutSnapshot, DomError> {
+        self.take_frame_invalidation();
         self.document.resolve(0.0);
         self.flushed_revision = self.revision;
         Ok(LayoutSnapshot::new(self.revision))
@@ -730,7 +751,15 @@ mod tests {
             dom.bounding_rect(replacement, snapshot).unwrap().width,
             240.0
         );
-        assert!(dom.take_frame_invalidation().metrics.restyled_nodes > 0);
+        let (metrics, full_document) = dom.last_frame_invalidation();
+        assert!(metrics.restyled_nodes > 0);
+        assert!(metrics.relaid_out_nodes >= metrics.restyled_nodes);
+        assert!(!full_document);
+        dom.flush_layout().unwrap();
+        assert_eq!(
+            dom.last_frame_invalidation(),
+            (blitsen_dom::InvalidationMetrics::default(), false)
+        );
 
         dom.append_child(body, replacement).unwrap();
         assert_eq!(dom.parent(replacement).unwrap(), Some(body));
@@ -758,5 +787,24 @@ mod tests {
         assert_eq!(nodes.len(), 2);
         dom.append_child(host, nodes[0]).unwrap();
         assert_eq!(dom.get_element_by_id("one").unwrap(), Some(nodes[0]));
+    }
+
+    #[test]
+    fn reports_the_real_full_document_fallback_mode() {
+        let mut dom = BlitzDom::from_html(
+            "<body><main id='host'><p>child</p></main></body>",
+            DocumentConfig {
+                incremental: Some(false),
+                ..Default::default()
+            },
+        );
+        let host = dom.get_element_by_id("host").unwrap().unwrap();
+        dom.set_attribute(host, &DomName::attribute("class"), "changed")
+            .unwrap();
+        dom.flush_layout().unwrap();
+        let (metrics, full_document) = dom.last_frame_invalidation();
+        assert!(full_document);
+        assert_eq!(metrics.restyled_nodes, dom.document_ref().tree().len());
+        assert_eq!(metrics.relaid_out_nodes, metrics.restyled_nodes);
     }
 }

@@ -259,6 +259,12 @@ mark node dirty (style) → ancestors dirty (layout)
 next frame: restyle + relayout dirty subtrees only
 ```
 
+Blitz incremental layout is enabled by default. Each bridge layout flush consumes a separate
+style-dirty set and ancestor-propagated layout-dirty set, and records the scheduled node counts
+for that frame. Native harness snapshots expose those counters. If incremental layout is disabled,
+the tracker switches to the explicit full-document fallback and reports the document's full node
+count for both phases, making the cost visible rather than silently claiming fine-grained work.
+
 Reads that depend on layout (`getBoundingClientRect`, `offsetWidth`, `scrollTop`) force a
 synchronous layout flush if the tree is dirty — the same layout-thrashing hazard as the web,
 with the same fix (batch reads before writes). We do not attempt to hide it.

@@ -691,6 +691,14 @@ pub struct OpenDirectoryOptions {
 #[derive(Serialize)]
 struct HarnessSnapshot {
     nodes: Vec<HarnessNode>,
+    invalidation: HarnessInvalidation,
+}
+
+#[derive(Serialize)]
+struct HarnessInvalidation {
+    restyled_nodes: usize,
+    relaid_out_nodes: usize,
+    full_document: bool,
 }
 
 #[derive(Serialize)]
@@ -1057,6 +1065,12 @@ fn snapshot_and_render(
     height: u32,
 ) -> napi::Result<(HarnessSnapshot, Vec<u8>)> {
     let snapshot = document.borrow_mut().flush_layout().map_err(dom_error)?;
+    let (invalidation_metrics, full_document) = document.borrow().last_frame_invalidation();
+    let invalidation = HarnessInvalidation {
+        restyled_nodes: invalidation_metrics.restyled_nodes,
+        relaid_out_nodes: invalidation_metrics.relaid_out_nodes,
+        full_document,
+    };
 
     let mut document = document.borrow_mut();
     let ids = document
@@ -1131,7 +1145,13 @@ fn snapshot_and_render(
             .write_image_data(&pixels)
             .map_err(|error| napi::Error::new(Status::GenericFailure, error.to_string()))?;
     }
-    Ok((HarnessSnapshot { nodes }, png))
+    Ok((
+        HarnessSnapshot {
+            nodes,
+            invalidation,
+        },
+        png,
+    ))
 }
 
 fn execute_document_harness(

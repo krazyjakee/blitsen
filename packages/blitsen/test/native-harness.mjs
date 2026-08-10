@@ -55,6 +55,10 @@ const snapshot = JSON.parse(native.runBridgeHarness(
 ));
 const target = snapshot.nodes.find((node) => node.attributes.id === "x");
 assert(target, "Rust tree contains #x");
+assert(snapshot.invalidation.restyled_nodes > 0, "frame exposes restyled-node scope");
+assert(snapshot.invalidation.relaid_out_nodes >= snapshot.invalidation.restyled_nodes,
+  "layout invalidation propagates through ancestors");
+assert.equal(snapshot.invalidation.full_document, false, "Blitz incremental layout is active");
 assert.equal(target.text_content, "hi");
 assert.equal(target.attributes.class, "done");
 assert.equal(target.attributes["data-window"], "ok");
