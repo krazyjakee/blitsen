@@ -34,6 +34,38 @@ assert.equal(target.layout.width, 140);
 const created = snapshot.nodes.find((node) => node.attributes.id === "created");
 assert(created, "document-created element reached the Rust tree");
 assert.equal(created.text_content, "new");
+
+const treeSnapshot = JSON.parse(native.runBridgeHarness(
+  `<body><div id="a"><i id="one">one</i><i id="two">two</i></div><div id="b"></div></body>`,
+  `{ const expect = (condition, message) => { if (!condition) throw new Error(message); };
+     const a = document.getElementById("a");
+     const b = document.getElementById("b");
+     const one = document.getElementById("one");
+     const two = document.getElementById("two");
+     const three = document.createElement("i"); three.id = "three";
+     expect(a.appendChild(three) === three && a.childNodes.item(2) === three && three.parentNode === a, "appendChild");
+     const zero = document.createElement("i"); zero.id = "zero";
+     expect(a.insertBefore(zero, one) === zero && a.firstChild === zero && zero.nextSibling === one, "insertBefore");
+     b.appendChild(two);
+     expect(two.parentNode === b && ![...a.childNodes].includes(two), "move detaches old parent");
+     const removed = a.removeChild(one);
+     expect(removed === one && removed.parentNode === null && !removed.isConnected, "removeChild");
+     zero.remove();
+     expect(zero.parentNode === null && !zero.isConnected, "remove");
+     const replacement = document.createElement("strong"); replacement.id = "replacement";
+     three.replaceWith(replacement);
+     expect(a.firstChild === replacement && replacement.nextSibling === null && three.parentNode === null, "replaceWith");
+     a.setAttribute("data-tree", "ok"); }`,
+  320,
+  180,
+));
+const treeById = new Map(treeSnapshot.nodes.map((node) => [node.attributes.id, node]));
+assert.equal(treeById.get("a").attributes["data-tree"], "ok");
+assert.equal(treeById.get("replacement").parent, treeById.get("a").handle);
+assert.equal(treeById.get("two").parent, treeById.get("b").handle);
+for (const removedId of ["zero", "one", "three"])
+  assert.equal(treeById.has(removedId), false, `${removedId} is detached from the Rust document tree`);
+
 const mutatedPng = Buffer.from(native.renderBridgeHarnessPng(
   `<style>#x { width: 180px; height: 80px; background: #ef4444 }</style><div id="x">old</div>`,
   `{ const painted = document.querySelector("#x");
