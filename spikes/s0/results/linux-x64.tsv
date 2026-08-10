@@ -1,0 +1,7 @@
+variant	installed_bytes	gzip_9_bytes
+debug	736676312	189660248
+release	67997072	26706135
+release-strip	55274296	24851040
+release-strip-lto	52480904	24076701
+jsc-only-release-strip	37980984	17933416
+blitz-only-release-strip	18620152	7174043
