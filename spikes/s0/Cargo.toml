@@ -1,0 +1,50 @@
+[package]
+name = "s0-jsc-blitz-size"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[build-dependencies]
+cc = "1.2"
+
+[features]
+default = ["blitz", "jsc"]
+blitz = [
+    "dep:anyrender",
+    "dep:anyrender_vello_cpu",
+    "dep:blitz-dom",
+    "dep:blitz-html",
+    "dep:blitz-paint",
+    "dep:blitz-traits",
+    "dep:peniko",
+]
+jsc = []
+
+[dependencies]
+anyrender = { version = "0.12.0", optional = true }
+anyrender_vello_cpu = { version = "0.15.0", optional = true }
+blitz-dom = { git = "https://github.com/DioxusLabs/blitz", rev = "1efe22d2524d71ede5b94592204c21f0de644219", optional = true }
+blitz-html = { git = "https://github.com/DioxusLabs/blitz", rev = "1efe22d2524d71ede5b94592204c21f0de644219", optional = true }
+blitz-paint = { git = "https://github.com/DioxusLabs/blitz", rev = "1efe22d2524d71ede5b94592204c21f0de644219", optional = true }
+blitz-traits = { git = "https://github.com/DioxusLabs/blitz", rev = "1efe22d2524d71ede5b94592204c21f0de644219", optional = true }
+peniko = { version = "0.6.0", optional = true }
+
+[patch.crates-io]
+anyrender = { git = "https://github.com/DioxusLabs/anyrender", rev = "dcd219746ff13a5832beab552f3f7f494d1bd84d" }
+anyrender_svg = { git = "https://github.com/DioxusLabs/anyrender", rev = "dcd219746ff13a5832beab552f3f7f494d1bd84d" }
+usvg = { git = "https://github.com/DioxusLabs/resvg", rev = "3289a9b0c3d3352692bf5acdf5f6e6949cdb57b5" }
+
+[profile.release]
+debug = false
+incremental = false
+
+[profile.production]
+inherits = "release"
+codegen-units = 1
+lto = true
+strip = true
+
+[profile.small]
+inherits = "production"
+opt-level = "s"
+panic = "abort"

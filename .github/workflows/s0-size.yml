@@ -1,0 +1,65 @@
+name: S0 cross-platform size
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  WEBKIT_REVISION: 447082ab6897278727b44e1ba3c326ae6e1504c3
+  MIMALLOC_REVISION: 1803341d6241d8fa4b3f65fa68cb13a32ad92f04
+
+jobs:
+  measure:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-14
+            asset: bun-webkit-macos-arm64-lto.tar.gz
+            executable: s0-jsc-blitz-size
+            result: macos-arm64.tsv
+          - runner: windows-2022
+            asset: bun-webkit-windows-amd64-lto.tar.gz
+            executable: s0-jsc-blitz-size.exe
+            result: windows-x64.tsv
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch pinned JSC and allocator
+        shell: bash
+        run: |
+          set -euo pipefail
+          url="https://github.com/oven-sh/WebKit/releases/download/autobuild-$WEBKIT_REVISION/${{ matrix.asset }}"
+          curl --fail --location --retry 3 --output webkit.tar.gz "$url"
+          mkdir webkit
+          tar -xzf webkit.tar.gz -C webkit
+          git clone --depth 1 https://github.com/oven-sh/mimalloc.git mimalloc
+          git -C mimalloc fetch --depth 1 origin "$MIMALLOC_REVISION"
+          git -C mimalloc checkout --detach "$MIMALLOC_REVISION"
+      - name: Build and measure
+        shell: bash
+        env:
+          BLITSEN_JSC_LIB_DIR: ${{ github.workspace }}/webkit/bun-webkit/lib
+          BLITSEN_MIMALLOC_DIR: ${{ github.workspace }}/mimalloc
+        run: |
+          set -euo pipefail
+          cargo build --manifest-path spikes/s0/Cargo.toml --profile production
+          binary="spikes/s0/target/production/${{ matrix.executable }}"
+          "$binary"
+          gzip -9 -c "$binary" > binary.gz
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            installed=$(powershell -NoProfile -Command "(Get-Item '$binary').Length")
+            compressed=$(powershell -NoProfile -Command "(Get-Item 'binary.gz').Length")
+          else
+            installed=$(stat -f '%z' "$binary")
+            compressed=$(stat -f '%z' binary.gz)
+          fi
+          printf 'platform\tvariant\tinstalled_bytes\tgzip_9_bytes\n' > "${{ matrix.result }}"
+          printf '%s\trelease-strip-lto\t%s\t%s\n' "$RUNNER_OS-$RUNNER_ARCH" "$installed" "$compressed" >> "${{ matrix.result }}"
+          cat "${{ matrix.result }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: s0-${{ matrix.result }}
+          path: ${{ matrix.result }}
