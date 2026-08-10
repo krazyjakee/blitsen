@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "crates/blitsen",
     "crates/blitsen-core",
     "crates/blitsen-dom",
     "crates/blitsen-js",

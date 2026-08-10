@@ -1,0 +1,15 @@
+[package]
+name = "blitsen"
+version = "0.0.1"
+description = "Native runtime for applications built from HTML, CSS, and JavaScript output"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "README.md"
+keywords = ["desktop", "html", "css", "gui"]
+categories = ["gui"]
+publish = true
+
+[lints]
+workspace = true

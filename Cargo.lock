@@ -3,6 +3,10 @@
 version = 4
 
 [[package]]
+name = "blitsen"
+version = "0.0.1"
+
+[[package]]
 name = "blitsen-core"
 version = "0.0.0"
 dependencies = [

@@ -1,10 +1,23 @@
 {
   "name": "blitsen",
-  "version": "0.0.0",
+  "version": "0.0.1",
   "description": "Native runtime CLI and types for Blitsen",
-  "private": true,
   "type": "module",
   "license": "MIT OR Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/krazyjakee/blitsen.git",
+    "directory": "packages/blitsen"
+  },
+  "homepage": "https://github.com/krazyjakee/blitsen#readme",
+  "bugs": "https://github.com/krazyjakee/blitsen/issues",
+  "keywords": [
+    "desktop",
+    "html",
+    "css",
+    "javascriptcore",
+    "blitz"
+  ],
   "bin": {
     "blitsen": "bin/blitsen.mjs"
   },
@@ -16,6 +29,8 @@
   },
   "types": "./index.d.ts",
   "files": [
+    "LICENSE",
+    "README.md",
     "bin",
     "index.d.ts",
     "index.mjs",
@@ -23,5 +38,8 @@
   ],
   "scripts": {
     "test": "bun test"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }
