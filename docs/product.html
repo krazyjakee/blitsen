@@ -1861,23 +1861,16 @@ requestAnimationFrame(<span class="c-key">function</span> update(t) {
           <table>
             <thead>
               <tr>
-                <th scope="col">Phase</th>
-                <th scope="col">Component</th>
-                <th scope="col">Estimate</th>
+                <th scope="col">Observation</th>
+                <th scope="col">Artifact</th>
+                <th scope="col">Measured size</th>
               </tr>
             </thead>
             <tbody>
-              <tr><td class="mono">1</td><th scope="row">Bun / JSC runtime</th><td class="num">~60–100 MB</td></tr>
-              <tr><td class="mono">1</td><th scope="row">Blitz + Stylo + Taffy + window</th><td class="num">~5–15 MB</td></tr>
-              <tr><td class="mono">1</td><th scope="row">bridge</th><td class="num">~1–5 MB</td></tr>
-              <tr><td class="mono">1</td><th scope="row">app code</th><td class="num">tiny</td></tr>
-              <tr><td class="mono">1</td><th scope="row"><strong>bare app</strong></th><td class="num"><strong>~70–120 MB</strong></td></tr>
-              <tr><td class="mono">2</td><th scope="row">JSC + required runtime</th><td class="num">~15–30 MB <span style="color:var(--ink-faint)">(unmeasured)</span></td></tr>
-              <tr><td class="mono">2</td><th scope="row">Blitz + native rendering</th><td class="num">~5–15 MB <span style="color:var(--ink-faint)">(unmeasured)</span></td></tr>
-              <tr><td class="mono">2</td><th scope="row">web compatibility layer</th><td class="num">~1–5 MB</td></tr>
-              <tr><td class="mono">2</td><th scope="row">app HTML/CSS/JS</th><td class="num">usually &lt;5 MB</td></tr>
-              <tr><td class="mono">2</td><th scope="row"><strong>bare app</strong></th><td class="num"><strong>~25–50 MB</strong></td></tr>
-              <tr><td class="mono">3</td><th scope="row"><strong>bare app</strong></th><td class="num"><strong>~20–40 MB</strong></td></tr>
+              <tr><td class="mono">S3 · Phase 1</td><th scope="row">prototype, full Bun runtime</th><td class="num">105,814,144 B</td></tr>
+              <tr><td class="mono">M3 · Phase 1</td><th scope="row">standalone Pong, optimized Rust host</th><td class="num">132,184,192 B</td></tr>
+              <tr><td class="mono">S0 · Phase 2</td><th scope="row">JSC + Blitz floor, stripped + LTO</th><td class="num">52,480,904 B</td></tr>
+              <tr><td class="mono">S0 · gzip -9</td><th scope="row">compressed Phase 2 floor</th><td class="num">24,076,701 B</td></tr>
             </tbody>
           </table>
         </div>
@@ -1885,10 +1878,10 @@ requestAnimationFrame(<span class="c-key">function</span> update(t) {
         <div class="callout warn">
           <span class="tag">Read this before quoting a number</span>
           <p>
-            <strong>These are engineering targets, not measurements.</strong> The Phase 2 and 3
-            numbers depend on a JSC + Blitz build that does not yet exist; establishing the true
-            floor is an early milestone (TECH.md §15). Public size claims are made only from measured
-            builds.
+            <strong>The original 25–50 MB Phase 2 estimate is withdrawn.</strong> The S0 floor
+            already exceeds it before the host, bridge, loader, GPU services, or application are
+            included. Installed and compressed sizes are reported separately; no production size
+            claim exists until the complete Phase 2 host is measured.
           </p>
         </div>
 
@@ -1918,7 +1911,7 @@ requestAnimationFrame(<span class="c-key">function</span> update(t) {
           <div class="ms">
             <span class="code-id">M1</span>
             <div>
-              <h4>Hello, DOM</h4>
+              <h4>Hello, DOM <span class="chip ok">Complete</span></h4>
               <p>
                 An <code>index.html</code> renders in a native window, a <code>&lt;script&gt;</code>
                 runs, and <code>document.querySelector("#x").textContent = "hi"</code> visibly updates
@@ -1929,7 +1922,7 @@ requestAnimationFrame(<span class="c-key">function</span> update(t) {
           <div class="ms">
             <span class="code-id">M2</span>
             <div>
-              <h4>Interactive</h4>
+              <h4>Interactive <span class="chip ok">Complete</span></h4>
               <p>
                 Click and keyboard events dispatch to JS listeners with correct propagation;
                 <code>requestAnimationFrame</code> drives a smooth animation; style and class mutation
@@ -1940,24 +1933,27 @@ requestAnimationFrame(<span class="c-key">function</span> update(t) {
           <div class="ms proof">
             <span class="code-id">M3</span>
             <div>
-              <h4>Pong <span class="chip ok">Architecture proof</span></h4>
+              <h4>Pong <span class="chip ok">Complete · Linux x64</span></h4>
               <p>
                 A complete playable Pong exists as nothing but <code>index.html</code>,
                 <code>style.css</code> and <code>game.js</code>, holds 60 fps, and runs from a single
                 exported executable on a machine with no toolchain installed. This is the point at
-                which the project is demonstrably real.
+                which the project is demonstrably real. See the
+                <a href="M3.md">M3 acceptance evidence</a>.
               </p>
             </div>
           </div>
           <div class="ms proof">
             <span class="code-id">M3b</span>
             <div>
-              <h4>Drop-in <span class="chip ok">Adoption proof</span></h4>
+              <h4>Drop-in <span class="chip ok">Complete · Linux x64</span></h4>
               <p>
                 An unmodified, existing Vite + React app is exported with nothing but
                 <code>npm i -D blitsen</code> and <code>blitsen build dist</code>, and runs. This
                 proves the adoption claim (P10) independently of the architecture claim, and is the
-                milestone most likely to attract users.
+                milestone most likely to attract users. See the
+                <a href="M3B.md">M3b acceptance evidence</a> and
+                <a href="COMPATIBILITY.md">published v0 profile</a>.
               </p>
             </div>
           </div>

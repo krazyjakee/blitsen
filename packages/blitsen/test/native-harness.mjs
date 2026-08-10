@@ -21,12 +21,41 @@ assert.equal(scriptTarget.attributes["data-dom-content-loaded"], "interactive");
 assert.equal(scriptTarget.attributes["data-load"], "complete");
 const interactiveSnapshot = JSON.parse(native.runDocumentScriptsHarness(
   join(import.meta.dir, "../../../examples/interactive/index.html"),
-  960,
-  640,
+  720,
+  520,
 ));
 const interactiveDemo = interactiveSnapshot.nodes.find(node => node.attributes.id === "demo");
 assert.equal(interactiveDemo.attributes["data-ready"], "true",
   "interactive acceptance example installs its event and animation script");
+const pongSnapshot = JSON.parse(native.runDocumentScriptsHarness(
+  join(import.meta.dir, "../../../examples/pong/index.html"),
+  720,
+  520,
+));
+const pongGame = pongSnapshot.nodes.find(node => node.attributes.id === "game");
+assert.equal(pongGame.attributes["data-ready"], "true",
+  "Pong installs its input and animation loop from the three-file application");
+assert.equal(pongGame.attributes["data-state"], "paused",
+  "Pong starts in a playable serve state");
+const pongFrames = JSON.parse(native.runDocumentAnimationHarness(
+  join(import.meta.dir, "../../../examples/pong/index.html"),
+  `__blitsenDispatchKeyboardEvent("keydown", { bubbles: true, cancelable: true,
+     key: " ", code: "Space", repeat: false });
+   __blitsenDispatchKeyboardEvent("keydown", { bubbles: true, cancelable: true,
+     key: "w", code: "KeyW", repeat: false });`,
+  60,
+  960,
+  640,
+));
+const pongNode = (snapshot, id) => snapshot.nodes.find(node => node.attributes.id === id);
+assert.equal(pongNode(pongFrames[0], "game").attributes["data-state"], "playing",
+  "Space serves the ball");
+assert(pongNode(pongFrames.at(-1), "left-paddle").layout.y
+  < pongNode(pongFrames[0], "left-paddle").layout.y, "W moves player one's paddle");
+assert.notEqual(pongNode(pongFrames.at(-1), "ball").layout.x,
+  pongNode(pongFrames[0], "ball").layout.x, "the ball advances through requestAnimationFrame");
+assert(Number(pongNode(pongFrames.at(-1), "fps").text_content) >= 59,
+  "the game reports its 60 Hz acceptance cadence");
 let scriptError;
 try {
   native.runDocumentScriptsHarness(join(scriptFixture, "error.html"), 320, 180);
@@ -65,7 +94,17 @@ const snapshot = JSON.parse(native.runBridgeHarness(
      created.id = "created";
      created.appendChild(document.createTextNode("new"));
      const staticList = document.querySelectorAll("section");
+     const observer = new MutationObserver(() => {});
+     observer.observe(document.body, { childList: true, subtree: true, attributes: true });
      document.body.appendChild(created);
+     const mutations = observer.takeRecords();
+     observer.disconnect();
+     if (mutations.length !== 1 || mutations[0].type !== "childList" ||
+         mutations[0].target !== document.body || mutations[0].addedNodes.item(0) !== created)
+       throw new Error("MutationObserver child-list record failed");
+     if (created.nodeType !== 1 || created.nodeName !== "SECTION" || created.ownerDocument !== document ||
+         document.nodeType !== 9 || document.defaultView !== window || !(created instanceof HTMLElement))
+       throw new Error("framework DOM identity fields failed");
      if (staticList.length !== 0 || !(document.body instanceof Element) || !(document.documentElement instanceof Element))
        throw new Error("document creation, roots, or static NodeList semantics failed");
      el.textContent = "hi";

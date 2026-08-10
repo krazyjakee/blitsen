@@ -1,0 +1,101 @@
+* { box-sizing: border-box; }
+html, body { margin: 0; min-height: 100%; }
+body {
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+  padding: 18px;
+  overflow: hidden;
+  background: #07111c;
+  color: #f7fbff;
+  font: 16px sans-serif;
+}
+.game { width: 640px; }
+.scoreboard {
+  display: grid;
+  grid-template-columns: 1fr 1.2fr 1fr;
+  align-items: end;
+  margin-bottom: 18px;
+}
+.scoreboard span, footer, .message span {
+  color: #72e7f2;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 2px;
+}
+.player { display: flex; align-items: end; gap: 14px; }
+.player-two { justify-content: end; }
+.player strong { color: #ffffff; font-size: 36px; line-height: 0.85; }
+.title { text-align: center; }
+.title span, .title strong { display: block; }
+.title strong { margin-top: 5px; font-size: 27px; letter-spacing: 10px; }
+.court {
+  position: relative;
+  width: 640px;
+  height: 340px;
+  overflow: hidden;
+  border: 2px solid #31516b;
+  border-radius: 18px;
+  outline: 0;
+  background: #0b1c2b;
+}
+.court:focus { border-color: #72e7f2; }
+.halfway {
+  position: absolute;
+  left: 317px;
+  top: 0;
+  width: 2px;
+  height: 340px;
+  background: #24445e;
+}
+.paddle {
+  position: absolute;
+  top: 130px;
+  width: 14px;
+  height: 80px;
+  border-radius: 7px;
+  background: #f7fbff;
+}
+.left-paddle { left: 28px; }
+.right-paddle { left: 594px; }
+.ball {
+  position: absolute;
+  left: 308px;
+  top: 158px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #72e7f2;
+}
+.message {
+  position: absolute;
+  left: 195px;
+  top: 115px;
+  width: 250px;
+  padding: 24px;
+  border: 1px solid #31516b;
+  border-radius: 12px;
+  background: #07111c;
+  text-align: center;
+}
+.message strong, .message span { display: block; }
+.message strong { margin-bottom: 9px; font-size: 24px; letter-spacing: 4px; }
+.game.playing .message { display: none; }
+.game.winner .message { border-color: #f6c453; }
+.game.winner .message span { color: #f6c453; }
+footer {
+  display: grid;
+  grid-template-columns: 1fr 1.3fr 1fr;
+  align-items: center;
+  margin-top: 17px;
+}
+footer div { display: flex; align-items: center; gap: 12px; }
+footer div:last-child { justify-content: end; }
+footer p { margin: 0; color: #7f9bb2; text-align: center; }
+footer strong { color: #dceaf5; font-size: 11px; letter-spacing: 1px; }
+.keys {
+  padding: 8px 10px;
+  border: 1px solid #31516b;
+  border-radius: 7px;
+  color: #72e7f2;
+}

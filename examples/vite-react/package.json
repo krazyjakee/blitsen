@@ -1,0 +1,19 @@
+{
+  "name": "blitsen-vite-react-acceptance",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "desktop": "vite build && blitsen build dist"
+  },
+  "dependencies": {
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^6.0.0",
+    "vite": "^8.2.0",
+    "blitsen": "file:../../packages/blitsen"
+  }
+}

@@ -10,6 +10,17 @@ re-scoped**; Windows and macOS validation is deferred. See the
 [technical specification](docs/TECH.md), and
 [licensing/export requirements](docs/LICENSING.md).
 
+The Linux x64 architecture proof is now complete: [`examples/pong`](examples/pong) is a
+three-file, two-player Pong app that runs at 60 Hz from a single Phase 1 executable. See the
+[M3 acceptance evidence](docs/M3.md). Phase 1 exports are not yet cleared for redistribution.
+
+The compatible-adoption proof is also complete on Linux x64: an untouched Vite + React production
+bundle passes [`blitsen doctor`](docs/COMPATIBILITY.md), exports as one executable, mounts React,
+and handles delegated input with no toolchain on `PATH`. See the [M3b evidence](docs/M3B.md).
+
+Phase 2 is underway. The [JavaScriptCore acquisition decision](docs/JSC.md) pins Bun's WebKit
+lineage while keeping the production engine dynamically replaceable behind Blitsen's own ABI.
+
 Blitsen is an independent project built on Blitz. It is not an official
 DioxusLabs project and is not endorsed by DioxusLabs.
 

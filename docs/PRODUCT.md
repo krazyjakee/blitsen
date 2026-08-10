@@ -358,6 +358,9 @@ Size remains a product metric, but M0 invalidated the original Phase 2 estimate.
 S3 Phase 1 prototype, full Bun runtime embedded (Linux x64)
   compiled executable          105,814,144 B  measured
 
+M3 Phase 1 standalone Pong, optimized Rust host (Linux x64)
+  compiled executable          132,184,192 B  measured
+
 S0 Phase 2 floor, stripped + LTO (Linux x64)
   JSC + Blitz only              52,480,904 B  measured
   gzip -9                       24,076,701 B  measured
@@ -385,22 +388,23 @@ installer. It needs JavaScript execution.
 binary. The core Linux architecture survived, while the 25–50 MB budget and unrestricted
 drop-in claim did not. See [the M0 decision](M0.md).
 
-**M1 — Hello, DOM.** An `index.html` renders in a native window, a `<script>` runs,
+**M1 — Hello, DOM: complete.** An `index.html` renders in a native window, a `<script>` runs,
 `document.querySelector("#x").textContent = "hi"` visibly updates the screen.
 
-**M2 — Interactive.** Click and keyboard events dispatch to JS listeners with correct
+**M2 — Interactive: complete.** Click and keyboard events dispatch to JS listeners with correct
 propagation; `requestAnimationFrame` drives a smooth animation; style and class mutation from
 JS relayouts correctly.
 
-**M3 — Pong.** A complete playable Pong exists as nothing but `index.html`, `style.css` and
+**M3 — Pong: complete on Linux x64.** A complete playable Pong exists as nothing but `index.html`, `style.css` and
 `game.js`, holds 60 fps, and runs from a single exported executable on a machine with no
 toolchain installed. **This is the architecture proof** — the point at which the project is
-demonstrably real.
+demonstrably real. See [the M3 acceptance evidence](M3.md).
 
-**M3b — Compatible adoption.** An unmodified, existing Vite + React app inside Blitsen's
+**M3b — Compatible adoption: complete on Linux x64.** An unmodified, existing Vite + React app inside Blitsen's
 published compatibility profile is exported with nothing but `npm i -D blitsen` and
 `blitsen build dist`, and runs. This proves P10 independently of the architecture claim;
-applications outside the profile receive actionable `doctor` diagnostics.
+applications outside the profile receive actionable `doctor` diagnostics. See the
+[M3b acceptance evidence](M3B.md) and [published v0 profile](COMPATIBILITY.md).
 
 **M4 — Ships.** `npm i -D blitsen` resolves the correct runtime on all six platform targets,
 `blitsen build` produces distributable artifacts, and a non-trivial third-party app (an editor or

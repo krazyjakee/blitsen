@@ -1,0 +1,68 @@
+:root {
+  font-family: sans-serif;
+  color: #172033;
+  background: #edf2f8;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+.shell {
+  width: 720px;
+  margin: 48px auto;
+  padding: 32px;
+  background: #ffffff;
+  border: 1px solid #cbd5e1;
+  border-radius: 16px;
+}
+
+header {
+  margin-bottom: 24px;
+}
+
+.eyebrow {
+  margin: 0 0 8px;
+  color: #4657ce;
+  font-weight: 700;
+}
+
+h1 {
+  margin: 0 0 8px;
+  font-size: 36px;
+}
+
+header p {
+  margin: 0;
+}
+
+.cards {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 24px;
+}
+
+article {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 6px;
+  padding: 16px;
+  background: #f6f8fc;
+  border: 1px solid #dbe3ef;
+  border-radius: 10px;
+}
+
+button {
+  padding: 10px 16px;
+  color: #ffffff;
+  background: #4657ce;
+  border: 0;
+  border-radius: 8px;
+  font: inherit;
+  font-weight: 700;
+}

@@ -1,17 +1,31 @@
-import { access, realpath } from "node:fs/promises";
+import { access, readFile, realpath } from "node:fs/promises";
 import { constants, watch as watchFs } from "node:fs";
-import { extname, join, normalize, relative, resolve } from "node:path";
+import { extname, join, normalize, resolve } from "node:path";
+import { doctorApplication, formatDiagnostic } from "./doctor.mjs";
 
 const HELP = `Usage: blitsen <directory> [options]
+       blitsen build <directory> [options]
+       blitsen doctor <directory> [--json]
 
 Open <directory>/index.html in a native Blitsen window.
+Build creates a Phase 1 single-file executable for the current platform.
+Doctor checks built static output against the v0 compatibility profile.
 
 Options:
   --width <pixels>   Initial logical width (default: 800)
   --height <pixels>  Initial logical height (default: 600)
   --title <text>     Native window title (default: Blitsen)
+  --outfile <path>   Build output path (default: application directory name)
+  --force            Replace an existing build output
+  --json             Emit the doctor report as JSON
   -h, --help         Show help
   -v, --version      Show version`;
+
+// Single source of truth: the published package manifest, not a literal.
+export async function packageVersion() {
+  const manifest = new URL("../package.json", import.meta.url);
+  return JSON.parse(await readFile(manifest, "utf8")).version;
+}
 
 export function parseArgs(args) {
   if (args.length === 0 || args.includes("--help") || args.includes("-h")) {
@@ -20,19 +34,31 @@ export function parseArgs(args) {
   if (args.includes("--version") || args.includes("-v")) {
     return { version: true };
   }
-  const options = { directory: null, width: 800, height: 600, title: "Blitsen" };
-  for (let index = 0; index < args.length; index += 1) {
+  const command = ["build", "doctor"].includes(args[0]) ? args[0] : "run";
+  const options = { command, directory: null, width: 800, height: 600, title: "Blitsen" };
+  for (let index = command === "run" ? 0 : 1; index < args.length; index += 1) {
     const argument = args[index];
-    if (["--width", "--height", "--title"].includes(argument)) {
+    if (["--width", "--height", "--title", "--outfile"].includes(argument)) {
       const value = args[++index];
       if (value === undefined) throw new Error(`${argument} requires a value`);
+      if (command === "doctor") throw new Error(`${argument} is not valid with doctor`);
       if (argument === "--title") options.title = value;
+      else if (argument === "--outfile") {
+        if (command !== "build") throw new Error("--outfile is only valid with build");
+        options.outfile = value;
+      }
       else {
         const pixels = Number(value);
         if (!Number.isInteger(pixels) || pixels <= 0)
           throw new Error(`${argument} must be a positive integer`);
         options[argument.slice(2)] = pixels;
       }
+    } else if (argument === "--force") {
+      if (command !== "build") throw new Error("--force is only valid with build");
+      options.force = true;
+    } else if (argument === "--json") {
+      if (command !== "doctor") throw new Error("--json is only valid with doctor");
+      options.json = true;
     } else if (argument.startsWith("-")) {
       throw new Error(`unknown option: ${argument}`);
     } else if (options.directory === null) {
@@ -56,21 +82,6 @@ export async function resolveApplication(directory) {
   return { root, entrypoint };
 }
 
-export async function resolveAsset(root, fromFile, specifier) {
-  if (specifier.startsWith("/") || /^[a-z][a-z\d+.-]*:/i.test(specifier)) {
-    throw new Error(`asset URL must be relative to its document: ${specifier}`);
-  }
-  const asset = await realpath(resolve(fromFile, "..", specifier)).catch(() => {
-    throw new Error(`unreadable asset: ${specifier}`);
-  });
-  const outside = relative(root, asset);
-  if (outside === ".." || outside.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`)) {
-    throw new Error(`asset escapes the application directory: ${specifier}`);
-  }
-  await access(asset, constants.R_OK);
-  return asset;
-}
-
 export function createReloadCoordinator(runtime, output = console, debounceMs = 100) {
   let pending = new Set();
   let timer = null;
@@ -83,7 +94,12 @@ export function createReloadCoordinator(runtime, output = console, debounceMs = 
     if (changed.size === 0 || closed) return;
     reloads = reloads.then(async () => {
       if ([...changed].every(file => extname(file).toLowerCase() === ".css")) {
-        for (const file of changed) await runtime.reloadCSS(file);
+        // reloadCSS reports false when no <link rel=stylesheet> resolves to the
+        // file: an @import target, or a sheet added since the document loaded.
+        // Those still affect the render, so fall back to a document reload.
+        let swapped = 0;
+        for (const file of changed) swapped += await runtime.reloadCSS(file) ? 1 : 0;
+        if (swapped === 0) await runtime.reloadDirectory();
       } else {
         await runtime.reloadDirectory();
       }
@@ -126,10 +142,35 @@ export async function main(args, output = console, runtime = null) {
       return 0;
     }
     if (options.version) {
-      output.log("0.0.1");
+      output.log(await packageVersion());
       return 0;
     }
     const application = await resolveApplication(options.directory);
+    if (options.command === "doctor") {
+      const report = await doctorApplication(application.root);
+      if (options.json) output.log(JSON.stringify(report, null, 2));
+      else {
+        for (const diagnostic of report.diagnostics) {
+          const writer = diagnostic.severity === "error" ? output.error : output.log;
+          writer.call(output, formatDiagnostic(diagnostic));
+        }
+        output.log(`Doctor scanned ${report.files} files: ${report.errors} errors, ${report.warnings} warnings.`);
+      }
+      return report.errors === 0 ? 0 : 1;
+    }
+    if (options.command === "build") {
+      if (!runtime?.build) {
+        throw new Error("native build runtime is unavailable; reinstall blitsen for this platform");
+      }
+      const report = await doctorApplication(application.root);
+      for (const diagnostic of report.diagnostics) {
+        output.error(`blitsen: build compatibility warning: ${formatDiagnostic(diagnostic)}`);
+      }
+      const result = await runtime.build({ ...application, ...options });
+      output.log(`Built ${result.outfile} (${result.assets} assets, ${result.bytes} bytes)`);
+      output.log("Phase 1 exports are architecture proofs and are not yet cleared for redistribution.");
+      return 0;
+    }
     if (!runtime?.openDirectory) {
       throw new Error("native addon is unavailable; reinstall blitsen for this platform");
     }
@@ -139,8 +180,15 @@ export async function main(args, output = console, runtime = null) {
       : null;
     try {
       if (runtime.pumpWindow) {
+        const frameInterval = 1000 / 60;
+        let nextFrame = performance.now();
         while (runtime.pumpWindow()) {
-          await (runtime.waitForNextFrame?.() ?? new Promise(resolve => setTimeout(resolve, 16)));
+          nextFrame += frameInterval;
+          const now = performance.now();
+          if (nextFrame < now - frameInterval) nextFrame = now;
+          const delay = Math.max(0, nextFrame - now);
+          await (runtime.waitForNextFrame?.(delay)
+            ?? new Promise(resolve => setTimeout(resolve, delay)));
         }
       }
     } finally {

@@ -350,18 +350,82 @@ const BOOTSTRAP: &str = r#"
     dispatchEvent(event) { return dispatchTo(this, event); }
   }
 
+  const mutationObservers = new Set();
+  const isObservedTarget = (observed, target, subtree) => {
+    if (observed === target) return true;
+    if (!subtree) return false;
+    for (let ancestor = target?.parentNode; ancestor; ancestor = ancestor.parentNode)
+      if (ancestor === observed) return true;
+    return false;
+  };
+  const notifyMutation = record => {
+    for (const observer of mutationObservers) {
+      if (!observer._observations.some(({ target, options }) =>
+        options[record.type] && isObservedTarget(target, record.target, options.subtree))) continue;
+      observer._records.push(Object.freeze(record));
+      if (observer._queued) continue;
+      observer._queued = true;
+      queueMicrotask(() => {
+        observer._queued = false;
+        const records = observer.takeRecords();
+        if (records.length > 0 && observer._observations.length > 0)
+          observer._callback(records, observer);
+      });
+    }
+  };
+
+  class MutationObserver {
+    constructor(callback) {
+      if (typeof callback !== "function") throw new TypeError("MutationObserver callback must be a function");
+      this._callback = callback;
+      this._observations = [];
+      this._records = [];
+      this._queued = false;
+    }
+    observe(target, options = {}) {
+      if (!(target instanceof Node) && target !== document)
+        throw new TypeError("MutationObserver target must be a Node");
+      const normalized = {
+        childList: Boolean(options.childList), attributes: Boolean(options.attributes),
+        characterData: Boolean(options.characterData), subtree: Boolean(options.subtree),
+      };
+      if (!normalized.childList && !normalized.attributes && !normalized.characterData)
+        throw new TypeError("MutationObserver options must enable at least one mutation type");
+      this._observations = this._observations.filter(observation => observation.target !== target);
+      this._observations.push({ target, options: normalized });
+      mutationObservers.add(this);
+    }
+    disconnect() {
+      this._observations = [];
+      this._records = [];
+      mutationObservers.delete(this);
+    }
+    takeRecords() { return this._records.splice(0); }
+  }
+
   class Node extends EventTarget {
     constructor() { throw new TypeError("Illegal constructor"); }
+    get nodeType() { return call("kind", this[handle]) === "element" ? 1 : 3; }
+    get nodeName() { return this.nodeType === 1 ? this.tagName.toUpperCase() : '#text'; }
+    get ownerDocument() { return document; }
     appendChild(child) {
       call("appendChild", this[handle], requireNode(child));
+      notifyMutation({ type: "childList", target: this, addedNodes: new NodeList([child]),
+        removedNodes: new NodeList([]), previousSibling: child.previousSibling, nextSibling: null });
       return child;
     }
     insertBefore(child, reference) {
       call("insertBefore", this[handle], requireNode(child), reference == null ? "" : requireNode(reference));
+      notifyMutation({ type: "childList", target: this, addedNodes: new NodeList([child]),
+        removedNodes: new NodeList([]), previousSibling: child.previousSibling, nextSibling: reference });
       return child;
     }
     removeChild(child) {
+      const previousSibling = child.previousSibling;
+      const nextSibling = child.nextSibling;
       call("removeChild", this[handle], requireNode(child));
+      notifyMutation({ type: "childList", target: this, addedNodes: new NodeList([]),
+        removedNodes: new NodeList([child]), previousSibling, nextSibling });
       return child;
     }
     remove() { call("remove", this[handle]); }
@@ -372,16 +436,34 @@ const BOOTSTRAP: &str = r#"
     get nextSibling() { return wrap(call("nextSibling", this[handle])); }
     get isConnected() { return call("isConnected", this[handle]); }
     get textContent() { return call("textContent", this[handle]); }
-    set textContent(value) { call("setTextContent", this[handle], String(value)); }
+    set textContent(value) {
+      call("setTextContent", this[handle], String(value));
+      notifyMutation({ type: "characterData", target: this, oldValue: null });
+    }
   }
 
   const styleCache = new WeakMap();
   const classListCache = new WeakMap();
 
   class Element extends Node {
+    get tagName() { return elementTag(this).toUpperCase(); }
+    get localName() { return elementTag(this); }
+    get namespaceURI() { return "http://www.w3.org/1999/xhtml"; }
     getAttribute(name) { return call("getAttribute", this[handle], String(name)); }
-    setAttribute(name, value) { call("setAttribute", this[handle], String(name), String(value)); }
-    removeAttribute(name) { call("removeAttribute", this[handle], String(name)); }
+    setAttribute(name, value) {
+      name = String(name);
+      const oldValue = this.getAttribute(name);
+      call("setAttribute", this[handle], name, String(value));
+      notifyMutation({ type: "attributes", target: this, attributeName: name,
+        attributeNamespace: null, oldValue });
+    }
+    removeAttribute(name) {
+      name = String(name);
+      const oldValue = this.getAttribute(name);
+      call("removeAttribute", this[handle], name);
+      notifyMutation({ type: "attributes", target: this, attributeName: name,
+        attributeNamespace: null, oldValue });
+    }
     hasAttribute(name) { return call("hasAttribute", this[handle], String(name)); }
     get id() { return this.getAttribute("id") ?? ""; }
     set id(value) { this.setAttribute("id", value); }
@@ -496,33 +578,57 @@ const BOOTSTRAP: &str = r#"
     if (!(value instanceof Node) || !(handle in value)) throw new TypeError("argument is not a Node");
     return value[handle];
   };
+  const wrapperCache = new Map();
   const wrap = rawHandle => {
     if (rawHandle == null) return null;
-    const wrapper = __blitsenWrap(String(rawHandle));
+    rawHandle = String(rawHandle);
+    const cached = wrapperCache.get(rawHandle);
+    if (cached) return cached;
+    const wrapper = __blitsenWrap(rawHandle);
     if (!(handle in wrapper)) {
-      Object.defineProperty(wrapper, handle, { value: String(rawHandle) });
+      Object.defineProperty(wrapper, handle, { value: rawHandle });
       Object.setPrototypeOf(wrapper, call("kind", rawHandle) === "element" ? Element.prototype : Node.prototype);
     }
+    wrapperCache.set(rawHandle, wrapper);
     return wrapper;
   };
 
   class Document extends EventTarget {
+    get nodeType() { return 9; }
+    get nodeName() { return '#document'; }
+    get ownerDocument() { return null; }
     querySelector(selector) { return wrap(call("querySelector", String(selector))); }
     querySelectorAll(selector) { return new NodeList(call("querySelectorAll", String(selector)).map(wrap)); }
     getElementById(id) { return wrap(call("getElementById", String(id))); }
     createElement(name) { return wrap(call("createElement", String(name))); }
     createTextNode(text) { return wrap(call("createTextNode", String(text))); }
     get body() { return wrap(call("body")); }
+    get head() { return this.querySelector("head"); }
     get documentElement() { return wrap(call("documentElement")); }
+    get defaultView() { return globalThis; }
     get activeElement() { return activeElement?.isConnected ? activeElement : this.body; }
     get readyState() { return readyState; }
   }
 
   const document = new Document();
+  class HTMLElement {
+    static [Symbol.hasInstance](value) { return value instanceof Element; }
+  }
+  class HTMLIFrameElement {
+    static [Symbol.hasInstance](value) {
+      return value instanceof Element && elementTag(value) === "iframe";
+    }
+  }
+  class SVGElement {
+    static [Symbol.hasInstance](value) {
+      return value instanceof Element && value.namespaceURI === "http://www.w3.org/2000/svg";
+    }
+  }
   for (const method of ["addEventListener", "removeEventListener", "dispatchEvent"])
     Object.defineProperty(globalThis, method, { value: EventTarget.prototype[method], configurable: true });
   const globals = {
-    EventTarget, Node, Element, NodeList, Document, DOMTokenList, CSSStyleDeclaration, document,
+    EventTarget, Node, Element, NodeList, Document, DOMTokenList, CSSStyleDeclaration,
+    MutationObserver, HTMLElement, HTMLIFrameElement, SVGElement, document,
     Event, MouseEvent, KeyboardEvent, CustomEvent,
     requestAnimationFrame, cancelAnimationFrame,
     setTimeout, clearTimeout, setInterval, clearInterval,
@@ -540,6 +646,7 @@ const BOOTSTRAP: &str = r#"
       contextIntervals.clear();
       animationFrames.clear();
       runningAnimationFrames?.clear();
+      wrapperCache.clear();
       Object.assign(globalThis, {
         setTimeout: hostSetTimeout, clearTimeout: hostClearTimeout,
         setInterval: hostSetInterval, clearInterval: hostClearInterval,

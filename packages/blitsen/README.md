@@ -12,8 +12,26 @@ npx blitsen . --width 800 --height 600 --title "My app"
 ```
 
 It resolves `index.html`, preflights local entrypoint assets, and opens the result
-in a native window. Application export is not implemented yet. Follow development
-and read the feasibility results at
+in a native window. On the current platform, the Phase 1 architecture-proof exporter is:
+
+```sh
+npx blitsen build dist --outfile MyApp
+```
+
+Check a bundler's static output against the published v0 profile before export:
+
+```sh
+npx blitsen doctor dist
+```
+
+The M3b gate consumes Vite's untouched default React output, including `/assets/...` URLs. Blitsen
+normalizes those references in its private staging directory, mounts React in the exported
+executable, and preserves delegated event state. See the repository's compatibility profile for
+the deliberately unsupported browser and renderer features reported by `doctor`.
+
+This creates one executable containing the Bun host, native addon, and application assets.
+Phase 1 exports are not yet cleared for redistribution: the automated notice and JSC relinking
+gate is still outstanding. Follow development and read the feasibility results at
 [github.com/krazyjakee/blitsen](https://github.com/krazyjakee/blitsen).
 
 On Linux, Bun remains the JavaScript event-loop owner. The CLI yields between
@@ -28,6 +46,12 @@ bun run --cwd packages/blitsen example:hello
 ```
 
 The expected result is a resizable native window with a green panel reading `hi`.
+
+Run the M3 architecture proof with:
+
+```sh
+bun run --cwd packages/blitsen example:pong
+```
 
 Blitsen is an independent project built on Blitz. It is not an official
 DioxusLabs project and is not endorsed by DioxusLabs.

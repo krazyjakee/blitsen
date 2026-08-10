@@ -38,8 +38,11 @@
   ],
   "scripts": {
     "example:hello": "bun test/run-hello-dom.mjs",
+    "example:pong": "bun test/run-pong.mjs",
     "test": "bun test",
-    "test:native": "bun test/run-native-harness.mjs"
+    "test:native": "bun test/run-native-harness.mjs",
+    "test:m3b": "bun test/run-m3b.mjs",
+    "test:standalone": "bun test/run-standalone.mjs"
   },
   "publishConfig": {
     "access": "public"

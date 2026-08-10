@@ -3,6 +3,7 @@
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { main } from "../src/cli.mjs";
+import { buildStandalone } from "../src/export.mjs";
 
 let runtime = null;
 try {
@@ -20,7 +21,8 @@ try {
     reloadCSS: engine.reloadCSS ? file => engine.reloadCSS(file) : null,
     reloadDirectory: engine.reloadDirectory ? () => engine.reloadDirectory() : null,
     pumpWindow: engine.pumpWindow ? () => engine.pumpWindow() : null,
-    waitForNextFrame: () => Bun.sleep(16),
+    waitForNextFrame: delay => Bun.sleep(delay),
+    build: options => buildStandalone(options, nativePath),
   };
 } catch {}
 

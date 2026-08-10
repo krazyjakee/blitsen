@@ -206,10 +206,12 @@ Document ──┘
 - A JS wrapper holds a generational `NodeId`. Generation counters make use-after-free a
   catchable error rather than silent corruption of an unrelated node.
 - **Identity is preserved**: two lookups of the same node return the same JS object, so
-  `a === b` and `WeakMap` keying behave as authors expect. Implemented via a
-  `NodeId → JsWeakRef` table.
-- Wrappers are collected by JSC; a finalizer drops the table entry. The DOM node's lifetime is
-  the tree's, never JS's — a detached node stays alive only while JS references it.
+  `a === b`, framework-owned properties and `WeakMap` keying behave as authors expect. A document
+  context strongly interns wrappers over the native `NodeId → JsWeakRef` table. The strong context
+  cache is required because frameworks attach listener/fiber state directly to connected wrappers;
+  M3b demonstrated that weak-only wrappers can be reclaimed in a compiled Bun host.
+- The context cache is cleared on document replacement. Detached wrappers may therefore remain
+  until that boundary in v0; bounded context lifetime is preferred over observable identity loss.
 
 ### v0 surface
 
@@ -221,6 +223,7 @@ window                    document
   addEventListener          getElementById
   setTimeout / setInterval  createElement / createTextNode
   innerWidth / innerHeight  body / documentElement
+  MutationObserver          nodeType / nodeName / ownerDocument
 
 Node / Element
   appendChild · insertBefore · removeChild · remove · replaceWith
@@ -242,7 +245,9 @@ Directory mode collects script elements after HTML parsing and executes supporte
 document order. Inline and local relative `src` scripts are supported, including `type="module"`
 graphs resolved by Bun. Until incremental parsing and networking land, `async` and `defer` are
 accepted but deliberately use the same deterministic post-parse document order. Non-JavaScript
-data-script types are skipped; server-root and remote script URLs are rejected.
+data-script types are skipped and remote script URLs are rejected. Export ingest normalizes local
+server-root HTML/CSS references into paths relative to each staged file, allowing Vite's default
+`/assets/...` output without modifying the user's `dist` directory.
 
 ### Mutation and invalidation
 
@@ -472,7 +477,7 @@ that, and duplicating it would make Blitsen a competitor to Vite instead of a ta
 
 | Step | Action |
 | --- | --- |
-| ① **Ingest** | Walk the output directory from its HTML entrypoint. Resolve relative references; refuse absolute URLs that assume a web server root, with a clear error naming the file. |
+| ① **Ingest** | Walk the output directory from its HTML entrypoint. Preserve relative references, normalize local server-root HTML/CSS references inside staging, and refuse remote subresources. |
 | ② **Scan** | Static analysis of the bundle for web API usage; anything the target runtime lacks is reported (`blitsen doctor`, and as a build warning). |
 | ③ **Collect** | Hash and collect assets. Embedded in the binary or laid out beside it, per config. |
 | ④ **Link** | Runtime + application bundle + assets → one executable. |
@@ -480,8 +485,9 @@ that, and duplicating it would make Blitsen a competitor to Vite instead of a ta
 
 - **Phase 1** step ④ is `bun build --compile` with the Rust engine as an embedded `.node` addon.
   Bun already compiles JS/TS — and HTML entrypoints — into standalone executables, so this path
-  mostly exists. Its output carries a full copy of the Bun runtime, which is the Phase 1 size
-  cost (PRODUCT.md §9).
+  is implemented for current-platform architecture proofs. Its output carries a full copy of
+  the Bun runtime, which is the Phase 1 size cost (PRODUCT.md §9). Redistribution remains gated
+  on the automated licensing checks in LICENSING.md.
 - **Phase 2** step ④ links our JSC-based runtime and appends the bundle as a binary section read
   at startup.
 
@@ -651,8 +657,10 @@ Rules that, if broken, cost a rewrite rather than a refactor:
 
 ## 17. Open technical questions
 
-1. **JSC acquisition for Phase 2** — vendor WebKit's JSC, use an existing Rust binding, or
-   extract Bun's build? Each has a very different maintenance cost.
+1. **JSC acquisition for Phase 2: decided.** Build a pinned Bun WebKit revision in Blitsen's
+   native release matrix, own the narrow Rust ABI layer, and dynamically load the replaceable
+   production library. Existing Rust bindings do not cover the six targets or the required
+   dynamic distribution model. See [`JSC.md`](JSC.md).
 2. **Module resolution in the shipped binary** — pre-bundled single graph (simplest), or a
    runtime resolver against embedded files (supports dynamic `import()`)?
 3. **Multi-window JS contexts** — one shared context or one per window? Shared is simpler and

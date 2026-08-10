@@ -52,6 +52,13 @@ use winit::application::macos::ApplicationHandlerExtMacOS;
 /// Stable addon name used by packaging and smoke tests.
 pub const ADDON_NAME: &str = "blitsen-node";
 
+type ActiveDocumentHarness = (Rc<RefCell<BlitzDom>>, u32, u32);
+
+thread_local! {
+    static ACTIVE_DOCUMENT_HARNESS: RefCell<Option<ActiveDocumentHarness>> =
+        const { RefCell::new(None) };
+}
+
 fn callback_string(value: &Unknown<'static>) -> Result<String, JsError> {
     let value = value.value();
     // SAFETY: callback arguments are live handles in their originating env.
@@ -1515,6 +1522,14 @@ impl Engine {
     /// Parses `index.html` and initializes a native Blitz window session.
     #[napi(js_name = "openDirectory")]
     pub fn open_directory(&self, options: OpenDirectoryOptions) -> napi::Result<()> {
+        // Rejected before any observable work: a second call must not build a
+        // runtime, create an event loop, or run the document's scripts again.
+        if self.session.borrow().is_some() {
+            return Err(napi::Error::new(
+                Status::GenericFailure,
+                "a native window session is already open",
+            ));
+        }
         let session_options = options.clone();
         let started_at = Instant::now();
         let source = std::fs::read_to_string(&options.entrypoint).map_err(|error| {
@@ -1595,12 +1610,6 @@ impl Engine {
             modifiers: ModifiersState::empty(),
             load_dispatched: false,
         };
-        if self.session.borrow().is_some() {
-            return Err(napi::Error::new(
-                Status::GenericFailure,
-                "a native window session is already open",
-            ));
-        }
         drop(guard);
         *self.session.borrow_mut() = Some(WindowSession {
             runtime,
@@ -2131,7 +2140,67 @@ fn execute_document_harness(
             "blitsen:load",
         )
         .map_err(napi_error)?;
+    ACTIVE_DOCUMENT_HARNESS.with(|active| {
+        *active.borrow_mut() = Some((Rc::clone(&document), width, height));
+    });
     snapshot_and_render(document, width, height).map(|(snapshot, _)| snapshot)
+}
+
+fn execute_document_animation_harness(
+    env: Env,
+    entrypoint: &Path,
+    setup_script: &str,
+    frames: u32,
+    width: u32,
+    height: u32,
+) -> napi::Result<Vec<HarnessSnapshot>> {
+    let source = std::fs::read_to_string(entrypoint).map_err(|error| {
+        napi::Error::new(
+            Status::GenericFailure,
+            format!("could not read {}: {error}", entrypoint.display()),
+        )
+    })?;
+    let root = entrypoint.parent().unwrap_or_else(|| Path::new("."));
+    let runtime = DomRuntime::new(BlitzDom::from_html(
+        &source,
+        DocumentConfig {
+            base_url: Some(format!("file://{}/", root.display())),
+            viewport: Some(Viewport::new(width, height, 1.0, ColorScheme::Light)),
+            ..Default::default()
+        },
+    ));
+    let document = runtime.document();
+    let scripts = document.borrow().document_scripts().map_err(dom_error)?;
+    let mut engine = NodeApiEngine::new(env);
+    execute_window_scripts(
+        &mut engine,
+        runtime,
+        scripts,
+        &entrypoint.to_string_lossy(),
+        width,
+        height,
+    )?;
+    engine
+        .evaluate_script(
+            "globalThis.__blitsenDispatchLifecycleEvent('load')",
+            "blitsen:load",
+        )
+        .and_then(|_| engine.evaluate_script(setup_script, "document-animation-setup.js"))
+        .map_err(napi_error)?;
+
+    let mut snapshots = Vec::with_capacity(frames as usize);
+    for frame in 1..=frames {
+        let timestamp = f64::from(frame) * (1_000.0 / 60.0);
+        engine
+            .evaluate_script(
+                &format!("globalThis.__blitsenAnimationFrameTick({timestamp})"),
+                "blitsen:document-animation-harness-tick",
+            )
+            .and_then(|_| engine.drain_microtasks().map(|_| ()))
+            .map_err(napi_error)?;
+        snapshots.push(snapshot_and_render(Rc::clone(&document), width, height)?.0);
+    }
+    Ok(snapshots)
 }
 
 /// Boots Blitz headlessly, runs JavaScript DOM mutations, and returns the Rust
@@ -2193,6 +2262,65 @@ pub fn run_document_scripts_harness(
         height.unwrap_or(600),
     )?;
     serde_json::to_string(&snapshot)
+        .map_err(|error| napi::Error::new(Status::GenericFailure, error.to_string()))
+}
+
+/// Evaluates a script against the most recently loaded document harness.
+#[napi]
+pub fn evaluate_document_harness(env: Env, script: String) -> napi::Result<()> {
+    let active = ACTIVE_DOCUMENT_HARNESS.with(|active| active.borrow().is_some());
+    if !active {
+        return Err(napi::Error::new(
+            Status::GenericFailure,
+            "no document harness is active",
+        ));
+    }
+    NodeApiEngine::new(env)
+        .evaluate_script(&script, "document-harness-evaluation.js")
+        .map(|_| ())
+        .map_err(napi_error)
+}
+
+/// Snapshots the most recently loaded document after the host event loop has advanced.
+#[napi]
+pub fn snapshot_document_harness() -> napi::Result<String> {
+    let snapshot = ACTIVE_DOCUMENT_HARNESS.with(|active| {
+        let active = active.borrow();
+        let (document, width, height) = active.as_ref().ok_or_else(|| {
+            napi::Error::new(Status::GenericFailure, "no document harness is active")
+        })?;
+        snapshot_and_render(Rc::clone(document), *width, *height).map(|(snapshot, _)| snapshot)
+    })?;
+    serde_json::to_string(&snapshot)
+        .map_err(|error| napi::Error::new(Status::GenericFailure, error.to_string()))
+}
+
+/// Loads a real HTML entrypoint and advances its animation loop at 60 Hz.
+#[napi]
+pub fn run_document_animation_harness(
+    env: Env,
+    entrypoint: String,
+    setup_script: String,
+    frames: Option<u32>,
+    width: Option<u32>,
+    height: Option<u32>,
+) -> napi::Result<String> {
+    let frames = frames.unwrap_or(60);
+    if frames > 10_000 {
+        return Err(napi::Error::new(
+            Status::InvalidArg,
+            "document animation harness is limited to 10000 frames",
+        ));
+    }
+    let snapshots = execute_document_animation_harness(
+        env,
+        Path::new(&entrypoint),
+        &setup_script,
+        frames,
+        width.unwrap_or(800),
+        height.unwrap_or(600),
+    )?;
+    serde_json::to_string(&snapshots)
         .map_err(|error| napi::Error::new(Status::GenericFailure, error.to_string()))
 }
 

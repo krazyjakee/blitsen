@@ -1,0 +1,35 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Blitsen Pong</title>
+    <link rel="stylesheet" href="./style.css">
+  </head>
+  <body>
+    <main id="game" class="game paused" data-ready="false" data-state="paused">
+      <header class="scoreboard">
+        <div class="player player-one"><span>PLAYER ONE</span><strong id="left-score">0</strong></div>
+        <div class="title"><span>M3 / ARCHITECTURE PROOF</span><strong>PONG</strong></div>
+        <div class="player player-two"><span>PLAYER TWO</span><strong id="right-score">0</strong></div>
+      </header>
+
+      <section id="court" class="court" tabindex="0" aria-label="Pong court">
+        <div class="halfway"></div>
+        <div id="left-paddle" class="paddle left-paddle"></div>
+        <div id="right-paddle" class="paddle right-paddle"></div>
+        <div id="ball" class="ball"></div>
+        <div id="message" class="message">
+          <strong id="message-title">READY?</strong>
+          <span id="message-detail">Press Space to serve</span>
+        </div>
+      </section>
+
+      <footer>
+        <div><span class="keys">W / S</span><strong>PLAYER ONE</strong></div>
+        <p><span id="fps">60</span> FPS · FIRST TO 7 · SPACE TO PAUSE</p>
+        <div><strong>PLAYER TWO</strong><span class="keys">↑ / ↓</span></div>
+      </footer>
+    </main>
+    <script src="./game.js"></script>
+  </body>
+</html>
