@@ -87,6 +87,37 @@ const contentById = new Map(contentSnapshot.nodes.map((node) => [node.attributes
 assert.equal(contentById.get("content").attributes["data-content"], "ok");
 assert.equal(contentById.get("replacement-content").layout.width, 240);
 
+const attributeSnapshot = JSON.parse(native.runBridgeHarness(
+  `<style>#attr { display:block; width:100px; height:10px } .active { width:220px !important }</style><div id="attr"></div>`,
+  `{ const element = document.getElementById("attr");
+     if (element.getAttribute("title") !== null || element.hasAttribute("title")) throw new Error("missing attribute");
+     element.setAttribute("title", "hello");
+     if (element.getAttribute("title") !== "hello" || !element.hasAttribute("title")) throw new Error("set/get/has attribute");
+     element.removeAttribute("title");
+     if (element.getAttribute("title") !== null || element.hasAttribute("title")) throw new Error("remove attribute");
+     element.id = "renamed";
+     if (element.id !== "renamed" || document.getElementById("attr") !== null || document.getElementById("renamed") !== element)
+       throw new Error("reflected id or live ID lookup");
+     element.className = "base";
+     element.classList.add("active", "base");
+     if (!element.classList.contains("active") || element.className !== "base active") throw new Error("classList add/contains");
+     if (element.classList.toggle("active") || !element.classList.toggle("active", true)) throw new Error("classList toggle");
+     element.classList.add("forced");
+     element.classList.remove("base");
+     const beforeInvalid = element.className;
+     let syntaxError = false;
+     try { element.classList.add("valid", "two words"); } catch (error) { syntaxError = error.name === "SyntaxError"; }
+     if (!syntaxError || element.className !== beforeInvalid) throw new Error("classList token validation must be atomic");
+     element.setAttribute("data-attributes", "ok"); }`,
+  320,
+  180,
+));
+const reflected = attributeSnapshot.nodes.find((node) => node.attributes.id === "renamed");
+assert(reflected, "reflected ID reaches the authoritative tree");
+assert.equal(reflected.attributes.class, "active forced");
+assert.equal(reflected.attributes["data-attributes"], "ok");
+assert.equal(reflected.layout.width, 220, "class mutation triggers the real Blitz cascade");
+
 const mutatedPng = Buffer.from(native.renderBridgeHarnessPng(
   `<style>#x { width: 180px; height: 80px; background: #ef4444 }</style><div id="x">old</div>`,
   `{ const painted = document.querySelector("#x");
