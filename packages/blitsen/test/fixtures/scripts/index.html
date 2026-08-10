@@ -1,0 +1,21 @@
+<!doctype html>
+<html>
+  <body>
+    <div id="script-target" data-order=""></div>
+    <script>
+      {
+        const target = document.getElementById("script-target");
+        target.setAttribute("data-order", "inline");
+      }
+    </script>
+    <script async src="./classic.js"></script>
+    <script type="application/json">{"ignored": true}</script>
+    <script defer src="./deferred.js"></script>
+    <script type="module" src="./module.js"></script>
+    <script type="module">
+      export {};
+      const target = document.getElementById("script-target");
+      target.setAttribute("data-order", target.getAttribute("data-order") + ",inline-module");
+    </script>
+  </body>
+</html>

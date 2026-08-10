@@ -236,6 +236,14 @@ Node / Element
 `innerHTML` requires the parser to be reachable as a fragment parser, not only at document
 load. Confirm early — a surprising amount of real-world JS depends on it.
 
+### v0 script loading subset
+
+Directory mode collects script elements after HTML parsing and executes supported entries in
+document order. Inline and local relative `src` scripts are supported, including `type="module"`
+graphs resolved by Bun. Until incremental parsing and networking land, `async` and `defer` are
+accepted but deliberately use the same deterministic post-parse document order. Non-JavaScript
+data-script types are skipped; server-root and remote script URLs are rejected.
+
 ### Mutation and invalidation
 
 Every setter is a Rust call that mutates the Blitz tree and marks it dirty. No shadow tree, no

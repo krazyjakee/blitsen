@@ -90,6 +90,21 @@ where
     let scripts = document
         .document_scripts()
         .map_err(|error| JsError::new(error.to_string()))?;
+    execute_collected_document_scripts(scripts, engine, entrypoint)
+}
+
+/// Executes a previously collected document-order script list.
+///
+/// Hosts with interior-mutable DOM storage use this form to release their tree
+/// borrow before evaluation callbacks begin mutating that same tree.
+pub fn execute_collected_document_scripts<J>(
+    scripts: Vec<DocumentScript>,
+    engine: &mut J,
+    entrypoint: &Path,
+) -> Result<Vec<J::Value>, JsError>
+where
+    J: ScriptEngine,
+{
     let root = entrypoint.parent().unwrap_or_else(|| Path::new("."));
     let mut results = Vec::with_capacity(scripts.len());
     for (index, script) in scripts.into_iter().enumerate() {

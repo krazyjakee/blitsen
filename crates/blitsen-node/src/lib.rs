@@ -14,7 +14,9 @@ use anyrender::{PaintScene as _, render_to_buffer};
 use anyrender_vello_cpu::VelloCpuImageRenderer;
 use base64::Engine as _;
 use blitsen_blitz::BlitzDom;
-use blitsen_core::{WindowState, WrapperTable};
+use blitsen_core::{
+    DocumentScript, ScriptDocument, WindowState, WrapperTable, execute_collected_document_scripts,
+};
 use blitsen_dom::{DomBackend, DomError};
 use blitsen_js::{
     ExternalId, JsEngine, JsError, JsType, LoopTurn, NativeCall, NativeCallback, NativeClass,
@@ -570,17 +572,33 @@ impl JsEngine for NodeApiEngine {
 
     fn evaluate_module(&mut self, source: &str, identifier: &str) -> Result<Self::Value, JsError> {
         let path = Path::new(identifier);
+        let loader_base = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            std::env::current_dir()
+                .map_err(|error| JsError::new(error.to_string()))?
+                .join("blitsen-inline-module.js")
+        };
+        let loader_base = serde_json::to_string(&loader_base.to_string_lossy())
+            .map_err(|error| JsError::new(error.to_string()))?;
         if path.is_absolute() && path.is_file() {
-            let specifier = format!("file://{}", identifier.replace(' ', "%20"));
+            let specifier = serde_json::to_string(identifier)
+                .map_err(|error| JsError::new(error.to_string()))?;
             return self.evaluate_script(
-                &format!("import({specifier:?})"),
+                &format!(
+                    "process.getBuiltinModule('module').createRequire({loader_base})({specifier})"
+                ),
                 "blitsen:external-module-loader",
             );
         }
         let source = format!("{source}\n//# sourceURL={identifier}");
         let encoded = base64::engine::general_purpose::STANDARD.encode(source);
+        let specifier = serde_json::to_string(&format!("data:text/javascript;base64,{encoded}"))
+            .map_err(|error| JsError::new(error.to_string()))?;
         self.evaluate_script(
-            &format!("import(\"data:text/javascript;base64,{encoded}\")"),
+            &format!(
+                "process.getBuiltinModule('module').createRequire({loader_base})({specifier})"
+            ),
             identifier,
         )
     }
@@ -947,21 +965,16 @@ impl Engine {
             },
         ));
         let document = dom_runtime.document();
-        let inline_scripts = {
+        let scripts = {
             let document = document.borrow();
-            document
-                .query_selector_all(document.document(), "script")
-                .map_err(dom_error)?
-                .into_iter()
-                .map(|node| document.text_content(node).map_err(dom_error))
-                .collect::<napi::Result<Vec<_>>>()?
+            document.document_scripts().map_err(dom_error)?
         };
         let mut engine = self.runtime.borrow_mut();
         let raw_env = engine.raw_env();
         let window_state = execute_window_scripts(
             &mut engine,
             dom_runtime,
-            &inline_scripts,
+            scripts,
             &options.entrypoint,
             options.width,
             options.height,
@@ -999,18 +1012,15 @@ impl Engine {
 fn execute_window_scripts(
     engine: &mut NodeApiEngine,
     runtime: DomRuntime,
-    scripts: &[String],
+    scripts: Vec<DocumentScript>,
     entrypoint: &str,
     width: u32,
     height: u32,
 ) -> napi::Result<Rc<RefCell<WindowState>>> {
     let window_state =
         dom_bridge::install(engine, runtime, width, height, 1.0).map_err(napi_error)?;
-    for (index, script) in scripts.iter().enumerate() {
-        engine
-            .evaluate_script(script, &format!("{entrypoint}#script-{}", index + 1))
-            .map_err(napi_error)?;
-    }
+    execute_collected_document_scripts(scripts, engine, Path::new(entrypoint))
+        .map_err(napi_error)?;
     Ok(window_state)
 }
 
@@ -1038,6 +1048,14 @@ fn execute_bridge_harness(
     engine
         .evaluate_script(&script, "harness-script.js")
         .map_err(napi_error)?;
+    snapshot_and_render(document, width, height)
+}
+
+fn snapshot_and_render(
+    document: Rc<RefCell<BlitzDom>>,
+    width: u32,
+    height: u32,
+) -> napi::Result<(HarnessSnapshot, Vec<u8>)> {
     let snapshot = document.borrow_mut().flush_layout().map_err(dom_error)?;
 
     let mut document = document.borrow_mut();
@@ -1116,6 +1134,41 @@ fn execute_bridge_harness(
     Ok((HarnessSnapshot { nodes }, png))
 }
 
+fn execute_document_harness(
+    env: Env,
+    entrypoint: &Path,
+    width: u32,
+    height: u32,
+) -> napi::Result<HarnessSnapshot> {
+    let source = std::fs::read_to_string(entrypoint).map_err(|error| {
+        napi::Error::new(
+            Status::GenericFailure,
+            format!("could not read {}: {error}", entrypoint.display()),
+        )
+    })?;
+    let root = entrypoint.parent().unwrap_or_else(|| Path::new("."));
+    let runtime = DomRuntime::new(BlitzDom::from_html(
+        &source,
+        DocumentConfig {
+            base_url: Some(format!("file://{}/", root.display())),
+            viewport: Some(Viewport::new(width, height, 1.0, ColorScheme::Light)),
+            ..Default::default()
+        },
+    ));
+    let document = runtime.document();
+    let scripts = document.borrow().document_scripts().map_err(dom_error)?;
+    let mut engine = NodeApiEngine::new(env);
+    execute_window_scripts(
+        &mut engine,
+        runtime,
+        scripts,
+        &entrypoint.to_string_lossy(),
+        width,
+        height,
+    )?;
+    snapshot_and_render(document, width, height).map(|(snapshot, _)| snapshot)
+}
+
 /// Boots Blitz headlessly, runs JavaScript DOM mutations, and returns the Rust
 /// tree state as JSON for cross-platform CI assertions.
 #[napi]
@@ -1127,6 +1180,24 @@ pub fn run_bridge_harness(
     height: Option<u32>,
 ) -> napi::Result<String> {
     let (snapshot, _) = execute_bridge_harness(env, html, script, width, height)?;
+    serde_json::to_string(&snapshot)
+        .map_err(|error| napi::Error::new(Status::GenericFailure, error.to_string()))
+}
+
+/// Loads a real HTML entrypoint and executes its collected script elements.
+#[napi]
+pub fn run_document_scripts_harness(
+    env: Env,
+    entrypoint: String,
+    width: Option<u32>,
+    height: Option<u32>,
+) -> napi::Result<String> {
+    let snapshot = execute_document_harness(
+        env,
+        Path::new(&entrypoint),
+        width.unwrap_or(800),
+        height.unwrap_or(600),
+    )?;
     serde_json::to_string(&snapshot)
         .map_err(|error| napi::Error::new(Status::GenericFailure, error.to_string()))
 }

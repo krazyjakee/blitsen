@@ -1,10 +1,30 @@
 import { strict as assert } from "node:assert";
 import { createRequire } from "node:module";
+import { join } from "node:path";
 
 const addonPath = process.argv[2];
 if (!addonPath) throw new Error("usage: bun native-harness.mjs <addon.node>");
 const native = createRequire(import.meta.url)(addonPath);
 assert.equal(native.wrapperIdentitySmoke(), true, "Node-API wrappers preserve identity and collect");
+const scriptFixture = join(import.meta.dir, "fixtures/scripts");
+const scriptSnapshot = JSON.parse(native.runDocumentScriptsHarness(
+  join(scriptFixture, "index.html"),
+  320,
+  180,
+));
+const scriptTarget = scriptSnapshot.nodes.find((node) => node.attributes.id === "script-target");
+assert(scriptTarget, "script fixture target reached the Rust tree");
+assert.equal(scriptTarget.attributes["data-order"], "inline,async,defer,module,inline-module");
+assert.match(scriptTarget.attributes["data-module-url"], /module\.js$/);
+let scriptError;
+try {
+  native.runDocumentScriptsHarness(join(scriptFixture, "error.html"), 320, 180);
+} catch (error) {
+  scriptError = error;
+}
+assert(scriptError, "broken external script throws");
+assert.match(String(scriptError.stack ?? scriptError), /intentional script fixture failure/);
+assert.match(String(scriptError.stack ?? scriptError), /broken\.js/);
 const snapshot = JSON.parse(native.runBridgeHarness(
   `<style>#x { display:block; width:100px; height:20px }</style><div id="x">old</div>`,
   `{ if (window !== globalThis || window.document !== document || innerWidth !== 320 || innerHeight !== 180 || devicePixelRatio !== 1)
