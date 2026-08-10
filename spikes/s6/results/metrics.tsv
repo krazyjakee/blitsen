@@ -1,0 +1,4 @@
+app	rmse	normalized_rmse	ncc
+react	8255.55	0.125972	0.898129
+vue	7118.18	0.108616	0.359666
+svelte	11338.7	0.173018	0.191305
