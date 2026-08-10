@@ -756,6 +756,7 @@ struct WindowApplication<Rend: anyrender::WindowRenderer> {
     mouse_down_targets: HashMap<u16, NodeId>,
     mouse_buttons: u16,
     modifiers: ModifiersState,
+    load_dispatched: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -1255,6 +1256,40 @@ impl<Rend: anyrender::WindowRenderer> WindowApplication<Rend> {
         };
         self.sync_window(width, height, f64::from(scale));
     }
+
+    fn dispatch_window_event(&self, event_type: &str) -> Result<bool, JsError> {
+        let event_type =
+            serde_json::to_string(event_type).map_err(|error| JsError::new(error.to_string()))?;
+        let mut engine = NodeApiEngine::new(Env::from_raw(self.env));
+        let result = engine.evaluate_script(
+            &format!("globalThis.__blitsenDispatchLifecycleEvent({event_type})"),
+            "blitsen:native-window-event",
+        )?;
+        engine.to_boolean(&result)
+    }
+
+    fn maybe_dispatch_load(&mut self) {
+        if self.load_dispatched || self.error.borrow().is_some() {
+            return;
+        }
+        if self
+            .document
+            .borrow()
+            .document_ref()
+            .has_pending_critical_resources()
+        {
+            return;
+        }
+        match self.dispatch_window_event("load") {
+            Ok(_) => {
+                self.load_dispatched = true;
+                for view in self.inner.windows.values() {
+                    view.window.request_redraw();
+                }
+            }
+            Err(error) => *self.error.borrow_mut() = Some(error),
+        }
+    }
 }
 
 struct SharedBlitzDocument(Rc<RefCell<BlitzDom>>);
@@ -1270,6 +1305,15 @@ impl BlitzDocument for SharedBlitzDocument {
         DocGuardMut::RefCell(std::cell::RefMut::map(self.0.borrow_mut(), |document| {
             &mut **document.document_mut()
         }))
+    }
+
+    fn poll(&mut self, _task_context: Option<std::task::Context<'_>>) -> bool {
+        let mut document = self.0.borrow_mut();
+        let pending_before = document.document_ref().has_pending_critical_resources();
+        let changes_before = document.document_ref().has_changes();
+        document.document_mut().handle_messages();
+        pending_before != document.document_ref().has_pending_critical_resources()
+            || changes_before != document.document_ref().has_changes()
     }
 }
 
@@ -1288,10 +1332,12 @@ impl<Rend: anyrender::WindowRenderer> ApplicationHandler for WindowApplication<R
         for id in windows {
             self.sync_native_window(id);
         }
+        self.maybe_dispatch_load();
     }
 
     fn proxy_wake_up(&mut self, event_loop: &dyn ActiveEventLoop) {
         self.inner.proxy_wake_up(event_loop);
+        self.maybe_dispatch_load();
     }
 
     fn window_event(
@@ -1315,6 +1361,12 @@ impl<Rend: anyrender::WindowRenderer> ApplicationHandler for WindowApplication<R
         self.inner.window_event(event_loop, window_id, event);
         if viewport_changed {
             self.sync_native_window(window_id);
+            if let Err(error) = self.dispatch_window_event("resize") {
+                *self.error.borrow_mut() = Some(error);
+            }
+            if let Some(view) = self.inner.windows.get(&window_id) {
+                view.window.request_redraw();
+            }
         }
         if animation_pending && let Some(view) = self.inner.windows.get(&window_id) {
             view.window.request_redraw();
@@ -1337,6 +1389,7 @@ impl<Rend: anyrender::WindowRenderer> ApplicationHandler for WindowApplication<R
 
     fn about_to_wait(&mut self, event_loop: &dyn ActiveEventLoop) {
         self.inner.about_to_wait(event_loop);
+        self.maybe_dispatch_load();
         if self.animation_frames_pending() {
             for view in self.inner.windows.values() {
                 view.window.request_redraw();
@@ -1533,6 +1586,7 @@ impl Engine {
             mouse_down_targets: HashMap::new(),
             mouse_buttons: 0,
             modifiers: ModifiersState::empty(),
+            load_dispatched: false,
         };
         if self.session.borrow().is_some() {
             return Err(napi::Error::new(
@@ -1659,6 +1713,12 @@ fn execute_window_scripts(
     let window_state =
         dom_bridge::install(engine, runtime, width, height, 1.0).map_err(napi_error)?;
     execute_collected_document_scripts(scripts, engine, Path::new(entrypoint))
+        .map_err(napi_error)?;
+    engine
+        .evaluate_script(
+            "globalThis.__blitsenDispatchLifecycleEvent('DOMContentLoaded')",
+            "blitsen:dom-content-loaded",
+        )
         .map_err(napi_error)?;
     Ok(window_state)
 }
@@ -1880,6 +1940,12 @@ fn execute_document_harness(
         width,
         height,
     )?;
+    engine
+        .evaluate_script(
+            "globalThis.__blitsenDispatchLifecycleEvent('load')",
+            "blitsen:load",
+        )
+        .map_err(napi_error)?;
     snapshot_and_render(document, width, height).map(|(snapshot, _)| snapshot)
 }
 

@@ -6,6 +6,12 @@
       {
         const target = document.getElementById("script-target");
         target.setAttribute("data-order", "inline");
+        document.addEventListener("DOMContentLoaded", () => {
+          target.setAttribute("data-dom-content-loaded", document.readyState);
+        });
+        window.addEventListener("load", () => {
+          target.setAttribute("data-load", document.readyState);
+        });
       }
     </script>
     <script async src="./classic.js"></script>

@@ -217,6 +217,7 @@ const BOOTSTRAP: &str = r#"
   };
 
   let activeElement = null;
+  let readyState = "loading";
   const elementTag = element => call("tagName", element[handle]);
   const isFocusable = element => {
     if (!(element instanceof Element) || element.hasAttribute("disabled")) return false;
@@ -260,6 +261,17 @@ const BOOTSTRAP: &str = r#"
     const allowed = target.dispatchEvent(event);
     if (type === "keydown" && init.key === "Tab" && allowed) moveFocus(Boolean(init.shiftKey));
     return allowed;
+  };
+  const dispatchLifecycleEvent = type => {
+    if (type === "DOMContentLoaded") {
+      readyState = "interactive";
+      return document.dispatchEvent(new Event(type, { bubbles: true }));
+    }
+    if (type === "load") {
+      readyState = "complete";
+      return globalThis.dispatchEvent(new Event(type));
+    }
+    return globalThis.dispatchEvent(new Event(type));
   };
 
   class EventTarget {
@@ -429,6 +441,7 @@ const BOOTSTRAP: &str = r#"
     get body() { return wrap(call("body")); }
     get documentElement() { return wrap(call("documentElement")); }
     get activeElement() { return activeElement?.isConnected ? activeElement : this.body; }
+    get readyState() { return readyState; }
   }
 
   const document = new Document();
@@ -443,6 +456,7 @@ const BOOTSTRAP: &str = r#"
     __blitsenEventInternals: eventInternals,
     __blitsenDispatchMouseEvent: dispatchMouseEvent,
     __blitsenDispatchKeyboardEvent: dispatchKeyboardEvent,
+    __blitsenDispatchLifecycleEvent: dispatchLifecycleEvent,
   });
   globalThis.window = globalThis;
   for (const key of ["location", "history", "navigator", "localStorage"]) {
@@ -493,7 +507,7 @@ pub(super) fn install(
     )?;
     engine.set_global("__blitsenWrap", &wrap_function)?;
 
-    let dispatch_runtime = runtime;
+    let dispatch_runtime = runtime.clone();
     let call_function = engine.define_function(
         "__blitsenDomCall",
         Box::new(move |call| {
@@ -519,6 +533,7 @@ pub(super) fn install(
     )));
     window_state.borrow().install(engine, &document)?;
     let resize_state = Rc::clone(&window_state);
+    let resize_runtime = runtime;
     let resize_function = engine.define_function(
         "__blitsenWindowResize",
         Box::new(move |call| {
@@ -529,10 +544,19 @@ pub(super) fn install(
                 .parse::<u32>()
                 .map_err(|_| JsError::new("invalid viewport height"))?;
             resize_state.borrow_mut().resize(width, height);
+            let mut document = resize_runtime.document.borrow_mut();
+            let mut viewport = document.document_ref().viewport().clone();
+            viewport.window_size = (width, height);
+            document.document_mut().set_viewport(viewport);
+            drop(document);
             let mut callback_engine = NodeApiEngine::new(Env::from_raw(raw_env));
             let window =
                 callback_engine.evaluate_script("globalThis", "blitsen:window-resize-target")?;
             resize_state.borrow().sync(&mut callback_engine, &window)?;
+            callback_engine.evaluate_script(
+                "globalThis.__blitsenDispatchLifecycleEvent('resize')",
+                "blitsen:test-window-resize",
+            )?;
             Ok(call.this)
         }),
     )?;

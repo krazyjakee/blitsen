@@ -303,6 +303,12 @@ those connected elements in document order. `focus()` and `blur()` update active
 dispatching their non-bubbling events. Keyboard input targets the active element, with logical
 `key`, physical `code`, repeat state, and tracked modifiers. Text input and IME remain outside v0.
 
+`DOMContentLoaded` exists in v0. It fires on `document` after the post-parse script list has
+completed, moving `document.readyState` from `loading` to `interactive`. `load` then fires once on
+`window` after Blitz reports that no critical document subresources remain, and moves the state to
+`complete`. Native resize updates Blitz's viewport and `innerWidth`/`innerHeight` before dispatching
+`resize`; listener mutations are therefore included in the redraw requested for that resize.
+
 ---
 
 ## 6. Frame pipeline

@@ -17,6 +17,8 @@ const scriptTarget = scriptSnapshot.nodes.find((node) => node.attributes.id === 
 assert(scriptTarget, "script fixture target reached the Rust tree");
 assert.equal(scriptTarget.attributes["data-order"], "inline,async,defer,module,inline-module");
 assert.match(scriptTarget.attributes["data-module-url"], /module\.js$/);
+assert.equal(scriptTarget.attributes["data-dom-content-loaded"], "interactive");
+assert.equal(scriptTarget.attributes["data-load"], "complete");
 let scriptError;
 try {
   native.runDocumentScriptsHarness(join(scriptFixture, "error.html"), 320, 180);
@@ -32,9 +34,17 @@ const snapshot = JSON.parse(native.runBridgeHarness(
        throw new Error("window identity, document, or initial viewport failed");
      if ("location" in window || "history" in window || "navigator" in window || "localStorage" in window)
        throw new Error("unsupported browser globals must be omitted");
+     let resizeCount = 0;
+     window.addEventListener("resize", () => {
+       resizeCount++;
+       if (innerWidth !== 640 || innerHeight !== 480)
+         throw new Error("resize dispatched before viewport synchronization");
+       document.getElementById("x").style.width = "160px";
+     });
      __blitsenWindowResize("640", "480");
      if (innerWidth !== 640 || innerHeight !== 480 || devicePixelRatio !== 1)
        throw new Error("window viewport did not synchronize after resize");
+     if (resizeCount !== 1) throw new Error("resize did not dispatch exactly once");
      const el = document.querySelector("#x");
      const byId = document.getElementById("x");
      const initial = document.querySelectorAll("#x");
@@ -49,8 +59,7 @@ const snapshot = JSON.parse(native.runBridgeHarness(
        throw new Error("document creation, roots, or static NodeList semantics failed");
      el.textContent = "hi";
      el.setAttribute("class", "done");
-     el.setAttribute("data-window", "ok");
-     el.style.width = "140px"; }`,
+     el.setAttribute("data-window", "ok"); }`,
   320,
   180,
 ));
@@ -63,8 +72,8 @@ assert.equal(snapshot.invalidation.full_document, false, "Blitz incremental layo
 assert.equal(target.text_content, "hi");
 assert.equal(target.attributes.class, "done");
 assert.equal(target.attributes["data-window"], "ok");
-assert.match(target.inline_style, /width:\s*140px/);
-assert.equal(target.layout.width, 140);
+assert.match(target.inline_style, /width:\s*160px/);
+assert.equal(target.layout.width, 160);
 const created = snapshot.nodes.find((node) => node.attributes.id === "created");
 assert(created, "document-created element reached the Rust tree");
 assert.equal(created.text_content, "new");
