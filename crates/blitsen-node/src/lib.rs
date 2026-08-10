@@ -12,7 +12,7 @@ use anyrender::{PaintScene as _, render_to_buffer};
 use anyrender_vello_cpu::VelloCpuImageRenderer;
 use base64::Engine as _;
 use blitsen_blitz::BlitzDom;
-use blitsen_core::WindowState;
+use blitsen_core::{WindowState, WrapperTable};
 use blitsen_dom::{DomBackend, DomError, DomName};
 use blitsen_js::{
     ExternalId, JsEngine, JsError, JsType, LoopTurn, NativeCall, NativeCallback, NativeClass,
@@ -1139,6 +1139,78 @@ pub fn render_bridge_harness_png(
 ) -> napi::Result<String> {
     let (_, png) = execute_bridge_harness(env, html, script, width, height)?;
     Ok(base64::engine::general_purpose::STANDARD.encode(png))
+}
+
+/// Exercises the real Node-API weak-reference and finalizer identity path.
+#[napi]
+pub fn wrapper_identity_smoke(env: Env) -> napi::Result<bool> {
+    let mut engine = NodeApiEngine::new(env);
+    let class = engine
+        .register_class(NativeClass::new("IdentityNode"))
+        .map_err(napi_error)?;
+    let table = WrapperTable::<NodeId, NodeWeakRef>::new();
+    let raw_env = engine.raw_env();
+    let weak_map_works = Env::from_raw(raw_env).run_in_scope(|| {
+        let node = NodeId::from_u64(1);
+        let first = table
+            .get_or_create(&mut engine, node, |engine, finalizer| {
+                engine.instantiate(&class, ExternalId(node.as_u64()), Some(finalizer))
+            })
+            .map_err(napi_error)?;
+        let second = table
+            .get_or_create(&mut engine, node, |_, _| {
+                Err(JsError::new("identity table created a duplicate wrapper"))
+            })
+            .map_err(napi_error)?;
+        let mut strictly_equal = false;
+        check(
+            unsafe {
+                sys::napi_strict_equals(raw_env, raw(&first), raw(&second), &mut strictly_equal)
+            },
+            "compare wrapper identity",
+        )
+        .map_err(napi_error)?;
+        if !strictly_equal {
+            return Ok(false);
+        }
+        engine
+            .set_global("__blitsenIdentityFirst", &first)
+            .and_then(|_| engine.set_global("__blitsenIdentitySecond", &second))
+            .map_err(napi_error)?;
+        engine
+            .evaluate_script(
+                "(() => { const identityMap = new WeakMap([[__blitsenIdentityFirst, 42]]); return identityMap.get(__blitsenIdentitySecond) === 42; })()",
+                "blitsen:identity-weak-map",
+            )
+            .and_then(|value| engine.to_boolean(&value))
+            .map_err(napi_error)
+    })?;
+    if !weak_map_works {
+        return Ok(false);
+    }
+
+    for slot in 2..=100_001_u64 {
+        Env::from_raw(raw_env).run_in_scope(|| {
+            let node = NodeId::from_u64(slot);
+            table
+                .get_or_create(&mut engine, node, |engine, finalizer| {
+                    engine.instantiate(&class, ExternalId(node.as_u64()), Some(finalizer))
+                })
+                .map(|_| ())
+                .map_err(napi_error)
+        })?;
+    }
+    if table.len() != 100_001 {
+        return Ok(false);
+    }
+    engine
+        .evaluate_script(
+            "delete globalThis.__blitsenIdentityFirst; delete globalThis.__blitsenIdentitySecond; Bun.gc(true); Bun.gc(true)",
+            "blitsen:identity-gc",
+        )
+        .map_err(napi_error)?;
+    table.prune_collected(&mut engine).map_err(napi_error)?;
+    Ok(table.is_empty())
 }
 
 /// Runs the load-bearing Node-API subset used by the trait implementation.

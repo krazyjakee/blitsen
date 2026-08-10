@@ -4,6 +4,7 @@ import { createRequire } from "node:module";
 const addonPath = process.argv[2];
 if (!addonPath) throw new Error("usage: bun native-harness.mjs <addon.node>");
 const native = createRequire(import.meta.url)(addonPath);
+assert.equal(native.wrapperIdentitySmoke(), true, "Node-API wrappers preserve identity and collect");
 const snapshot = JSON.parse(native.runBridgeHarness(
   `<style>#x { display:block; width:100px; height:20px }</style><div id="x">old</div>`,
   `const el = document.querySelector("#x");
