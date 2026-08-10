@@ -404,6 +404,15 @@ pub struct Rect {
     pub height: f32,
 }
 
+/// Result of resolving a viewport point against the laid-out document.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HitTest<N> {
+    /// Deepest interactive DOM node at the point.
+    pub target: N,
+    /// Connected propagation path in root-to-target order.
+    pub path: Vec<N>,
+}
+
 impl Rect {
     /// Reports whether a viewport point lies inside the rectangle.
     pub fn contains(self, x: f32, y: f32) -> bool {
@@ -589,13 +598,13 @@ pub trait DomBackend {
     /// Returns border-box geometry after validating a layout snapshot.
     fn bounding_rect(&self, node: Self::NodeId, snapshot: LayoutSnapshot)
     -> Result<Rect, DomError>;
-    /// Returns the topmost node at a viewport point after validating layout.
+    /// Returns the topmost node and its propagation path after validating layout.
     fn hit_test(
         &self,
         x: f32,
         y: f32,
         snapshot: LayoutSnapshot,
-    ) -> Result<Option<Self::NodeId>, DomError>;
+    ) -> Result<Option<HitTest<Self::NodeId>>, DomError>;
 }
 
 #[cfg(test)]

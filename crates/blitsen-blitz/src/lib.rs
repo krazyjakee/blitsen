@@ -4,15 +4,33 @@
 //! DOM operations into Blitz calls. It owns one authoritative `HtmlDocument`;
 //! no parallel tree or attribute store is maintained.
 
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use blitsen_dom::{
-    DomBackend, DomError, DomName, FrameInvalidation, InvalidationMetrics, InvalidationMode,
-    InvalidationTracker, LayoutSnapshot, Namespace, NodeKind, Rect,
+    DomBackend, DomError, DomName, FrameInvalidation, HitTest, InvalidationMetrics,
+    InvalidationMode, InvalidationTracker, LayoutSnapshot, Namespace, NodeKind, Rect,
 };
 use blitz::dom::{DocumentConfig, LocalName, NodeData, NodeId, QualName, ns};
 use blitz::html::{HtmlDocument, HtmlProvider};
+use kurbo::Point;
+use style::computed_values::pointer_events::T as PointerEvents;
+use style::computed_values::visibility::T as Visibility;
+use style::values::computed::Overflow;
+
+fn compare_stacking_paths(left: &[i32], right: &[i32]) -> Ordering {
+    (0..left.len().max(right.len()))
+        .find_map(|index| {
+            let ordering = left
+                .get(index)
+                .copied()
+                .unwrap_or(0)
+                .cmp(&right.get(index).copied().unwrap_or(0));
+            (ordering != Ordering::Equal).then_some(ordering)
+        })
+        .unwrap_or(Ordering::Equal)
+}
 
 /// A Blitz HTML document exposed only through Blitsen's DOM boundary.
 pub struct BlitzDom {
@@ -113,6 +131,68 @@ impl BlitzDom {
 
     fn node(&self, node: NodeId) -> Result<&blitz::dom::Node, DomError> {
         self.document.get_node(node).ok_or(DomError::StaleNode)
+    }
+
+    fn hit_candidate(
+        &self,
+        target: NodeId,
+        viewport_x: f32,
+        viewport_y: f32,
+    ) -> Result<Option<(Vec<i32>, usize)>, DomError> {
+        let mut chain = vec![target];
+        while let Some(parent) = self.parent(*chain.last().expect("target starts chain"))? {
+            chain.push(parent);
+        }
+        chain.reverse();
+
+        let mut x = viewport_x;
+        let mut y = viewport_y;
+        let mut stacking_path = Vec::new();
+        let mut depth = 0;
+        for (index, id) in chain.into_iter().enumerate() {
+            let node = self.node(id)?;
+            let Some(styles) = node.primary_styles() else {
+                continue;
+            };
+            if matches!(
+                styles.clone_visibility(),
+                Visibility::Hidden | Visibility::Collapse
+            ) {
+                return Ok(None);
+            }
+            if index > 0 {
+                let layout = node.final_layout();
+                x = x - layout.location.x + node.scroll_offset().x as f32;
+                y = y - layout.location.y + node.scroll_offset().y as f32;
+                if let Some(transform) = *node.transform() {
+                    let point = transform.inverse() * Point::new(f64::from(x), f64::from(y));
+                    x = point.x as f32;
+                    y = point.y as f32;
+                }
+                depth += 1;
+            }
+            if node.z_index() != 0 || node.is_stacking_context_root(false) {
+                stacking_path.push(node.z_index());
+            }
+
+            let layout = node.final_layout();
+            let inside_x = x >= 0.0 && x < layout.size.width;
+            let inside_y = y >= 0.0 && y < layout.size.height;
+            if let Some(styles) = node.primary_styles() {
+                let clips_x = styles.clone_overflow_x() != Overflow::Visible;
+                let clips_y = styles.clone_overflow_y() != Overflow::Visible;
+                if (clips_x && !inside_x) || (clips_y && !inside_y) {
+                    return Ok(None);
+                }
+            }
+        }
+        let target = self.node(target)?;
+        let layout = target.final_layout();
+        let inside = x >= 0.0 && x < layout.size.width && y >= 0.0 && y < layout.size.height;
+        let interactive = target
+            .primary_styles()
+            .is_some_and(|styles| styles.clone_pointer_events() != PointerEvents::None);
+        Ok((inside && interactive).then_some((stacking_path, depth)))
     }
 
     fn ensure_element(&self, node: NodeId) -> Result<(), DomError> {
@@ -671,11 +751,38 @@ impl DomBackend for BlitzDom {
         x: f32,
         y: f32,
         snapshot: LayoutSnapshot,
-    ) -> Result<Option<NodeId>, DomError> {
+    ) -> Result<Option<HitTest<NodeId>>, DomError> {
         if snapshot.revision() != self.revision || self.flushed_revision != self.revision {
             return Err(DomError::LayoutNotFlushed);
         }
-        Ok(self.document.hit(x, y).map(|hit| hit.node_id))
+        let mut best: Option<(Vec<i32>, usize, usize, NodeId)> = None;
+        for (order, node) in self
+            .query_selector_all(self.document(), "*")?
+            .into_iter()
+            .enumerate()
+        {
+            let Some((stacking_path, depth)) = self.hit_candidate(node, x, y)? else {
+                continue;
+            };
+            let candidate = (stacking_path, order, depth, node);
+            if best.as_ref().is_none_or(|current| {
+                compare_stacking_paths(&candidate.0, &current.0)
+                    .then_with(|| candidate.1.cmp(&current.1))
+                    .then_with(|| candidate.2.cmp(&current.2))
+                    == Ordering::Greater
+            }) {
+                best = Some(candidate);
+            }
+        }
+        let Some((_, _, _, target)) = best else {
+            return Ok(None);
+        };
+        let mut path = vec![target];
+        while let Some(parent) = self.parent(*path.last().expect("target starts path"))? {
+            path.push(parent);
+        }
+        path.reverse();
+        Ok(Some(HitTest { target, path }))
     }
 }
 
@@ -806,5 +913,70 @@ mod tests {
         assert!(full_document);
         assert_eq!(metrics.restyled_nodes, dom.document_ref().tree().len());
         assert_eq!(metrics.relaid_out_nodes, metrics.restyled_nodes);
+    }
+
+    #[test]
+    fn hit_testing_returns_paint_order_transforms_clipping_and_the_dom_path() {
+        let mut dom = BlitzDom::from_html(
+            r#"
+            <style>
+              html, body { margin: 0; width: 400px; height: 300px }
+              .box { position: absolute; width: 100px; height: 100px }
+              #low { left: 0; top: 0 }
+              #high { left: 20px; top: 20px; z-index: 2 }
+              #high-child { width: 100%; height: 100% }
+              #transparent { left: 20px; top: 20px; z-index: 3; pointer-events: none }
+              #transformed { left: 150px; top: 0; transform: translateX(40px) }
+              #clip { left: 0; top: 150px; width: 40px; height: 40px; overflow: hidden }
+              #outside { position: absolute; left: 60px; top: 0; width: 20px; height: 20px }
+              #nested-low { left: 250px; top: 150px; z-index: 1 }
+              #nested-child { width: 100%; height: 100%; position: relative; z-index: 100 }
+              #nested-high { left: 250px; top: 150px; z-index: 2 }
+            </style>
+            <body>
+              <div id="low" class="box"></div>
+              <div id="high" class="box"><div id="high-child"></div></div>
+              <div id="transparent" class="box"></div>
+              <div id="transformed" class="box"></div>
+              <div id="clip" class="box"><div id="outside"></div></div>
+              <div id="nested-low" class="box"><div id="nested-child"></div></div>
+              <div id="nested-high" class="box"></div>
+            </body>
+            "#,
+            DocumentConfig {
+                viewport: Some(Viewport::new(400, 300, 1.0, ColorScheme::Light)),
+                ..Default::default()
+            },
+        );
+        let snapshot = dom.flush_layout().unwrap();
+        let document = dom.document();
+        let body = dom.body().unwrap();
+        let high = dom.get_element_by_id("high-child").unwrap().unwrap();
+        let transformed = dom.get_element_by_id("transformed").unwrap().unwrap();
+
+        let overlap = dom.hit_test(30.0, 30.0, snapshot).unwrap().unwrap();
+        assert_eq!(overlap.target, high);
+        assert_eq!(overlap.path.first(), Some(&document));
+        assert_eq!(overlap.path.last(), Some(&high));
+
+        let transformed_hit = dom.hit_test(195.0, 10.0, snapshot).unwrap().unwrap();
+        assert_eq!(transformed_hit.target, transformed);
+
+        let clipped = dom.hit_test(65.0, 160.0, snapshot).unwrap().unwrap();
+        assert_eq!(clipped.target, body);
+        assert_eq!(
+            clipped.path,
+            vec![document, dom.document_element().unwrap(), body]
+        );
+
+        let nested_high = dom.get_element_by_id("nested-high").unwrap().unwrap();
+        assert_eq!(
+            dom.hit_test(260.0, 160.0, snapshot)
+                .unwrap()
+                .unwrap()
+                .target,
+            nested_high,
+            "a child cannot escape its ancestor's lower stacking context"
+        );
     }
 }

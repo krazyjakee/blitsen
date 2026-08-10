@@ -287,6 +287,7 @@ dependencies = [
  "blitsen-dom",
  "blitz",
  "html-escape",
+ "kurbo",
  "stylo",
 ]
 
