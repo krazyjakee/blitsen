@@ -458,7 +458,11 @@ npx blitsen http://localhost:5173    # ② proxy mode: load from a running dev s
 subresources over HTTP from the user's own dev server, so Vite/Webpack HMR, source maps and the
 entire existing inner loop keep working — the native window simply replaces the browser tab.
 This requires `fetch` and a module loader that can resolve over HTTP, which is a real constraint
-on when it can ship (a v1 concern, not v0).
+on when it can ship. **S7 decision: proxy mode is v1, not v0.** Bun 1.3.14 can execute a
+pre-scanned Vite graph and connect to `vite-hmr`, but runtime resolver callbacks are synchronous,
+HTTP modules receive a synthetic `file:///http://…` identity, source-map identity is not
+preserved, `EventSource` is absent, and the actual browser-facing HMR client still depends on the
+v1 web-platform surface. Directory mode is the v0 path; see `spikes/s7/README.md`.
 
 Directory mode reload granularity: CSS swaps live via re-cascade with no reload; HTML and JS
 restart the JS context and reparse the document. Preserving JS state across reload is not

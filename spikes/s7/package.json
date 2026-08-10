@@ -1,0 +1,11 @@
+{
+  "name": "s7-http-module-graph",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "bun run.mjs"
+  },
+  "devDependencies": {
+    "vite": "8.2.1"
+  }
+}

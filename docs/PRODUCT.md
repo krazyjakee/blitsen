@@ -441,8 +441,11 @@ dashboard) is built by someone who is not us.
 5. **Is TypeScript first-class?** Mostly moot under the export model — the user's existing
    bundler handles TS before Blitsen sees the output. Still open for the no-build-step path.
 6. **Where do assets live** in the exported binary — embedded, side-loaded, or either?
-7. **Does the dev-server mode ship in v0?** It is the cheapest possible adoption on-ramp
-   (`blitsen http://localhost:5173`) and may be worth pulling forward ahead of export.
+7. ~~Does the dev-server mode ship in v0?~~ — **settled by S7: no; target v1.** Bun can fetch
+   and execute a pre-scanned Vite module graph and service its WebSocket transport, but its
+   plugin loader does not preserve HTTP module identity or source-map URLs, async resolution is
+   unavailable, and the browser-facing HMR client still needs the v1 web-platform surface.
+   Directory watching plus full context reload remains the v0 development path.
 8. **Native API imports** — `native:dialog` (bare specifier, needs runtime resolver support in
    every bundler) or `blitsen/dialog` (a real npm path that any bundler already resolves)? The
    latter is likely more compatible; the former reads better. Possibly both.
