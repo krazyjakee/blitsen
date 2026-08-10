@@ -14,6 +14,8 @@ use super::{DomRuntime, NodeApiEngine, NodeWeakRef, callback_string, check, unkn
 
 const BOOTSTRAP: &str = r#"
 (() => {
+  const testHarness = Boolean(globalThis.__blitsenTestHarness);
+  delete globalThis.__blitsenTestHarness;
   const call = (operation, ...args) =>
     JSON.parse(__blitsenDomCall(operation, ...args.map(value => String(value))));
   const handle = Symbol("Blitsen node handle");
@@ -489,7 +491,7 @@ const BOOTSTRAP: &str = r#"
   const document = new Document();
   for (const method of ["addEventListener", "removeEventListener", "dispatchEvent"])
     Object.defineProperty(globalThis, method, { value: EventTarget.prototype[method], configurable: true });
-  Object.assign(globalThis, {
+  const globals = {
     EventTarget, Node, Element, NodeList, Document, DOMTokenList, CSSStyleDeclaration, document,
     Event, MouseEvent, KeyboardEvent, CustomEvent,
     requestAnimationFrame, cancelAnimationFrame,
@@ -498,13 +500,14 @@ const BOOTSTRAP: &str = r#"
     __blitsenForcedLayoutsThisFrame: () => forcedLayoutsThisFrame,
     __blitsenEventInternals: eventInternals,
     __blitsenDispatchMouseEvent: dispatchMouseEvent,
-    __blitsenDispatchMouseEventTo: (type, target, init = {}) => {
-      if (!(target instanceof Node)) throw new TypeError("mouse event target must be a Node");
-      return dispatchMouseEvent(String(type), target[handle], init);
-    },
     __blitsenDispatchKeyboardEvent: dispatchKeyboardEvent,
     __blitsenDispatchLifecycleEvent: dispatchLifecycleEvent,
-  });
+  };
+  if (testHarness) globals.__blitsenInjectMouseEvent = (type, target, init = {}) => {
+    if (!(target instanceof Node)) throw new TypeError("mouse event target must be a Node");
+    return dispatchMouseEvent(String(type), target[handle], init);
+  };
+  Object.assign(globalThis, globals);
   globalThis.window = globalThis;
   for (const key of ["location", "history", "navigator", "localStorage"]) {
     try { delete globalThis[key]; } catch {}
@@ -519,6 +522,7 @@ pub(super) fn install(
     width: u32,
     height: u32,
     device_pixel_ratio: f64,
+    test_harness: bool,
 ) -> Result<Rc<RefCell<WindowState>>, JsError> {
     let class = Rc::new(engine.register_class(NativeClass::new("BlitsenNode"))?);
     let table = Rc::new(WrapperTable::<NodeId, NodeWeakRef>::new());
@@ -598,6 +602,8 @@ pub(super) fn install(
     });
     let dev_layout_warnings = engine.boolean(dev_layout_warnings);
     engine.set_global("__blitsenDevLayoutWarnings", &dev_layout_warnings)?;
+    let test_harness = engine.boolean(test_harness);
+    engine.set_global("__blitsenTestHarness", &test_harness)?;
     engine.evaluate_script(BOOTSTRAP, "blitsen:dom-bootstrap")?;
 
     let document = engine.evaluate_script("globalThis.document", "blitsen:document-value")?;

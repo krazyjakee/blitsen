@@ -1706,7 +1706,7 @@ fn execute_window_scripts(
     height: u32,
 ) -> napi::Result<Rc<RefCell<WindowState>>> {
     let window_state =
-        dom_bridge::install(engine, runtime, width, height, 1.0).map_err(napi_error)?;
+        dom_bridge::install(engine, runtime, width, height, 1.0, false).map_err(napi_error)?;
     execute_collected_document_scripts(scripts, engine, Path::new(entrypoint))
         .map_err(napi_error)?;
     engine
@@ -1738,7 +1738,7 @@ fn execute_bridge_harness(
     document.borrow_mut().flush_layout().map_err(dom_error)?;
     let mut engine = NodeApiEngine::new(env);
     let _window_state =
-        dom_bridge::install(&mut engine, runtime, width, height, 1.0).map_err(napi_error)?;
+        dom_bridge::install(&mut engine, runtime, width, height, 1.0, true).map_err(napi_error)?;
     engine
         .evaluate_script(&script, "harness-script.js")
         .map_err(napi_error)?;
@@ -1764,7 +1764,7 @@ fn execute_animation_harness(
     document.borrow_mut().flush_layout().map_err(dom_error)?;
     let mut engine = NodeApiEngine::new(env);
     let _window_state =
-        dom_bridge::install(&mut engine, runtime, width, height, 1.0).map_err(napi_error)?;
+        dom_bridge::install(&mut engine, runtime, width, height, 1.0, true).map_err(napi_error)?;
     engine
         .evaluate_script(&script, "animation-harness-script.js")
         .map_err(napi_error)?;

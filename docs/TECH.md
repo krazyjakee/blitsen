@@ -592,7 +592,9 @@ executing the same native assertions on Linux, macOS, or Windows.
 - **Bridge unit tests** — DOM operations driven from JS, asserted against the Rust tree state.
 - **Event dispatch tests** — synthetic events injected at the bridge boundary (below the OS), so
   propagation order, `preventDefault` and `stopPropagation` are testable without touching a real
-  input device.
+  input device. The target-based injection helper is installed only by the headless native
+  harness and is absent from shipped windows. It runs under the local `test:native` gate while
+  hosted CI remains deliberately disabled.
 - **Frame determinism** — record/replay of an input trace at a fixed timestep, producing a
   deterministic frame hash sequence.
 - **Size regression** — the local release verification records bare-app size and fails on

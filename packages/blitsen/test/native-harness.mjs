@@ -184,9 +184,11 @@ const eventDispatch = JSON.parse(native.runBridgeHarness(
      listen(outer, "outer-bubble");
      listen(document, "document-bubble");
      listen(window, "window-bubble");
-     const event = new CustomEvent("probe", { bubbles: true, cancelable: true, detail: 42 });
-     if (target.dispatchEvent(event) !== false || !event.defaultPrevented || event.currentTarget !== null ||
-         event.eventPhase !== 0 || event.detail !== 42) throw new Error("dispatchEvent result or final state");
+     let event;
+     target.addEventListener("probe", current => { event = current; }, { once: true });
+     if (__blitsenInjectMouseEvent("probe", target, { bubbles: true, cancelable: true }) !== false ||
+         !event.defaultPrevented || event.currentTarget !== null || event.eventPhase !== 0)
+       throw new Error("injected event result or final state");
      const expected = ["window-capture:1", "document-capture:1", "outer-capture:1",
        "target-capture:2", "target-bubble:2", "outer-bubble:3", "document-bubble:3", "window-bubble:3"];
      if (order.join(",") !== expected.join(",")) throw new Error("propagation order: " + order);
@@ -195,7 +197,7 @@ const eventDispatch = JSON.parse(native.runBridgeHarness(
      const onceCallback = () => once++;
      target.addEventListener("once", onceCallback, { once: true });
      target.addEventListener("once", onceCallback, { once: false, passive: true });
-     target.dispatchEvent(new Event("once")); target.dispatchEvent(new Event("once"));
+     __blitsenInjectMouseEvent("once", target); __blitsenInjectMouseEvent("once", target);
      if (once !== 1) throw new Error("once or de-duplication");
 
      const mutation = [];
@@ -207,31 +209,40 @@ const eventDispatch = JSON.parse(native.runBridgeHarness(
        target.addEventListener("mutation", added);
      });
      target.addEventListener("mutation", removed);
-     target.dispatchEvent(new Event("mutation"));
+     __blitsenInjectMouseEvent("mutation", target);
      if (mutation.join(",") !== "first") throw new Error("listener removal/addition during dispatch");
-     target.dispatchEvent(new Event("mutation"));
+     __blitsenInjectMouseEvent("mutation", target);
      if (mutation.join(",") !== "first,first,added") throw new Error("deferred listener addition");
 
      const oldError = console.error; let reported = 0; console.error = () => reported++;
      let afterThrow = false;
      target.addEventListener("throw", () => { throw new Error("listener failure"); });
      target.addEventListener("throw", () => { afterThrow = true; });
-     target.dispatchEvent(new Event("throw")); console.error = oldError;
+     __blitsenInjectMouseEvent("throw", target); console.error = oldError;
      if (reported !== 1 || !afterThrow) throw new Error("per-listener exception isolation");
 
      const stopped = [];
      target.addEventListener("stop", event => { stopped.push("first"); event.stopImmediatePropagation(); });
      target.addEventListener("stop", () => stopped.push("peer"));
      outer.addEventListener("stop", () => stopped.push("ancestor"));
-     target.dispatchEvent(new Event("stop", { bubbles: true }));
+     __blitsenInjectMouseEvent("stop", target, { bubbles: true });
      if (stopped.join(",") !== "first") throw new Error("stopImmediatePropagation");
 
-     const passive = new Event("passive", { cancelable: true });
+     const propagation = [];
+     target.addEventListener("stop-propagation", event => { propagation.push("first"); event.stopPropagation(); });
+     target.addEventListener("stop-propagation", () => propagation.push("peer"));
+     outer.addEventListener("stop-propagation", () => propagation.push("ancestor"));
+     __blitsenInjectMouseEvent("stop-propagation", target, { bubbles: true });
+     if (propagation.join(",") !== "first,peer") throw new Error("stopPropagation");
+
+     let passive;
      target.addEventListener("passive", event => event.preventDefault(), { passive: true });
-     if (!target.dispatchEvent(passive) || passive.defaultPrevented) throw new Error("passive listener");
+     target.addEventListener("passive", event => { passive = event; });
+     if (!__blitsenInjectMouseEvent("passive", target, { cancelable: true }) || passive.defaultPrevented)
+       throw new Error("passive listener");
      let handled = false;
      target.addEventListener("object", { handleEvent(event) { handled = event.currentTarget === target; } });
-     target.dispatchEvent(new Event("object"));
+     __blitsenInjectMouseEvent("object", target);
      if (!handled) throw new Error("object event listener");
      target.setAttribute("data-dispatch", "ok"); }`,
   200,
@@ -289,21 +300,21 @@ const defaultActions = JSON.parse(native.runBridgeHarness(
      const focusable = document.getElementById("focusable");
      let focusDuringBubble;
      window.addEventListener("click", () => { focusDuringBubble = document.activeElement; });
-     __blitsenDispatchMouseEventTo("click", clickTarget, { bubbles: true, cancelable: true });
+     __blitsenInjectMouseEvent("click", clickTarget, { bubbles: true, cancelable: true });
      if (focusDuringBubble !== document.body || document.activeElement !== focusable)
        throw new Error("click focus must follow bubbling and choose the nearest focusable ancestor");
 
      focusable.blur();
      const cancelTarget = document.getElementById("cancel-target");
      cancelTarget.addEventListener("click", event => event.preventDefault());
-     __blitsenDispatchMouseEventTo("click", cancelTarget, { bubbles: true, cancelable: true });
+     __blitsenInjectMouseEvent("click", cancelTarget, { bubbles: true, cancelable: true });
      if (document.activeElement !== document.body) throw new Error("preventDefault click focus");
 
-     __blitsenDispatchMouseEventTo("wheel", clickTarget,
+     __blitsenInjectMouseEvent("wheel", clickTarget,
        { bubbles: true, cancelable: true, deltaY: 40 });
      const cancelWheel = event => event.preventDefault();
      clickTarget.addEventListener("wheel", cancelWheel);
-     __blitsenDispatchMouseEventTo("wheel", clickTarget,
+     __blitsenInjectMouseEvent("wheel", clickTarget,
        { bubbles: true, cancelable: true, deltaY: 40 });
      clickTarget.removeEventListener("wheel", cancelWheel);
 

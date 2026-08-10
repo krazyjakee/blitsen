@@ -4,6 +4,9 @@
     <div id="script-target" data-order=""></div>
     <script>
       {
+        if ("__blitsenInjectMouseEvent" in globalThis) {
+          throw new Error("test-only event injection leaked into a shipped window");
+        }
         const target = document.getElementById("script-target");
         target.setAttribute("data-order", "inline");
         document.addEventListener("DOMContentLoaded", () => {
