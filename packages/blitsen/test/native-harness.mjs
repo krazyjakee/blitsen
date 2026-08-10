@@ -230,6 +230,45 @@ const eventDispatch = JSON.parse(native.runBridgeHarness(
 ));
 assert.equal(eventDispatch.nodes.find(node => node.attributes.id === "event-target").attributes["data-dispatch"], "ok");
 
+const keyboardDispatch = JSON.parse(native.runBridgeHarness(
+  `<button id="first-key">first</button><button id="second-key">second</button>`,
+  `{ const first = document.getElementById("first-key");
+     const second = document.getElementById("second-key");
+     if (document.activeElement !== document.body) throw new Error("initial activeElement");
+     const focusOrder = [];
+     first.addEventListener("focus", () => focusOrder.push("first-focus"));
+     first.addEventListener("blur", () => focusOrder.push("first-blur"));
+     second.addEventListener("focus", () => focusOrder.push("second-focus"));
+     first.focus();
+     if (document.activeElement !== first || focusOrder.join(",") !== "first-focus") throw new Error("focus()");
+     let keyRecord;
+     first.addEventListener("keydown", event => {
+       keyRecord = [event.key, event.code, event.repeat, event.ctrlKey, event.currentTarget === first];
+     });
+     __blitsenDispatchKeyboardEvent("keydown", { bubbles: true, cancelable: true,
+       key: "a", code: "KeyA", repeat: true, ctrlKey: true });
+     if (keyRecord.join(",") !== "a,KeyA,true,true,true") throw new Error("native KeyboardEvent dispatch");
+     __blitsenDispatchKeyboardEvent("keydown", { bubbles: true, cancelable: true,
+       key: "Tab", code: "Tab", repeat: false });
+     if (document.activeElement !== second || focusOrder.join(",") !== "first-focus,first-blur,second-focus")
+       throw new Error("Tab focus traversal");
+     const cancelTab = event => event.preventDefault();
+     second.addEventListener("keydown", cancelTab);
+     __blitsenDispatchKeyboardEvent("keydown", { bubbles: true, cancelable: true,
+       key: "Tab", code: "Tab", repeat: false, shiftKey: true });
+     if (document.activeElement !== second) throw new Error("preventDefault Tab");
+     second.removeEventListener("keydown", cancelTab);
+     __blitsenDispatchKeyboardEvent("keydown", { bubbles: true, cancelable: true,
+       key: "Tab", code: "Tab", repeat: false, shiftKey: true });
+     if (document.activeElement !== first) throw new Error("Shift+Tab focus traversal");
+     first.blur();
+     if (document.activeElement !== document.body) throw new Error("blur()");
+     first.setAttribute("data-keyboard", "ok"); }`,
+  200,
+  80,
+));
+assert.equal(keyboardDispatch.nodes.find(node => node.attributes.id === "first-key").attributes["data-keyboard"], "ok");
+
 const treeSnapshot = JSON.parse(native.runBridgeHarness(
   `<body><div id="a"><i id="one">one</i><i id="two">two</i></div><div id="b"></div></body>`,
   `{ const expect = (condition, message) => { if (!condition) throw new Error(message); };

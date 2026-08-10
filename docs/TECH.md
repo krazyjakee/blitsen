@@ -297,6 +297,12 @@ window scale. High-frequency `mousemove` input is coalesced to the latest positi
 `mouseenter`, `mouseleave`, `mouseover`, and `mouseout` are deferred to v1; v0 uses bubbling
 `mousemove` plus hit testing. An uncancelled `wheel` scrolls the nearest scrollable ancestor.
 
+`document.activeElement` initially resolves to `body`. An uncancelled click focuses the nearest
+enabled form control, link, or element with a nonnegative `tabindex`; Tab and Shift+Tab traverse
+those connected elements in document order. `focus()` and `blur()` update active state before
+dispatching their non-bubbling events. Keyboard input targets the active element, with logical
+`key`, physical `code`, repeat state, and tracked modifiers. Text input and IME remain outside v0.
+
 ---
 
 ## 6. Frame pipeline

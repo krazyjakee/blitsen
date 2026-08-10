@@ -216,8 +216,51 @@ const BOOTSTRAP: &str = r#"
     }
   };
 
-  const dispatchMouseEvent = (type, rawHandle, init) =>
-    wrap(String(rawHandle)).dispatchEvent(new MouseEvent(String(type), init));
+  let activeElement = null;
+  const elementTag = element => call("tagName", element[handle]);
+  const isFocusable = element => {
+    if (!(element instanceof Element) || element.hasAttribute("disabled")) return false;
+    const tabindex = element.getAttribute("tabindex");
+    if (tabindex !== null) return Number(tabindex) >= 0;
+    const tag = elementTag(element);
+    return ["button", "input", "select", "textarea"].includes(tag) ||
+      (tag === "a" && element.hasAttribute("href"));
+  };
+  const setFocus = element => {
+    const next = element ?? document.body;
+    const previous = activeElement ?? document.body;
+    if (next === previous) { activeElement = next; return; }
+    activeElement = next;
+    previous?.dispatchEvent(new Event("blur"));
+    next?.dispatchEvent(new Event("focus"));
+  };
+  const focusNearest = target => {
+    for (let element = target; element instanceof Element; element = element.parentNode)
+      if (isFocusable(element)) { setFocus(element); return; }
+    setFocus(document.body);
+  };
+  const moveFocus = backwards => {
+    const focusables = [...document.querySelectorAll("*")].filter(isFocusable);
+    if (focusables.length === 0) { setFocus(document.body); return; }
+    const current = focusables.indexOf(activeElement);
+    const index = backwards
+      ? (current <= 0 ? focusables.length - 1 : current - 1)
+      : (current < 0 || current === focusables.length - 1 ? 0 : current + 1);
+    setFocus(focusables[index]);
+  };
+  const dispatchMouseEvent = (type, rawHandle, init) => {
+    const target = wrap(String(rawHandle));
+    const allowed = target.dispatchEvent(new MouseEvent(String(type), init));
+    if (type === "click" && allowed) focusNearest(target);
+    return allowed;
+  };
+  const dispatchKeyboardEvent = (type, init) => {
+    const event = new KeyboardEvent(String(type), init);
+    const target = activeElement ?? document.body ?? document;
+    const allowed = target.dispatchEvent(event);
+    if (type === "keydown" && init.key === "Tab" && allowed) moveFocus(Boolean(init.shiftKey));
+    return allowed;
+  };
 
   class EventTarget {
     addEventListener(type, callback, options = false) {
@@ -308,6 +351,8 @@ const BOOTSTRAP: &str = r#"
     }
     get innerHTML() { return call("innerHTML", this[handle]); }
     set innerHTML(value) { call("setInnerHTML", this[handle], String(value)); }
+    focus() { if (isFocusable(this)) setFocus(this); }
+    blur() { if (activeElement === this) setFocus(document.body); }
   }
 
   class NodeList {
@@ -383,6 +428,7 @@ const BOOTSTRAP: &str = r#"
     createTextNode(text) { return wrap(call("createTextNode", String(text))); }
     get body() { return wrap(call("body")); }
     get documentElement() { return wrap(call("documentElement")); }
+    get activeElement() { return activeElement?.isConnected ? activeElement : this.body; }
   }
 
   const document = new Document();
@@ -396,6 +442,7 @@ const BOOTSTRAP: &str = r#"
     __blitsenAnimationFramesPending: () => animationFrames.size > 0,
     __blitsenEventInternals: eventInternals,
     __blitsenDispatchMouseEvent: dispatchMouseEvent,
+    __blitsenDispatchKeyboardEvent: dispatchKeyboardEvent,
   });
   globalThis.window = globalThis;
   for (const key of ["location", "history", "navigator", "localStorage"]) {
@@ -540,6 +587,11 @@ fn dispatch(runtime: &DomRuntime, operation: &str, arguments: &[String]) -> Resu
                 NodeKind::Fragment => "fragment",
             }
             .into(),
+        )),
+        "tagName" => Ok(Value::String(
+            dom.element_name(handle(runtime, arguments, 0)?)
+                .map_err(dom_error)?
+                .local,
         )),
         "querySelector" => Ok(serialized(
             dom.query_selector(dom.document(), bridge_arg(arguments, 0, "selector")?)

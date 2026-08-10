@@ -43,7 +43,7 @@ use winit::event::{
 };
 use winit::event_loop::pump_events::EventLoopExtPumpEvents;
 use winit::event_loop::{ActiveEventLoop, EventLoop};
-use winit::keyboard::ModifiersState;
+use winit::keyboard::{Key, ModifiersState, PhysicalKey};
 use winit::window::{WindowAttributes, WindowId};
 
 #[cfg(target_os = "macos")]
@@ -751,6 +751,7 @@ struct WindowApplication<Rend: anyrender::WindowRenderer> {
     started_at: Instant,
     document: Rc<RefCell<BlitzDom>>,
     pending_mouse_input: Vec<(WindowId, PendingMouseInput)>,
+    pending_keyboard_input: Vec<(WindowId, PendingKeyboardInput)>,
     pointer_positions: HashMap<WindowId, (f64, f64)>,
     mouse_down_targets: HashMap<u16, NodeId>,
     mouse_buttons: u16,
@@ -775,6 +776,17 @@ enum PendingMouseInput {
     },
 }
 
+#[derive(Clone)]
+enum PendingKeyboardInput {
+    Key {
+        event_type: &'static str,
+        key: String,
+        code: String,
+        repeat: bool,
+    },
+    WindowFocus(bool),
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct MouseEventInit {
@@ -788,6 +800,20 @@ struct MouseEventInit {
     screen_y: f64,
     button: u16,
     buttons: u16,
+    ctrl_key: bool,
+    shift_key: bool,
+    alt_key: bool,
+    meta_key: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct KeyboardEventInit {
+    bubbles: bool,
+    cancelable: bool,
+    key: String,
+    code: String,
+    repeat: bool,
     ctrl_key: bool,
     shift_key: bool,
     alt_key: bool,
@@ -842,6 +868,22 @@ fn css_pointer_coordinates(
     )
 }
 
+fn dom_key_name(key: &Key) -> String {
+    match key {
+        Key::Character(character) => character.to_string(),
+        Key::Named(named) => format!("{named:?}"),
+        Key::Dead(_) => "Dead".into(),
+        Key::Unidentified(_) => "Unidentified".into(),
+    }
+}
+
+fn dom_key_code(key: PhysicalKey) -> String {
+    match key {
+        PhysicalKey::Code(code) => format!("{code:?}"),
+        PhysicalKey::Unidentified(_) => String::new(),
+    }
+}
+
 impl<Rend: anyrender::WindowRenderer> WindowApplication<Rend> {
     fn queue_mouse_input(&mut self, window_id: WindowId, event: &WindowEvent) -> bool {
         let input = match event {
@@ -892,6 +934,96 @@ impl<Rend: anyrender::WindowRenderer> WindowApplication<Rend> {
         };
         self.pending_mouse_input.push((window_id, input));
         true
+    }
+
+    fn queue_keyboard_input(&mut self, window_id: WindowId, event: &WindowEvent) -> bool {
+        let input = match event {
+            WindowEvent::KeyboardInput { event, .. } => PendingKeyboardInput::Key {
+                event_type: if event.state == ElementState::Pressed {
+                    "keydown"
+                } else {
+                    "keyup"
+                },
+                key: dom_key_name(&event.logical_key),
+                code: dom_key_code(event.physical_key),
+                repeat: event.repeat,
+            },
+            WindowEvent::Focused(focused) => PendingKeyboardInput::WindowFocus(*focused),
+            _ => return false,
+        };
+        self.pending_keyboard_input.push((window_id, input));
+        true
+    }
+
+    fn dispatch_keyboard_event(
+        &self,
+        event_type: &str,
+        init: &KeyboardEventInit,
+    ) -> Result<bool, JsError> {
+        let event_type =
+            serde_json::to_string(event_type).map_err(|error| JsError::new(error.to_string()))?;
+        let init = serde_json::to_string(init).map_err(|error| JsError::new(error.to_string()))?;
+        let mut engine = NodeApiEngine::new(Env::from_raw(self.env));
+        let result = engine.evaluate_script(
+            &format!("globalThis.__blitsenDispatchKeyboardEvent({event_type}, {init})"),
+            "blitsen:native-keyboard-event",
+        )?;
+        engine.to_boolean(&result)
+    }
+
+    fn drain_keyboard_input(&mut self, window_id: WindowId) {
+        if self.error.borrow().is_some() {
+            return;
+        }
+        let mut inputs = Vec::new();
+        self.pending_keyboard_input
+            .retain(|(queued_window, input)| {
+                if *queued_window == window_id {
+                    inputs.push(input.clone());
+                    false
+                } else {
+                    true
+                }
+            });
+        for input in inputs {
+            let result = match input {
+                PendingKeyboardInput::Key {
+                    event_type,
+                    key,
+                    code,
+                    repeat,
+                } => self.dispatch_keyboard_event(
+                    event_type,
+                    &KeyboardEventInit {
+                        bubbles: true,
+                        cancelable: true,
+                        key,
+                        code,
+                        repeat,
+                        ctrl_key: self.modifiers.control_key(),
+                        shift_key: self.modifiers.shift_key(),
+                        alt_key: self.modifiers.alt_key(),
+                        meta_key: self.modifiers.meta_key(),
+                    },
+                ),
+                PendingKeyboardInput::WindowFocus(focused) => {
+                    let mut engine = NodeApiEngine::new(Env::from_raw(self.env));
+                    engine
+                        .evaluate_script(
+                            &format!(
+                                "globalThis.dispatchEvent(new Event({}))",
+                                if focused { "\"focus\"" } else { "\"blur\"" }
+                            ),
+                            "blitsen:native-window-focus",
+                        )
+                        .and_then(|value| engine.to_boolean(&value))
+                }
+            };
+            if let Err(error) = result {
+                *self.error.borrow_mut() = Some(error);
+                return;
+            }
+        }
     }
 
     fn dispatch_mouse_event(
@@ -1169,6 +1301,7 @@ impl<Rend: anyrender::WindowRenderer> ApplicationHandler for WindowApplication<R
         event: WindowEvent,
     ) {
         let queued_mouse_input = self.queue_mouse_input(window_id, &event);
+        let queued_keyboard_input = self.queue_keyboard_input(window_id, &event);
         let viewport_changed = matches!(
             &event,
             WindowEvent::SurfaceResized(_) | WindowEvent::ScaleFactorChanged { .. }
@@ -1176,6 +1309,7 @@ impl<Rend: anyrender::WindowRenderer> ApplicationHandler for WindowApplication<R
         let redraw = matches!(&event, WindowEvent::RedrawRequested);
         if redraw {
             self.drain_mouse_input(window_id);
+            self.drain_keyboard_input(window_id);
         }
         let animation_pending = redraw && self.run_animation_frame();
         self.inner.window_event(event_loop, window_id, event);
@@ -1185,7 +1319,9 @@ impl<Rend: anyrender::WindowRenderer> ApplicationHandler for WindowApplication<R
         if animation_pending && let Some(view) = self.inner.windows.get(&window_id) {
             view.window.request_redraw();
         }
-        if queued_mouse_input && let Some(view) = self.inner.windows.get(&window_id) {
+        if (queued_mouse_input || queued_keyboard_input)
+            && let Some(view) = self.inner.windows.get(&window_id)
+        {
             view.window.request_redraw();
         }
     }
@@ -1392,6 +1528,7 @@ impl Engine {
             started_at,
             document,
             pending_mouse_input: Vec::new(),
+            pending_keyboard_input: Vec::new(),
             pointer_positions: HashMap::new(),
             mouse_down_targets: HashMap::new(),
             mouse_buttons: 0,
@@ -2099,6 +2236,15 @@ mod tests {
         assert_eq!(
             css_pointer_coordinates(300.0, 180.0, 2.0, 40.0, 30.0),
             (150.0, 90.0, 190.0, 120.0)
+        );
+        assert_eq!(dom_key_name(&Key::Character("a".into())), "a");
+        assert_eq!(
+            dom_key_name(&Key::Named(winit::keyboard::NamedKey::Tab)),
+            "Tab"
+        );
+        assert_eq!(
+            dom_key_code(PhysicalKey::Code(winit::keyboard::KeyCode::KeyA)),
+            "KeyA"
         );
     }
 }
