@@ -5,6 +5,7 @@ import { join } from "node:path";
 const addonPath = process.argv[2];
 if (!addonPath) throw new Error("usage: bun native-harness.mjs <addon.node>");
 const native = createRequire(import.meta.url)(addonPath);
+assert.equal(native.nodeApiSmoke(), true, "Bun implements the load-bearing Node-API subset");
 assert.equal(native.wrapperIdentitySmoke(), true, "Node-API wrappers preserve identity and collect");
 const scriptFixture = join(import.meta.dir, "fixtures/scripts");
 const scriptSnapshot = JSON.parse(native.runDocumentScriptsHarness(
