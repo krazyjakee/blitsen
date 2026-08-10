@@ -1,0 +1,14 @@
+[package]
+name = "s4-html-fragment"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+blitz-dom = { git = "https://github.com/DioxusLabs/blitz", rev = "1efe22d2524d71ede5b94592204c21f0de644219" }
+blitz-html = { git = "https://github.com/DioxusLabs/blitz", rev = "1efe22d2524d71ede5b94592204c21f0de644219" }
+blitz-traits = { git = "https://github.com/DioxusLabs/blitz", rev = "1efe22d2524d71ede5b94592204c21f0de644219" }
+
+[patch.crates-io]
+anyrender = { git = "https://github.com/DioxusLabs/anyrender", rev = "dcd219746ff13a5832beab552f3f7f494d1bd84d" }
+usvg = { git = "https://github.com/DioxusLabs/resvg", rev = "3289a9b0c3d3352692bf5acdf5f6e6949cdb57b5" }
