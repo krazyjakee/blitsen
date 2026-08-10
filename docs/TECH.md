@@ -288,6 +288,10 @@ v0 events: `click`, `mousedown`, `mouseup`, `mousemove`, `keydown`, `keyup`, `re
 A listener that throws must not corrupt dispatch: exceptions are caught per listener, reported,
 and dispatch continues — as on the web.
 
+`addEventListener` accepts `capture`, `once`, and `passive`. Passive listeners are tracked and
+cannot cancel an event; Blitsen does not currently use the flag for browser-style scrolling
+latency optimization.
+
 ---
 
 ## 6. Frame pipeline

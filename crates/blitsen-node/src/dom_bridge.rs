@@ -58,7 +58,7 @@ const BOOTSTRAP: &str = r#"
         bubbles: Boolean(options.bubbles), cancelable: Boolean(options.cancelable),
         defaultPrevented: false, propagationStopped: false,
         immediatePropagationStopped: false, passive: false,
-        timeStamp: performance.now(),
+        dispatching: false, timeStamp: performance.now(),
       });
     }
     get type() { return stateFor(this).type; }
@@ -134,7 +134,112 @@ const BOOTSTRAP: &str = r#"
     },
   });
 
-  class Node {
+  const listenerMaps = new WeakMap();
+  const listenersFor = target => {
+    let map = listenerMaps.get(target);
+    if (!map) { map = new Map(); listenerMaps.set(target, map); }
+    return map;
+  };
+  const listenerOptions = options => typeof options === "boolean"
+    ? { capture: options, once: false, passive: false }
+    : { capture: Boolean(options?.capture), once: Boolean(options?.once), passive: Boolean(options?.passive) };
+  const validListener = callback => typeof callback === "function" ||
+    (callback !== null && typeof callback === "object" && typeof callback.handleEvent === "function");
+  const callListener = (callback, currentTarget, event) => typeof callback === "function"
+    ? callback.call(currentTarget, event)
+    : callback.handleEvent.call(callback, event);
+
+  const removeListenerRecord = (target, type, record) => {
+    record.removed = true;
+    const listeners = listenerMaps.get(target)?.get(type);
+    if (!listeners) return;
+    const index = listeners.indexOf(record);
+    if (index >= 0) listeners.splice(index, 1);
+  };
+
+  const invokeListenerSnapshot = (target, event, phase, capture, snapshot) => {
+    const state = stateFor(event);
+    state.currentTarget = target;
+    state.eventPhase = phase;
+    for (const record of snapshot) {
+      if (state.immediatePropagationStopped) break;
+      if (record.removed || record.capture !== capture) continue;
+      if (record.once) removeListenerRecord(target, state.type, record);
+      state.passive = record.passive;
+      try { callListener(record.callback, target, event); }
+      catch (error) { console.error("Uncaught exception in event listener", error); }
+      finally { state.passive = false; }
+    }
+  };
+
+  const propagationPath = target => {
+    if (target === globalThis) return [globalThis];
+    if (target === document) return [globalThis, document];
+    if (!(target instanceof Node)) return [target];
+    const ancestors = [];
+    for (let parent = target.parentNode; parent instanceof Element; parent = parent.parentNode)
+      ancestors.push(parent);
+    return target.isConnected
+      ? [globalThis, document, ...ancestors.reverse(), target]
+      : [...ancestors.reverse(), target];
+  };
+
+  const dispatchTo = (target, event) => {
+    if (!(event instanceof Event)) throw new TypeError("dispatchEvent argument must be an Event");
+    const state = stateFor(event);
+    if (state.dispatching) throw new DOMException("The event is already being dispatched", "InvalidStateError");
+    state.dispatching = true;
+    state.target = target;
+    state.propagationStopped = false;
+    state.immediatePropagationStopped = false;
+    const path = propagationPath(target);
+    try {
+      for (const currentTarget of path.slice(0, -1)) {
+        const snapshot = [...(listenerMaps.get(currentTarget)?.get(state.type) ?? [])];
+        invokeListenerSnapshot(currentTarget, event, 1, true, snapshot);
+        if (state.propagationStopped) return !state.defaultPrevented;
+      }
+      const snapshot = [...(listenerMaps.get(target)?.get(state.type) ?? [])];
+      invokeListenerSnapshot(target, event, 2, true, snapshot);
+      invokeListenerSnapshot(target, event, 2, false, snapshot);
+      if (state.bubbles && !state.propagationStopped) {
+        for (const currentTarget of path.slice(0, -1).reverse()) {
+          const listeners = [...(listenerMaps.get(currentTarget)?.get(state.type) ?? [])];
+          invokeListenerSnapshot(currentTarget, event, 3, false, listeners);
+          if (state.propagationStopped) break;
+        }
+      }
+      return !state.defaultPrevented;
+    } finally {
+      state.dispatching = false;
+      eventInternals.finish(event);
+    }
+  };
+
+  class EventTarget {
+    addEventListener(type, callback, options = false) {
+      if (!validListener(callback)) return;
+      type = String(type);
+      const normalized = listenerOptions(options);
+      const map = listenersFor(this);
+      const listeners = map.get(type) ?? [];
+      if (listeners.some(record => !record.removed && record.callback === callback && record.capture === normalized.capture))
+        return;
+      listeners.push({ callback, ...normalized, removed: false });
+      map.set(type, listeners);
+    }
+    removeEventListener(type, callback, options = false) {
+      if (!validListener(callback)) return;
+      type = String(type);
+      const capture = listenerOptions(options).capture;
+      const record = listenerMaps.get(this)?.get(type)?.find(record =>
+        !record.removed && record.callback === callback && record.capture === capture);
+      if (record) removeListenerRecord(this, type, record);
+    }
+    dispatchEvent(event) { return dispatchTo(this, event); }
+  }
+
+  class Node extends EventTarget {
     constructor() { throw new TypeError("Illegal constructor"); }
     appendChild(child) {
       call("appendChild", this[handle], requireNode(child));
@@ -267,7 +372,7 @@ const BOOTSTRAP: &str = r#"
     return wrapper;
   };
 
-  class Document {
+  class Document extends EventTarget {
     querySelector(selector) { return wrap(call("querySelector", String(selector))); }
     querySelectorAll(selector) { return new NodeList(call("querySelectorAll", String(selector)).map(wrap)); }
     getElementById(id) { return wrap(call("getElementById", String(id))); }
@@ -278,8 +383,10 @@ const BOOTSTRAP: &str = r#"
   }
 
   const document = new Document();
+  for (const method of ["addEventListener", "removeEventListener", "dispatchEvent"])
+    Object.defineProperty(globalThis, method, { value: EventTarget.prototype[method], configurable: true });
   Object.assign(globalThis, {
-    Node, Element, NodeList, Document, DOMTokenList, CSSStyleDeclaration, document,
+    EventTarget, Node, Element, NodeList, Document, DOMTokenList, CSSStyleDeclaration, document,
     Event, MouseEvent, KeyboardEvent, CustomEvent,
     requestAnimationFrame, cancelAnimationFrame,
     __blitsenAnimationFrameTick: animationFrameTick,

@@ -154,6 +154,82 @@ const eventSurface = JSON.parse(native.runBridgeHarness(
 ));
 assert.equal(eventSurface.nodes.find(node => node.attributes.id === "event-surface").attributes["data-events"], "ok");
 
+const eventDispatch = JSON.parse(native.runBridgeHarness(
+  `<div id="outer"><button id="event-target">go</button></div>`,
+  `{ const outer = document.getElementById("outer");
+     const target = document.getElementById("event-target");
+     if (!(target instanceof EventTarget) || !(document instanceof EventTarget) ||
+         typeof window.addEventListener !== "function") throw new Error("EventTarget installation");
+     const order = [];
+     const listen = (current, name, capture = false) => current.addEventListener("probe", function(event) {
+       if (this !== current || event.currentTarget !== current || event.target !== target)
+         throw new Error("listener target identity");
+       order.push(name + ":" + event.eventPhase);
+       if (name === "outer-bubble") event.preventDefault();
+     }, capture);
+     listen(window, "window-capture", true);
+     listen(document, "document-capture", true);
+     listen(outer, "outer-capture", true);
+     listen(target, "target-capture", true);
+     listen(target, "target-bubble");
+     listen(outer, "outer-bubble");
+     listen(document, "document-bubble");
+     listen(window, "window-bubble");
+     const event = new CustomEvent("probe", { bubbles: true, cancelable: true, detail: 42 });
+     if (target.dispatchEvent(event) !== false || !event.defaultPrevented || event.currentTarget !== null ||
+         event.eventPhase !== 0 || event.detail !== 42) throw new Error("dispatchEvent result or final state");
+     const expected = ["window-capture:1", "document-capture:1", "outer-capture:1",
+       "target-capture:2", "target-bubble:2", "outer-bubble:3", "document-bubble:3", "window-bubble:3"];
+     if (order.join(",") !== expected.join(",")) throw new Error("propagation order: " + order);
+
+     let once = 0;
+     const onceCallback = () => once++;
+     target.addEventListener("once", onceCallback, { once: true });
+     target.addEventListener("once", onceCallback, { once: false, passive: true });
+     target.dispatchEvent(new Event("once")); target.dispatchEvent(new Event("once"));
+     if (once !== 1) throw new Error("once or de-duplication");
+
+     const mutation = [];
+     const added = () => mutation.push("added");
+     const removed = () => mutation.push("removed");
+     target.addEventListener("mutation", () => {
+       mutation.push("first");
+       target.removeEventListener("mutation", removed);
+       target.addEventListener("mutation", added);
+     });
+     target.addEventListener("mutation", removed);
+     target.dispatchEvent(new Event("mutation"));
+     if (mutation.join(",") !== "first") throw new Error("listener removal/addition during dispatch");
+     target.dispatchEvent(new Event("mutation"));
+     if (mutation.join(",") !== "first,first,added") throw new Error("deferred listener addition");
+
+     const oldError = console.error; let reported = 0; console.error = () => reported++;
+     let afterThrow = false;
+     target.addEventListener("throw", () => { throw new Error("listener failure"); });
+     target.addEventListener("throw", () => { afterThrow = true; });
+     target.dispatchEvent(new Event("throw")); console.error = oldError;
+     if (reported !== 1 || !afterThrow) throw new Error("per-listener exception isolation");
+
+     const stopped = [];
+     target.addEventListener("stop", event => { stopped.push("first"); event.stopImmediatePropagation(); });
+     target.addEventListener("stop", () => stopped.push("peer"));
+     outer.addEventListener("stop", () => stopped.push("ancestor"));
+     target.dispatchEvent(new Event("stop", { bubbles: true }));
+     if (stopped.join(",") !== "first") throw new Error("stopImmediatePropagation");
+
+     const passive = new Event("passive", { cancelable: true });
+     target.addEventListener("passive", event => event.preventDefault(), { passive: true });
+     if (!target.dispatchEvent(passive) || passive.defaultPrevented) throw new Error("passive listener");
+     let handled = false;
+     target.addEventListener("object", { handleEvent(event) { handled = event.currentTarget === target; } });
+     target.dispatchEvent(new Event("object"));
+     if (!handled) throw new Error("object event listener");
+     target.setAttribute("data-dispatch", "ok"); }`,
+  200,
+  100,
+));
+assert.equal(eventDispatch.nodes.find(node => node.attributes.id === "event-target").attributes["data-dispatch"], "ok");
+
 const treeSnapshot = JSON.parse(native.runBridgeHarness(
   `<body><div id="a"><i id="one">one</i><i id="two">two</i></div><div id="b"></div></body>`,
   `{ const expect = (condition, message) => { if (!condition) throw new Error(message); };
