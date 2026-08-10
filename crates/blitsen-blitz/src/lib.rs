@@ -224,6 +224,78 @@ impl BlitzDom {
             .filter(|(name, _)| !name.is_empty())
             .collect()
     }
+
+    fn serialize_node(
+        &self,
+        node: NodeId,
+        output: &mut String,
+        raw_text: bool,
+    ) -> Result<(), DomError> {
+        let node = self.node(node)?;
+        match &node.data {
+            NodeData::Document(_) | NodeData::AnonymousBlock(_) => {
+                for child in &node.children {
+                    self.serialize_node(*child, output, false)?;
+                }
+            }
+            NodeData::Text(text) => {
+                if raw_text {
+                    output.push_str(&text.content);
+                } else {
+                    output.push_str(&html_escape::encode_text(&text.content));
+                }
+            }
+            NodeData::Comment { contents } => {
+                output.push_str("<!--");
+                output.push_str(contents);
+                output.push_str("-->");
+            }
+            NodeData::Element(element) => {
+                let tag = element.name.local.as_ref();
+                output.push('<');
+                output.push_str(tag);
+                for attribute in element.attrs() {
+                    output.push(' ');
+                    output.push_str(&attribute.name.local);
+                    output.push_str("=\"");
+                    output.push_str(&html_escape::encode_double_quoted_attribute(
+                        &attribute.value,
+                    ));
+                    output.push('"');
+                }
+                output.push('>');
+                let is_html = element.name.ns == ns!(html);
+                let is_void = is_html
+                    && matches!(
+                        tag,
+                        "area"
+                            | "base"
+                            | "br"
+                            | "col"
+                            | "embed"
+                            | "hr"
+                            | "img"
+                            | "input"
+                            | "link"
+                            | "meta"
+                            | "param"
+                            | "source"
+                            | "track"
+                            | "wbr"
+                    );
+                if !is_void {
+                    let children_are_raw = is_html && matches!(tag, "script" | "style");
+                    for child in &node.children {
+                        self.serialize_node(*child, output, children_are_raw)?;
+                    }
+                    output.push_str("</");
+                    output.push_str(tag);
+                    output.push('>');
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 impl DomBackend for BlitzDom {
@@ -518,7 +590,7 @@ impl DomBackend for BlitzDom {
     fn inner_html(&self, node: NodeId) -> Result<String, DomError> {
         let mut html = String::new();
         for child in &self.node(node)?.children {
-            self.node(*child)?.write_outer_html(&mut html);
+            self.serialize_node(*child, &mut html, false)?;
         }
         Ok(html)
     }

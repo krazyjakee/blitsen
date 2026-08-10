@@ -11,6 +11,7 @@ publish.workspace = true
 [dependencies]
 blitsen-dom = { path = "../blitsen-dom" }
 blitz = { git = "https://github.com/DioxusLabs/blitz", rev = "1efe22d2524d71ede5b94592204c21f0de644219" }
+html-escape = "0.2"
 style = { package = "stylo", version = "0.20" }
 
 [lints]

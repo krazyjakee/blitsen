@@ -66,6 +66,27 @@ assert.equal(treeById.get("two").parent, treeById.get("b").handle);
 for (const removedId of ["zero", "one", "three"])
   assert.equal(treeById.has(removedId), false, `${removedId} is detached from the Rust document tree`);
 
+const contentSnapshot = JSON.parse(native.runBridgeHarness(
+  `<style>#content > .wide { display:block; width:240px; height:30px }</style><div id="content"><b>A</b></div>`,
+  `{ const content = document.getElementById("content");
+     if (content.textContent !== "A") throw new Error("textContent getter");
+     content.textContent = "a < b & c";
+     if (content.innerHTML !== "a &lt; b &amp; c" || content.childNodes.length !== 1)
+       throw new Error("textContent setter or escaped serialization");
+     const detachedText = content.firstChild;
+     content.innerHTML = '<span id="replacement-content" class="wide">A &amp; B</span><em>tail</em>';
+     if (content.textContent !== "A & Btail" || detachedText.parentNode !== null || detachedText.isConnected)
+       throw new Error("contextual innerHTML replacement");
+     if (content.innerHTML !== '<span id="replacement-content" class="wide">A &amp; B</span><em>tail</em>')
+       throw new Error("innerHTML serialization");
+     content.setAttribute("data-content", "ok"); }`,
+  320,
+  180,
+));
+const contentById = new Map(contentSnapshot.nodes.map((node) => [node.attributes.id, node]));
+assert.equal(contentById.get("content").attributes["data-content"], "ok");
+assert.equal(contentById.get("replacement-content").layout.width, 240);
+
 const mutatedPng = Buffer.from(native.renderBridgeHarnessPng(
   `<style>#x { width: 180px; height: 80px; background: #ef4444 }</style><div id="x">old</div>`,
   `{ const painted = document.querySelector("#x");
