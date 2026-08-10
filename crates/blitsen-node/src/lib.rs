@@ -8,20 +8,24 @@ use std::ptr;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use anyrender::{PaintScene as _, render_to_buffer};
+use anyrender_vello_cpu::VelloCpuImageRenderer;
 use base64::Engine as _;
 use blitsen_core::WindowState;
 use blitsen_js::{
     ExternalId, JsEngine, JsError, JsType, LoopTurn, NativeCall, NativeCallback, NativeClass,
     NativeMethod, TypedArray, TypedArrayKind,
 };
-use blitz::dom::DocumentConfig;
+use blitz::dom::{DocumentConfig, util::Color};
 use blitz::html::HtmlDocument;
+use blitz::paint::paint_scene;
 use blitz::shell::{BlitzApplication, BlitzShellProxy, WindowConfig, create_default_event_loop};
 use blitz::traits::net::NetProvider;
 use blitz::traits::shell::{ColorScheme, Viewport};
 use napi::bindgen_prelude::{FromNapiValue, Unknown};
 use napi::{Env, JsValue, Status, ValueType, sys};
 use napi_derive::napi;
+use peniko::{Fill, kurbo::Rect};
 use serde::Serialize;
 use winit::dpi::LogicalSize;
 use winit::window::WindowAttributes;
@@ -719,7 +723,7 @@ impl Engine {
         let event_loop = create_default_event_loop();
         let (proxy, receiver) = BlitzShellProxy::new(event_loop.create_proxy());
         let net_provider = Arc::new(blitz::net::Provider::new(Some(Arc::new(proxy.clone()))));
-        let document = HtmlDocument::from_html(
+        let mut document = HtmlDocument::from_html(
             &source,
             DocumentConfig {
                 base_url: Some(format!("file://{}/", options.root.replace(' ', "%20"))),
@@ -727,6 +731,19 @@ impl Engine {
                 ..Default::default()
             },
         );
+        let inline_scripts = document
+            .query_selector_all("script")
+            .map_err(|error| napi::Error::new(Status::GenericFailure, format!("{error:?}")))?
+            .into_iter()
+            .filter_map(|node| document.get_node(node).map(|node| node.text_content()))
+            .collect::<Vec<_>>();
+        execute_window_scripts(
+            &mut self.runtime.borrow_mut(),
+            &mut document,
+            &inline_scripts,
+            &options.entrypoint,
+        )?;
+        document.resolve(0.0);
         let renderer = anyrender_vello::VelloWindowRenderer::new();
         let attributes = WindowAttributes::default()
             .with_title(options.title)
@@ -740,25 +757,115 @@ impl Engine {
     }
 }
 
-/// Boots Blitz headlessly, runs JavaScript DOM mutations, and returns the Rust
-/// tree state as JSON for cross-platform CI assertions.
-#[napi]
-pub fn run_bridge_harness(
+fn execute_window_scripts(
+    engine: &mut NodeApiEngine,
+    document: &mut HtmlDocument,
+    scripts: &[String],
+    entrypoint: &str,
+) -> napi::Result<()> {
+    let document_pointer = document as *mut HtmlDocument;
+    let set_text = engine
+        .define_function(
+            "__blitsenWindowSetText",
+            Box::new(move |call| {
+                let selector = callback_string(&call.arguments[0])?;
+                let value = callback_string(&call.arguments[1])?;
+                // SAFETY: scripts execute synchronously before `document` is
+                // moved into Blitz. The callback is deleted before returning.
+                let document = unsafe { &mut *document_pointer };
+                let node = document
+                    .query_selector(&selector)
+                    .map_err(|error| JsError::new(format!("{error:?}")))?
+                    .ok_or_else(|| JsError::new(format!("selector matched no node: {selector}")))?;
+                let mut mutation = document.mutate();
+                mutation.remove_and_drop_all_children(node);
+                if !value.is_empty() {
+                    let text = mutation.create_text_node(&value);
+                    mutation.append_children(node, &[text]);
+                }
+                Ok(call.this)
+            }),
+        )
+        .map_err(napi_error)?;
+    engine
+        .set_global("__blitsenWindowSetText", &set_text)
+        .map_err(napi_error)?;
+    let set_style = engine
+        .define_function(
+            "__blitsenWindowSetStyle",
+            Box::new(move |call| {
+                let selector = callback_string(&call.arguments[0])?;
+                let property = callback_string(&call.arguments[1])?;
+                let value = callback_string(&call.arguments[2])?;
+                // SAFETY: this callback has the same synchronous lifetime as
+                // the text callback above.
+                let document = unsafe { &mut *document_pointer };
+                let node = document
+                    .query_selector(&selector)
+                    .map_err(|error| JsError::new(format!("{error:?}")))?
+                    .ok_or_else(|| JsError::new(format!("selector matched no node: {selector}")))?;
+                document.mutate().set_style_property(
+                    node,
+                    &blitsen_core::js_property_to_css(&property),
+                    &value,
+                );
+                Ok(call.this)
+            }),
+        )
+        .map_err(napi_error)?;
+    engine
+        .set_global("__blitsenWindowSetStyle", &set_style)
+        .map_err(napi_error)?;
+    engine
+        .evaluate_script(
+            r#"
+            globalThis.document = {
+              querySelector(selector) {
+                const element = {
+                  set textContent(value) {
+                    __blitsenWindowSetText(selector, String(value));
+                  }
+                };
+                element.style = new Proxy({}, {
+                  set(_target, property, value) {
+                    __blitsenWindowSetStyle(selector, String(property), String(value));
+                    return true;
+                  }
+                });
+                return element;
+              }
+            };
+            "#,
+            "blitsen:window-document-bootstrap",
+        )
+        .map_err(napi_error)?;
+    for (index, script) in scripts.iter().enumerate() {
+        engine
+            .evaluate_script(script, &format!("{entrypoint}#script-{}", index + 1))
+            .map_err(napi_error)?;
+    }
+    engine
+        .evaluate_script(
+            "delete globalThis.document; delete globalThis.__blitsenWindowSetText; delete globalThis.__blitsenWindowSetStyle",
+            "blitsen:window-document-cleanup",
+        )
+        .map_err(napi_error)?;
+    Ok(())
+}
+
+fn execute_bridge_harness(
     env: Env,
     html: String,
     script: String,
     width: Option<u32>,
     height: Option<u32>,
-) -> napi::Result<String> {
+) -> napi::Result<(HarnessSnapshot, Vec<u8>)> {
+    let width = width.unwrap_or(800);
+    let height = height.unwrap_or(600);
     let document = Rc::new(RefCell::new(HtmlDocument::from_html(
         &html,
         DocumentConfig {
-            viewport: Some(Viewport::new(
-                width.unwrap_or(800),
-                height.unwrap_or(600),
-                1.0,
-                ColorScheme::Light,
-            )),
+            viewport: Some(Viewport::new(width, height, 1.0, ColorScheme::Light)),
             ..Default::default()
         },
     )));
@@ -880,7 +987,7 @@ pub fn run_bridge_harness(
         .map_err(napi_error)?;
     document.borrow_mut().resolve(0.0);
 
-    let document = document.borrow();
+    let mut document = document.borrow_mut();
     let ids = document
         .query_selector_all("*")
         .map_err(|error| napi::Error::new(Status::GenericFailure, format!("{error:?}")))?;
@@ -923,8 +1030,61 @@ pub fn run_bridge_harness(
             },
         });
     }
-    serde_json::to_string(&HarnessSnapshot { nodes })
+    let pixels = render_to_buffer::<VelloCpuImageRenderer, _>(
+        |scene| {
+            scene.fill(
+                Fill::NonZero,
+                Default::default(),
+                Color::WHITE,
+                Default::default(),
+                &Rect::new(0.0, 0.0, width as f64, height as f64),
+            );
+            paint_scene(scene, document.as_mut(), 1.0, width, height, 0, 0);
+        },
+        width,
+        height,
+    );
+    let mut png = Vec::new();
+    {
+        let mut encoder = png::Encoder::new(&mut png, width, height);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder
+            .write_header()
+            .map_err(|error| napi::Error::new(Status::GenericFailure, error.to_string()))?;
+        writer
+            .write_image_data(&pixels)
+            .map_err(|error| napi::Error::new(Status::GenericFailure, error.to_string()))?;
+    }
+    Ok((HarnessSnapshot { nodes }, png))
+}
+
+/// Boots Blitz headlessly, runs JavaScript DOM mutations, and returns the Rust
+/// tree state as JSON for cross-platform CI assertions.
+#[napi]
+pub fn run_bridge_harness(
+    env: Env,
+    html: String,
+    script: String,
+    width: Option<u32>,
+    height: Option<u32>,
+) -> napi::Result<String> {
+    let (snapshot, _) = execute_bridge_harness(env, html, script, width, height)?;
+    serde_json::to_string(&snapshot)
         .map_err(|error| napi::Error::new(Status::GenericFailure, error.to_string()))
+}
+
+/// Renders the post-JavaScript frame as a base64-encoded PNG.
+#[napi]
+pub fn render_bridge_harness_png(
+    env: Env,
+    html: String,
+    script: String,
+    width: Option<u32>,
+    height: Option<u32>,
+) -> napi::Result<String> {
+    let (_, png) = execute_bridge_harness(env, html, script, width, height)?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(png))
 }
 
 /// Runs the load-bearing Node-API subset used by the trait implementation.

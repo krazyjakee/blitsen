@@ -19,4 +19,20 @@ assert.equal(target.text_content, "hi");
 assert.equal(target.attributes.class, "done");
 assert.match(target.inline_style, /width:\s*140px/);
 assert.equal(target.layout.width, 140);
+const mutatedPng = Buffer.from(native.renderBridgeHarnessPng(
+  `<style>#x { width: 180px; height: 80px; background: #ef4444 }</style><div id="x">old</div>`,
+  `{ const painted = document.querySelector("#x");
+     painted.textContent = "hi";
+     painted.style.backgroundColor = "#22c55e"; }`,
+  320,
+  180,
+), "base64");
+const baselinePng = Buffer.from(native.renderBridgeHarnessPng(
+  `<style>#x { width: 180px; height: 80px; background: #ef4444 }</style><div id="x">old</div>`,
+  ``,
+  320,
+  180,
+), "base64");
+assert.deepEqual([...mutatedPng.subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10]);
+assert.notDeepEqual(mutatedPng, baselinePng, "post-mutation PNG differs from the parsed frame");
 console.log("bridge harness passed", process.platform, process.arch);

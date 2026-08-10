@@ -1,0 +1,20 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Hello, DOM</title>
+    <style>
+      html, body { margin: 0; height: 100%; }
+      body { display: grid; place-items: center; background: #18212f; color: #f5f7fa; }
+      #x { width: 180px; height: 96px; background: #ef4444; font: 700 48px sans-serif; }
+    </style>
+  </head>
+  <body>
+    <main id="x">waiting</main>
+    <script>
+      const greeting = document.querySelector("#x");
+      greeting.textContent = "hi";
+      greeting.style.backgroundColor = "#22c55e";
+    </script>
+  </body>
+</html>
