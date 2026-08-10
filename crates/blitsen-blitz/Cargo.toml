@@ -1,0 +1,17 @@
+[package]
+name = "blitsen-blitz"
+description = "Blitz implementation of Blitsen's renderer-neutral DOM boundary"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+blitsen-dom = { path = "../blitsen-dom" }
+blitz = { git = "https://github.com/DioxusLabs/blitz", rev = "1efe22d2524d71ede5b94592204c21f0de644219" }
+style = { package = "stylo", version = "0.20" }
+
+[lints]
+workspace = true

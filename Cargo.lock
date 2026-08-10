@@ -281,6 +281,15 @@ name = "blitsen"
 version = "0.0.1"
 
 [[package]]
+name = "blitsen-blitz"
+version = "0.0.0"
+dependencies = [
+ "blitsen-dom",
+ "blitz",
+ "stylo",
+]
+
+[[package]]
 name = "blitsen-core"
 version = "0.0.0"
 dependencies = [
@@ -304,6 +313,7 @@ dependencies = [
  "anyrender_vello",
  "anyrender_vello_cpu",
  "base64",
+ "blitsen-blitz",
  "blitsen-core",
  "blitsen-dom",
  "blitsen-js",

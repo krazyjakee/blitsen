@@ -11,13 +11,14 @@ use std::sync::Arc;
 use anyrender::{PaintScene as _, render_to_buffer};
 use anyrender_vello_cpu::VelloCpuImageRenderer;
 use base64::Engine as _;
+use blitsen_blitz::BlitzDom;
 use blitsen_core::WindowState;
+use blitsen_dom::{DomBackend, DomError, DomName};
 use blitsen_js::{
     ExternalId, JsEngine, JsError, JsType, LoopTurn, NativeCall, NativeCallback, NativeClass,
     NativeMethod, TypedArray, TypedArrayKind,
 };
 use blitz::dom::{DocumentConfig, util::Color};
-use blitz::html::HtmlDocument;
 use blitz::paint::paint_scene;
 use blitz::shell::{BlitzApplication, BlitzShellProxy, WindowConfig, create_default_event_loop};
 use blitz::traits::net::NetProvider;
@@ -44,6 +45,10 @@ fn js_error(error: napi::Error) -> JsError {
 }
 
 fn napi_error(error: JsError) -> napi::Error {
+    napi::Error::new(Status::GenericFailure, error.to_string())
+}
+
+fn dom_error(error: DomError) -> napi::Error {
     napi::Error::new(Status::GenericFailure, error.to_string())
 }
 
@@ -723,7 +728,7 @@ impl Engine {
         let event_loop = create_default_event_loop();
         let (proxy, receiver) = BlitzShellProxy::new(event_loop.create_proxy());
         let net_provider = Arc::new(blitz::net::Provider::new(Some(Arc::new(proxy.clone()))));
-        let mut document = HtmlDocument::from_html(
+        let mut document = BlitzDom::from_html(
             &source,
             DocumentConfig {
                 base_url: Some(format!("file://{}/", options.root.replace(' ', "%20"))),
@@ -732,23 +737,24 @@ impl Engine {
             },
         );
         let inline_scripts = document
-            .query_selector_all("script")
-            .map_err(|error| napi::Error::new(Status::GenericFailure, format!("{error:?}")))?
+            .query_selector_all(document.document(), "script")
+            .map_err(dom_error)?
             .into_iter()
-            .filter_map(|node| document.get_node(node).map(|node| node.text_content()))
-            .collect::<Vec<_>>();
+            .map(|node| document.text_content(node).map_err(dom_error))
+            .collect::<napi::Result<Vec<_>>>()?;
         execute_window_scripts(
             &mut self.runtime.borrow_mut(),
             &mut document,
             &inline_scripts,
             &options.entrypoint,
         )?;
-        document.resolve(0.0);
+        document.flush_layout().map_err(dom_error)?;
         let renderer = anyrender_vello::VelloWindowRenderer::new();
         let attributes = WindowAttributes::default()
             .with_title(options.title)
             .with_surface_size(LogicalSize::new(options.width, options.height));
-        let window = WindowConfig::with_attributes(Box::new(document), renderer, attributes);
+        let window =
+            WindowConfig::with_attributes(Box::new(document.into_document()), renderer, attributes);
         let mut application = BlitzApplication::new(proxy, receiver);
         application.add_window(window);
         event_loop
@@ -759,11 +765,11 @@ impl Engine {
 
 fn execute_window_scripts(
     engine: &mut NodeApiEngine,
-    document: &mut HtmlDocument,
+    document: &mut BlitzDom,
     scripts: &[String],
     entrypoint: &str,
 ) -> napi::Result<()> {
-    let document_pointer = document as *mut HtmlDocument;
+    let document_pointer = document as *mut BlitzDom;
     let set_text = engine
         .define_function(
             "__blitsenWindowSetText",
@@ -774,15 +780,12 @@ fn execute_window_scripts(
                 // moved into Blitz. The callback is deleted before returning.
                 let document = unsafe { &mut *document_pointer };
                 let node = document
-                    .query_selector(&selector)
-                    .map_err(|error| JsError::new(format!("{error:?}")))?
+                    .query_selector(document.document(), &selector)
+                    .map_err(|error| JsError::new(error.to_string()))?
                     .ok_or_else(|| JsError::new(format!("selector matched no node: {selector}")))?;
-                let mut mutation = document.mutate();
-                mutation.remove_and_drop_all_children(node);
-                if !value.is_empty() {
-                    let text = mutation.create_text_node(&value);
-                    mutation.append_children(node, &[text]);
-                }
+                document
+                    .set_text_content(node, &value)
+                    .map_err(|error| JsError::new(error.to_string()))?;
                 Ok(call.this)
             }),
         )
@@ -801,14 +804,12 @@ fn execute_window_scripts(
                 // the text callback above.
                 let document = unsafe { &mut *document_pointer };
                 let node = document
-                    .query_selector(&selector)
-                    .map_err(|error| JsError::new(format!("{error:?}")))?
+                    .query_selector(document.document(), &selector)
+                    .map_err(|error| JsError::new(error.to_string()))?
                     .ok_or_else(|| JsError::new(format!("selector matched no node: {selector}")))?;
-                document.mutate().set_style_property(
-                    node,
-                    &blitsen_core::js_property_to_css(&property),
-                    &value,
-                );
+                document
+                    .set_inline_style(node, &blitsen_core::js_property_to_css(&property), &value)
+                    .map_err(|error| JsError::new(error.to_string()))?;
                 Ok(call.this)
             }),
         )
@@ -862,14 +863,14 @@ fn execute_bridge_harness(
 ) -> napi::Result<(HarnessSnapshot, Vec<u8>)> {
     let width = width.unwrap_or(800);
     let height = height.unwrap_or(600);
-    let document = Rc::new(RefCell::new(HtmlDocument::from_html(
+    let document = Rc::new(RefCell::new(BlitzDom::from_html(
         &html,
         DocumentConfig {
             viewport: Some(Viewport::new(width, height, 1.0, ColorScheme::Light)),
             ..Default::default()
         },
     )));
-    document.borrow_mut().resolve(0.0);
+    document.borrow_mut().flush_layout().map_err(dom_error)?;
     let mut engine = NodeApiEngine::new(env);
 
     let text_document = Rc::clone(&document);
@@ -889,15 +890,12 @@ fn execute_bridge_harness(
                 )?;
                 let mut document = text_document.borrow_mut();
                 let node = document
-                    .query_selector(&selector)
-                    .map_err(|error| JsError::new(format!("{error:?}")))?
+                    .query_selector(document.document(), &selector)
+                    .map_err(|error| JsError::new(error.to_string()))?
                     .ok_or_else(|| JsError::new(format!("selector matched no node: {selector}")))?;
-                let mut mutation = document.mutate();
-                mutation.remove_and_drop_all_children(node);
-                if !value.is_empty() {
-                    let text = mutation.create_text_node(&value);
-                    mutation.append_children(node, &[text]);
-                }
+                document
+                    .set_text_content(node, &value)
+                    .map_err(|error| JsError::new(error.to_string()))?;
                 Ok(call.this)
             }),
         )
@@ -916,18 +914,12 @@ fn execute_bridge_harness(
                 let value = callback_string(&call.arguments[2])?;
                 let mut document = attr_document.borrow_mut();
                 let node = document
-                    .query_selector(&selector)
-                    .map_err(|error| JsError::new(format!("{error:?}")))?
+                    .query_selector(document.document(), &selector)
+                    .map_err(|error| JsError::new(error.to_string()))?
                     .ok_or_else(|| JsError::new(format!("selector matched no node: {selector}")))?;
-                document.mutate().set_attribute(
-                    node,
-                    blitz::dom::QualName::new(
-                        None,
-                        blitz::dom::ns!(),
-                        blitz::dom::LocalName::from(name),
-                    ),
-                    &value,
-                );
+                document
+                    .set_attribute(node, &DomName::attribute(name), &value)
+                    .map_err(|error| JsError::new(error.to_string()))?;
                 Ok(call.this)
             }),
         )
@@ -946,14 +938,12 @@ fn execute_bridge_harness(
                 let value = callback_string(&call.arguments[2])?;
                 let mut document = style_document.borrow_mut();
                 let node = document
-                    .query_selector(&selector)
-                    .map_err(|error| JsError::new(format!("{error:?}")))?
+                    .query_selector(document.document(), &selector)
+                    .map_err(|error| JsError::new(error.to_string()))?
                     .ok_or_else(|| JsError::new(format!("selector matched no node: {selector}")))?;
-                document.mutate().set_style_property(
-                    node,
-                    &blitsen_core::js_property_to_css(&property),
-                    &value,
-                );
+                document
+                    .set_inline_style(node, &blitsen_core::js_property_to_css(&property), &value)
+                    .map_err(|error| JsError::new(error.to_string()))?;
                 Ok(call.this)
             }),
         )
@@ -985,15 +975,15 @@ fn execute_bridge_harness(
         )
         .and_then(|_| engine.evaluate_script(&script, "harness-script.js"))
         .map_err(napi_error)?;
-    document.borrow_mut().resolve(0.0);
+    let snapshot = document.borrow_mut().flush_layout().map_err(dom_error)?;
 
     let mut document = document.borrow_mut();
     let ids = document
-        .query_selector_all("*")
-        .map_err(|error| napi::Error::new(Status::GenericFailure, format!("{error:?}")))?;
+        .query_selector_all(document.document(), "*")
+        .map_err(dom_error)?;
     let mut nodes = Vec::with_capacity(ids.len());
     for id in ids {
-        let node = document.get_node(id).ok_or_else(|| {
+        let node = document.document_ref().get_node(id).ok_or_else(|| {
             napi::Error::new(Status::GenericFailure, "Blitz returned a stale node")
         })?;
         let Some(element) = node.element_data() else {
@@ -1009,24 +999,20 @@ fn execute_bridge_harness(
                 )
             })
             .collect::<BTreeMap<_, _>>();
-        let layout = node.final_layout();
-        let inline_style = element
-            .style_attribute
-            .as_ref()
-            .map(|style| format!("{style:?}"))
-            .unwrap_or_default();
+        let layout = document.bounding_rect(id, snapshot).map_err(dom_error)?;
+        let inline_style = document.inline_style_text(id).map_err(dom_error)?;
         nodes.push(HarnessNode {
             handle: id.as_u64(),
             parent: node.parent.map(|parent| parent.as_u64()),
             tag: element.name.local.to_string(),
-            text_content: node.text_content(),
+            text_content: document.text_content(id).map_err(dom_error)?,
             inline_style,
             attributes,
             layout: HarnessLayout {
-                x: layout.location.x,
-                y: layout.location.y,
-                width: layout.size.width,
-                height: layout.size.height,
+                x: layout.x,
+                y: layout.y,
+                width: layout.width,
+                height: layout.height,
             },
         });
     }
@@ -1039,7 +1025,15 @@ fn execute_bridge_harness(
                 Default::default(),
                 &Rect::new(0.0, 0.0, width as f64, height as f64),
             );
-            paint_scene(scene, document.as_mut(), 1.0, width, height, 0, 0);
+            paint_scene(
+                scene,
+                document.document_mut().as_mut(),
+                1.0,
+                width,
+                height,
+                0,
+                0,
+            );
         },
         width,
         height,
