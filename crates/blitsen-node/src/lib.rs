@@ -1,5 +1,7 @@
 //! Bun-loadable Node-API addon and JavaScript-engine implementation.
 
+mod dom_bridge;
+
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::ffi::c_void;
@@ -13,7 +15,7 @@ use anyrender_vello_cpu::VelloCpuImageRenderer;
 use base64::Engine as _;
 use blitsen_blitz::BlitzDom;
 use blitsen_core::{WindowState, WrapperTable};
-use blitsen_dom::{DomBackend, DomError, DomName};
+use blitsen_dom::{DomBackend, DomError};
 use blitsen_js::{
     ExternalId, JsEngine, JsError, JsType, LoopTurn, NativeCall, NativeCallback, NativeClass,
     NativeMethod, TypedArray, TypedArrayKind,
@@ -932,108 +934,9 @@ fn execute_bridge_harness(
     let document = runtime.document();
     document.borrow_mut().flush_layout().map_err(dom_error)?;
     let mut engine = NodeApiEngine::new(env);
-
-    let text_document = Rc::clone(&document);
-    let set_text = engine
-        .define_function(
-            "__blitsenSetText",
-            Box::new(move |call| {
-                let selector = callback_string(
-                    call.arguments
-                        .first()
-                        .ok_or_else(|| JsError::new("missing selector"))?,
-                )?;
-                let value = callback_string(
-                    call.arguments
-                        .get(1)
-                        .ok_or_else(|| JsError::new("missing text value"))?,
-                )?;
-                let mut document = text_document.borrow_mut();
-                let node = document
-                    .query_selector(document.document(), &selector)
-                    .map_err(|error| JsError::new(error.to_string()))?
-                    .ok_or_else(|| JsError::new(format!("selector matched no node: {selector}")))?;
-                document
-                    .set_text_content(node, &value)
-                    .map_err(|error| JsError::new(error.to_string()))?;
-                Ok(call.this)
-            }),
-        )
-        .map_err(napi_error)?;
+    dom_bridge::install(&mut engine, runtime).map_err(napi_error)?;
     engine
-        .set_global("__blitsenSetText", &set_text)
-        .map_err(napi_error)?;
-
-    let attr_document = Rc::clone(&document);
-    let set_attribute = engine
-        .define_function(
-            "__blitsenSetAttribute",
-            Box::new(move |call| {
-                let selector = callback_string(&call.arguments[0])?;
-                let name = callback_string(&call.arguments[1])?;
-                let value = callback_string(&call.arguments[2])?;
-                let mut document = attr_document.borrow_mut();
-                let node = document
-                    .query_selector(document.document(), &selector)
-                    .map_err(|error| JsError::new(error.to_string()))?
-                    .ok_or_else(|| JsError::new(format!("selector matched no node: {selector}")))?;
-                document
-                    .set_attribute(node, &DomName::attribute(name), &value)
-                    .map_err(|error| JsError::new(error.to_string()))?;
-                Ok(call.this)
-            }),
-        )
-        .map_err(napi_error)?;
-    engine
-        .set_global("__blitsenSetAttribute", &set_attribute)
-        .map_err(napi_error)?;
-
-    let style_document = Rc::clone(&document);
-    let set_style = engine
-        .define_function(
-            "__blitsenSetStyle",
-            Box::new(move |call| {
-                let selector = callback_string(&call.arguments[0])?;
-                let property = callback_string(&call.arguments[1])?;
-                let value = callback_string(&call.arguments[2])?;
-                let mut document = style_document.borrow_mut();
-                let node = document
-                    .query_selector(document.document(), &selector)
-                    .map_err(|error| JsError::new(error.to_string()))?
-                    .ok_or_else(|| JsError::new(format!("selector matched no node: {selector}")))?;
-                document
-                    .set_inline_style(node, &blitsen_core::js_property_to_css(&property), &value)
-                    .map_err(|error| JsError::new(error.to_string()))?;
-                Ok(call.this)
-            }),
-        )
-        .map_err(napi_error)?;
-    engine
-        .set_global("__blitsenSetStyle", &set_style)
-        .map_err(napi_error)?;
-
-    engine
-        .evaluate_script(
-            r#"
-            globalThis.document = {
-              querySelector(selector) {
-                const element = {
-                  set textContent(value) { __blitsenSetText(selector, String(value)); },
-                  setAttribute(name, value) { __blitsenSetAttribute(selector, String(name), String(value)); }
-                };
-                element.style = new Proxy({}, {
-                  set(_target, property, value) {
-                    __blitsenSetStyle(selector, String(property), String(value));
-                    return true;
-                  }
-                });
-                return element;
-              }
-            };
-            "#,
-            "blitsen:harness-bootstrap",
-        )
-        .and_then(|_| engine.evaluate_script(&script, "harness-script.js"))
+        .evaluate_script(&script, "harness-script.js")
         .map_err(napi_error)?;
     let snapshot = document.borrow_mut().flush_layout().map_err(dom_error)?;
 
@@ -1346,6 +1249,8 @@ pub fn node_api_smoke(env: Env) -> napi::Result<bool> {
 
 #[cfg(test)]
 mod tests {
+    use blitsen_dom::DomName;
+
     use super::*;
 
     #[test]

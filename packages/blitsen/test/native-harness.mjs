@@ -7,10 +7,21 @@ const native = createRequire(import.meta.url)(addonPath);
 assert.equal(native.wrapperIdentitySmoke(), true, "Node-API wrappers preserve identity and collect");
 const snapshot = JSON.parse(native.runBridgeHarness(
   `<style>#x { display:block; width:100px; height:20px }</style><div id="x">old</div>`,
-  `const el = document.querySelector("#x");
-   el.textContent = "hi";
-   el.setAttribute("class", "done");
-   el.style.width = "140px";`,
+  `{ const el = document.querySelector("#x");
+     const byId = document.getElementById("x");
+     const initial = document.querySelectorAll("#x");
+     if (el !== byId || !(initial instanceof NodeList) || initial.length !== 1 || initial.item(0) !== el)
+       throw new Error("document lookup or wrapper identity failed");
+     const created = document.createElement("section");
+     created.id = "created";
+     created.appendChild(document.createTextNode("new"));
+     const staticList = document.querySelectorAll("section");
+     document.body.appendChild(created);
+     if (staticList.length !== 0 || !(document.body instanceof Element) || !(document.documentElement instanceof Element))
+       throw new Error("document creation, roots, or static NodeList semantics failed");
+     el.textContent = "hi";
+     el.setAttribute("class", "done");
+     el.style.width = "140px"; }`,
   320,
   180,
 ));
@@ -20,6 +31,9 @@ assert.equal(target.text_content, "hi");
 assert.equal(target.attributes.class, "done");
 assert.match(target.inline_style, /width:\s*140px/);
 assert.equal(target.layout.width, 140);
+const created = snapshot.nodes.find((node) => node.attributes.id === "created");
+assert(created, "document-created element reached the Rust tree");
+assert.equal(created.text_content, "new");
 const mutatedPng = Buffer.from(native.renderBridgeHarnessPng(
   `<style>#x { width: 180px; height: 80px; background: #ef4444 }</style><div id="x">old</div>`,
   `{ const painted = document.querySelector("#x");
