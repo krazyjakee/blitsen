@@ -434,7 +434,10 @@ dashboard) is built by someone who is not us.
    the project is built on, but it should never be allowed to imply that Blitsen is an official
    DioxusLabs project — worth a line in the README, and worth care if the two are ever
    discussed together upstream.
-2. **Licence**, and whether JSC's licensing constrains the export model for closed-source apps.
+2. ~~Licence and JSC constraints~~ — **settled:** Blitsen is `MIT OR Apache-2.0` and
+   closed-source applications are supported subject to JSC's LGPL-family distribution terms.
+   Phase 2 production exports dynamically load a user-replaceable JSC library; static linking is
+   reserved for spikes or an export that supplies a complete relinking kit. See `LICENSING.md`.
 3. ~~Distribution~~ — **settled**: npm dev dependency with per-platform runtime packages
    (§6, TECH.md §11).
 4. **Do multiple windows share one JS context** or get isolated ones?

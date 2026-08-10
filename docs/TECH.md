@@ -95,10 +95,15 @@ written an embedding layer.
 
 ### Phase 2 — Blitsen is the host
 
-Bun demotes to toolchain. We embed JSC directly (`rusty_jsc`-style bindings or our own) and
+Bun demotes to toolchain. We load JSC directly (`rusty_jsc`-style bindings or our own) and
 supply the runtime services the app actually needs — module loading against a pre-bundled
 graph, timers, microtask draining — dropping the package manager, test runner, bundler,
 transpiler, CLI, dev server and installer from the shipped binary.
+
+Production exports dynamically load a user-replaceable JSC shared library to keep
+closed-source distribution on the clean LGPL path. A one-file wrapper may carry and extract the
+default library, but must allow an ABI-compatible replacement. Static JSC is for internal spikes
+or a future mode that emits complete relinking materials. See `LICENSING.md`.
 
 **The bridge API must not change between phases.** Everything in §5–§9 is specified against a
 `JsEngine` trait with two implementations (Node-API-over-Bun, embedded-JSC). If Phase 1 code
