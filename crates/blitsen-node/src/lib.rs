@@ -18,7 +18,7 @@ use blitsen_js::{
     ExternalId, JsEngine, JsError, JsType, LoopTurn, NativeCall, NativeCallback, NativeClass,
     NativeMethod, TypedArray, TypedArrayKind,
 };
-use blitz::dom::{DocumentConfig, util::Color};
+use blitz::dom::{DocumentConfig, NodeId, util::Color};
 use blitz::paint::paint_scene;
 use blitz::shell::{BlitzApplication, BlitzShellProxy, WindowConfig, create_default_event_loop};
 use blitz::traits::net::NetProvider;
@@ -684,6 +684,65 @@ struct HarnessLayout {
     height: f32,
 }
 
+/// Shared native DOM state addressed by serialized generational Blitz handles.
+///
+/// Every native bridge entry point parses the opaque handle and resolves it in
+/// the authoritative document before performing work.
+#[derive(Clone)]
+pub struct DomRuntime {
+    document: Rc<RefCell<BlitzDom>>,
+}
+
+impl DomRuntime {
+    /// Owns a concrete Blitz backend behind single-threaded shared state.
+    pub fn new(document: BlitzDom) -> Self {
+        Self {
+            document: Rc::new(RefCell::new(document)),
+        }
+    }
+
+    /// Returns the shared backend for a synchronous bridge operation.
+    pub fn document(&self) -> Rc<RefCell<BlitzDom>> {
+        Rc::clone(&self.document)
+    }
+
+    /// Serializes a versioned Blitz handle without losing integer precision in JavaScript.
+    pub fn serialize_handle(node: NodeId) -> String {
+        node.as_u64().to_string()
+    }
+
+    /// Parses an opaque handle and rejects stale or fabricated generations.
+    pub fn resolve_handle(&self, handle: &str) -> Result<NodeId, JsError> {
+        let raw = handle
+            .parse::<u64>()
+            .map_err(|_| JsError::new("invalid DOM node handle"))?;
+        let node = NodeId::from_u64(raw);
+        self.document
+            .borrow()
+            .node_kind(node)
+            .map_err(|error| JsError::new(error.to_string()))?;
+        Ok(node)
+    }
+
+    /// Retains a detached node for one live JavaScript wrapper.
+    pub fn retain_handle(&self, handle: &str) -> Result<(), JsError> {
+        let node = self.resolve_handle(handle)?;
+        self.document
+            .borrow_mut()
+            .retain_for_js(node)
+            .map_err(|error| JsError::new(error.to_string()))
+    }
+
+    /// Releases one wrapper and collects an otherwise-unowned detached subtree.
+    pub fn release_handle(&self, handle: &str) -> Result<bool, JsError> {
+        let node = self.resolve_handle(handle)?;
+        self.document
+            .borrow_mut()
+            .release_from_js(node)
+            .map_err(|error| JsError::new(error.to_string()))
+    }
+}
+
 #[napi]
 impl Engine {
     /// Creates an engine in the current Bun/Node-API environment.
@@ -863,13 +922,14 @@ fn execute_bridge_harness(
 ) -> napi::Result<(HarnessSnapshot, Vec<u8>)> {
     let width = width.unwrap_or(800);
     let height = height.unwrap_or(600);
-    let document = Rc::new(RefCell::new(BlitzDom::from_html(
+    let runtime = DomRuntime::new(BlitzDom::from_html(
         &html,
         DocumentConfig {
             viewport: Some(Viewport::new(width, height, 1.0, ColorScheme::Light)),
             ..Default::default()
         },
-    )));
+    ));
+    let document = runtime.document();
     document.borrow_mut().flush_layout().map_err(dom_error)?;
     let mut engine = NodeApiEngine::new(env);
 
@@ -1210,4 +1270,33 @@ pub fn node_api_smoke(env: Env) -> napi::Result<bool> {
     engine.drain_microtasks().map_err(napi_error)?;
     engine.pump_event_loop().map_err(napi_error)?;
     Ok(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn native_runtime_rejects_stale_generational_handles() {
+        let mut dom = BlitzDom::from_html("<body><main id=host></main></body>", Default::default());
+        let host = dom.get_element_by_id("host").unwrap().unwrap();
+        let node = dom.create_element(&DomName::html("section")).unwrap();
+        dom.append_child(host, node).unwrap();
+        let runtime = DomRuntime::new(dom);
+        let handle = DomRuntime::serialize_handle(node);
+
+        runtime.retain_handle(&handle).unwrap();
+        runtime.document().borrow_mut().remove(node).unwrap();
+        assert_eq!(runtime.resolve_handle(&handle).unwrap(), node);
+        assert!(runtime.release_handle(&handle).unwrap());
+        assert!(runtime.resolve_handle(&handle).is_err());
+
+        let replacement = runtime
+            .document()
+            .borrow_mut()
+            .create_element(&DomName::html("aside"))
+            .unwrap();
+        assert_ne!(DomRuntime::serialize_handle(replacement), handle);
+        assert!(runtime.resolve_handle("18446744073709551615").is_err());
+    }
 }
