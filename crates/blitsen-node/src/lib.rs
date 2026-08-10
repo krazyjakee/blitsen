@@ -973,6 +973,12 @@ impl Engine {
             },
         ));
         let document = dom_runtime.document();
+        validate_local_assets(
+            &document.borrow(),
+            Path::new(&options.root),
+            Path::new(&options.entrypoint),
+        )
+        .map_err(napi_error)?;
         let scripts = {
             let document = document.borrow();
             document.document_scripts().map_err(dom_error)?
@@ -1015,6 +1021,79 @@ impl Engine {
         }
         Ok(())
     }
+}
+
+fn validate_local_assets(
+    document: &BlitzDom,
+    root: &Path,
+    entrypoint: &Path,
+) -> Result<(), JsError> {
+    let root = root.canonicalize().map_err(|error| {
+        JsError::new(format!("could not resolve application directory: {error}"))
+    })?;
+    let entrypoint_directory = entrypoint.parent().unwrap_or(&root);
+    for (selector, attribute) in [
+        ("script[src]", "src"),
+        ("link[href]", "href"),
+        ("img[src]", "src"),
+        ("source[src]", "src"),
+        ("audio[src]", "src"),
+        ("video[src]", "src"),
+        ("video[poster]", "poster"),
+        ("track[src]", "src"),
+        ("embed[src]", "src"),
+        ("object[data]", "data"),
+        ("input[src]", "src"),
+    ] {
+        for node in document
+            .query_selector_all(document.document(), selector)
+            .map_err(|error| JsError::new(error.to_string()))?
+        {
+            let Some(specifier) = document
+                .attribute(node, &blitsen_dom::DomName::attribute(attribute))
+                .map_err(|error| JsError::new(error.to_string()))?
+            else {
+                continue;
+            };
+            validate_local_asset(&root, entrypoint_directory, &specifier)?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_local_asset(root: &Path, from: &Path, specifier: &str) -> Result<(), JsError> {
+    let has_scheme = specifier.split_once(':').is_some_and(|(scheme, _)| {
+        let mut characters = scheme.chars();
+        characters
+            .next()
+            .is_some_and(|first| first.is_ascii_alphabetic())
+            && characters
+                .all(|character| character.is_ascii_alphanumeric() || "+-.".contains(character))
+    });
+    if specifier.starts_with('/') || has_scheme {
+        return Err(JsError::new(format!(
+            "asset URL must be relative to index.html: {specifier}"
+        )));
+    }
+    let local = specifier.split(['?', '#']).next().unwrap_or_default();
+    if local.is_empty() {
+        return Ok(());
+    }
+    let asset = from
+        .join(local)
+        .canonicalize()
+        .map_err(|_| JsError::new(format!("unreadable asset from index.html: {specifier}")))?;
+    if !asset.starts_with(root) {
+        return Err(JsError::new(format!(
+            "asset escapes application directory: {specifier}"
+        )));
+    }
+    if !asset.is_file() {
+        return Err(JsError::new(format!(
+            "unreadable asset from index.html: {specifier}"
+        )));
+    }
+    Ok(())
 }
 
 fn execute_window_scripts(
@@ -1466,5 +1545,39 @@ mod tests {
             .unwrap();
         assert_ne!(DomRuntime::serialize_handle(replacement), handle);
         assert!(runtime.resolve_handle("18446744073709551615").is_err());
+    }
+
+    #[test]
+    fn entrypoint_assets_are_preflighted_inside_the_application_root() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../packages/blitsen/test/fixtures/scripts")
+            .canonicalize()
+            .unwrap();
+        let entrypoint = root.join("index.html");
+        let document = |source| {
+            BlitzDom::from_html(
+                source,
+                DocumentConfig {
+                    base_url: Some(format!("file://{}/", root.display())),
+                    ..Default::default()
+                },
+            )
+        };
+        let valid = document("<link href='#local'><img src='./dependency.js?cache=1'>");
+        validate_local_assets(&valid, &root, &entrypoint).unwrap();
+
+        for (source, expected) in [
+            ("<img src='./missing.png'>", "unreadable asset"),
+            ("<script src='/app.js'></script>", "must be relative"),
+            ("<img src='https://example.com/a.png'>", "must be relative"),
+            (
+                "<img src='../../../../../Cargo.toml'>",
+                "escapes application",
+            ),
+        ] {
+            let invalid = document(source);
+            let error = validate_local_assets(&invalid, &root, &entrypoint).unwrap_err();
+            assert!(error.message().contains(expected), "{}", error.message());
+        }
     }
 }
