@@ -20,7 +20,9 @@ use blitsen_js::{
     ExternalId, JsEngine, JsError, JsType, LoopTurn, NativeCall, NativeCallback, NativeClass,
     NativeMethod, TypedArray, TypedArrayKind,
 };
-use blitz::dom::{DocumentConfig, NodeId, util::Color};
+use blitz::dom::{
+    DocGuard, DocGuardMut, Document as BlitzDocument, DocumentConfig, NodeId, util::Color,
+};
 use blitz::paint::paint_scene;
 use blitz::shell::{BlitzApplication, BlitzShellProxy, WindowConfig, create_default_event_loop};
 use blitz::traits::net::NetProvider;
@@ -30,8 +32,14 @@ use napi::{Env, JsValue, Status, ValueType, sys};
 use napi_derive::napi;
 use peniko::{Fill, kurbo::Rect};
 use serde::Serialize;
+use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
-use winit::window::WindowAttributes;
+use winit::event::{DeviceEvent, StartCause, WindowEvent};
+use winit::event_loop::ActiveEventLoop;
+use winit::window::{WindowAttributes, WindowId};
+
+#[cfg(target_os = "macos")]
+use winit::application::macos::ApplicationHandlerExtMacOS;
 
 /// Stable addon name used by packaging and smoke tests.
 pub const ADDON_NAME: &str = "blitsen-node";
@@ -695,6 +703,141 @@ pub struct DomRuntime {
     document: Rc<RefCell<BlitzDom>>,
 }
 
+struct WindowApplication<Rend: anyrender::WindowRenderer> {
+    inner: BlitzApplication<Rend>,
+    env: sys::napi_env,
+    state: Rc<RefCell<WindowState>>,
+    error: Rc<RefCell<Option<JsError>>>,
+}
+
+impl<Rend: anyrender::WindowRenderer> WindowApplication<Rend> {
+    fn sync_window(&self, width: u32, height: u32, device_pixel_ratio: f64) {
+        if self.error.borrow().is_some() {
+            return;
+        }
+        *self.state.borrow_mut() = WindowState::new(width, height, device_pixel_ratio);
+        let result = (|| {
+            let mut engine = NodeApiEngine::new(Env::from_raw(self.env));
+            let window = engine.evaluate_script("globalThis", "blitsen:window-resize-target")?;
+            self.state.borrow().sync(&mut engine, &window)
+        })();
+        if let Err(error) = result {
+            *self.error.borrow_mut() = Some(error);
+        }
+    }
+
+    fn sync_native_window(&self, window_id: WindowId) {
+        let Some((width, height, scale)) = self.inner.windows.get(&window_id).map(|view| {
+            let document = view.doc.inner();
+            let viewport = document.viewport();
+            let logical =
+                winit::dpi::PhysicalSize::new(viewport.window_size.0, viewport.window_size.1)
+                    .to_logical::<u32>(f64::from(viewport.hidpi_scale));
+            (logical.width, logical.height, viewport.hidpi_scale)
+        }) else {
+            return;
+        };
+        self.sync_window(width, height, f64::from(scale));
+    }
+}
+
+struct SharedBlitzDocument(Rc<RefCell<BlitzDom>>);
+
+impl BlitzDocument for SharedBlitzDocument {
+    fn inner(&self) -> DocGuard<'_> {
+        DocGuard::RefCell(std::cell::Ref::map(self.0.borrow(), |document| {
+            &**document.document_ref()
+        }))
+    }
+
+    fn inner_mut(&mut self) -> DocGuardMut<'_> {
+        DocGuardMut::RefCell(std::cell::RefMut::map(self.0.borrow_mut(), |document| {
+            &mut **document.document_mut()
+        }))
+    }
+}
+
+impl<Rend: anyrender::WindowRenderer> ApplicationHandler for WindowApplication<Rend> {
+    fn new_events(&mut self, event_loop: &dyn ActiveEventLoop, cause: StartCause) {
+        self.inner.new_events(event_loop, cause);
+    }
+
+    fn resumed(&mut self, event_loop: &dyn ActiveEventLoop) {
+        self.inner.resumed(event_loop);
+    }
+
+    fn can_create_surfaces(&mut self, event_loop: &dyn ActiveEventLoop) {
+        self.inner.can_create_surfaces(event_loop);
+        let windows: Vec<_> = self.inner.windows.keys().copied().collect();
+        for id in windows {
+            self.sync_native_window(id);
+        }
+    }
+
+    fn proxy_wake_up(&mut self, event_loop: &dyn ActiveEventLoop) {
+        self.inner.proxy_wake_up(event_loop);
+    }
+
+    fn window_event(
+        &mut self,
+        event_loop: &dyn ActiveEventLoop,
+        window_id: WindowId,
+        event: WindowEvent,
+    ) {
+        let viewport_changed = matches!(
+            &event,
+            WindowEvent::SurfaceResized(_) | WindowEvent::ScaleFactorChanged { .. }
+        );
+        self.inner.window_event(event_loop, window_id, event);
+        if viewport_changed {
+            self.sync_native_window(window_id);
+        }
+    }
+
+    fn device_event(
+        &mut self,
+        event_loop: &dyn ActiveEventLoop,
+        device_id: Option<winit::event::DeviceId>,
+        event: DeviceEvent,
+    ) {
+        self.inner.device_event(event_loop, device_id, event);
+    }
+
+    fn about_to_wait(&mut self, event_loop: &dyn ActiveEventLoop) {
+        self.inner.about_to_wait(event_loop);
+    }
+
+    fn suspended(&mut self, event_loop: &dyn ActiveEventLoop) {
+        self.inner.suspended(event_loop);
+    }
+
+    fn destroy_surfaces(&mut self, event_loop: &dyn ActiveEventLoop) {
+        self.inner.destroy_surfaces(event_loop);
+    }
+
+    fn memory_warning(&mut self, event_loop: &dyn ActiveEventLoop) {
+        self.inner.memory_warning(event_loop);
+    }
+
+    #[cfg(target_os = "macos")]
+    fn macos_handler(&mut self) -> Option<&mut dyn ApplicationHandlerExtMacOS> {
+        Some(self)
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl<Rend: anyrender::WindowRenderer> ApplicationHandlerExtMacOS for WindowApplication<Rend> {
+    fn standard_key_binding(
+        &mut self,
+        event_loop: &dyn ActiveEventLoop,
+        window_id: WindowId,
+        action: &str,
+    ) {
+        self.inner
+            .standard_key_binding(event_loop, window_id, action);
+    }
+}
+
 impl DomRuntime {
     /// Owns a concrete Blitz backend behind single-threaded shared state.
     pub fn new(document: BlitzDom) -> Self {
@@ -789,130 +932,86 @@ impl Engine {
         let event_loop = create_default_event_loop();
         let (proxy, receiver) = BlitzShellProxy::new(event_loop.create_proxy());
         let net_provider = Arc::new(blitz::net::Provider::new(Some(Arc::new(proxy.clone()))));
-        let mut document = BlitzDom::from_html(
+        let dom_runtime = DomRuntime::new(BlitzDom::from_html(
             &source,
             DocumentConfig {
                 base_url: Some(format!("file://{}/", options.root.replace(' ', "%20"))),
                 net_provider: Some(net_provider as Arc<dyn NetProvider>),
+                viewport: Some(Viewport::new(
+                    options.width,
+                    options.height,
+                    1.0,
+                    ColorScheme::Light,
+                )),
                 ..Default::default()
             },
-        );
-        let inline_scripts = document
-            .query_selector_all(document.document(), "script")
-            .map_err(dom_error)?
-            .into_iter()
-            .map(|node| document.text_content(node).map_err(dom_error))
-            .collect::<napi::Result<Vec<_>>>()?;
-        execute_window_scripts(
-            &mut self.runtime.borrow_mut(),
-            &mut document,
+        ));
+        let document = dom_runtime.document();
+        let inline_scripts = {
+            let document = document.borrow();
+            document
+                .query_selector_all(document.document(), "script")
+                .map_err(dom_error)?
+                .into_iter()
+                .map(|node| document.text_content(node).map_err(dom_error))
+                .collect::<napi::Result<Vec<_>>>()?
+        };
+        let mut engine = self.runtime.borrow_mut();
+        let raw_env = engine.raw_env();
+        let window_state = execute_window_scripts(
+            &mut engine,
+            dom_runtime,
             &inline_scripts,
             &options.entrypoint,
+            options.width,
+            options.height,
         )?;
-        document.flush_layout().map_err(dom_error)?;
+        drop(engine);
+        document.borrow_mut().flush_layout().map_err(dom_error)?;
         let renderer = anyrender_vello::VelloWindowRenderer::new();
         let attributes = WindowAttributes::default()
             .with_title(options.title)
             .with_surface_size(LogicalSize::new(options.width, options.height));
-        let window =
-            WindowConfig::with_attributes(Box::new(document.into_document()), renderer, attributes);
+        let window = WindowConfig::with_attributes(
+            Box::new(SharedBlitzDocument(document)),
+            renderer,
+            attributes,
+        );
         let mut application = BlitzApplication::new(proxy, receiver);
         application.add_window(window);
+        let window_error = Rc::new(RefCell::new(None));
+        let application = WindowApplication {
+            inner: application,
+            env: raw_env,
+            state: window_state,
+            error: Rc::clone(&window_error),
+        };
         event_loop
             .run_app(application)
-            .map_err(|error| napi::Error::new(Status::GenericFailure, error.to_string()))
+            .map_err(|error| napi::Error::new(Status::GenericFailure, error.to_string()))?;
+        if let Some(error) = window_error.borrow_mut().take() {
+            return Err(napi_error(error));
+        }
+        Ok(())
     }
 }
 
 fn execute_window_scripts(
     engine: &mut NodeApiEngine,
-    document: &mut BlitzDom,
+    runtime: DomRuntime,
     scripts: &[String],
     entrypoint: &str,
-) -> napi::Result<()> {
-    let document_pointer = document as *mut BlitzDom;
-    let set_text = engine
-        .define_function(
-            "__blitsenWindowSetText",
-            Box::new(move |call| {
-                let selector = callback_string(&call.arguments[0])?;
-                let value = callback_string(&call.arguments[1])?;
-                // SAFETY: scripts execute synchronously before `document` is
-                // moved into Blitz. The callback is deleted before returning.
-                let document = unsafe { &mut *document_pointer };
-                let node = document
-                    .query_selector(document.document(), &selector)
-                    .map_err(|error| JsError::new(error.to_string()))?
-                    .ok_or_else(|| JsError::new(format!("selector matched no node: {selector}")))?;
-                document
-                    .set_text_content(node, &value)
-                    .map_err(|error| JsError::new(error.to_string()))?;
-                Ok(call.this)
-            }),
-        )
-        .map_err(napi_error)?;
-    engine
-        .set_global("__blitsenWindowSetText", &set_text)
-        .map_err(napi_error)?;
-    let set_style = engine
-        .define_function(
-            "__blitsenWindowSetStyle",
-            Box::new(move |call| {
-                let selector = callback_string(&call.arguments[0])?;
-                let property = callback_string(&call.arguments[1])?;
-                let value = callback_string(&call.arguments[2])?;
-                // SAFETY: this callback has the same synchronous lifetime as
-                // the text callback above.
-                let document = unsafe { &mut *document_pointer };
-                let node = document
-                    .query_selector(document.document(), &selector)
-                    .map_err(|error| JsError::new(error.to_string()))?
-                    .ok_or_else(|| JsError::new(format!("selector matched no node: {selector}")))?;
-                document
-                    .set_inline_style(node, &blitsen_core::js_property_to_css(&property), &value)
-                    .map_err(|error| JsError::new(error.to_string()))?;
-                Ok(call.this)
-            }),
-        )
-        .map_err(napi_error)?;
-    engine
-        .set_global("__blitsenWindowSetStyle", &set_style)
-        .map_err(napi_error)?;
-    engine
-        .evaluate_script(
-            r#"
-            globalThis.document = {
-              querySelector(selector) {
-                const element = {
-                  set textContent(value) {
-                    __blitsenWindowSetText(selector, String(value));
-                  }
-                };
-                element.style = new Proxy({}, {
-                  set(_target, property, value) {
-                    __blitsenWindowSetStyle(selector, String(property), String(value));
-                    return true;
-                  }
-                });
-                return element;
-              }
-            };
-            "#,
-            "blitsen:window-document-bootstrap",
-        )
-        .map_err(napi_error)?;
+    width: u32,
+    height: u32,
+) -> napi::Result<Rc<RefCell<WindowState>>> {
+    let window_state =
+        dom_bridge::install(engine, runtime, width, height, 1.0).map_err(napi_error)?;
     for (index, script) in scripts.iter().enumerate() {
         engine
             .evaluate_script(script, &format!("{entrypoint}#script-{}", index + 1))
             .map_err(napi_error)?;
     }
-    engine
-        .evaluate_script(
-            "delete globalThis.document; delete globalThis.__blitsenWindowSetText; delete globalThis.__blitsenWindowSetStyle",
-            "blitsen:window-document-cleanup",
-        )
-        .map_err(napi_error)?;
-    Ok(())
+    Ok(window_state)
 }
 
 fn execute_bridge_harness(
@@ -934,7 +1033,8 @@ fn execute_bridge_harness(
     let document = runtime.document();
     document.borrow_mut().flush_layout().map_err(dom_error)?;
     let mut engine = NodeApiEngine::new(env);
-    dom_bridge::install(&mut engine, runtime).map_err(napi_error)?;
+    let _window_state =
+        dom_bridge::install(&mut engine, runtime, width, height, 1.0).map_err(napi_error)?;
     engine
         .evaluate_script(&script, "harness-script.js")
         .map_err(napi_error)?;

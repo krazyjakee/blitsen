@@ -7,7 +7,14 @@ const native = createRequire(import.meta.url)(addonPath);
 assert.equal(native.wrapperIdentitySmoke(), true, "Node-API wrappers preserve identity and collect");
 const snapshot = JSON.parse(native.runBridgeHarness(
   `<style>#x { display:block; width:100px; height:20px }</style><div id="x">old</div>`,
-  `{ const el = document.querySelector("#x");
+  `{ if (window !== globalThis || window.document !== document || innerWidth !== 320 || innerHeight !== 180 || devicePixelRatio !== 1)
+       throw new Error("window identity, document, or initial viewport failed");
+     if ("location" in window || "history" in window || "navigator" in window || "localStorage" in window)
+       throw new Error("unsupported browser globals must be omitted");
+     __blitsenWindowResize("640", "480");
+     if (innerWidth !== 640 || innerHeight !== 480 || devicePixelRatio !== 1)
+       throw new Error("window viewport did not synchronize after resize");
+     const el = document.querySelector("#x");
      const byId = document.getElementById("x");
      const initial = document.querySelectorAll("#x");
      if (el !== byId || !(initial instanceof NodeList) || initial.length !== 1 || initial.item(0) !== el)
@@ -21,6 +28,7 @@ const snapshot = JSON.parse(native.runBridgeHarness(
        throw new Error("document creation, roots, or static NodeList semantics failed");
      el.textContent = "hi";
      el.setAttribute("class", "done");
+     el.setAttribute("data-window", "ok");
      el.style.width = "140px"; }`,
   320,
   180,
@@ -29,6 +37,7 @@ const target = snapshot.nodes.find((node) => node.attributes.id === "x");
 assert(target, "Rust tree contains #x");
 assert.equal(target.text_content, "hi");
 assert.equal(target.attributes.class, "done");
+assert.equal(target.attributes["data-window"], "ok");
 assert.match(target.inline_style, /width:\s*140px/);
 assert.equal(target.layout.width, 140);
 const created = snapshot.nodes.find((node) => node.attributes.id === "created");

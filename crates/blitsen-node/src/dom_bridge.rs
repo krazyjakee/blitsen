@@ -1,8 +1,9 @@
 //! Native DOM object installation for the Bun host.
 
+use std::cell::RefCell;
 use std::rc::Rc;
 
-use blitsen_core::{WrapperTable, js_property_to_css};
+use blitsen_core::{WindowState, WrapperTable, js_property_to_css};
 use blitsen_dom::{DomBackend, DomError, DomName, NodeKind};
 use blitsen_js::{ExternalId, JsEngine, JsError, NativeClass};
 use blitz::dom::NodeId;
@@ -170,7 +171,13 @@ const BOOTSTRAP: &str = r#"
 "#;
 
 /// Installs the real DOM object graph into a Node-API JavaScript environment.
-pub(super) fn install(engine: &mut NodeApiEngine, runtime: DomRuntime) -> Result<(), JsError> {
+pub(super) fn install(
+    engine: &mut NodeApiEngine,
+    runtime: DomRuntime,
+    width: u32,
+    height: u32,
+    device_pixel_ratio: f64,
+) -> Result<Rc<RefCell<WindowState>>, JsError> {
     let class = Rc::new(engine.register_class(NativeClass::new("BlitsenNode"))?);
     let table = Rc::new(WrapperTable::<NodeId, NodeWeakRef>::new());
     let raw_env = engine.raw_env();
@@ -222,7 +229,34 @@ pub(super) fn install(engine: &mut NodeApiEngine, runtime: DomRuntime) -> Result
     )?;
     engine.set_global("__blitsenDomCall", &call_function)?;
     engine.evaluate_script(BOOTSTRAP, "blitsen:dom-bootstrap")?;
-    Ok(())
+
+    let document = engine.evaluate_script("globalThis.document", "blitsen:document-value")?;
+    let window_state = Rc::new(RefCell::new(WindowState::new(
+        width,
+        height,
+        device_pixel_ratio,
+    )));
+    window_state.borrow().install(engine, &document)?;
+    let resize_state = Rc::clone(&window_state);
+    let resize_function = engine.define_function(
+        "__blitsenWindowResize",
+        Box::new(move |call| {
+            let width = argument(&call.arguments, 0, "viewport width")?
+                .parse::<u32>()
+                .map_err(|_| JsError::new("invalid viewport width"))?;
+            let height = argument(&call.arguments, 1, "viewport height")?
+                .parse::<u32>()
+                .map_err(|_| JsError::new("invalid viewport height"))?;
+            resize_state.borrow_mut().resize(width, height);
+            let mut callback_engine = NodeApiEngine::new(Env::from_raw(raw_env));
+            let window =
+                callback_engine.evaluate_script("globalThis", "blitsen:window-resize-target")?;
+            resize_state.borrow().sync(&mut callback_engine, &window)?;
+            Ok(call.this)
+        }),
+    )?;
+    engine.set_global("__blitsenWindowResize", &resize_function)?;
+    Ok(window_state)
 }
 
 fn argument(arguments: &[Unknown<'static>], index: usize, name: &str) -> Result<String, JsError> {
