@@ -77,6 +77,7 @@ const BOOTSTRAP: &str = r##"
     notifyResizeObservers();
     notifyMediaQueries();
     settleFetches();
+    settleImages();
     const callbacks = animationFrames;
     animationFrames = new Map();
     runningAnimationFrames = callbacks;
@@ -89,10 +90,11 @@ const BOOTSTRAP: &str = r##"
     if (__blitsenDevLayoutWarnings && forcedLayoutsThisFrame > 0)
       console.warn(`Blitsen: ${forcedLayoutsThisFrame} forced synchronous layout(s) in this frame`);
     forcedLayoutsThisFrame = 0;
-    // In-flight requests and undelivered resize observations keep the host
-    // turning: their landing point is this function, so a loop that stopped
-    // would never deliver them.
-    return animationFrames.size + inflightFetches.size + pendingResizeObservations();
+    // In-flight requests, undecoded images and undelivered resize observations
+    // keep the host turning: their landing point is this function, so a loop
+    // that stopped would never deliver them.
+    return animationFrames.size + inflightFetches.size + pendingResizeObservations()
+      + waitingImages();
   };
 
   const eventStates = new WeakMap();
@@ -674,6 +676,68 @@ const BOOTSTRAP: &str = r##"
     set href(value) { this.setAttribute("href", value); }
   }
 
+  // Images. Blitz decodes subresources beside the DOM and announces nothing when
+  // one lands, so `load` and `error` are delivered by polling the elements that
+  // owe an outcome — at the frame boundary, where `fetch` completions land too.
+  const pendingImages = new Set();
+  const imageHandlers = new WeakMap();
+  const imageState = element => call("imageState", element[handle]);
+  const setImageHandler = (element, type, callback) => {
+    let handlers = imageHandlers.get(element);
+    if (!handlers) imageHandlers.set(element, handlers = { load: null, error: null });
+    if (handlers[type]) element.removeEventListener(type, handlers[type]);
+    handlers[type] = typeof callback === "function" ? callback : null;
+    if (handlers[type]) element.addEventListener(type, handlers[type]);
+  };
+  // Over a copy: a handler that gives another image a source owes that outcome
+  // to the next frame, not to the rest of this pass.
+  const settleImages = () => {
+    for (const element of [...pendingImages]) {
+      const state = imageState(element);
+      if (!state.complete) continue;
+      pendingImages.delete(element);
+      element.dispatchEvent(new Event(state.errored ? "error" : "load"));
+    }
+  };
+  // Blitz requests a source only once the element is in the document, so a
+  // detached image is waiting on nothing and must not hold the host open.
+  const waitingImages = () => {
+    let waiting = 0;
+    for (const element of pendingImages) if (element.isConnected) waiting++;
+    return waiting;
+  };
+
+  class HTMLImageElement extends Element {
+    // Decoded size is applied while layout resolves, so reading it is a layout
+    // read exactly as `getBoundingClientRect` is.
+    get naturalWidth() { return recordForcedLayout(imageState(this)).naturalWidth; }
+    get naturalHeight() { return recordForcedLayout(imageState(this)).naturalHeight; }
+    get complete() { return recordForcedLayout(imageState(this)).complete; }
+    get src() {
+      const value = this.getAttribute("src");
+      return value === null ? "" : resolveAgainstDocument(value).href;
+    }
+    set src(value) { this.setAttribute("src", value); }
+    // A source is a request whatever it resolves to, so the outcome is owed from
+    // the write. Through `setAttribute` rather than the `src` setter because
+    // that is the one a framework renders through.
+    setAttribute(name, value) {
+      super.setAttribute(name, value);
+      if (String(name) === "src") pendingImages.add(this);
+    }
+    // Nothing is delivered retroactively: an image that has already settled is
+    // read through `complete`, which is what `complete` is for.
+    addEventListener(type, callback, options = false) {
+      super.addEventListener(type, callback, options);
+      if ((type === "load" || type === "error") && !imageState(this).complete)
+        pendingImages.add(this);
+    }
+    get onload() { return imageHandlers.get(this)?.load ?? null; }
+    set onload(callback) { setImageHandler(this, "load", callback); }
+    get onerror() { return imageHandlers.get(this)?.error ?? null; }
+    set onerror(callback) { setImageHandler(this, "error", callback); }
+  }
+
   // Acquired surfaces are held strongly: the element is what the application
   // draws into, and it releases the claim by releasing the surface.
   const acquiredSurfaces = new Map();
@@ -976,8 +1040,8 @@ const BOOTSTRAP: &str = r##"
     return value[handle];
   };
   const wrapperCache = new Map();
-  const TAG_INTERFACES = { "blitsen-view": BlitsenViewElement, link: HTMLLinkElement,
-    template: HTMLTemplateElement };
+  const TAG_INTERFACES = { "blitsen-view": BlitsenViewElement, img: HTMLImageElement,
+    link: HTMLLinkElement, template: HTMLTemplateElement };
   const wrap = rawHandle => {
     if (rawHandle == null) return null;
     rawHandle = String(rawHandle);
@@ -1039,6 +1103,21 @@ const BOOTSTRAP: &str = r##"
     static [Symbol.hasInstance](value) {
       return value instanceof Element && value.namespaceURI === "http://www.w3.org/2000/svg";
     }
+  }
+  const imageDimension = value => {
+    const number = Math.trunc(Number(value));
+    return Number.isFinite(number) ? number : 0;
+  };
+  class Image {
+    // The two arguments are the content attributes a browser writes, not a
+    // layout size; an argument left out sets no attribute at all.
+    constructor(width, height) {
+      const image = document.createElement("img");
+      if (width !== undefined) image.setAttribute("width", imageDimension(width));
+      if (height !== undefined) image.setAttribute("height", imageDimension(height));
+      return image;
+    }
+    static [Symbol.hasInstance](value) { return value instanceof HTMLImageElement; }
   }
   // Networking. Blitsen's own fetch rather than the host's, so the Phase 2
   // engine swap is invisible to the application. There is no same-origin policy
@@ -1520,8 +1599,8 @@ const BOOTSTRAP: &str = r##"
   const globals = {
     EventTarget, Node, Element, NodeList, Document, DocumentFragment, DOMTokenList,
     CSSStyleDeclaration, MutationObserver, ResizeObserver, HTMLElement, HTMLIFrameElement,
-    SVGElement, Text, Comment,
-    HTMLLinkElement, HTMLTemplateElement, Storage, Navigator, document,
+    SVGElement, Text, Comment, Image,
+    HTMLImageElement, HTMLLinkElement, HTMLTemplateElement, Storage, Navigator, document,
     BlitsenViewElement, BlitsenViewSurface,
     getComputedStyle, matchMedia, MediaQueryList, MediaQueryListEvent,
     Event, MouseEvent, KeyboardEvent, CustomEvent, PopStateEvent, HashChangeEvent,
@@ -1531,7 +1610,8 @@ const BOOTSTRAP: &str = r##"
     setTimeout, clearTimeout, setInterval, clearInterval,
     __blitsenAnimationFrameTick: animationFrameTick,
     __blitsenAnimationFramesPending: () =>
-      animationFrames.size > 0 || inflightFetches.size > 0 || pendingResizeObservations() > 0,
+      animationFrames.size > 0 || inflightFetches.size > 0 || pendingResizeObservations() > 0
+      || waitingImages() > 0,
     __blitsenForcedLayoutsThisFrame: () => forcedLayoutsThisFrame,
     __blitsenEventInternals: eventInternals,
     __blitsenDispatchMouseEvent: dispatchMouseEvent,
@@ -1548,6 +1628,7 @@ const BOOTSTRAP: &str = r##"
       resizeObservers.clear();
       mediaQueryLists.clear();
       wrapperCache.clear();
+      pendingImages.clear();
       inflightFetches.clear();
       __blitsenFetchDispose();
       historyEntries = [{ url: documentUrl, state: null }];
@@ -1603,7 +1684,7 @@ const BOOTSTRAP: &str = r##"
     "FormData", "File", "FileReader",
     "HTMLCanvasElement", "CanvasRenderingContext2D", "OffscreenCanvas", "ImageData", "Path2D",
     "WebGLRenderingContext", "WebGL2RenderingContext", "GPUCanvasContext",
-    "Image", "Audio", "AudioContext", "webkitAudioContext", "HTMLMediaElement",
+    "Audio", "AudioContext", "webkitAudioContext", "HTMLMediaElement",
     "alert", "confirm", "prompt", "print",
     "open", "close", "navigation",
     "cookieStore", "screen", "Notification", "caches",
@@ -2213,6 +2294,19 @@ fn dispatch(runtime: &DomRuntime, operation: &str, arguments: &[String]) -> Resu
                 "clientHeight": metrics.client_height,
                 "scrollLeft": metrics.scroll_left,
                 "scrollTop": metrics.scroll_top,
+            }))
+        }
+        "imageState" => {
+            let forced = dom.layout_is_dirty();
+            let node = handle(runtime, arguments, 0)?;
+            let snapshot = dom.flush_layout().map_err(dom_error)?;
+            let state = dom.image_state(node, snapshot).map_err(dom_error)?;
+            Ok(json!({
+                "forced": forced,
+                "naturalWidth": state.natural_width,
+                "naturalHeight": state.natural_height,
+                "complete": state.complete,
+                "errored": state.errored,
             }))
         }
         "viewportSurface" => {

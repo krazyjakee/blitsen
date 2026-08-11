@@ -465,12 +465,21 @@ One layout flush resolves repeatedly while subresources are still landing, becau
 `background-image` is only discovered once style resolves — after the pass that would have
 applied it. Without that, every backdrop flashes empty for one frame.
 
-**`naturalWidth`, `naturalHeight`, `complete` — in the backend, not yet in JavaScript.**
-`DomBackend::image_state` reads them, gated on a layout snapshot like the geometry reads, because
-decoded data is applied while layout resolves. `complete` is true for an image with no source and
-for one whose request is over — including one that failed, so a poller is never stuck. No
-bootstrap class exposes any of this yet, and the manifest records them as absent, so the two
-agree: the seam is built and the JS surface is not.
+**`Image`, `naturalWidth`, `naturalHeight`, `complete`, `load` and `error`.**
+`DomBackend::image_state` reads the decode state, gated on a layout snapshot like the geometry
+reads, because decoded data is applied while layout resolves. `complete` is true for an image with
+no source and for one whose request is over — including one that failed, so a poller is never
+stuck. `HTMLImageElement` is the wrapper interface for `<img>` and reads all three over that seam,
+charging a forced synchronous layout exactly as `getBoundingClientRect` does; `new Image(w, h)`
+builds one, with the two arguments as the content attributes a browser writes.
+
+Blitz announces nothing when a subresource lands, so `load` and `error` are delivered by polling
+the elements that owe an outcome, at the top of the frame where `fetch` completions are settled.
+An element owes one from the moment a source is written to it, and a listener attached to an
+element that has already settled is owed nothing: browsers fire no retroactive `load`, which is
+what `complete` is there to answer. An image still in flight keeps the host turning — unless it is
+detached, since Blitz requests a source only once the element is in the document, and waiting on
+one that will never be asked for is waiting forever.
 
 ---
 

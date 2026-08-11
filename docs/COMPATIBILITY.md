@@ -309,7 +309,7 @@ determinism gate instead.
 
 | Group | Implemented | Absent |
 | --- | --- | --- |
-| WEB_DOM | `document`, `Document`, `Node`, `Element`, `NodeList`, `DOMTokenList`, `CSSStyleDeclaration`, `MutationObserver`, `HTMLElement`, `HTMLIFrameElement`, `SVGElement`, `Text`, `Comment`, `DocumentFragment`, `HTMLLinkElement`, `HTMLTemplateElement`, `Element.querySelector`, `Element.querySelectorAll`, `Element.closest`, `Element.matches`, `Element.cloneNode`, `Element.contains`, `Element.children`, `Element.previousSibling`, `Element.lastChild`, `Element.parentElement`, `Element.dataset`, `Element.nodeValue`, `Element.before`, `Element.after`, `Element.getElementsByTagName`, `HTMLLinkElement.relList`, `HTMLTemplateElement.content`, `DOMTokenList.supports`, `Document.createElementNS`, `Document.createComment`, `Document.createDocumentFragment`, `Document.getElementsByTagName`, `Document.importNode` | `Element.outerHTML`, `Element.insertAdjacentHTML`, `Element.attachShadow`, `Element.scrollIntoView` |
+| WEB_DOM | `document`, `Document`, `Node`, `Element`, `NodeList`, `DOMTokenList`, `CSSStyleDeclaration`, `MutationObserver`, `HTMLElement`, `HTMLIFrameElement`, `SVGElement`, `Text`, `Comment`, `DocumentFragment`, `HTMLLinkElement`, `HTMLTemplateElement`, `HTMLImageElement`, `Image`, `HTMLImageElement.src`, `HTMLImageElement.naturalWidth`, `HTMLImageElement.naturalHeight`, `HTMLImageElement.complete`, `HTMLImageElement.onload`, `HTMLImageElement.onerror`, `Element.querySelector`, `Element.querySelectorAll`, `Element.closest`, `Element.matches`, `Element.cloneNode`, `Element.contains`, `Element.children`, `Element.previousSibling`, `Element.lastChild`, `Element.parentElement`, `Element.dataset`, `Element.nodeValue`, `Element.before`, `Element.after`, `Element.getElementsByTagName`, `HTMLLinkElement.relList`, `HTMLTemplateElement.content`, `DOMTokenList.supports`, `Document.createElementNS`, `Document.createComment`, `Document.createDocumentFragment`, `Document.getElementsByTagName`, `Document.importNode` | `Element.outerHTML`, `Element.insertAdjacentHTML`, `Element.attachShadow`, `Element.scrollIntoView` |
 | WEB_EVENTS | `EventTarget`, `Event`, `CustomEvent`, `MouseEvent`, `KeyboardEvent`, `addEventListener`, `removeEventListener`, `dispatchEvent` | — |
 | WEB_SCHEDULING | `requestAnimationFrame`, `cancelAnimationFrame`, `setTimeout`, `clearTimeout`, `setInterval`, `clearInterval` | `requestIdleCallback`, `cancelIdleCallback` |
 | WEB_NETWORK | `fetch`, `Headers`, `Request`, `Response`, `Blob`, `AbortController`, `AbortSignal` | — |
@@ -324,7 +324,7 @@ determinism gate instead.
 | WEB_FORM | — | `FormData`, `File`, `FileReader` |
 | WEB_CANVAS | — | `HTMLCanvasElement`, `CanvasRenderingContext2D`, `OffscreenCanvas`, `ImageData`, `Path2D` |
 | WEB_GPU | — | `WebGLRenderingContext`, `WebGL2RenderingContext`, `GPUCanvasContext` |
-| WEB_MEDIA | — | `Image`, `Audio`, `AudioContext`, `webkitAudioContext`, `HTMLMediaElement` |
+| WEB_MEDIA | — | `Audio`, `AudioContext`, `webkitAudioContext`, `HTMLMediaElement` |
 | WEB_DIALOG | — | `alert`, `confirm`, `prompt`, `print` |
 | WEB_NAVIGATION | — | `open`, `close`, `navigation`, `document.write`, `document.writeln`, `document.open`, `document.close`, `location.assign`, `location.replace`, `location.reload`, `location.ancestorOrigins` |
 | WEB_COOKIE | — | `document.cookie`, `cookieStore`, `Headers.getSetCookie` |

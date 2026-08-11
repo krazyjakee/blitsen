@@ -115,6 +115,74 @@
       "pattern": "(?<![.\\w$])HTMLTemplateElement\\b"
     },
     {
+      "api": "HTMLImageElement",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_DOM",
+      "pattern": "(?<![.\\w$])HTMLImageElement\\b"
+    },
+    {
+      "api": "Image",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_DOM",
+      "pattern": "\\bnew Image\\s*\\("
+    },
+    {
+      "api": "HTMLImageElement.src",
+      "kind": "member",
+      "owner": "HTMLImageElement.prototype",
+      "member": "src",
+      "status": "implemented",
+      "code": "WEB_DOM",
+      "pattern": null
+    },
+    {
+      "api": "HTMLImageElement.naturalWidth",
+      "kind": "member",
+      "owner": "HTMLImageElement.prototype",
+      "member": "naturalWidth",
+      "status": "implemented",
+      "code": "WEB_DOM",
+      "pattern": null
+    },
+    {
+      "api": "HTMLImageElement.naturalHeight",
+      "kind": "member",
+      "owner": "HTMLImageElement.prototype",
+      "member": "naturalHeight",
+      "status": "implemented",
+      "code": "WEB_DOM",
+      "pattern": null
+    },
+    {
+      "api": "HTMLImageElement.complete",
+      "kind": "member",
+      "owner": "HTMLImageElement.prototype",
+      "member": "complete",
+      "status": "implemented",
+      "code": "WEB_DOM",
+      "pattern": null
+    },
+    {
+      "api": "HTMLImageElement.onload",
+      "kind": "member",
+      "owner": "HTMLImageElement.prototype",
+      "member": "onload",
+      "status": "implemented",
+      "code": "WEB_DOM",
+      "pattern": null
+    },
+    {
+      "api": "HTMLImageElement.onerror",
+      "kind": "member",
+      "owner": "HTMLImageElement.prototype",
+      "member": "onerror",
+      "status": "implemented",
+      "code": "WEB_DOM",
+      "pattern": null
+    },
+    {
       "api": "Element.querySelector",
       "kind": "member",
       "owner": "Element.prototype",
@@ -801,13 +869,6 @@
       "status": "absent",
       "code": "WEB_GPU",
       "pattern": "(?<![.\\w$])GPUCanvasContext\\b"
-    },
-    {
-      "api": "Image",
-      "kind": "global",
-      "status": "absent",
-      "code": "WEB_MEDIA",
-      "pattern": "\\bnew Image\\s*\\("
     },
     {
       "api": "Audio",
