@@ -1,0 +1,22 @@
+<!--
+Blitz gap G2 (docs/BLITZ-GAPS.md): any property named by `transition` keeps the
+value it had before the stylesheet finished loading, and keeps it for good.
+
+  cargo run --release --example screenshot -- file://$PWD/transition-stale-style.html 400
+
+A browser paints the red bar and nothing else. Blitz paints "still painted" as
+well: `visibility` is covered by that element's `transition`, so it stays at the
+initial `visible` rather than the `hidden` the stylesheet declares. #plain, which
+transitions nothing, is hidden correctly, and the bar shows the sheet did load.
+Inlining the same CSS in a <style> element renders it correctly, which is why
+this cannot be a conformance case — the corpus has no network.
+-->
+<!doctype html>
+<html>
+  <head><link rel="stylesheet" href="transition-stale-style.css"></head>
+  <body>
+    <p id="transitioned">still painted</p>
+    <p id="plain">correctly hidden</p>
+    <div id="control"></div>
+  </body>
+</html>

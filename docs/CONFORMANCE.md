@@ -36,6 +36,23 @@ bun run --cwd packages/blitsen conformance:record
 Recording **refuses to run while any declared check fails**, so a golden can never lock in a layout
 the corpus itself says is wrong.
 
+## Cases that document a Blitz defect
+
+A reduction of a renderer bug fails by definition, and the two tiers above have no room for one: it
+cannot pass its checks, and a golden of its frame would be the recording this corpus exists to
+avoid. So a third kind of case says `@defect <what>` and marks the individual checks a browser
+satisfies and Blitz does not with `@!`. Those checks are asserted to *fail*.
+
+The gate therefore stays green while the defect stands, and the run prints what still diverges. The
+moment the defect is fixed the case fails, with the message that it looks fixed and the `!` should
+go — because a known-failure that quietly starts passing is worth nothing, and the point is to close
+the entry in [BLITZ-GAPS.md](BLITZ-GAPS.md) rather than let it rot. The numbers on a `@!` line are
+still derived rather than recorded, and are checked against a browser; the two cases here were
+verified against Chromium at the same viewport.
+
+Such a case carries no golden image, and every check it does not mark still gates normally — which
+is what keeps it a reduction rather than a blank cheque.
+
 ## Case format
 
 A case is one self-contained HTML document. The leading comment is the expectation header; only
@@ -46,6 +63,8 @@ A case is one self-contained HTML document. The leading comment is the expectati
 | `@size <w> <h>` | Viewport, default `400 200` |
 | `@oracle` | The declared checks were derived from the CSS, not recorded from a run |
 | `@host-fonts` | Depends on the host's installed fonts; carries no golden image |
+| `@defect <what>` | Documents a Blitz defect; carries no golden image |
+| `@!<check>` | A browser satisfies this check and Blitz does not, so it must fail |
 | `@box <selector> <x> <y> <w> <h>` | Border box of the one element the selector matches; a component written `-` is not checked |
 | `@pixel <x> <y> <#rrggbbaa>` | Exact colour at a point |
 | `@ink <x> <y> <w> <h> <#rrggbbaa> >=\|<= <fraction>` | Fraction of a rectangle painted exactly that colour |
@@ -83,7 +102,9 @@ meanwhile.
 
 ## What is in the corpus
 
-Nine of the ten cases are correctness oracles. `react-vite` is a change detector, and says so.
+Eleven of the twelve cases are correctness oracles. `react-vite` is a change detector, and says so.
+The two `defect-*` cases are oracles too — their numbers came from the CSS and were confirmed
+against a browser — but what they gate is that Blitz still gets them wrong.
 
 | Case | Covers | Kind |
 | --- | --- | --- |
@@ -97,6 +118,8 @@ Nine of the ten cases are correctness oracles. `react-vite` is a change detector
 | `images` | `<img>` intrinsic ratio, `background-image`, `background-size`/`position`/`repeat` | Oracle |
 | `host-typography` | Text painting through the host's own fonts | Oracle, no golden |
 | `react-vite` | Real React output: centred shell, flex card row, borders, radii, wrapping | Change detector |
+| `defect-initial-containing-block` | `absolute`/`fixed` insets resolved against the viewport | Known defect |
+| `defect-absolute-auto-margins` | Auto margins against a `max-width`-clamped used width | Known defect |
 
 Every golden image in this repository was rendered on the machine that recorded it and then looked
 at. They are not recordings of whatever the renderer happened to do.
@@ -140,6 +163,10 @@ to the golden image.
   CI-runnable as it stands. It answers a different question anyway: *does Blitsen match a browser*,
   where this corpus asks *does Blitsen match itself, everywhere*. Both are needed; only the second
   can be a gate.
+- **Reductions that need the network.** A case is parsed from a string and laid out once, with no
+  net provider, so a bug that only appears when a subresource arrives late cannot be one. Gap G2 is
+  exactly that, and its reduction lives in
+  [`tests/reductions/`](../crates/blitsen-blitz/tests/reductions) with the command that shows it.
 - **Vue and Svelte have no case.** The repository builds one real framework bundle, React through
   Vite, and that is the one captured. Adding another means adding another buildable example, not
   another corpus entry.

@@ -1,0 +1,34 @@
+<!-- conformance
+Known Blitz defect (gap G3). Auto margins on an absolutely positioned box are
+resolved from its declared width rather than its used one, so `max-width`
+breaks the centring instead of tightening it.
+
+#clamped gives both insets, so the free space is #cb's 200. Its width resolves
+to 180 and then clamps to `max-width: 100`, and the two auto margins split what
+is left: (200 - 100) / 2 = 50. Blitz splits the free space against the
+unclamped 180 instead, which leaves nothing for the margins, so the box stays
+at the left inset. The same shape — `inset: 0; margin: auto; max-width` — is
+how the Wordle+ capture in spikes/s6 centres its modals.
+
+@oracle
+@defect G3 — auto margins ignore max-width clamping on an absolutely positioned box
+@box #cb 0 0 200 100
+@!box #clamped 50 20 100 40
+@pixel 100 10 #e5e7ebff
+@!pixel 100 40 #ef4444ff
+@!pixel 30 40 #e5e7ebff
+-->
+<!doctype html>
+<html>
+  <head>
+    <style>
+      html, body { margin: 0; background: #ffffff }
+      #cb { position: relative; width: 200px; height: 100px; background: #e5e7eb }
+      #clamped { position: absolute; left: 0; right: 0; top: 20px; margin: auto;
+                 width: 180px; max-width: 100px; height: 40px; background: #ef4444 }
+    </style>
+  </head>
+  <body>
+    <div id="cb"><div id="clamped"></div></div>
+  </body>
+</html>

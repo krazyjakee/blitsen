@@ -1,0 +1,38 @@
+<!-- conformance
+Known Blitz defect (gap G3). The initial containing block is the viewport, not
+the root element's box, and `position: fixed` resolves against the viewport
+whatever the document contains.
+
+Nothing here is positioned, so `html` and `body` are as tall as #flow: 60. Both
+insets therefore have to come from the 400x200 viewport. #abs is `bottom: 0`
+with a 20px height, so it sits at 200 - 20 = 180; #fixed stretches the whole
+200. Blitz resolves both against the parent block's box instead, so each stops
+at 60 — which is what the Wordle+ capture in spikes/s6 shows as overlays
+escaping the layout they were written for.
+
+The two boxes overlap in the bottom-right corner. Both are positioned with
+`z-index: auto`, so document order decides, and #fixed paints over #abs there.
+
+@oracle
+@defect G3 — the initial containing block is the root box, not the viewport
+@box #flow 0 0 400 60
+@!box #abs 0 180 400 20
+@!box #fixed 380 0 20 200
+@pixel 200 30 #e5e7ebff
+@!pixel 200 190 #ef4444ff
+@!pixel 390 190 #22c55eff
+-->
+<!doctype html>
+<html>
+  <head>
+    <style>
+      html, body { margin: 0; background: #ffffff }
+      #flow { height: 60px; background: #e5e7eb }
+      #abs { position: absolute; left: 0; right: 0; bottom: 0; height: 20px; background: #ef4444 }
+      #fixed { position: fixed; right: 0; top: 0; bottom: 0; width: 20px; background: #22c55e }
+    </style>
+  </head>
+  <body>
+    <div id="flow"></div><div id="abs"></div><div id="fixed"></div>
+  </body>
+</html>

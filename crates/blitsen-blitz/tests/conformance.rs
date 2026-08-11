@@ -25,6 +25,14 @@
 //! conformance`; recording refuses to run while any declared check fails, so a
 //! golden cannot lock in a layout the corpus itself says is wrong. The whole
 //! arrangement is documented in `docs/CONFORMANCE.md`.
+//!
+//! A third kind of case documents a defect in Blitz itself. It says `defect`
+//! and marks the individual checks a browser satisfies and Blitz does not with
+//! `@!`. Those checks are asserted to *fail*: the gate stays green while the
+//! defect stands, and the case fails the moment the defect is fixed, so the
+//! entry gets closed rather than rotting. Such a case carries no golden image,
+//! because a golden of wrong output is exactly the recording this corpus
+//! refuses to keep.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -33,7 +41,7 @@ use anyrender::{PaintScene as _, render_to_buffer};
 use anyrender_vello_cpu::VelloCpuImageRenderer;
 use blitsen_blitz::BlitzDom;
 use blitsen_core::replay::FrameDigest;
-use blitsen_dom::DomBackend;
+use blitsen_dom::{DomBackend, LayoutSnapshot};
 use blitz::dom::DocumentConfig;
 use blitz::traits::shell::{ColorScheme, Viewport};
 use peniko::{Color, Fill, kurbo::Rect};
@@ -143,6 +151,28 @@ enum Check {
     },
 }
 
+impl Check {
+    /// Names the check without its expected value, for the message a case gets
+    /// when a check it declared as failing starts holding.
+    fn label(&self) -> String {
+        match self {
+            Check::Box { selector, .. } => format!("{selector} box"),
+            Check::Pixel { x, y, .. } => format!("pixel {x},{y}"),
+            Check::Ink {
+                rect: [x, y, width, height],
+                ..
+            } => format!("{width}x{height} at {x},{y}"),
+        }
+    }
+}
+
+struct Expectation {
+    /// A browser satisfies this check and Blitz does not, so the corpus asserts
+    /// the divergence instead of the check. Written `@!`.
+    defect: bool,
+    check: Check,
+}
+
 struct Case {
     html: String,
     width: u32,
@@ -151,7 +181,10 @@ struct Case {
     oracle: bool,
     /// Depends on the host's installed fonts, so it carries no golden image.
     host_fonts: bool,
-    checks: Vec<Check>,
+    /// What upstream defect this case documents. Carries no golden image
+    /// either: the frame is the wrong one until the defect is fixed.
+    defect: Option<String>,
+    checks: Vec<Expectation>,
 }
 
 fn color(token: &str) -> [u8; 4] {
@@ -191,24 +224,37 @@ fn parse(name: &str, source: &str) -> Case {
         height: 200,
         oracle: false,
         host_fonts: false,
+        defect: None,
         checks: Vec::new(),
     };
     for line in header
         .lines()
         .filter(|line| line.trim_start().starts_with('@'))
     {
-        let words: Vec<&str> = line
-            .trim_start()
-            .trim_start_matches('@')
+        let directive = line.trim_start().trim_start_matches('@');
+        let defect = directive.starts_with('!');
+        let words: Vec<&str> = directive
+            .trim_start_matches('!')
             .split_whitespace()
             .collect();
-        match words.first().copied() {
+        let check = match words.first().copied() {
             Some("size") => {
                 case.width = number(words.get(1), line);
                 case.height = number(words.get(2), line);
+                None
             }
-            Some("oracle") => case.oracle = true,
-            Some("host-fonts") => case.host_fonts = true,
+            Some("oracle") => {
+                case.oracle = true;
+                None
+            }
+            Some("host-fonts") => {
+                case.host_fonts = true;
+                None
+            }
+            Some("defect") => {
+                case.defect = Some(words[1..].join(" "));
+                None
+            }
             // Taken from the end, because a selector can contain spaces.
             Some("box") => {
                 let split = words
@@ -216,15 +262,15 @@ fn parse(name: &str, source: &str) -> Case {
                     .checked_sub(4)
                     .filter(|split| *split > 1)
                     .unwrap_or_else(|| panic!("missing operand in `{line}`"));
-                case.checks.push(Check::Box {
+                Some(Check::Box {
                     selector: words[1..split].join(" "),
                     rect: std::array::from_fn(|component| {
                         let token = words.get(split + component);
                         (token.copied() != Some("-")).then(|| number(token, line))
                     }),
-                });
+                })
             }
-            Some("pixel") => case.checks.push(Check::Pixel {
+            Some("pixel") => Some(Check::Pixel {
                 x: number(words.get(1), line),
                 y: number(words.get(2), line),
                 rgba: color(
@@ -239,7 +285,7 @@ fn parse(name: &str, source: &str) -> Case {
                     .get(6)
                     .filter(|word| ["<=", ">="].contains(word))
                     .unwrap_or_else(|| panic!("missing >= or <= in `{line}`"));
-                case.checks.push(Check::Ink {
+                Some(Check::Ink {
                     rect: [
                         number(words.get(1), line),
                         number(words.get(2), line),
@@ -253,19 +299,32 @@ fn parse(name: &str, source: &str) -> Case {
                     ),
                     at_least: (comparison == ">=").then_some(fraction),
                     at_most: (comparison == "<=").then_some(fraction),
-                });
+                })
             }
             verb => panic!(
                 "{name} declares an unknown directive `{}`",
                 verb.unwrap_or_default()
             ),
-        }
+        };
+        assert!(
+            !defect || check.is_some(),
+            "{name} marks `{line}` as a defect, but only a check can diverge"
+        );
+        case.checks
+            .extend(check.map(|check| Expectation { defect, check }));
     }
     // A case with only a golden image is a recording of current behaviour and
     // nothing more, which is the failure mode this corpus exists to avoid.
     assert!(
         !case.checks.is_empty(),
         "{name} declares nothing it must be true of"
+    );
+    // Both halves of a defect case have to be present, or it silently becomes
+    // an ordinary case that happens to pass, or one that fails the gate.
+    assert_eq!(
+        case.defect.is_some(),
+        case.checks.iter().any(|expectation| expectation.defect),
+        "{name} declares `defect` without any `@!` check, or the other way round"
     );
     case
 }
@@ -275,69 +334,89 @@ fn pixel(pixels: &[u8], width: u32, x: u32, y: u32) -> [u8; 4] {
     pixels[start..start + 4].try_into().expect("rgba8 pixel")
 }
 
-/// Renders a case and reports every declared check it failed.
-fn check(case: &Case) -> (Vec<u8>, Vec<String>) {
+/// Describes how a check did not hold, or `None` if it did.
+fn evaluate(
+    check: &Check,
+    dom: &BlitzDom,
+    snapshot: LayoutSnapshot,
+    pixels: &[u8],
+    width: u32,
+) -> Option<String> {
+    match check {
+        Check::Box { selector, rect } => {
+            let matched = dom
+                .query_selector_all(dom.document(), selector)
+                .unwrap_or_else(|error| panic!("{selector} did not parse: {error:?}"));
+            let [node] = matched[..] else {
+                return Some(format!("{selector} matched {} elements", matched.len()));
+            };
+            let found = dom.bounding_rect(node, snapshot).expect("layout flushed");
+            let found = [found.x, found.y, found.width, found.height];
+            found
+                .iter()
+                .zip(rect)
+                .any(|(found, expected)| {
+                    expected.is_some_and(|expected| (found - expected).abs() > 0.01)
+                })
+                .then(|| format!("{selector} box is {found:?}, declared {rect:?}"))
+        }
+        Check::Pixel { x, y, rgba } => {
+            let found = pixel(pixels, width, *x, *y);
+            (found != *rgba)
+                .then(|| format!("pixel {x},{y} is {}, declared {}", hex(found), hex(*rgba)))
+        }
+        Check::Ink {
+            rect: [x, y, ink_width, height],
+            rgba,
+            at_least,
+            at_most,
+        } => {
+            let matching = (*y..y + height)
+                .flat_map(|row| (*x..x + ink_width).map(move |column| (column, row)))
+                .filter(|(column, row)| pixel(pixels, width, *column, *row) == *rgba)
+                .count();
+            let coverage = matching as f64 / f64::from(ink_width * height);
+            let short = at_least.is_some_and(|bound| coverage < bound);
+            let over = at_most.is_some_and(|bound| coverage > bound);
+            (short || over).then(|| {
+                format!(
+                    "{}x{} at {x},{y} is {:.4} {}, declared {}{:.4}",
+                    ink_width,
+                    height,
+                    coverage,
+                    hex(*rgba),
+                    if short { ">= " } else { "<= " },
+                    at_least.or(*at_most).unwrap_or_default()
+                )
+            })
+        }
+    }
+}
+
+/// Renders a case and reports every declared check it failed, plus every
+/// divergence a `@!` check declared and found — which is the defect the case
+/// documents, and is not a failure until it goes away.
+fn check(case: &Case) -> (Vec<u8>, Vec<String>, Vec<String>) {
     let mut dom = document(&case.html, case.width, case.height);
     let snapshot = dom.flush_layout().expect("layout");
     let pixels = render(&mut dom, case.width, case.height);
     let mut failures = Vec::new();
+    let mut divergences = Vec::new();
 
     for expectation in &case.checks {
-        match expectation {
-            Check::Box { selector, rect } => {
-                let matched = dom
-                    .query_selector_all(dom.document(), selector)
-                    .unwrap_or_else(|error| panic!("{selector} did not parse: {error:?}"));
-                let [node] = matched[..] else {
-                    failures.push(format!("{selector} matched {} elements", matched.len()));
-                    continue;
-                };
-                let found = dom.bounding_rect(node, snapshot).expect("layout flushed");
-                let found = [found.x, found.y, found.width, found.height];
-                if found.iter().zip(rect).any(|(found, expected)| {
-                    expected.is_some_and(|expected| (found - expected).abs() > 0.01)
-                }) {
-                    failures.push(format!("{selector} box is {found:?}, declared {rect:?}"));
-                }
-            }
-            Check::Pixel { x, y, rgba } => {
-                let found = pixel(&pixels, case.width, *x, *y);
-                if found != *rgba {
-                    failures.push(format!(
-                        "pixel {x},{y} is {}, declared {}",
-                        hex(found),
-                        hex(*rgba)
-                    ));
-                }
-            }
-            Check::Ink {
-                rect: [x, y, width, height],
-                rgba,
-                at_least,
-                at_most,
-            } => {
-                let matching = (*y..y + height)
-                    .flat_map(|row| (*x..x + width).map(move |column| (column, row)))
-                    .filter(|(column, row)| pixel(&pixels, case.width, *column, *row) == *rgba)
-                    .count();
-                let coverage = matching as f64 / f64::from(width * height);
-                let short = at_least.is_some_and(|bound| coverage < bound);
-                let over = at_most.is_some_and(|bound| coverage > bound);
-                if short || over {
-                    failures.push(format!(
-                        "{}x{} at {x},{y} is {:.4} {}, declared {}{:.4}",
-                        width,
-                        height,
-                        coverage,
-                        hex(*rgba),
-                        if short { ">= " } else { "<= " },
-                        at_least.or(*at_most).unwrap_or_default()
-                    ));
-                }
-            }
+        let outcome = evaluate(&expectation.check, &dom, snapshot, &pixels, case.width);
+        match (expectation.defect, outcome) {
+            (false, Some(failure)) => failures.push(failure),
+            (true, Some(divergence)) => divergences.push(divergence),
+            (true, None) => failures.push(format!(
+                "{} now holds; the defect this case documents looks fixed — \
+                 drop the `!` and close the gap",
+                expectation.check.label()
+            )),
+            (false, None) => {}
         }
     }
-    (pixels, failures)
+    (pixels, failures, divergences)
 }
 
 fn hex(rgba: [u8; 4]) -> String {
@@ -416,6 +495,7 @@ fn layout_conformance_corpus() {
     let divergence = divergence_directory();
     let _ = std::fs::remove_dir_all(&divergence);
     let mut failures = Vec::new();
+    let mut documented = Vec::new();
     let mut frames = Vec::new();
     let mut oracles = 0;
 
@@ -429,13 +509,21 @@ fn layout_conformance_corpus() {
             &name,
             &std::fs::read_to_string(source).expect("case source"),
         );
-        let (pixels, mut reported) = check(&case);
+        let (pixels, mut reported, divergences) = check(&case);
         oracles += usize::from(case.oracle);
         for failure in reported.drain(..) {
             failures.push(format!("{name}: {failure}"));
         }
+        if let Some(defect) = &case.defect {
+            documented.push(format!("{name} ({defect})"));
+            for divergence in divergences {
+                documented.push(format!("    {divergence}"));
+            }
+        }
 
-        if case.host_fonts {
+        // A defect case's frame is the wrong one by construction, so it gets no
+        // golden; the divergence it declares is the whole of its gate.
+        if case.host_fonts || case.defect.is_some() {
             continue;
         }
         let golden = goldens.join(format!("{name}.png"));
@@ -521,4 +609,10 @@ fn layout_conformance_corpus() {
             "not compared — this host's raster fingerprint differs from the goldens'"
         }
     );
+    if !documented.is_empty() {
+        println!(
+            "Known Blitz defects, still diverging as declared:\n  {}",
+            documented.join("\n  ")
+        );
+    }
 }

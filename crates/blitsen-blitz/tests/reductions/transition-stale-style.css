@@ -1,0 +1,3 @@
+#transitioned { transition: all 0.2s; visibility: hidden }
+#plain { visibility: hidden }
+#control { width: 100px; height: 20px; background: #ef4444 }
