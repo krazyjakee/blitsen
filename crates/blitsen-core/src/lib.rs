@@ -125,6 +125,16 @@ where
             continue;
         }
         let (source, identifier) = if let Some(src) = script.src {
+            // A source we will not fetch skips that script and leaves the rest of
+            // the document running, as a browser does with a request that fails.
+            // Aborting the run instead meant one analytics tag stopped every other
+            // script on the page. The export refuses a remote script outright, so
+            // this path is reached only by a directly opened directory, and it is
+            // reported rather than passed over in silence.
+            if is_remote_script(&src) {
+                eprintln!("blitsen: skipping remote script, which is not fetched: {src}");
+                continue;
+            }
             let path = resolve_local_script(root, &src)?;
             let source = std::fs::read_to_string(&path).map_err(|error| {
                 JsError::new(format!("could not read script {}: {error}", path.display()))
@@ -151,6 +161,12 @@ where
         results.push(result);
     }
     Ok(results)
+}
+
+/// Reports a `src` Blitsen will not fetch: another origin, or a server root that
+/// has no server behind it.
+fn is_remote_script(src: &str) -> bool {
+    src.starts_with("//") || src.contains("://")
 }
 
 fn resolve_local_script(root: &Path, src: &str) -> Result<PathBuf, JsError> {
@@ -1705,23 +1721,42 @@ mod tests {
     }
 
     #[test]
-    fn document_scripts_reject_server_root_and_remote_sources() {
+    fn document_scripts_reject_a_server_root_source() {
         let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixture/index.html");
-        for src in ["/assets/app.js", "https://example.com/app.js"] {
-            let document = MockScripts(vec![DocumentScript {
-                source: String::new(),
-                src: Some(src.into()),
-                script_type: None,
-                async_attribute: false,
-                defer_attribute: false,
-            }]);
-            let error = execute_document_scripts(
-                &document,
-                &mut RecordingScriptEngine::default(),
-                &fixture,
-            )
-            .unwrap_err();
-            assert!(error.message().contains("must be relative"));
+        let document = MockScripts(vec![DocumentScript {
+            source: String::new(),
+            src: Some("/assets/app.js".into()),
+            script_type: None,
+            async_attribute: false,
+            defer_attribute: false,
+        }]);
+        let error =
+            execute_document_scripts(&document, &mut RecordingScriptEngine::default(), &fixture)
+                .unwrap_err();
+        assert!(error.message().contains("must be relative"));
+    }
+
+    /// A remote script is skipped rather than fatal, so the rest of the document
+    /// still runs — one analytics tag used to stop every other script on the page.
+    #[test]
+    fn a_remote_script_skips_without_stopping_the_document() {
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixture/index.html");
+        let script = |src: Option<&str>, source: &str| DocumentScript {
+            source: source.into(),
+            src: src.map(Into::into),
+            script_type: None,
+            async_attribute: false,
+            defer_attribute: false,
+        };
+        for remote in ["https://example.com/gtag.js", "//cdn.example.com/a.js"] {
+            let document = MockScripts(vec![script(Some(remote), ""), script(None, "1")]);
+            let mut engine = RecordingScriptEngine::default();
+            assert_eq!(
+                execute_document_scripts(&document, &mut engine, &fixture).unwrap(),
+                vec![1],
+                "the inline script after {remote} still runs"
+            );
+            assert_eq!(engine.evaluations.len(), 1);
         }
     }
 }
