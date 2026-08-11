@@ -77,7 +77,7 @@ const snapshot = JSON.parse(native.runBridgeHarness(
   `<style>#x { display:block; width:100px; height:20px }</style><div id="x">old</div>`,
   `{ if (window !== globalThis || window.document !== document || innerWidth !== 320 || innerHeight !== 180 || devicePixelRatio !== 1)
        throw new Error("window identity, document, or initial viewport failed");
-     if ("indexedDB" in window || "matchMedia" in window)
+     if ("indexedDB" in window || "IntersectionObserver" in window)
        throw new Error("unsupported browser globals must be omitted");
      if (!(navigator instanceof Navigator) || !(localStorage instanceof Storage))
        throw new Error("the host's navigator and storage must be replaced by Blitsen's own");
@@ -618,6 +618,111 @@ assert.equal(styled.attributes["data-style"], "ok");
 assert.match(styled.inline_style, /left:\s*5px/);
 assert.doesNotMatch(styled.inline_style, /definitely-invalid/);
 assert.equal(styled.layout.width, 90);
+
+// Read-back style: the cascade, the device and element geometry, asked from
+// JavaScript. Asserted by what each answers, not by whether it exists — the
+// manifest check below already covers presence.
+const readBack = JSON.parse(native.runBridgeHarness(
+  `<style>
+     :root { --brand: #123456 }
+     #resolved { display:block; width:50%; height:20px; padding:4px; border:2px solid;
+       color:rgb(1,2,3) }
+     #resolved.hot { color:rgb(9,9,9); height:44px }
+     #observed { display:block; width:60px; height:30px; padding:5px; border:1px solid }
+   </style>
+   <div id="resolved">t</div><div id="observed"></div>`,
+  `{ const expect = (condition, message) => { if (!condition) throw new Error(message); };
+     const element = document.getElementById("resolved");
+     const style = getComputedStyle(element);
+     expect(style instanceof CSSStyleDeclaration && getComputedStyle(element) === style,
+       "a computed declaration is a CSSStyleDeclaration and is stable per element");
+     // Nothing here was ever an inline declaration: this is the stylesheet
+     // resolved by Blitz, which element.style cannot see.
+     expect(element.style.color === "" && style.color === "rgb(1, 2, 3)" &&
+       style.getPropertyValue("color") === "rgb(1, 2, 3)", "resolved value: " + style.color);
+     expect(style.getPropertyValue("--brand") === "#123456" &&
+       style.getPropertyValue("--unset") === "",
+       "a custom property resolves through inheritance: " + style.getPropertyValue("--brand"));
+     // 320px viewport less the body's 8px margins: a percentage becomes the
+     // used value, which only layout knows.
+     expect(style.width === "152px" && style.height === "20px", "used box size: " + style.width);
+     expect(style.getPropertyValue("padding") === "4px" && style.margin === "0px",
+       "shorthands serialize from their longhands: " + style.getPropertyValue("padding"));
+     expect(style.getPropertyValue("not-a-property") === "" &&
+       getComputedStyle(document.createElement("div")).color === "",
+       "an unknown property and an element the cascade never reached read as absent");
+     element.classList.add("hot");
+     expect(style.color === "rgb(9, 9, 9)" && style.height === "44px",
+       "a class mutation changes what the same declaration resolves to: " + style.color);
+     expect(style.cssText === "", "a computed declaration block serializes as nothing");
+     for (const [operation, message] of [
+       [() => style.setProperty("color", "red"), "setProperty"],
+       [() => { style.color = "red"; }, "assignment"],
+     ]) {
+       let refused;
+       try { operation(); } catch (error) { refused = error.name; }
+       if (refused !== "NoModificationAllowedError") throw new Error("read-only: " + message);
+     }
+     let notElement, pseudo;
+     try { getComputedStyle(document.createTextNode("x")); } catch (error) { notElement = error.constructor.name; }
+     try { getComputedStyle(element, "::before"); } catch (error) { pseudo = error.name; }
+     expect(notElement === "TypeError" && pseudo === "NotSupportedError",
+       "a non-element and a pseudo-element are refused rather than answered");
+
+     expect(matchMedia("(prefers-color-scheme: light)").matches &&
+       !matchMedia("(prefers-color-scheme: dark)").matches, "the window's colour scheme");
+     const unknownFeature = matchMedia("(prefers-reduced-motion: reduce)");
+     const invalid = matchMedia("!!!");
+     expect(!unknownFeature.matches && !invalid.matches && invalid.media === "not all",
+       "an unknown feature does not match and an invalid query serializes as not all");
+     const query = matchMedia("(min-width: 500px)");
+     expect(query instanceof MediaQueryList && query.media === "(min-width: 500px)" &&
+       !query.matches, "the viewport is 320px wide");
+     const changes = [];
+     query.addEventListener("change", event => changes.push(["listener", event.matches, event.media]));
+     query.onchange = event => changes.push(["onchange", event.matches]);
+     query.addListener(event => changes.push(["legacy", event instanceof MediaQueryListEvent]));
+     __blitsenWindowResize("640", "480");
+     __blitsenAnimationFrameTick(0);
+     expect(query.matches, "a resize re-evaluates the query");
+     expect(JSON.stringify(changes) === JSON.stringify([["listener", true, "(min-width: 500px)"],
+       ["onchange", true], ["legacy", true]]), "change delivery: " + JSON.stringify(changes));
+     __blitsenAnimationFrameTick(16);
+     expect(changes.length === 3, "a query that did not flip dispatches nothing");
+
+     const observed = document.getElementById("observed");
+     const sizes = [];
+     const observer = new ResizeObserver(entries => sizes.push(entries.map(entry =>
+       [entry.target === observed, entry.contentRect.x, entry.contentRect.width,
+        entry.contentRect.height, entry.borderBoxSize[0].inlineSize,
+        entry.contentBoxSize[0].blockSize])));
+     let badTarget, badBox;
+     try { observer.observe(document.createTextNode("x")); } catch (error) { badTarget = error.constructor.name; }
+     try { observer.observe(observed, { box: "device-pixel-content-box" }); }
+     catch (error) { badBox = error.constructor.name; }
+     expect(badTarget === "TypeError" && badBox === "TypeError",
+       "a non-element target and an unreportable box are refused");
+     expect(!__blitsenAnimationFramesPending(), "nothing is owed before observing");
+     observer.observe(observed);
+     expect(__blitsenAnimationFramesPending(),
+       "an unreported observation keeps the host turning until it is delivered");
+     __blitsenAnimationFrameTick(32);
+     expect(!__blitsenAnimationFramesPending(), "a delivered observation owes nothing");
+     __blitsenAnimationFrameTick(48);
+     observed.style.width = "100px";
+     __blitsenAnimationFrameTick(64);
+     observer.unobserve(observed);
+     observed.style.width = "20px";
+     __blitsenAnimationFrameTick(80);
+     expect(JSON.stringify(sizes) === JSON.stringify([
+       [[true, 6, 60, 30, 72, 30]], [[true, 6, 100, 30, 112, 30]],
+     ]), "resize delivery: " + JSON.stringify(sizes));
+     observer.disconnect();
+     element.setAttribute("data-read-back", "ok"); }`,
+  320,
+  180,
+));
+assert.equal(readBack.nodes.find(node => node.attributes.id === "resolved").attributes["data-read-back"], "ok");
 
 const acceptanceHtml =
   `<style>#x { width: 180px; height: 80px; background: #ef4444 }</style><div id="x">old</div>`;

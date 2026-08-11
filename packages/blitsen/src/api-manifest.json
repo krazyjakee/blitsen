@@ -838,20 +838,6 @@
       "pattern": "(?<![.\\w$])HTMLMediaElement\\b"
     },
     {
-      "api": "MediaQueryList",
-      "kind": "global",
-      "status": "absent",
-      "code": "WEB_MEDIA",
-      "pattern": "(?<![.\\w$])MediaQueryList\\b"
-    },
-    {
-      "api": "matchMedia",
-      "kind": "global",
-      "status": "absent",
-      "code": "WEB_MEDIA",
-      "pattern": "(?<![.\\w$])matchMedia\\b"
-    },
-    {
       "api": "alert",
       "kind": "global",
       "status": "absent",
@@ -1062,7 +1048,7 @@
     {
       "api": "ResizeObserver",
       "kind": "global",
-      "status": "absent",
+      "status": "implemented",
       "code": "WEB_OBSERVER",
       "pattern": "(?<![.\\w$])ResizeObserver\\b"
     },
@@ -1083,9 +1069,30 @@
     {
       "api": "getComputedStyle",
       "kind": "global",
-      "status": "absent",
+      "status": "implemented",
       "code": "WEB_STYLE",
       "pattern": "(?<![.\\w$])getComputedStyle\\b"
+    },
+    {
+      "api": "matchMedia",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_STYLE",
+      "pattern": "(?<![.\\w$])matchMedia\\b"
+    },
+    {
+      "api": "MediaQueryList",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_STYLE",
+      "pattern": "(?<![.\\w$])MediaQueryList\\b"
+    },
+    {
+      "api": "MediaQueryListEvent",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_STYLE",
+      "pattern": "(?<![.\\w$])MediaQueryListEvent\\b"
     },
     {
       "api": "CSSStyleSheet",
@@ -1222,14 +1229,14 @@
     },
     "WEB_OBSERVER": {
       "severity": "warning",
-      "message": "Layout and performance observers are not implemented.",
-      "guidance": "Read geometry in a requestAnimationFrame callback, or observe resize on window.",
+      "message": "This observer is not implemented; only ResizeObserver is.",
+      "guidance": "Read geometry in a requestAnimationFrame callback, or observe the element's size instead.",
       "extra": null
     },
     "WEB_STYLE": {
       "severity": "error",
-      "message": "Computed style and the stylesheet objects are not implemented.",
-      "guidance": "Read the inline style property, or drive the value from a class.",
+      "message": "The CSSOM stylesheet objects are not implemented.",
+      "guidance": "Read a value with getComputedStyle, or drive it from a class.",
       "extra": null
     },
     "WEB_COMPONENTS": {

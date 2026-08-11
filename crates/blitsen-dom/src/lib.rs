@@ -409,6 +409,12 @@ pub struct Rect {
 pub struct LayoutMetrics {
     /// Viewport-relative border box.
     pub rect: Rect,
+    /// Content box, positioned relative to the border box's own origin.
+    ///
+    /// That origin is what `ResizeObserverEntry.contentRect` reports, and it is
+    /// the one measurement `rect` and the client sizes below cannot express:
+    /// they stop at the padding box.
+    pub content_rect: Rect,
     /// Rounded border-box width.
     pub offset_width: f64,
     /// Rounded border-box height.
@@ -515,6 +521,18 @@ impl ImageState {
             errored: false,
         }
     }
+}
+
+/// One CSS media query evaluated against the current device.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MediaQueryMatch {
+    /// The query as the CSS parser serializes it.
+    ///
+    /// A query the parser rejects serializes as `not all`, which is what CSS
+    /// error handling turns an unparsable media query list into.
+    pub media: String,
+    /// Whether the query matches the device this document is rendered for.
+    pub matches: bool,
 }
 
 /// Result of resolving a viewport point against the laid-out document.
@@ -723,6 +741,27 @@ pub trait DomBackend {
         node: Self::NodeId,
         snapshot: LayoutSnapshot,
     ) -> Result<LayoutMetrics, DomError>;
+    /// Returns one resolved CSS property value from a validated snapshot.
+    ///
+    /// `None` distinguishes "this renderer has no value here" — an unknown
+    /// property name, or a node the cascade never reached — from a property
+    /// that genuinely resolves to the empty string. The read is snapshot gated
+    /// because CSSOM resolves the box properties to their used values, which
+    /// only layout knows.
+    fn resolved_style(
+        &self,
+        node: Self::NodeId,
+        property: &str,
+        snapshot: LayoutSnapshot,
+    ) -> Result<Option<String>, DomError>;
+
+    /// Evaluates a CSS media query against the document's current device.
+    ///
+    /// This is the same evaluation the cascade performs for `@media`, so a
+    /// feature the style engine does not implement is unknown here too, and an
+    /// unknown feature makes the query not match.
+    fn media_query(&mut self, query: &str) -> Result<MediaQueryMatch, DomError>;
+
     /// Sets one or both scroll axes without bubbling into an ancestor scroller.
     fn set_scroll_offset(
         &mut self,

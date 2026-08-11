@@ -15,8 +15,8 @@ use std::sync::Arc;
 
 use blitsen_dom::{
     DomBackend, DomError, DomName, FrameInvalidation, HitTest, ImageState, InvalidationMetrics,
-    InvalidationMode, InvalidationTracker, LayoutMetrics, LayoutSnapshot, NATIVE_VIEWPORT_TAG,
-    Namespace, NodeKind, Rect, ViewportSurface,
+    InvalidationMode, InvalidationTracker, LayoutMetrics, LayoutSnapshot, MediaQueryMatch,
+    NATIVE_VIEWPORT_TAG, Namespace, NodeKind, Rect, ViewportSurface,
 };
 use blitz::dom::node::ImageData;
 use blitz::dom::{DocumentConfig, LocalName, NodeData, NodeId, QualName, ns};
@@ -24,6 +24,11 @@ use blitz::html::{HtmlDocument, HtmlProvider};
 use kurbo::Point;
 use style::computed_values::pointer_events::T as PointerEvents;
 use style::computed_values::visibility::T as Visibility;
+use style::context::QuirksMode;
+use style::properties::{PropertyDeclaration, PropertyId};
+use style::stylesheets::{
+    AllowImportRules, CssRule, CustomMediaEvaluator, Origin, StylesheetContents, UrlExtraData,
+};
 use style::values::computed::Overflow;
 
 use resources::{ResourceLog, ResourceState};
@@ -40,6 +45,15 @@ const RESOURCE_RESOLVE_PASSES: usize = 4;
 
 type HitCandidate = (Vec<i32>, usize, f32, f32);
 type RankedHit = (Vec<i32>, usize, usize, NodeId, f32, f32);
+
+/// Serializes a CSS-pixel length the way a resolved value is written.
+///
+/// Layout arithmetic is `f32`, so a used length can carry noise no browser
+/// would ever print; two decimals is finer than any display can show and coarse
+/// enough to hide it.
+fn css_pixels(length: f32) -> String {
+    format!("{}px", (f64::from(length) * 100.0).round() / 100.0)
+}
 
 fn compare_stacking_paths(left: &[i32], right: &[i32]) -> Ordering {
     (0..left.len().max(right.len()))
@@ -875,8 +889,27 @@ impl DomBackend for BlitzDom {
         } else {
             *element.scroll_offset()
         };
+        let content_rect = Rect {
+            x: layout.border.left + layout.padding.left,
+            y: layout.border.top + layout.padding.top,
+            width: (layout.size.width
+                - layout.border.left
+                - layout.border.right
+                - layout.padding.left
+                - layout.padding.right
+                - layout.scrollbar_size.width)
+                .max(0.0),
+            height: (layout.size.height
+                - layout.border.top
+                - layout.border.bottom
+                - layout.padding.top
+                - layout.padding.bottom
+                - layout.scrollbar_size.height)
+                .max(0.0),
+        };
         Ok(LayoutMetrics {
             rect,
+            content_rect,
             offset_width: f64::from(layout.size.width.round()),
             offset_height: f64::from(layout.size.height.round()),
             client_width: f64::from(
@@ -897,6 +930,98 @@ impl DomBackend for BlitzDom {
             ),
             scroll_left: scroll.x,
             scroll_top: scroll.y,
+        })
+    }
+
+    fn resolved_style(
+        &self,
+        node: NodeId,
+        property: &str,
+        snapshot: LayoutSnapshot,
+    ) -> Result<Option<String>, DomError> {
+        let element = self.node(node)?;
+        element.element_data().ok_or(DomError::InvalidNodeType)?;
+        // A node the cascade never reached — one that has never been connected —
+        // has no resolved style at all, rather than a default one.
+        let Some(styles) = element.primary_styles() else {
+            return Ok(None);
+        };
+        // CSSOM resolves `width` and `height` to the used value, which is the
+        // content box layout produced and not the declaration that asked for it.
+        // A box that was never generated has no used value to report.
+        if matches!(property, "width" | "height") && !styles.clone_display().is_none() {
+            let content = self.layout_metrics(node, snapshot)?.content_rect;
+            let used = if property == "width" {
+                content.width
+            } else {
+                content.height
+            };
+            return Ok(Some(css_pixels(used)));
+        }
+        if snapshot.revision() != self.revision || self.flushed_revision != self.revision {
+            return Err(DomError::LayoutNotFlushed);
+        }
+        let Ok(id) = PropertyId::parse_enabled_for_all_content(property) else {
+            return Ok(None);
+        };
+        Ok(match id.as_shorthand() {
+            Err(declaration) => Some(styles.computed_value_to_string(declaration)),
+            // A shorthand has no computed value of its own: it is the
+            // serialization of its longhands, and only some sets of longhand
+            // values are expressible as one.
+            Ok(shorthand) => {
+                let longhands: Vec<PropertyDeclaration> = shorthand
+                    .longhands()
+                    .map(|longhand| styles.computed_or_resolved_declaration(longhand, None))
+                    .collect();
+                let mut text = String::new();
+                shorthand
+                    .longhands_to_css(&longhands.iter().collect::<Vec<_>>(), &mut text)
+                    .ok()
+                    .filter(|()| !text.is_empty())
+                    .map(|()| text)
+            }
+        })
+    }
+
+    fn media_query(&mut self, query: &str) -> Result<MediaQueryMatch, DomError> {
+        let guard = self.document.guard().clone();
+        // Parsed as the stylesheet rule it is, so a query reaches JavaScript
+        // through the same parser and the same error handling the cascade uses.
+        // The rule needs a body a parser will not discard.
+        let sheet = StylesheetContents::from_str(
+            &format!("@media {query} {{ x {{ color: red }} }}"),
+            UrlExtraData::from(self.document.url().clone()),
+            Origin::Author,
+            &guard,
+            None,
+            None,
+            QuirksMode::NoQuirks,
+            AllowImportRules::No,
+            None,
+        );
+        let read = guard.read();
+        let media = sheet
+            .rules
+            .read_with(&read)
+            .0
+            .iter()
+            .find_map(|rule| match rule {
+                CssRule::Media(rule) => Some(rule.media_queries.read_with(&read)),
+                _ => None,
+            })
+            .ok_or_else(|| DomError::Syntax(format!("not a media query: {query}")))?;
+        // `MediaList` derives its `Debug` from its CSS serialization, which is
+        // what CSSOM asks `MediaQueryList.media` to report.
+        let text = format!("{media:?}");
+        let matches = media.evaluate(
+            self.document.stylist_device(),
+            QuirksMode::NoQuirks,
+            &mut CustomMediaEvaluator::none(),
+        );
+        Ok(MediaQueryMatch {
+            media: text,
+            matches,
         })
     }
 

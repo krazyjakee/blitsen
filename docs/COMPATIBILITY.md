@@ -27,6 +27,7 @@ JavaScript comes from the [generated manifest](#capability-tiers) below.
 | Framework DOM | Stable node identity, standard node type/name/value/owner fields, `MutationObserver`, creation/insertion/removal, text and attributes, elements, comments, namespaced elements, fragments and `<template>` |
 | Selection and collections | `querySelector`, `querySelectorAll` and `getElementsByTagName` on the document and on an element, `getElementById`, `closest`, `matches`, `children`, `dataset`, static `NodeList`, `classList`, `link.relList` |
 | Events | Capture/target/bubble listeners, click, mouse, wheel, keyboard, focus, resize and lifecycle events |
+| Style read-back | `getComputedStyle`, `matchMedia`/`MediaQueryList`, `ResizeObserver` |
 | Scheduling | `requestAnimationFrame`, timers and microtasks |
 | Networking | `fetch`, `Headers`, `Request`, `Response`, `Blob`, `AbortController` over `http`/`https`, with buffered bodies |
 | Routing | In-memory `history` and `location`, `popstate` and `hashchange` |
@@ -159,6 +160,75 @@ Without it Vite's own module-preload polyfill installs itself and `fetch`es ever
 address with no server behind it, which takes down any code-split build. The preload keywords are
 honoured by doing nothing: an exported application's chunks are local files with no cache to warm.
 
+## Reading style back
+
+Blitz has already resolved the cascade, evaluated `@media` and laid the document out. These three
+APIs ask it those answers from JavaScript rather than keeping a second idea of what an element's
+style is; none of them is a shadow implementation.
+
+**`getComputedStyle(element)`** returns a read-only `CSSStyleDeclaration` over the resolved
+style — the stylesheet, not the inline declaration `element.style` reads. It is live: the same
+object reflects a class or attribute mutation on the next read. Custom properties resolve through
+inheritance, so a `--brand` declared on `:root` reads on any descendant.
+
+Every read is layout-dependent, because CSSOM resolves `width` and `height` to the **used** value:
+`width: 50%` reads as the pixel width layout produced. So a read goes through the same layout flush
+`getBoundingClientRect` does, and a read *after* a write is a forced synchronous layout — the
+expensive kind, counted by `BLITSEN_DEV_LAYOUT_WARNINGS` alongside the geometry reads. Batch reads
+before writes as you would in a browser.
+
+Where it differs from a browser:
+
+- **An element the cascade has never reached reads empty.** A detached element is not in the
+  document, so this renderer has no resolved style for it at all, and every property reads `""`
+  rather than the initial value a browser would invent. Everything connected — including
+  `display: none` subtrees — resolves normally.
+- **Shorthands serialize from their longhands**, and read `""` when those longhands do not compose
+  into one — which is also what `all` does in a browser. `margin`, `padding`, `border-width` and
+  the rest of the ordinary shorthands compose.
+- **The declaration is not enumerable.** `length`, `item()` and index access are absent; ask for
+  the properties you want by name. `cssText` is `""`, which is what CSSOM specifies for a computed
+  block anyway, and every mutator throws `NoModificationAllowedError` rather than silently
+  ignoring the write.
+- **Pseudo-elements are refused**, with a `NotSupportedError` naming the selector. A pseudo-element
+  box is not addressable here, and answering with the originating element's style would be a wrong
+  answer rather than a missing one.
+- Only `width` and `height` are used values. The inset and box properties report their computed
+  value, which is the declaration resolved to absolute units rather than the used geometry.
+
+**`matchMedia(query)`** runs the query through the same parser and the same evaluator the cascade
+uses for `@media`, so what matches in a stylesheet matches here. `MediaQueryList` carries `media`,
+`matches`, `addEventListener("change")`, `onchange`, and the pre-2019 `addListener`/`removeListener`
+a library still installs; the event is a `MediaQueryListEvent` with `media` and `matches`.
+
+The features the style engine implements are `width`, `height`, `device-width`, `device-height`,
+`orientation`, `aspect-ratio`, `resolution`, `device-pixel-ratio`, `scan`, `pointer`, `any-pointer`,
+`hover`, `any-hover` and `prefers-color-scheme`. Anything else — `prefers-reduced-motion`,
+`prefers-contrast`, `forced-colors` — is an unknown feature to the engine, and an unknown feature
+does not match, which is the CSS answer rather than a Blitsen one. An unparsable query serializes
+as `not all` and does not match, as it does in a browser.
+
+`prefers-color-scheme` is **`light` for the life of the process**: the window is created with a
+light colour scheme and nothing changes it yet, so a dark-mode toggle driven by the system
+preference stays light while one driven by a class or `localStorage` works normally. The only
+device state that can change is the viewport, so a `change` event is dispatched when — and only
+when — a window resize flips a query, at the start of the frame turn.
+
+**`ResizeObserver`** observes elements, with `observe`, `unobserve` and `disconnect`. An entry
+carries `target`, `contentRect`, `borderBoxSize` and `contentBoxSize`; `contentRect` is the content
+box positioned from the border box's own origin, exactly as the specification defines it.
+
+Observations are delivered **at the start of the frame turn**, beside the `<blitsen-view>` surface
+resizes and before any `requestAnimationFrame` callback — the same defined point in the turn that
+network results land at. The first observation for an element is guaranteed: an undelivered
+observation keeps the host turning the way an in-flight request does. A browser delivers after
+layout and before paint instead, so an entry here describes the layout the previous frame settled
+on. `box: "device-pixel-content-box"` is refused with a `TypeError`, because the device-pixel
+snapping it reports is not exposed; `inlineSize` is width and `blockSize` is height, which holds
+for every writing mode this renderer lays out.
+
+`IntersectionObserver`, `PerformanceObserver`, `CSSStyleSheet` and `StyleSheetList` remain absent.
+
 ## Storage
 
 `localStorage` and `sessionStorage` exist, hold what is put in them, and **lose it when the
@@ -254,13 +324,13 @@ determinism gate instead.
 | WEB_FORM | — | `FormData`, `File`, `FileReader` |
 | WEB_CANVAS | — | `HTMLCanvasElement`, `CanvasRenderingContext2D`, `OffscreenCanvas`, `ImageData`, `Path2D` |
 | WEB_GPU | — | `WebGLRenderingContext`, `WebGL2RenderingContext`, `GPUCanvasContext` |
-| WEB_MEDIA | — | `Image`, `Audio`, `AudioContext`, `webkitAudioContext`, `HTMLMediaElement`, `MediaQueryList`, `matchMedia` |
+| WEB_MEDIA | — | `Image`, `Audio`, `AudioContext`, `webkitAudioContext`, `HTMLMediaElement` |
 | WEB_DIALOG | — | `alert`, `confirm`, `prompt`, `print` |
 | WEB_NAVIGATION | — | `open`, `close`, `navigation`, `document.write`, `document.writeln`, `document.open`, `document.close`, `location.assign`, `location.replace`, `location.reload`, `location.ancestorOrigins` |
 | WEB_COOKIE | — | `document.cookie`, `cookieStore`, `Headers.getSetCookie` |
 | WEB_DEVICE | `Navigator`, `navigator`, `navigator.userAgent`, `navigator.platform`, `navigator.language` | `screen`, `Notification`, `caches` |
-| WEB_OBSERVER | — | `ResizeObserver`, `IntersectionObserver`, `PerformanceObserver` |
-| WEB_STYLE | — | `getComputedStyle`, `CSSStyleSheet`, `StyleSheetList` |
+| WEB_OBSERVER | `ResizeObserver` | `IntersectionObserver`, `PerformanceObserver` |
+| WEB_STYLE | `getComputedStyle`, `matchMedia`, `MediaQueryList`, `MediaQueryListEvent` | `CSSStyleSheet`, `StyleSheetList` |
 | WEB_COMPONENTS | — | `customElements`, `ShadowRoot`, `DOMParser` |
 
 | Diagnostic | Severity | Reported as |
@@ -283,8 +353,8 @@ determinism gate instead.
 | `WEB_NAVIGATION` | error | Document navigation is deliberately absent; there is no page to leave. |
 | `WEB_COOKIE` | error | There is no origin and no cookie jar behind an exported application. |
 | `WEB_DEVICE` | warning | This device API is not implemented. |
-| `WEB_OBSERVER` | warning | Layout and performance observers are not implemented. |
-| `WEB_STYLE` | error | Computed style and the stylesheet objects are not implemented. |
+| `WEB_OBSERVER` | warning | This observer is not implemented; only ResizeObserver is. |
+| `WEB_STYLE` | error | The CSSOM stylesheet objects are not implemented. |
 | `WEB_COMPONENTS` | error | Custom elements, shadow DOM and DOM parsing are not implemented. |
 | `CSS_TRANSITION` | warning | A property named by `transition` keeps its pre-stylesheet value (Blitz bug 689). |
 | `CSS_FIXED` | warning | Fixed and sticky boxes resolve against the root box, not the viewport (Blitz bug 690). |

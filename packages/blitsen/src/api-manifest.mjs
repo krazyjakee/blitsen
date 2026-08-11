@@ -43,7 +43,7 @@ const CATALOGUE = {
     "Path2D"],
   WEB_GPU: ["WebGLRenderingContext", "WebGL2RenderingContext", "GPUCanvasContext"],
   WEB_MEDIA: [["Image", "\\bnew Image\\s*\\("], ["Audio", "\\bnew Audio\\s*\\("], "AudioContext",
-    "webkitAudioContext", "HTMLMediaElement", "MediaQueryList", "matchMedia"],
+    "webkitAudioContext", "HTMLMediaElement"],
   WEB_DIALOG: [["alert", "\\balert\\s*\\("], ["confirm", "\\bconfirm\\s*\\("],
     ["prompt", "\\bprompt\\s*\\("], ["print", "\\bwindow\\.print\\s*\\("]],
   WEB_NAVIGATION: [["open", "\\bwindow\\.open\\s*\\("], ["close", null], ["navigation", null],
@@ -53,7 +53,8 @@ const CATALOGUE = {
   WEB_DEVICE: ["Navigator", "navigator", "navigator.userAgent", "navigator.platform",
     "navigator.language", ["screen", null], "Notification", ["caches", null]],
   WEB_OBSERVER: ["ResizeObserver", "IntersectionObserver", "PerformanceObserver"],
-  WEB_STYLE: ["getComputedStyle", "CSSStyleSheet", "StyleSheetList"],
+  WEB_STYLE: ["getComputedStyle", "matchMedia", "MediaQueryList", "MediaQueryListEvent",
+    "CSSStyleSheet", "StyleSheetList"],
   WEB_COMPONENTS: ["customElements", "ShadowRoot", "DOMParser"],
 };
 
@@ -91,10 +92,10 @@ const DIAGNOSTICS = {
     "Keep session state in memory or in a file the application owns."],
   WEB_DEVICE: ["warning", "This device API is not implemented.",
     "Feature-detect it, or use the native modules for capability the web does not have."],
-  WEB_OBSERVER: ["warning", "Layout and performance observers are not implemented.",
-    "Read geometry in a requestAnimationFrame callback, or observe resize on window."],
-  WEB_STYLE: ["error", "Computed style and the stylesheet objects are not implemented.",
-    "Read the inline style property, or drive the value from a class."],
+  WEB_OBSERVER: ["warning", "This observer is not implemented; only ResizeObserver is.",
+    "Read geometry in a requestAnimationFrame callback, or observe the element's size instead."],
+  WEB_STYLE: ["error", "The CSSOM stylesheet objects are not implemented.",
+    "Read a value with getComputedStyle, or drive it from a class."],
   WEB_COMPONENTS: ["error", "Custom elements, shadow DOM and DOM parsing are not implemented.",
     "Render with ordinary elements the bundler already emits."],
 };

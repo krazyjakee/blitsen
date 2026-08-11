@@ -74,6 +74,8 @@ const BOOTSTRAP: &str = r##"
   };
   const animationFrameTick = timestamp => {
     notifySurfaceResizes();
+    notifyResizeObservers();
+    notifyMediaQueries();
     settleFetches();
     const callbacks = animationFrames;
     animationFrames = new Map();
@@ -87,9 +89,10 @@ const BOOTSTRAP: &str = r##"
     if (__blitsenDevLayoutWarnings && forcedLayoutsThisFrame > 0)
       console.warn(`Blitsen: ${forcedLayoutsThisFrame} forced synchronous layout(s) in this frame`);
     forcedLayoutsThisFrame = 0;
-    // In-flight requests keep the host turning: their landing point is this
-    // function, so a loop that stopped would never deliver them.
-    return animationFrames.size + inflightFetches.size;
+    // In-flight requests and undelivered resize observations keep the host
+    // turning: their landing point is this function, so a loop that stopped
+    // would never deliver them.
+    return animationFrames.size + inflightFetches.size + pendingResizeObservations();
   };
 
   const eventStates = new WeakMap();
@@ -786,6 +789,188 @@ const BOOTSTRAP: &str = r##"
     _setJsProperty(property, value) { call("styleSetJs", this._element[handle], property, value); }
   }
 
+  // Computed style. Blitz has already resolved the cascade, so this reads that
+  // answer back rather than keeping a second idea of what an element's style is.
+  // Every read is layout-dependent — `width` and `height` resolve to the used
+  // value — so it takes the same flush the geometry reads take, and a read after
+  // a write counts as the forced layout it is.
+  const readOnlyStyle = () => {
+    throw new DOMException("a computed style declaration is read-only", "NoModificationAllowedError");
+  };
+
+  class CSSResolvedStyleDeclaration extends CSSStyleDeclaration {
+    // An empty string here is what a browser returns too: an unknown property,
+    // an unset custom property, or a shorthand whose longhands do not compose.
+    // The one case a browser answers differently is an element the cascade has
+    // never reached — see COMPATIBILITY.md.
+    getPropertyValue(property) {
+      return recordForcedLayout(
+        call("computedStyle", this._element[handle], this._name(property))).value ?? "";
+    }
+    // CSSOM: a computed declaration block serializes as nothing.
+    get cssText() { return ""; }
+    set cssText(value) { readOnlyStyle(); }
+    setProperty(property, value) { readOnlyStyle(); }
+    removeProperty(property) { readOnlyStyle(); }
+    _getJsProperty(property) {
+      return recordForcedLayout(
+        call("computedStyleJs", this._element[handle], property)).value ?? "";
+    }
+    _setJsProperty(property, value) { readOnlyStyle(); }
+  }
+
+  const computedStyleCache = new WeakMap();
+  const getComputedStyle = (element, pseudoElement = null) => {
+    if (!(element instanceof Element)) throw new TypeError("getComputedStyle requires an Element");
+    // A pseudo-element box is not addressable through this bridge, and answering
+    // with the originating element's style would be a wrong answer rather than
+    // a missing one.
+    if (pseudoElement != null && String(pseudoElement) !== "")
+      throw new DOMException(`no resolved style for ${pseudoElement}`, "NotSupportedError");
+    let style = computedStyleCache.get(element);
+    if (!style) {
+      style = new Proxy(new CSSResolvedStyleDeclaration(element), {
+        get(target, property, receiver) {
+          if (typeof property !== "string" || property in target) return Reflect.get(target, property, receiver);
+          return target._getJsProperty(property);
+        },
+        set() { readOnlyStyle(); },
+      });
+      computedStyleCache.set(element, style);
+    }
+    return style;
+  };
+
+  // Media queries. Stylo evaluates `@media` for the cascade; this asks it the
+  // same question from JavaScript, so a feature the style engine does not
+  // implement is unknown to both and its query does not match.
+  const mediaQueryLists = new Set();
+  const mediaStates = new WeakMap();
+  const mediaStateFor = list => {
+    const state = mediaStates.get(list);
+    if (!state) throw new TypeError("Illegal invocation");
+    return state;
+  };
+
+  class MediaQueryListEvent extends Event {
+    constructor(type, options = {}) {
+      super(type, options);
+      Object.defineProperties(this, {
+        media: { value: String(options.media ?? ""), enumerable: true },
+        matches: { value: Boolean(options.matches), enumerable: true },
+      });
+    }
+  }
+
+  class MediaQueryList extends EventTarget {
+    constructor() { throw new TypeError("Illegal constructor"); }
+    get media() { return mediaStateFor(this).media; }
+    get matches() { return mediaStateFor(this).matches; }
+    get onchange() { return mediaStateFor(this).onchange; }
+    set onchange(callback) {
+      const state = mediaStateFor(this);
+      if (state.onchange) this.removeEventListener("change", state.onchange);
+      state.onchange = typeof callback === "function" ? callback : null;
+      if (state.onchange) this.addEventListener("change", state.onchange);
+    }
+    // A list is only worth re-evaluating once something is listening to it.
+    addEventListener(type, callback, options = false) {
+      super.addEventListener(type, callback, options);
+      mediaQueryLists.add(this);
+    }
+    // The pre-2019 spelling, which a library still installs when its own type
+    // definitions predate `addEventListener` on this interface.
+    addListener(callback) { this.addEventListener("change", callback); }
+    removeListener(callback) { this.removeEventListener("change", callback); }
+  }
+
+  const matchMedia = query => {
+    query = String(query);
+    const list = Object.create(MediaQueryList.prototype);
+    mediaStates.set(list, { query, onchange: null, ...call("matchMedia", query) });
+    return list;
+  };
+  // The only device state an exported application can change is the viewport:
+  // the colour scheme is fixed for the life of the process, so a query can only
+  // flip when the window does.
+  let mediaViewport = null;
+  const notifyMediaQueries = () => {
+    const viewport = `${innerWidth}x${innerHeight}@${devicePixelRatio}`;
+    if (viewport === mediaViewport) return;
+    mediaViewport = viewport;
+    for (const list of mediaQueryLists) {
+      const state = mediaStateFor(list);
+      const { matches } = call("matchMedia", state.query);
+      if (matches === state.matches) continue;
+      state.matches = matches;
+      list.dispatchEvent(new MediaQueryListEvent("change", { media: state.media, matches }));
+    }
+  };
+
+  // Element resize observation, delivered at the top of the frame turn beside
+  // the surface resizes, which is where this runtime settles geometry.
+  const resizeObservers = new Set();
+  const resizeSignature = (metrics, box) => box === "border-box"
+    ? `${metrics.width}x${metrics.height}`
+    : `${metrics.contentWidth}x${metrics.contentHeight}`;
+  const resizeEntry = (target, metrics) => {
+    const { contentX: x, contentY: y, contentWidth: width, contentHeight: height } = metrics;
+    return Object.freeze({
+      target,
+      contentRect: Object.freeze({ x, y, width, height,
+        top: y, right: x + width, bottom: y + height, left: x }),
+      // Physical writing modes only: inline is width and block is height, which
+      // holds for every writing mode this renderer lays out.
+      borderBoxSize: Object.freeze([
+        Object.freeze({ inlineSize: metrics.width, blockSize: metrics.height })]),
+      contentBoxSize: Object.freeze([Object.freeze({ inlineSize: width, blockSize: height })]),
+    });
+  };
+  // An element that has never been reported is work the frame loop owes the
+  // application, the way an in-flight request is.
+  const pendingResizeObservations = () => {
+    let pending = 0;
+    for (const observer of resizeObservers)
+      for (const record of observer._targets.values()) if (record.reported === null) pending++;
+    return pending;
+  };
+  const notifyResizeObservers = () => {
+    for (const observer of resizeObservers) {
+      const entries = [];
+      for (const [target, record] of observer._targets) {
+        if (!target.isConnected) continue;
+        const metrics = call("layoutMetrics", target[handle]);
+        const signature = resizeSignature(metrics, record.box);
+        if (signature === record.reported) continue;
+        record.reported = signature;
+        entries.push(resizeEntry(target, metrics));
+      }
+      if (entries.length === 0) continue;
+      try { observer._callback(entries, observer); }
+      catch (error) { console.error("Uncaught exception in ResizeObserver callback", error); }
+    }
+  };
+
+  class ResizeObserver {
+    constructor(callback) {
+      if (typeof callback !== "function") throw new TypeError("ResizeObserver callback must be a function");
+      this._callback = callback;
+      this._targets = new Map();
+    }
+    observe(target, options = {}) {
+      if (!(target instanceof Element)) throw new TypeError("ResizeObserver target must be an Element");
+      const box = String(options.box ?? "content-box");
+      // `device-pixel-content-box` needs a device-pixel snap this bridge does
+      // not report, so it is refused rather than answered in CSS pixels.
+      if (box !== "content-box" && box !== "border-box")
+        throw new TypeError(`unsupported ResizeObserver box: ${box}`);
+      this._targets.set(target, { box, reported: null });
+      resizeObservers.add(this);
+    }
+    unobserve(target) { this._targets.delete(target); }
+    disconnect() { this._targets.clear(); resizeObservers.delete(this); }
+  }
+
   const requireNode = value => {
     if (!(value instanceof Node) || !(handle in value)) throw new TypeError("argument is not a Node");
     return value[handle];
@@ -1334,17 +1519,19 @@ const BOOTSTRAP: &str = r##"
     Object.defineProperty(globalThis, method, { value: EventTarget.prototype[method], configurable: true });
   const globals = {
     EventTarget, Node, Element, NodeList, Document, DocumentFragment, DOMTokenList,
-    CSSStyleDeclaration, MutationObserver, HTMLElement, HTMLIFrameElement, SVGElement,
-    Text, Comment,
+    CSSStyleDeclaration, MutationObserver, ResizeObserver, HTMLElement, HTMLIFrameElement,
+    SVGElement, Text, Comment,
     HTMLLinkElement, HTMLTemplateElement, Storage, Navigator, document,
     BlitsenViewElement, BlitsenViewSurface,
+    getComputedStyle, matchMedia, MediaQueryList, MediaQueryListEvent,
     Event, MouseEvent, KeyboardEvent, CustomEvent, PopStateEvent, HashChangeEvent,
     Headers, Request, Response, Blob, AbortController, AbortSignal, fetch,
     Location, History,
     requestAnimationFrame, cancelAnimationFrame,
     setTimeout, clearTimeout, setInterval, clearInterval,
     __blitsenAnimationFrameTick: animationFrameTick,
-    __blitsenAnimationFramesPending: () => animationFrames.size > 0 || inflightFetches.size > 0,
+    __blitsenAnimationFramesPending: () =>
+      animationFrames.size > 0 || inflightFetches.size > 0 || pendingResizeObservations() > 0,
     __blitsenForcedLayoutsThisFrame: () => forcedLayoutsThisFrame,
     __blitsenEventInternals: eventInternals,
     __blitsenDispatchMouseEvent: dispatchMouseEvent,
@@ -1358,6 +1545,8 @@ const BOOTSTRAP: &str = r##"
       animationFrames.clear();
       runningAnimationFrames?.clear();
       acquiredSurfaces.clear();
+      resizeObservers.clear();
+      mediaQueryLists.clear();
       wrapperCache.clear();
       inflightFetches.clear();
       __blitsenFetchDispose();
@@ -1415,12 +1604,11 @@ const BOOTSTRAP: &str = r##"
     "HTMLCanvasElement", "CanvasRenderingContext2D", "OffscreenCanvas", "ImageData", "Path2D",
     "WebGLRenderingContext", "WebGL2RenderingContext", "GPUCanvasContext",
     "Image", "Audio", "AudioContext", "webkitAudioContext", "HTMLMediaElement",
-    "MediaQueryList", "matchMedia",
     "alert", "confirm", "prompt", "print",
     "open", "close", "navigation",
     "cookieStore", "screen", "Notification", "caches",
-    "ResizeObserver", "IntersectionObserver", "PerformanceObserver",
-    "getComputedStyle", "CSSStyleSheet", "StyleSheetList",
+    "IntersectionObserver", "PerformanceObserver",
+    "CSSStyleSheet", "StyleSheetList",
     "customElements", "ShadowRoot", "DOMParser"]) {
     try { delete globalThis[key]; } catch {}
   }
@@ -2015,6 +2203,10 @@ fn dispatch(runtime: &DomRuntime, operation: &str, arguments: &[String]) -> Resu
                 "y": metrics.rect.y,
                 "width": metrics.rect.width,
                 "height": metrics.rect.height,
+                "contentX": metrics.content_rect.x,
+                "contentY": metrics.content_rect.y,
+                "contentWidth": metrics.content_rect.width,
+                "contentHeight": metrics.content_rect.height,
                 "offsetWidth": metrics.offset_width,
                 "offsetHeight": metrics.offset_height,
                 "clientWidth": metrics.client_width,
@@ -2319,6 +2511,30 @@ fn dispatch(runtime: &DomRuntime, operation: &str, arguments: &[String]) -> Resu
             )
             .map_err(dom_error)?;
             Ok(Value::Null)
+        }
+        // Layout-dependent like the geometry reads, and gated the same way: the
+        // resolved value of a box property is the used value, which is only
+        // knowable after style and layout have settled.
+        "computedStyle" | "computedStyleJs" => {
+            let forced = dom.layout_is_dirty();
+            let node = handle(runtime, arguments, 0)?;
+            let property = bridge_arg(arguments, 1, "property")?;
+            let property = if operation == "computedStyleJs" {
+                js_property_to_css(property)
+            } else {
+                property.to_owned()
+            };
+            let snapshot = dom.flush_layout().map_err(dom_error)?;
+            let value = dom
+                .resolved_style(node, &property, snapshot)
+                .map_err(dom_error)?;
+            Ok(json!({ "forced": forced, "value": value }))
+        }
+        "matchMedia" => {
+            let query = dom
+                .media_query(bridge_arg(arguments, 0, "media query")?)
+                .map_err(dom_error)?;
+            Ok(json!({ "media": query.media, "matches": query.matches }))
         }
         "documentUrl" => Ok(Value::String(web_url::DOCUMENT_URL.into())),
         "urlParts" => web_url::components(bridge_arg(arguments, 0, "URL")?).map_err(JsError::new),
