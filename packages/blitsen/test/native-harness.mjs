@@ -77,8 +77,10 @@ const snapshot = JSON.parse(native.runBridgeHarness(
   `<style>#x { display:block; width:100px; height:20px }</style><div id="x">old</div>`,
   `{ if (window !== globalThis || window.document !== document || innerWidth !== 320 || innerHeight !== 180 || devicePixelRatio !== 1)
        throw new Error("window identity, document, or initial viewport failed");
-     if ("navigator" in window || "localStorage" in window)
+     if ("indexedDB" in window || "matchMedia" in window)
        throw new Error("unsupported browser globals must be omitted");
+     if (!(navigator instanceof Navigator) || !(localStorage instanceof Storage))
+       throw new Error("the host's navigator and storage must be replaced by Blitsen's own");
      if (!(location instanceof Location) || !(history instanceof History))
        throw new Error("client-side routers need location and history");
      for (const absent of ["assign", "replace", "reload", "ancestorOrigins"])
@@ -445,6 +447,114 @@ const contentSnapshot = JSON.parse(native.runBridgeHarness(
 const contentById = new Map(contentSnapshot.nodes.map((node) => [node.attributes.id, node]));
 assert.equal(contentById.get("content").attributes["data-content"], "ok");
 assert.equal(contentById.get("replacement-content").layout.width, 240);
+
+// The surface real framework builds reach for on their first render: node kinds
+// the HTML parser makes but `createElement` cannot, element-scoped selection,
+// and fragments. Asserted by behaviour, because presence is what the manifest
+// check above already covers.
+const domSurface = JSON.parse(native.runBridgeHarness(
+  `<div id="surface"><span class="child" data-role="one">A</span><b>B</b></div>
+   <template id="tpl"><tr><td>cell</td></tr><!--anchor--><span class="cloned">clone</span></template>`,
+  `{ const expect = (condition, message) => { if (!condition) throw new Error(message); };
+     const root = document.getElementById("surface");
+     const span = root.querySelector(".child");
+     expect(span === root.children[0] && root.querySelectorAll("span, b").length === 2 &&
+       root.querySelector("#surface") === null, "element-scoped selection excludes its own scope");
+     expect(span.matches(".child") && !span.matches("#surface"), "matches");
+     expect(span.closest("#surface") === root && span.closest("nav") === null, "closest");
+     expect(root.children.length === 2 && root.contains(span) && !span.contains(root) &&
+       span.parentElement === root && root.lastChild.previousSibling === span, "tree walks");
+     span.dataset.moreInfo = "two";
+     expect(span.dataset.role === "one" && span.getAttribute("data-more-info") === "two" &&
+       Object.keys(span.dataset).join() === "role,moreInfo" && "moreInfo" in span.dataset,
+       "dataset maps data- attributes both ways");
+
+     const comment = document.createComment("v-if");
+     expect(comment.nodeType === 8 && comment.nodeName === "#comment" && comment instanceof Comment &&
+       comment.textContent === "v-if", "comment node");
+     root.appendChild(comment);
+     expect(root.innerHTML.endsWith("<!--v-if-->") && root.childNodes.length === 3 &&
+       root.children.length === 2, "a comment is in the tree but is not an element");
+     let refusedComment;
+     try { document.createComment("a-->b"); } catch (error) { refusedComment = true; }
+     expect(refusedComment, "comment data that would close the comment early is refused");
+
+     const svg = document.createElementNS("http://www.w3.org/2000/svg", "linearGradient");
+     svg.id = "gradient";
+     expect(svg.namespaceURI === "http://www.w3.org/2000/svg" && svg.tagName === "linearGradient" &&
+       svg instanceof SVGElement, "SVG elements keep their namespace and their case");
+     expect(document.createElement("DIV").tagName === "DIV" &&
+       document.createElement("div").namespaceURI === "http://www.w3.org/1999/xhtml", "HTML folds case");
+     root.appendChild(svg);
+
+     const template = document.getElementById("tpl");
+     const content = template.content;
+     expect(template instanceof HTMLTemplateElement && content instanceof DocumentFragment &&
+       content.nodeType === 11 && template.childNodes.length === 0,
+       "template contents belong to the fragment, not to the element");
+     expect(content.childNodes.length === 3 && content.querySelector("td").textContent === "cell",
+       "a template parses children an ordinary element would discard");
+     const clone = content.cloneNode(true);
+     const cloned = clone.querySelector(".cloned");
+     expect(clone !== content && cloned !== content.querySelector(".cloned") &&
+       clone.childNodes.length === 3, "a fragment clones deeply and independently");
+     root.appendChild(clone);
+     expect(clone.childNodes.length === 0 && cloned.parentNode === root &&
+       content.childNodes.length === 3, "inserting a fragment moves its children and spares the source");
+
+     const fragment = document.createDocumentFragment();
+     fragment.appendChild(document.createElement("i"));
+     fragment.appendChild(document.createTextNode("tail"));
+     const observer = new MutationObserver(() => {});
+     observer.observe(root, { childList: true });
+     root.appendChild(fragment);
+     const records = observer.takeRecords();
+     observer.disconnect();
+     expect(records.length === 1 && records[0].addedNodes.length === 2,
+       "a fragment insertion reports the nodes that actually moved");
+     expect(root.lastChild.nodeValue === "tail", "nodeValue reads text data");
+     root.lastChild.nodeValue = "changed";
+     expect(root.textContent.endsWith("changed"), "nodeValue writes text data");
+     const anchor = root.lastChild;
+     anchor.before(document.createElement("u"));
+     expect(anchor.previousSibling.tagName === "U", "before() inserts against a sibling");
+
+     // Without this, Vite's module-preload polyfill installs itself and fetches
+     // every chunk over an address that has no server behind it.
+     const link = document.createElement("link");
+     expect(link instanceof HTMLLinkElement && link.relList.supports("modulepreload") &&
+       !link.relList.supports("not-a-relation"), "link.relList reports the keywords it knows");
+     link.rel = "modulepreload";
+     link.href = "assets/chunk.js";
+     expect(link.relList.contains("modulepreload") && link.getAttribute("rel") === "modulepreload" &&
+       link.href === "blitsen://app/assets/chunk.js", "rel and href reflect their attributes");
+     let tokenError;
+     try { root.classList.supports("x"); } catch (error) { tokenError = error.constructor.name; }
+     expect(tokenError === "TypeError", "a token list with no keyword set refuses supports()");
+
+     expect(localStorage.getItem("absent") === null, "an unset key reads as null, not undefined");
+     localStorage.setItem("theme", "dark");
+     localStorage.count = 2;
+     expect(localStorage.getItem("count") === "2" && localStorage.theme === "dark" &&
+       localStorage.length === 2 && Object.keys(localStorage).join() === "theme,count",
+       "both access forms reach one store");
+     localStorage.removeItem("theme");
+     expect(localStorage.length === 1 && sessionStorage.getItem("count") === null,
+       "the two storage areas are separate");
+     expect(navigator.userAgent.startsWith("Blitsen/") && navigator.platform.length > 0 &&
+       navigator.languages[0] === navigator.language, "navigator states this machine's identity");
+     for (const capability of ["clipboard", "geolocation", "mediaDevices", "serviceWorker",
+       "sendBeacon", "userAgentData", "onLine", "storage", "permissions", "cookieEnabled"])
+       if (capability in navigator) throw new Error("navigator claims capability: " + capability);
+     root.setAttribute("data-dom-surface", "ok"); }`,
+  320,
+  180,
+));
+const surfaceNodes = new Map(domSurface.nodes.map(node => [node.attributes.id, node]));
+assert.equal(surfaceNodes.get("surface").attributes["data-dom-surface"], "ok");
+assert(surfaceNodes.has("gradient"), "the namespaced element reached the Rust tree");
+assert.equal(domSurface.nodes.filter(node => node.attributes.class === "cloned").length, 1,
+  "the clone reached the Rust tree and its source stayed in the detached fragment");
 
 const attributeSnapshot = JSON.parse(native.runBridgeHarness(
   `<style>#attr { display:block; width:100px; height:10px } .active { width:220px !important }</style><div id="attr"></div>`,

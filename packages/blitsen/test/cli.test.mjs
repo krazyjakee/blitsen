@@ -134,9 +134,10 @@ describe("directory CLI", () => {
     expect(await main(["doctor", join(fixtures, "unsupported")], output)).toBe(1);
     expect(lines.some(([, line]) => line.includes("HTML_CANVAS") && line.includes("native viewport")))
       .toBeTrue();
-    expect(lines.some(([, line]) => line.includes("WEB_STORAGE") && line.includes("filesystem")))
+    expect(lines.some(([, line]) =>
+      line.includes("WEB_STORAGE_MEMORY") && line.includes("gone when the application exits")))
       .toBeTrue();
-    expect(lines.at(-1)[1]).toContain("errors, 0 warnings");
+    expect(lines.at(-1)[1]).toContain("errors, 1 warnings");
   });
 
   test("accepts the routing and fetch surface the runtime actually implements", async () => {
@@ -196,9 +197,11 @@ describe("directory CLI", () => {
     const directory = await mkdtemp(join(tmpdir(), "blitsen-manifest-test-"));
     try {
       await writeFile(join(directory, "app.js"),
-        "new Worker(url); customElements.define(); localStorage.getItem('x'); window.open('/x');");
+        "new Worker(url); customElements.define(); indexedDB.open('x'); window.open('/x');\n"
+        + "localStorage.setItem('theme', 'dark');");
       const codes = (await doctorApplication(directory)).diagnostics.map(entry => entry.code);
-      expect(codes.sort()).toEqual(["WEB_COMPONENTS", "WEB_NAVIGATION", "WEB_STORAGE", "WEB_WORKER"]);
+      expect(codes.sort()).toEqual(["WEB_COMPONENTS", "WEB_NAVIGATION", "WEB_STORAGE",
+        "WEB_STORAGE_MEMORY", "WEB_WORKER"]);
 
       const manifest = await loadApiManifest();
       await writeFile(join(directory, "app.js"), manifest.apis

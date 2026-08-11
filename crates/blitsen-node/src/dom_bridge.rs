@@ -3,8 +3,9 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use blitsen_blitz::BlitzDom;
 use blitsen_core::{WindowState, WrapperTable, js_property_to_css};
-use blitsen_dom::{DomBackend, DomError, DomName, NodeKind};
+use blitsen_dom::{DomBackend, DomError, DomName, Namespace, NodeKind};
 use blitsen_js::{ExternalId, JsEngine, JsError, JsType, NativeClass, TypedArray, TypedArrayKind};
 use blitz::dom::NodeId;
 use napi::{Env, Unknown, sys};
@@ -410,22 +411,45 @@ const BOOTSTRAP: &str = r##"
     takeRecords() { return this._records.splice(0); }
   }
 
+  const NODE_TYPES = { element: 1, text: 3, comment: 8, document: 9, fragment: 11 };
+
   class Node extends EventTarget {
     constructor() { throw new TypeError("Illegal constructor"); }
-    get nodeType() { return call("kind", this[handle]) === "element" ? 1 : 3; }
-    get nodeName() { return this.nodeType === 1 ? this.tagName.toUpperCase() : '#text'; }
+    get nodeType() { return NODE_TYPES[call("kind", this[handle])]; }
+    get nodeName() {
+      const type = this.nodeType;
+      return type === 1 ? this.tagName : type === 8 ? "#comment" : "#text";
+    }
+    get nodeValue() { return this.nodeType === 1 ? null : this.textContent; }
+    set nodeValue(value) { this.textContent = value === null ? "" : value; }
     get ownerDocument() { return document; }
     appendChild(child) {
+      if (child instanceof DocumentFragment) return insertFragment(this, child, null);
       call("appendChild", this[handle], requireNode(child));
       notifyMutation({ type: "childList", target: this, addedNodes: new NodeList([child]),
         removedNodes: new NodeList([]), previousSibling: child.previousSibling, nextSibling: null });
       return child;
     }
     insertBefore(child, reference) {
+      if (child instanceof DocumentFragment) return insertFragment(this, child, reference ?? null);
       call("insertBefore", this[handle], requireNode(child), reference == null ? "" : requireNode(reference));
       notifyMutation({ type: "childList", target: this, addedNodes: new NodeList([child]),
         removedNodes: new NodeList([]), previousSibling: child.previousSibling, nextSibling: reference });
       return child;
+    }
+    before(...nodes) {
+      const parent = this.parentNode;
+      if (parent) for (const node of nodes) parent.insertBefore(node, this);
+    }
+    after(...nodes) {
+      const parent = this.parentNode;
+      if (parent) for (const node of nodes.reverse()) parent.insertBefore(node, this.nextSibling);
+    }
+    // A clone carries the tree and nothing else: no listeners and no wrapper
+    // identity, which is what the DOM specifies.
+    cloneNode(deep = false) { return wrap(call("cloneNode", this[handle], Boolean(deep))); }
+    contains(other) {
+      return other instanceof Node && call("contains", this[handle], other[handle]);
     }
     removeChild(child) {
       const previousSibling = child.previousSibling;
@@ -438,9 +462,15 @@ const BOOTSTRAP: &str = r##"
     remove() { call("remove", this[handle]); }
     replaceWith(replacement) { call("replaceWith", this[handle], requireNode(replacement)); }
     get parentNode() { return wrap(call("parentNode", this[handle])); }
+    get parentElement() {
+      const parent = this.parentNode;
+      return parent?.nodeType === 1 ? parent : null;
+    }
     get childNodes() { return new NodeList(call("childNodes", this[handle]).map(wrap)); }
     get firstChild() { return wrap(call("firstChild", this[handle])); }
+    get lastChild() { return wrap(call("lastChild", this[handle])); }
     get nextSibling() { return wrap(call("nextSibling", this[handle])); }
+    get previousSibling() { return wrap(call("previousSibling", this[handle])); }
     get isConnected() { return call("isConnected", this[handle]); }
     get textContent() { return call("textContent", this[handle]); }
     set textContent(value) {
@@ -451,11 +481,50 @@ const BOOTSTRAP: &str = r##"
 
   const styleCache = new WeakMap();
   const classListCache = new WeakMap();
+  const relListCache = new WeakMap();
+  const datasetCache = new WeakMap();
+  const HTML_NAMESPACE = "http://www.w3.org/1999/xhtml";
+  // `data-my-value` is `dataset.myValue`, the DOMStringMap mapping both ways.
+  const datasetName = key => `data-${String(key).replace(/[A-Z]/g, letter => `-${letter.toLowerCase()}`)}`;
+  const datasetKey = name => name.slice(5).replace(/-([a-z])/g, (_, letter) => letter.toUpperCase());
+  const datasetMap = element => new Proxy({}, {
+    get(_, key) {
+      return typeof key === "string" ? element.getAttribute(datasetName(key)) ?? undefined : undefined;
+    },
+    set(_, key, value) { element.setAttribute(datasetName(key), value); return true; },
+    has(_, key) { return typeof key === "string" && element.hasAttribute(datasetName(key)); },
+    deleteProperty(_, key) { element.removeAttribute(datasetName(key)); return true; },
+    ownKeys() {
+      return call("attributeNames", element[handle])
+        .filter(name => name.startsWith("data-")).map(datasetKey);
+    },
+    getOwnPropertyDescriptor(_, key) {
+      const value = typeof key === "string" ? element.getAttribute(datasetName(key)) : null;
+      return value === null ? undefined : { value, writable: true, enumerable: true, configurable: true };
+    },
+  });
 
   class Element extends Node {
-    get tagName() { return elementTag(this).toUpperCase(); }
+    get tagName() {
+      const name = elementTag(this);
+      // Only HTML folds case, which is why `linearGradient` survives here.
+      return this.namespaceURI === HTML_NAMESPACE ? name.toUpperCase() : name;
+    }
     get localName() { return elementTag(this); }
-    get namespaceURI() { return "http://www.w3.org/1999/xhtml"; }
+    get namespaceURI() { return call("namespaceUri", this[handle]); }
+    querySelector(selector) { return wrap(call("querySelectorIn", this[handle], String(selector))); }
+    querySelectorAll(selector) {
+      return new NodeList(call("querySelectorAllIn", this[handle], String(selector)).map(wrap));
+    }
+    getElementsByTagName(name) { return this.querySelectorAll(String(name)); }
+    matches(selector) { return call("matches", this[handle], String(selector)); }
+    closest(selector) { return wrap(call("closest", this[handle], String(selector))); }
+    get children() { return new NodeList(call("childElements", this[handle]).map(wrap)); }
+    get dataset() {
+      let data = datasetCache.get(this);
+      if (!data) { data = datasetMap(this); datasetCache.set(this, data); }
+      return data;
+    }
     getAttribute(name) { return call("getAttribute", this[handle], String(name)); }
     setAttribute(name, value) {
       name = String(name);
@@ -479,7 +548,7 @@ const BOOTSTRAP: &str = r##"
     get classList() {
       let list = classListCache.get(this);
       if (!list) {
-        list = new DOMTokenList(this);
+        list = new DOMTokenList(this, "class");
         classListCache.set(this, list);
       }
       return list;
@@ -528,6 +597,78 @@ const BOOTSTRAP: &str = r##"
     }
     focus() { if (isFocusable(this)) setFocus(this); }
     blur() { if (activeElement === this) setFocus(document.body); }
+  }
+
+  // A fragment is backed by a detached element rather than by a list of nodes:
+  // that gives its children a real parent to be parsed, serialized and cloned
+  // against, and it is never connected, so it is never styled or painted.
+  class DocumentFragment extends Node {
+    get nodeType() { return 11; }
+    get nodeName() { return "#document-fragment"; }
+    cloneNode(deep = false) { return asFragment(super.cloneNode(deep)); }
+    querySelector(selector) { return wrap(call("querySelectorIn", this[handle], String(selector))); }
+    querySelectorAll(selector) {
+      return new NodeList(call("querySelectorAllIn", this[handle], String(selector)).map(wrap));
+    }
+  }
+
+  // Inserting a fragment moves its children and leaves it empty, which is the
+  // whole of what a fragment is for.
+  const insertFragment = (parent, fragment, reference) => {
+    const moved = [...fragment.childNodes];
+    const anchor = reference == null ? "" : requireNode(reference);
+    for (const child of moved) call("insertBefore", parent[handle], child[handle], anchor);
+    if (moved.length > 0) notifyMutation({ type: "childList", target: parent,
+      addedNodes: new NodeList(moved), removedNodes: new NodeList([]),
+      previousSibling: moved[0].previousSibling, nextSibling: reference });
+    return fragment;
+  };
+
+  const templateContents = new WeakMap();
+
+  // A fragment host is a template element the wrapper is retyped over: the
+  // parser needs the element, and JavaScript needs the fragment interface.
+  const asFragment = node => Object.setPrototypeOf(node, DocumentFragment.prototype);
+  const createFragment = () => asFragment(wrap(call("createFragment")));
+
+  class HTMLTemplateElement extends Element {
+    // Blitz has no separate template-contents document, so a parsed template
+    // keeps its children until they are asked for. Moving them into the
+    // fragment on read is what makes `content` behave as the parser should
+    // have: the element ends up empty and the nodes end up in the fragment.
+    get content() {
+      let fragment = templateContents.get(this);
+      if (!fragment) templateContents.set(this, fragment = createFragment());
+      for (const child of this.childNodes) fragment.appendChild(child);
+      return fragment;
+    }
+  }
+
+  // The `rel` keywords this runtime understands. `supports` is what Vite's
+  // module-preload polyfill asks before installing itself, and answering
+  // truthfully keeps it from fetching every chunk over an address with no
+  // server behind it. The preload hints are honoured by doing nothing: an
+  // exported application's chunks are local files that need no warming.
+  const LINK_RELATIONS = ["alternate", "author", "canonical", "dns-prefetch", "help", "icon",
+    "license", "manifest", "modulepreload", "next", "pingback", "preconnect", "prefetch",
+    "preload", "prev", "search", "stylesheet"];
+
+  class HTMLLinkElement extends Element {
+    get relList() {
+      let list = relListCache.get(this);
+      if (!list) {
+        list = new DOMTokenList(this, "rel", LINK_RELATIONS);
+        relListCache.set(this, list);
+      }
+      return list;
+    }
+    get rel() { return this.getAttribute("rel") ?? ""; }
+    set rel(value) { this.setAttribute("rel", value); }
+    get href() {
+      const value = this.getAttribute("href");
+      return value === null ? "" : resolveAgainstDocument(value).href;
+    }
+    set href(value) { this.setAttribute("href", value); }
   }
 
   // Acquired surfaces are held strongly: the element is what the application
@@ -589,23 +730,38 @@ const BOOTSTRAP: &str = r##"
   }
 
   class DOMTokenList {
-    constructor(element) { this._element = element; }
-    _tokens() { return this._element.className.trim() ? this._element.className.trim().split(/\s+/) : []; }
+    constructor(element, attribute, supported = null) {
+      this._element = element;
+      this._attribute = attribute;
+      this._supported = supported;
+    }
+    _text() { return (this._element.getAttribute(this._attribute) ?? "").trim(); }
+    _tokens() { return this._text() ? this._text().split(/\s+/) : []; }
     _validate(tokens) {
       for (const token of tokens) {
         if (!token || /\s/.test(token)) throw new DOMException("The token must not be empty or contain whitespace", "SyntaxError");
       }
     }
+    get length() { return this._tokens().length; }
+    item(index) { return this._tokens()[index] ?? null; }
     contains(token) { this._validate([token]); return this._tokens().includes(token); }
+    forEach(callback, thisArg) { this._tokens().forEach((token, index) => callback.call(thisArg, token, index, this)); }
+    // Only a list with a defined keyword set answers this; the class attribute
+    // has none, and the DOM says that is a TypeError rather than a false.
+    supports(token) {
+      if (!this._supported) throw new TypeError(`${this._attribute} has no supported tokens`);
+      return this._supported.includes(String(token).toLowerCase());
+    }
     add(...tokens) {
       this._validate(tokens);
       const values = this._tokens();
       for (const token of tokens) if (!values.includes(token)) values.push(token);
-      this._element.className = values.join(" ");
+      this._element.setAttribute(this._attribute, values.join(" "));
     }
     remove(...tokens) {
       this._validate(tokens);
-      this._element.className = this._tokens().filter(token => !tokens.includes(token)).join(" ");
+      this._element.setAttribute(this._attribute,
+        this._tokens().filter(token => !tokens.includes(token)).join(" "));
     }
     toggle(token, force) {
       this._validate([token]);
@@ -614,7 +770,8 @@ const BOOTSTRAP: &str = r##"
       if (desired !== present) (desired ? this.add(token) : this.remove(token));
       return desired;
     }
-    toString() { return this._element.className; }
+    toString() { return this._element.getAttribute(this._attribute) ?? ""; }
+    *[Symbol.iterator]() { yield* this._tokens(); }
   }
 
   class CSSStyleDeclaration {
@@ -634,6 +791,8 @@ const BOOTSTRAP: &str = r##"
     return value[handle];
   };
   const wrapperCache = new Map();
+  const TAG_INTERFACES = { "blitsen-view": BlitsenViewElement, link: HTMLLinkElement,
+    template: HTMLTemplateElement };
   const wrap = rawHandle => {
     if (rawHandle == null) return null;
     rawHandle = String(rawHandle);
@@ -643,8 +802,7 @@ const BOOTSTRAP: &str = r##"
     if (!(handle in wrapper)) {
       Object.defineProperty(wrapper, handle, { value: rawHandle });
       Object.setPrototypeOf(wrapper, call("kind", rawHandle) !== "element" ? Node.prototype
-        : call("tagName", rawHandle) === "blitsen-view" ? BlitsenViewElement.prototype
-        : Element.prototype);
+        : (TAG_INTERFACES[call("tagName", rawHandle)] ?? Element).prototype);
     }
     wrapperCache.set(rawHandle, wrapper);
     return wrapper;
@@ -656,9 +814,17 @@ const BOOTSTRAP: &str = r##"
     get ownerDocument() { return null; }
     querySelector(selector) { return wrap(call("querySelector", String(selector))); }
     querySelectorAll(selector) { return new NodeList(call("querySelectorAll", String(selector)).map(wrap)); }
+    getElementsByTagName(name) { return this.querySelectorAll(String(name)); }
     getElementById(id) { return wrap(call("getElementById", String(id))); }
     createElement(name) { return wrap(call("createElement", String(name))); }
+    createElementNS(namespace, name) {
+      return wrap(call("createElementNS", namespace == null ? "" : String(namespace), String(name)));
+    }
     createTextNode(text) { return wrap(call("createTextNode", String(text))); }
+    createComment(data) { return wrap(call("createComment", String(data))); }
+    createDocumentFragment() { return createFragment(); }
+    // There is one document, so importing a node is copying it.
+    importNode(node, deep = false) { requireNode(node); return node.cloneNode(deep); }
     get body() { return wrap(call("body")); }
     get head() { return this.querySelector("head"); }
     get documentElement() { return wrap(call("documentElement")); }
@@ -675,6 +841,14 @@ const BOOTSTRAP: &str = r##"
     static [Symbol.hasInstance](value) {
       return value instanceof Element && elementTag(value) === "iframe";
     }
+  }
+  class Text {
+    constructor(data = "") { return document.createTextNode(data); }
+    static [Symbol.hasInstance](value) { return value instanceof Node && value.nodeType === 3; }
+  }
+  class Comment {
+    constructor(data = "") { return document.createComment(data); }
+    static [Symbol.hasInstance](value) { return value instanceof Node && value.nodeType === 8; }
   }
   class SVGElement {
     static [Symbol.hasInstance](value) {
@@ -1085,11 +1259,84 @@ const BOOTSTRAP: &str = r##"
   const location = Object.create(Location.prototype);
   const history = Object.create(History.prototype);
 
+  // Storage. In memory for the life of the process, and no more than that:
+  // there is no profile directory behind an exported application yet, so
+  // `localStorage` here keeps a session rather than a preference. The reason it
+  // exists at all is that its absence is not survivable — libraries read it
+  // unguarded inside a render — while its forgetfulness is, and `doctor` reports
+  // that forgetfulness on every build rather than leaving it to be discovered.
+  const storageEntries = new WeakMap();
+  const entriesOf = storage => {
+    const entries = storageEntries.get(storage);
+    if (!entries) throw new TypeError("Illegal invocation");
+    return entries;
+  };
+
+  class Storage {
+    constructor() { storageEntries.set(this, new Map()); }
+    get length() { return entriesOf(this).size; }
+    key(index) { return [...entriesOf(this).keys()][Number(index)] ?? null; }
+    getItem(key) { return entriesOf(this).get(String(key)) ?? null; }
+    setItem(key, value) { entriesOf(this).set(String(key), String(value)); }
+    removeItem(key) { entriesOf(this).delete(String(key)); }
+    clear() { entriesOf(this).clear(); }
+  }
+
+  // Property access is the same store as `getItem`, so `storage.theme = "dark"`
+  // cannot diverge from `storage.setItem("theme", "dark")`.
+  const storageArea = () => {
+    const storage = new Storage();
+    const area = new Proxy(storage, {
+      get(target, key, receiver) {
+        return typeof key !== "string" || key in target
+          ? Reflect.get(target, key, receiver) : target.getItem(key) ?? undefined;
+      },
+      set(target, key, value, receiver) {
+        if (typeof key !== "string" || key in target) return Reflect.set(target, key, value, receiver);
+        target.setItem(key, value);
+        return true;
+      },
+      has(target, key) {
+        return key in target || (typeof key === "string" && target.getItem(key) !== null);
+      },
+      deleteProperty(target, key) { target.removeItem(key); return true; },
+      ownKeys(target) { return [...entriesOf(target).keys()]; },
+      getOwnPropertyDescriptor(target, key) {
+        const value = typeof key === "string" ? target.getItem(key) : null;
+        return value === null ? undefined : { value, writable: true, enumerable: true, configurable: true };
+      },
+    });
+    // A method reached through the proxy is called with the proxy as `this`, so
+    // both objects have to find the same entries.
+    storageEntries.set(area, entriesOf(storage));
+    return area;
+  };
+  const localStorage = storageArea();
+  const sessionStorage = storageArea();
+
+  // Identity, never capability. These three are facts about the machine the
+  // application is running on, which is why they can be answered at all; every
+  // capability `navigator` normally carries stays absent so that feature
+  // detection still selects a fallback path.
+  const navigatorFacts = JSON.parse(__blitsenNavigatorState);
+
+  class Navigator {
+    constructor() { throw new TypeError("Illegal constructor"); }
+    get userAgent() { return navigatorFacts.userAgent; }
+    get platform() { return navigatorFacts.platform; }
+    get language() { return navigatorFacts.language; }
+    get languages() { return Object.freeze([navigatorFacts.language]); }
+  }
+
+  const navigator = Object.create(Navigator.prototype);
+
   for (const method of ["addEventListener", "removeEventListener", "dispatchEvent"])
     Object.defineProperty(globalThis, method, { value: EventTarget.prototype[method], configurable: true });
   const globals = {
-    EventTarget, Node, Element, NodeList, Document, DOMTokenList, CSSStyleDeclaration,
-    MutationObserver, HTMLElement, HTMLIFrameElement, SVGElement, document,
+    EventTarget, Node, Element, NodeList, Document, DocumentFragment, DOMTokenList,
+    CSSStyleDeclaration, MutationObserver, HTMLElement, HTMLIFrameElement, SVGElement,
+    Text, Comment,
+    HTMLLinkElement, HTMLTemplateElement, Storage, Navigator, document,
     BlitsenViewElement, BlitsenViewSurface,
     Event, MouseEvent, KeyboardEvent, CustomEvent, PopStateEvent, HashChangeEvent,
     Headers, Request, Response, Blob, AbortController, AbortSignal, fetch,
@@ -1123,11 +1370,12 @@ const BOOTSTRAP: &str = r##"
       });
     },
     // `WindowState::install` clears the host's browser globals after this
-    // script runs, so Blitsen's own `location` and `history` are attached from
-    // there rather than here.
-    __blitsenInstallRouting: () => {
-      delete globalThis.__blitsenInstallRouting;
-      for (const [name, value] of [["location", location], ["history", history]])
+    // script runs, so the ones Blitsen replaces rather than deletes are attached
+    // from there rather than here.
+    __blitsenInstallReplacedGlobals: () => {
+      delete globalThis.__blitsenInstallReplacedGlobals;
+      for (const [name, value] of [["location", location], ["history", history],
+        ["navigator", navigator], ["localStorage", localStorage], ["sessionStorage", sessionStorage]])
         Object.defineProperty(globalThis, name, { value, enumerable: true, configurable: true });
     },
   };
@@ -1158,8 +1406,7 @@ const BOOTSTRAP: &str = r##"
   // itself, and leaving those in place would make them disappear at the Phase 2
   // engine swap. `packages/blitsen/src/api-manifest.mjs` reads this list, and
   // refuses to generate a manifest that describes any other API as absent.
-  for (const key of ["requestIdleCallback", "cancelIdleCallback",
-    "localStorage", "sessionStorage", "indexedDB",
+  for (const key of ["requestIdleCallback", "cancelIdleCallback", "indexedDB",
     "Worker", "SharedWorker", "ServiceWorker", "ServiceWorkerContainer",
     "MessageChannel", "MessagePort", "BroadcastChannel", "postMessage",
     "WebSocket", "EventSource", "XMLHttpRequest",
@@ -1171,10 +1418,10 @@ const BOOTSTRAP: &str = r##"
     "MediaQueryList", "matchMedia",
     "alert", "confirm", "prompt", "print",
     "open", "close", "navigation",
-    "cookieStore", "navigator", "screen", "Notification", "caches",
+    "cookieStore", "screen", "Notification", "caches",
     "ResizeObserver", "IntersectionObserver", "PerformanceObserver",
     "getComputedStyle", "CSSStyleSheet", "StyleSheetList",
-    "customElements", "ShadowRoot", "HTMLTemplateElement", "DOMParser"]) {
+    "customElements", "ShadowRoot", "DOMParser"]) {
     try { delete globalThis[key]; } catch {}
   }
 })();
@@ -1298,6 +1545,8 @@ pub(super) fn install(
     });
     let dev_layout_warnings = engine.boolean(dev_layout_warnings);
     engine.set_global("__blitsenDevLayoutWarnings", &dev_layout_warnings)?;
+    let navigator = json_string(raw_env, &navigator_state())?;
+    engine.set_global("__blitsenNavigatorState", &navigator)?;
     let test_harness = engine.boolean(test_harness);
     engine.set_global("__blitsenTestHarness", &test_harness)?;
     engine.evaluate_script(BOOTSTRAP, "blitsen:dom-bootstrap")?;
@@ -1310,8 +1559,8 @@ pub(super) fn install(
     )));
     window_state.borrow().install(engine, &document)?;
     engine.evaluate_script(
-        "globalThis.__blitsenInstallRouting()",
-        "blitsen:install-routing",
+        "globalThis.__blitsenInstallReplacedGlobals()",
+        "blitsen:install-replaced-globals",
     )?;
     let resize_state = Rc::clone(&window_state);
     let resize_runtime = runtime;
@@ -1343,6 +1592,38 @@ pub(super) fn install(
     )?;
     engine.set_global("__blitsenWindowResize", &resize_function)?;
     Ok(window_state)
+}
+
+/// The three facts `navigator` is allowed to state about this machine.
+///
+/// Identity, never capability: see COMPATIBILITY.md for why the rest of the
+/// interface stays absent. The user-agent string names Blitsen rather than
+/// impersonating a browser, because an application that sniffs it deserves a
+/// true answer more than it deserves a code path written for someone else.
+fn navigator_state() -> Value {
+    let platform = match (std::env::consts::OS, std::env::consts::ARCH) {
+        ("macos", _) => "MacIntel".to_owned(),
+        ("windows", _) => "Win32".to_owned(),
+        (os, arch) => format!("{}{} {arch}", os[..1].to_uppercase(), &os[1..]),
+    };
+    // POSIX locales are `en_GB.UTF-8`; BCP 47 is `en-GB`.
+    let language = ["LC_ALL", "LC_MESSAGES", "LANG"]
+        .iter()
+        .find_map(|name| std::env::var(name).ok())
+        .map(|locale| {
+            locale
+                .split(['.', '@'])
+                .next()
+                .unwrap_or_default()
+                .replace('_', "-")
+        })
+        .filter(|locale| !locale.is_empty() && locale != "C" && locale != "POSIX")
+        .unwrap_or_else(|| "en-US".to_owned());
+    json!({
+        "userAgent": format!("Blitsen/{} ({platform})", env!("CARGO_PKG_VERSION")),
+        "platform": platform,
+        "language": language,
+    })
 }
 
 /// Installs the UTF-8 conversions the body classes need.
@@ -1480,6 +1761,156 @@ fn dom_error(error: DomError) -> JsError {
     JsError::new(error.to_string())
 }
 
+const HTML_NAMESPACE: &str = "http://www.w3.org/1999/xhtml";
+const SVG_NAMESPACE: &str = "http://www.w3.org/2000/svg";
+const MATHML_NAMESPACE: &str = "http://www.w3.org/1998/Math/MathML";
+
+/// The element a fragment's children are parked under.
+///
+/// A `DocumentFragment` is a real detached element in the backend: that is what
+/// gives its children a parent to be parsed, serialized and cloned against, and
+/// it is never connected, so it is never styled, laid out or painted. The name
+/// is `template` because template contents are the one parsing context that
+/// accepts every kind of child, including the table rows an ordinary element
+/// would discard.
+const FRAGMENT_TAG: &str = "template";
+
+fn namespace_uri(namespace: &Namespace) -> Option<&str> {
+    match namespace {
+        Namespace::Html => Some(HTML_NAMESPACE),
+        Namespace::Svg => Some(SVG_NAMESPACE),
+        Namespace::MathMl => Some(MATHML_NAMESPACE),
+        Namespace::None => None,
+        Namespace::Other(uri) => Some(uri),
+    }
+}
+
+fn element_name(namespace: &str, name: &str) -> Result<DomName, JsError> {
+    if name.is_empty()
+        || name.chars().any(|character| {
+            character.is_whitespace() || matches!(character, '<' | '>' | '/' | '\0')
+        })
+    {
+        return Err(JsError::new("invalid element name"));
+    }
+    Ok(match namespace {
+        "" => DomName {
+            namespace: Namespace::None,
+            local: name.to_owned(),
+        },
+        // Only HTML folds case; SVG has `linearGradient` and `clipPath`.
+        HTML_NAMESPACE => DomName::html(name.to_ascii_lowercase()),
+        SVG_NAMESPACE => DomName {
+            namespace: Namespace::Svg,
+            local: name.to_owned(),
+        },
+        MATHML_NAMESPACE => DomName {
+            namespace: Namespace::MathMl,
+            local: name.to_owned(),
+        },
+        other => DomName {
+            namespace: Namespace::Other(other.to_owned()),
+            local: name.to_owned(),
+        },
+    })
+}
+
+/// Returns an element's attribute names in document order.
+///
+/// Read through the renderer's own view of the node: the DOM boundary can read
+/// one attribute by name but cannot enumerate them, and `dataset` has to know
+/// which `data-` attributes exist before it can answer for them.
+fn attribute_names(dom: &BlitzDom, node: NodeId) -> Result<Vec<String>, JsError> {
+    Ok(dom
+        .document_ref()
+        .get_node(node)
+        .ok_or_else(|| dom_error(DomError::StaleNode))?
+        .element_data()
+        .ok_or_else(|| dom_error(DomError::InvalidNodeType))?
+        .attrs()
+        .iter()
+        .map(|attribute| attribute.name.local.to_string())
+        .collect())
+}
+
+/// Copies a node, deeply when asked, the way `cloneNode` defines it.
+///
+/// A clone carries the tree and nothing else: no listeners, no wrapper identity
+/// and no JavaScript state, which is what the DOM specifies. Depth is served by
+/// serializing and reparsing, because that is the only complete copy the DOM
+/// boundary offers.
+fn clone_node(dom: &mut BlitzDom, node: NodeId, deep: bool) -> Result<NodeId, JsError> {
+    match dom.node_kind(node).map_err(dom_error)? {
+        NodeKind::Element => {
+            let name = dom.element_name(node).map_err(dom_error)?;
+            let clone = dom.create_element(&name).map_err(dom_error)?;
+            for attribute in attribute_names(dom, node)? {
+                let attribute = DomName::attribute(attribute);
+                if let Some(value) = dom.attribute(node, &attribute).map_err(dom_error)? {
+                    dom.set_attribute(clone, &attribute, &value)
+                        .map_err(dom_error)?;
+                }
+            }
+            if deep {
+                let html = dom.inner_html(node).map_err(dom_error)?;
+                dom.set_inner_html(clone, &html).map_err(dom_error)?;
+            }
+            Ok(clone)
+        }
+        NodeKind::Text => {
+            let text = dom.text_content(node).map_err(dom_error)?;
+            dom.create_text(&text).map_err(dom_error)
+        }
+        NodeKind::Comment => {
+            let data = comment_data(dom, node)?;
+            create_comment(dom, &data)
+        }
+        NodeKind::Document | NodeKind::Fragment => Err(dom_error(DomError::InvalidNodeType)),
+    }
+}
+
+fn comment_data(dom: &BlitzDom, node: NodeId) -> Result<String, JsError> {
+    match &dom
+        .document_ref()
+        .get_node(node)
+        .ok_or_else(|| dom_error(DomError::StaleNode))?
+        .data
+    {
+        blitz::dom::NodeData::Comment { contents } => Ok(contents.clone()),
+        _ => Err(dom_error(DomError::InvalidNodeType)),
+    }
+}
+
+/// Creates a detached comment node by parsing one.
+///
+/// The DOM boundary has no comment constructor, so the fragment parser is the
+/// way to reach the node kind. Data that would close the comment early is
+/// refused rather than silently truncated.
+fn create_comment(dom: &mut BlitzDom, data: &str) -> Result<NodeId, JsError> {
+    if data.contains("-->")
+        || data.contains("--!>")
+        || data.starts_with('>')
+        || data.starts_with("->")
+    {
+        return Err(JsError::new(
+            "comment data cannot contain a comment terminator",
+        ));
+    }
+    let context = dom
+        .body()
+        .or_else(|| dom.document_element())
+        .ok_or_else(|| dom_error(DomError::NotFound))?;
+    let nodes = dom
+        .parse_fragment(context, &format!("<!--{data}-->"))
+        .map_err(dom_error)?;
+    match nodes.first() {
+        Some(node) if nodes.len() == 1 && dom.node_kind(*node) == Ok(NodeKind::Comment) => {
+            Ok(*node)
+        }
+        _ => Err(JsError::new("comment data could not be represented")),
+    }
+}
+
 fn dispatch(runtime: &DomRuntime, operation: &str, arguments: &[String]) -> Result<Value, JsError> {
     let shared = runtime.document();
     let mut dom = shared.borrow_mut();
@@ -1502,6 +1933,13 @@ fn dispatch(runtime: &DomRuntime, operation: &str, arguments: &[String]) -> Resu
                 .map_err(dom_error)?
                 .local,
         )),
+        "namespaceUri" => Ok(namespace_uri(
+            &dom.element_name(handle(runtime, arguments, 0)?)
+                .map_err(dom_error)?
+                .namespace,
+        )
+        .map(|uri| Value::String(uri.to_owned()))
+        .unwrap_or(Value::Null)),
         "querySelector" => Ok(serialized(
             dom.query_selector(dom.document(), bridge_arg(arguments, 0, "selector")?)
                 .map_err(dom_error)?,
@@ -1513,6 +1951,55 @@ fn dispatch(runtime: &DomRuntime, operation: &str, arguments: &[String]) -> Resu
                 .map(DomRuntime::serialize_handle)
                 .collect::<Vec<_>>()
         )),
+        "querySelectorIn" => {
+            let node = handle(runtime, arguments, 0)?;
+            Ok(serialized(
+                dom.query_selector(node, bridge_arg(arguments, 1, "selector")?)
+                    .map_err(dom_error)?,
+            ))
+        }
+        "querySelectorAllIn" => {
+            let node = handle(runtime, arguments, 0)?;
+            Ok(json!(
+                dom.query_selector_all(node, bridge_arg(arguments, 1, "selector")?)
+                    .map_err(dom_error)?
+                    .into_iter()
+                    .map(DomRuntime::serialize_handle)
+                    .collect::<Vec<_>>()
+            ))
+        }
+        // Selector matching against a single element is the renderer's own, not
+        // an emulation over `querySelectorAll`: a detached element has no scope
+        // to search, and an ancestor walk would rescan the subtree per level.
+        "matches" => {
+            let node = handle(runtime, arguments, 0)?;
+            dom.node_kind(node).map_err(dom_error)?;
+            Ok(Value::Bool(
+                dom.document_ref()
+                    .matches_selector(node, bridge_arg(arguments, 1, "selector")?)
+                    .map_err(|error| dom_error(DomError::Syntax(format!("{error:?}"))))?,
+            ))
+        }
+        "closest" => {
+            let node = handle(runtime, arguments, 0)?;
+            dom.node_kind(node).map_err(dom_error)?;
+            Ok(serialized(
+                dom.document_ref()
+                    .closest(node, bridge_arg(arguments, 1, "selector")?)
+                    .map_err(|error| dom_error(DomError::Syntax(format!("{error:?}"))))?,
+            ))
+        }
+        "contains" => {
+            let node = handle(runtime, arguments, 0)?;
+            let mut candidate = Some(handle(runtime, arguments, 1)?);
+            while let Some(current) = candidate {
+                if current == node {
+                    return Ok(Value::Bool(true));
+                }
+                candidate = dom.parent(current).map_err(dom_error)?;
+            }
+            Ok(Value::Bool(false))
+        }
         "getElementById" => Ok(serialized(
             dom.get_element_by_id(bridge_arg(arguments, 0, "id")?)
                 .map_err(dom_error)?,
@@ -1591,24 +2078,37 @@ fn dispatch(runtime: &DomRuntime, operation: &str, arguments: &[String]) -> Resu
             }
             Ok(json!({ "forced": forced }))
         }
-        "createElement" => {
-            let name = bridge_arg(arguments, 0, "element name")?;
-            if name.is_empty()
-                || name.chars().any(|character| {
-                    character.is_whitespace() || matches!(character, '<' | '>' | '/' | '\0')
-                })
-            {
-                return Err(JsError::new("invalid HTML element name"));
-            }
-            Ok(serialized(Some(
-                dom.create_element(&DomName::html(name.to_ascii_lowercase()))
-                    .map_err(dom_error)?,
-            )))
-        }
+        "createElement" => Ok(serialized(Some(
+            dom.create_element(&element_name(
+                HTML_NAMESPACE,
+                bridge_arg(arguments, 0, "element name")?,
+            )?)
+            .map_err(dom_error)?,
+        ))),
+        "createElementNS" => Ok(serialized(Some(
+            dom.create_element(&element_name(
+                bridge_arg(arguments, 0, "namespace")?,
+                bridge_arg(arguments, 1, "element name")?,
+            )?)
+            .map_err(dom_error)?,
+        ))),
         "createTextNode" => Ok(serialized(Some(
             dom.create_text(bridge_arg(arguments, 0, "text")?)
                 .map_err(dom_error)?,
         ))),
+        "createComment" => Ok(serialized(Some(create_comment(
+            &mut dom,
+            bridge_arg(arguments, 0, "comment data")?,
+        )?))),
+        "createFragment" => Ok(serialized(Some(
+            dom.create_element(&DomName::html(FRAGMENT_TAG))
+                .map_err(dom_error)?,
+        ))),
+        "cloneNode" => {
+            let node = handle(runtime, arguments, 0)?;
+            let deep = bridge_arg(arguments, 1, "clone depth")? == "true";
+            Ok(serialized(Some(clone_node(&mut dom, node, deep)?)))
+        }
         "body" => Ok(serialized(dom.body())),
         "documentElement" => Ok(serialized(dom.document_element())),
         "appendChild" => {
@@ -1662,24 +2162,53 @@ fn dispatch(runtime: &DomRuntime, operation: &str, arguments: &[String]) -> Resu
                 .map(DomRuntime::serialize_handle)
                 .collect::<Vec<_>>()
         )),
+        "childElements" => {
+            let children = dom
+                .children(handle(runtime, arguments, 0)?)
+                .map_err(dom_error)?;
+            let mut elements = Vec::new();
+            for child in children {
+                if dom.node_kind(child).map_err(dom_error)? == NodeKind::Element {
+                    elements.push(DomRuntime::serialize_handle(child));
+                }
+            }
+            Ok(json!(elements))
+        }
         "firstChild" => Ok(serialized(
             dom.children(handle(runtime, arguments, 0)?)
                 .map_err(dom_error)?
                 .first()
                 .copied(),
         )),
+        "lastChild" => Ok(serialized(
+            dom.children(handle(runtime, arguments, 0)?)
+                .map_err(dom_error)?
+                .last()
+                .copied(),
+        )),
         "nextSibling" => Ok(serialized(
             dom.next_sibling(handle(runtime, arguments, 0)?)
+                .map_err(dom_error)?,
+        )),
+        "previousSibling" => Ok(serialized(
+            dom.previous_sibling(handle(runtime, arguments, 0)?)
                 .map_err(dom_error)?,
         )),
         "isConnected" => Ok(Value::Bool(
             dom.is_connected(handle(runtime, arguments, 0)?)
                 .map_err(dom_error)?,
         )),
-        "textContent" => Ok(Value::String(
-            dom.text_content(handle(runtime, arguments, 0)?)
-                .map_err(dom_error)?,
-        )),
+        // A comment's data is its `textContent`; the renderer's own text
+        // collection skips comments, as it must for an element's.
+        "textContent" => {
+            let node = handle(runtime, arguments, 0)?;
+            Ok(Value::String(
+                match dom.node_kind(node).map_err(dom_error)? {
+                    NodeKind::Comment => comment_data(&dom, node)?,
+                    _ => dom.text_content(node).map_err(dom_error)?,
+                },
+            ))
+        }
         "setTextContent" => {
             let node = handle(runtime, arguments, 0)?;
             dom.set_text_content(node, bridge_arg(arguments, 1, "text")?)
@@ -1723,6 +2252,10 @@ fn dispatch(runtime: &DomRuntime, operation: &str, arguments: &[String]) -> Resu
             dom.remove_attribute(node, &name).map_err(dom_error)?;
             Ok(Value::Null)
         }
+        "attributeNames" => Ok(json!(attribute_names(
+            &dom,
+            handle(runtime, arguments, 0)?
+        )?)),
         "hasAttribute" => Ok(Value::Bool(
             dom.attribute(
                 handle(runtime, arguments, 0)?,

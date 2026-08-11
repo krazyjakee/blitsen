@@ -226,7 +226,9 @@ for (const fixture of FIXTURES) {
   const staging = join(work, `${fixture.name}.staged`);
   await rm(staging, { recursive: true, force: true });
   result.assets = await stage(dist, staging);
-  const frames = join(options.out, fixture.name);
+  // Not `<name>` itself: a successful build writes the executable there, and the
+  // directory then collides with it. Every build was refused when this was written.
+  const frames = join(options.out, `${fixture.name}.frames`);
   await mkdir(frames, { recursive: true });
   const reportPath = join(frames, "render.json");
   const rendered = run(

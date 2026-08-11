@@ -13,11 +13,15 @@ const SOURCE_NAME = "crates/blitsen-node/src/dom_bridge.rs";
 const CATALOGUE = {
   WEB_DOM: ["document", "Document", "Node", "Element", "NodeList", "DOMTokenList",
     "CSSStyleDeclaration", "MutationObserver", "HTMLElement", "HTMLIFrameElement", "SVGElement",
+    "Text", "Comment", "DocumentFragment", "HTMLLinkElement", "HTMLTemplateElement",
     "Element.querySelector", "Element.querySelectorAll", "Element.closest", "Element.matches",
     "Element.cloneNode", "Element.contains", "Element.children", "Element.previousSibling",
-    "Element.lastChild", "Element.parentElement", "Element.dataset", "Element.outerHTML",
+    "Element.lastChild", "Element.parentElement", "Element.dataset", "Element.nodeValue",
+    "Element.before", "Element.after", "Element.getElementsByTagName", "Element.outerHTML",
     "Element.insertAdjacentHTML", "Element.attachShadow", "Element.scrollIntoView",
-    "Document.createElementNS", "Document.createDocumentFragment"],
+    "HTMLLinkElement.relList", "HTMLTemplateElement.content", "DOMTokenList.supports",
+    "Document.createElementNS", "Document.createComment", "Document.createDocumentFragment",
+    "Document.getElementsByTagName", "Document.importNode"],
   WEB_EVENTS: ["EventTarget", "Event", "CustomEvent", "MouseEvent", "KeyboardEvent",
     "addEventListener", "removeEventListener", "dispatchEvent"],
   WEB_SCHEDULING: ["requestAnimationFrame", "cancelAnimationFrame", "setTimeout", "clearTimeout",
@@ -27,7 +31,7 @@ const CATALOGUE = {
   WEB_ROUTING: ["window", "location", "history", "Location", "History", "PopStateEvent",
     "HashChangeEvent"],
   WEB_VIEWPORT: ["BlitsenViewElement", "BlitsenViewSurface"],
-  WEB_STORAGE: ["localStorage", "sessionStorage", "indexedDB"],
+  WEB_STORAGE: ["Storage", "localStorage", "sessionStorage", "indexedDB"],
   WEB_WORKER: ["Worker", "SharedWorker", "ServiceWorker", "ServiceWorkerContainer"],
   WEB_MESSAGING: ["MessageChannel", "MessagePort", "BroadcastChannel", "postMessage"],
   WEB_SOCKET: ["WebSocket", "EventSource"],
@@ -46,10 +50,11 @@ const CATALOGUE = {
     "document.write", "document.writeln", "document.open", "document.close", "location.assign",
     "location.replace", "location.reload", "location.ancestorOrigins"],
   WEB_COOKIE: ["document.cookie", "cookieStore", "Headers.getSetCookie"],
-  WEB_DEVICE: ["navigator", ["screen", null], "Notification", ["caches", null]],
+  WEB_DEVICE: ["Navigator", "navigator", "navigator.userAgent", "navigator.platform",
+    "navigator.language", ["screen", null], "Notification", ["caches", null]],
   WEB_OBSERVER: ["ResizeObserver", "IntersectionObserver", "PerformanceObserver"],
   WEB_STYLE: ["getComputedStyle", "CSSStyleSheet", "StyleSheetList"],
-  WEB_COMPONENTS: ["customElements", "ShadowRoot", "HTMLTemplateElement", "DOMParser"],
+  WEB_COMPONENTS: ["customElements", "ShadowRoot", "DOMParser"],
 };
 
 // What `doctor` says about a group whose APIs turn out to be absent, plus an
@@ -59,8 +64,8 @@ const DIAGNOSTICS = {
     "Use the document-level lookups and node methods listed in COMPATIBILITY.md."],
   WEB_SCHEDULING: ["warning", "Idle-callback scheduling is not implemented.",
     "Schedule the work with requestAnimationFrame or a timer."],
-  WEB_STORAGE: ["error", "Browser storage is not implemented.",
-    "Use a Node filesystem/database package or feature-detect storage."],
+  WEB_STORAGE: ["error", "IndexedDB is not implemented.",
+    "Use a Node filesystem/database package, or the Web Storage APIs for session state."],
   WEB_WORKER: ["error", "Web workers are not implemented.",
     "Run the work in the main context or use a native/Node worker path."],
   WEB_MESSAGING: ["warning", "Message channels are not implemented.",
@@ -100,6 +105,11 @@ const USAGE_RULES = [
   ["WEB_FETCH", "error", "\\bfetch\\s*\\(\\s*[\"'`](?!https?:\\/\\/)",
     "fetch resolves this URL against an address with no server behind it.",
     "Bundle the data into the export, or request an absolute http(s) URL."],
+  // Storage exists and works; what it cannot do is outlive the process, and a
+  // write is the only thing that has something to lose by that.
+  ["WEB_STORAGE_MEMORY", "warning", "\\blocalStorage\\s*\\.\\s*setItem\\b",
+    "localStorage is in memory only: what it stores is gone when the application exits.",
+    "Keep anything that must survive a restart in a file the application owns."],
 ];
 
 // Renderer capability, which no JavaScript declaration describes.

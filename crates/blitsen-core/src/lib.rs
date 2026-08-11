@@ -205,7 +205,7 @@ impl WindowState {
         document: &J::Value,
     ) -> Result<J::Value, JsError> {
         let window = engine.evaluate_script(
-            "for (const key of ['location','history','navigator','localStorage']) { try { delete globalThis[key] } catch {} } globalThis",
+            "for (const key of ['location','history','navigator','localStorage','sessionStorage']) { try { delete globalThis[key] } catch {} } globalThis",
             "blitsen:window-bootstrap",
         )?;
         engine.set_global("window", &window)?;

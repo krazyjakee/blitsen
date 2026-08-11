@@ -24,8 +24,8 @@ JavaScript comes from the [generated manifest](#capability-tiers) below.
 | --- | --- |
 | Application shape | One built `index.html` plus the local files reachable from it; root-relative HTML/CSS asset URLs are normalized while ingesting without changing `dist` |
 | JavaScript | ES modules already emitted by the application's bundler |
-| Framework DOM | Stable node identity, standard node type/name/owner fields, `MutationObserver`, creation/insertion/removal, text and attributes |
-| Selection and collections | `querySelector`, `querySelectorAll`, `getElementById`, static `NodeList`, `classList` |
+| Framework DOM | Stable node identity, standard node type/name/value/owner fields, `MutationObserver`, creation/insertion/removal, text and attributes, elements, comments, namespaced elements, fragments and `<template>` |
+| Selection and collections | `querySelector`, `querySelectorAll` and `getElementsByTagName` on the document and on an element, `getElementById`, `closest`, `matches`, `children`, `dataset`, static `NodeList`, `classList`, `link.relList` |
 | Events | Capture/target/bubble listeners, click, mouse, wheel, keyboard, focus, resize and lifecycle events |
 | Scheduling | `requestAnimationFrame`, timers and microtasks |
 | Networking | `fetch`, `Headers`, `Request`, `Response`, `Blob`, `AbortController` over `http`/`https`, with buffered bodies |
@@ -130,6 +130,69 @@ Checked against the real libraries rather than a reading of their source: React 
 `popstate`) and Vue Router 4 (`createWebHistory` and `createWebHashHistory`, including
 `router.back()`) resolve, match and traverse routes unmodified on this surface.
 
+## Nodes, fragments and templates
+
+The HTML parser makes node kinds `createElement` cannot, and framework runtimes need every one of
+them: `createComment` for Vue's `v-if` and fragment anchors, `createElementNS` for inline SVG,
+`createDocumentFragment` and `<template>.content` for Svelte 5's cloned templates. These are real
+nodes in the renderer's tree, not JavaScript stand-ins.
+
+Three differences from a browser are worth knowing:
+
+- **Collections are static.** `children`, `querySelectorAll` and `getElementsByTagName` return a
+  `NodeList` snapshot rather than a live `HTMLCollection`.
+- **A fragment is a detached `<template>` element underneath**, which is what gives its children a
+  real parent to be parsed, serialized and cloned against — including table rows, which any other
+  parsing context would discard. `cloneNode(true)` copies by serializing and reparsing, so a clone
+  carries the tree and its attributes and nothing else: no listeners and no JavaScript state, which
+  is what the DOM specifies anyway.
+- **`template.content` takes the parsed children off the element** the first time it is read,
+  because Blitz has no separate template-contents document. The element is empty afterwards, which
+  is what the specification says it was all along.
+
+A comment's data is fixed when it is created, and data that would close the comment early
+(`-->`) is refused rather than silently truncated. `outerHTML`, `insertAdjacentHTML`,
+`attachShadow` and `scrollIntoView` remain absent.
+
+`link.relList` exists chiefly so that `relList.supports("modulepreload")` can answer truthfully.
+Without it Vite's own module-preload polyfill installs itself and `fetch`es every chunk over an
+address with no server behind it, which takes down any code-split build. The preload keywords are
+honoured by doing nothing: an exported application's chunks are local files with no cache to warm.
+
+## Storage
+
+`localStorage` and `sessionStorage` exist, hold what is put in them, and **lose it when the
+application exits**. There is no profile directory behind an exported application yet, so both are
+one process's memory: `sessionStorage` is therefore exactly right, and `localStorage` is a session
+store wearing a longer name.
+
+It is implemented anyway because the absence is not survivable and the forgetfulness is. Libraries
+read `localStorage` unguarded inside a render — shadcn's theme provider does it in a `useState`
+initialiser — so an absent global takes the application down before first paint, while an empty one
+degrades to the default theme. What must not happen is that the difference goes unnoticed, so
+`doctor` reports every `localStorage.setItem` as `WEB_STORAGE_MEMORY`, on every build, for as long
+as this is true. Keep anything that has to outlive the process in a file the application owns.
+Real persistence is tracked separately.
+
+`indexedDB` stays absent.
+
+## Device identity
+
+`navigator` answers three questions — `userAgent`, `platform`, and `language`/`languages` — and
+nothing else. Those are facts about the machine the application is running on, and they are
+answered for the same reason storage is: Svelte 5 reads `navigator.userAgent` while it hydrates,
+without guarding it.
+
+Everything else `navigator` normally carries is capability rather than identity — `clipboard`,
+`geolocation`, `mediaDevices`, `serviceWorker`, `sendBeacon`, `permissions`, `onLine`,
+`userAgentData` — and all of it stays absent, so a feature test selects a fallback instead of
+calling something that cannot work. `screen`, `Notification` and `caches` are absent for the same
+reason; the native modules cover what an application actually needs there.
+
+The user-agent string names Blitsen (`Blitsen/0.0.0 (Linux x86_64)`) instead of impersonating a
+browser. An application that sniffs it deserves a true answer more than it deserves a code path
+written for someone else's engine.
+
 ## Unreferenced files
 
 Ingest walks the output directory from `index.html` and collects only what it can reach.
@@ -176,13 +239,13 @@ determinism gate instead.
 
 | Group | Implemented | Absent |
 | --- | --- | --- |
-| WEB_DOM | `document`, `Document`, `Node`, `Element`, `NodeList`, `DOMTokenList`, `CSSStyleDeclaration`, `MutationObserver`, `HTMLElement`, `HTMLIFrameElement`, `SVGElement` | `Element.querySelector`, `Element.querySelectorAll`, `Element.closest`, `Element.matches`, `Element.cloneNode`, `Element.contains`, `Element.children`, `Element.previousSibling`, `Element.lastChild`, `Element.parentElement`, `Element.dataset`, `Element.outerHTML`, `Element.insertAdjacentHTML`, `Element.attachShadow`, `Element.scrollIntoView`, `Document.createElementNS`, `Document.createDocumentFragment` |
+| WEB_DOM | `document`, `Document`, `Node`, `Element`, `NodeList`, `DOMTokenList`, `CSSStyleDeclaration`, `MutationObserver`, `HTMLElement`, `HTMLIFrameElement`, `SVGElement`, `Text`, `Comment`, `DocumentFragment`, `HTMLLinkElement`, `HTMLTemplateElement`, `Element.querySelector`, `Element.querySelectorAll`, `Element.closest`, `Element.matches`, `Element.cloneNode`, `Element.contains`, `Element.children`, `Element.previousSibling`, `Element.lastChild`, `Element.parentElement`, `Element.dataset`, `Element.nodeValue`, `Element.before`, `Element.after`, `Element.getElementsByTagName`, `HTMLLinkElement.relList`, `HTMLTemplateElement.content`, `DOMTokenList.supports`, `Document.createElementNS`, `Document.createComment`, `Document.createDocumentFragment`, `Document.getElementsByTagName`, `Document.importNode` | `Element.outerHTML`, `Element.insertAdjacentHTML`, `Element.attachShadow`, `Element.scrollIntoView` |
 | WEB_EVENTS | `EventTarget`, `Event`, `CustomEvent`, `MouseEvent`, `KeyboardEvent`, `addEventListener`, `removeEventListener`, `dispatchEvent` | — |
 | WEB_SCHEDULING | `requestAnimationFrame`, `cancelAnimationFrame`, `setTimeout`, `clearTimeout`, `setInterval`, `clearInterval` | `requestIdleCallback`, `cancelIdleCallback` |
 | WEB_NETWORK | `fetch`, `Headers`, `Request`, `Response`, `Blob`, `AbortController`, `AbortSignal` | — |
 | WEB_ROUTING | `window`, `location`, `history`, `Location`, `History`, `PopStateEvent`, `HashChangeEvent` | — |
 | WEB_VIEWPORT | `BlitsenViewElement`, `BlitsenViewSurface` | — |
-| WEB_STORAGE | — | `localStorage`, `sessionStorage`, `indexedDB` |
+| WEB_STORAGE | `Storage`, `localStorage`, `sessionStorage` | `indexedDB` |
 | WEB_WORKER | — | `Worker`, `SharedWorker`, `ServiceWorker`, `ServiceWorkerContainer` |
 | WEB_MESSAGING | — | `MessageChannel`, `MessagePort`, `BroadcastChannel`, `postMessage` |
 | WEB_SOCKET | — | `WebSocket`, `EventSource` |
@@ -195,17 +258,18 @@ determinism gate instead.
 | WEB_DIALOG | — | `alert`, `confirm`, `prompt`, `print` |
 | WEB_NAVIGATION | — | `open`, `close`, `navigation`, `document.write`, `document.writeln`, `document.open`, `document.close`, `location.assign`, `location.replace`, `location.reload`, `location.ancestorOrigins` |
 | WEB_COOKIE | — | `document.cookie`, `cookieStore`, `Headers.getSetCookie` |
-| WEB_DEVICE | — | `navigator`, `screen`, `Notification`, `caches` |
+| WEB_DEVICE | `Navigator`, `navigator`, `navigator.userAgent`, `navigator.platform`, `navigator.language` | `screen`, `Notification`, `caches` |
 | WEB_OBSERVER | — | `ResizeObserver`, `IntersectionObserver`, `PerformanceObserver` |
 | WEB_STYLE | — | `getComputedStyle`, `CSSStyleSheet`, `StyleSheetList` |
-| WEB_COMPONENTS | — | `customElements`, `ShadowRoot`, `HTMLTemplateElement`, `DOMParser` |
+| WEB_COMPONENTS | — | `customElements`, `ShadowRoot`, `DOMParser` |
 
 | Diagnostic | Severity | Reported as |
 | --- | --- | --- |
 | `WEB_FETCH` | error | fetch resolves this URL against an address with no server behind it. |
+| `WEB_STORAGE_MEMORY` | warning | localStorage is in memory only: what it stores is gone when the application exits. |
 | `WEB_DOM` | warning | This DOM method is not implemented. |
 | `WEB_SCHEDULING` | warning | Idle-callback scheduling is not implemented. |
-| `WEB_STORAGE` | error | Browser storage is not implemented. |
+| `WEB_STORAGE` | error | IndexedDB is not implemented. |
 | `WEB_WORKER` | error | Web workers are not implemented. |
 | `WEB_MESSAGING` | warning | Message channels are not implemented. |
 | `WEB_SOCKET` | warning | Browser network streams are not implemented. |

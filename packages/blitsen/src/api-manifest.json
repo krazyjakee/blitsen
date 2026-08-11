@@ -80,11 +80,46 @@
       "pattern": "(?<![.\\w$])SVGElement\\b"
     },
     {
+      "api": "Text",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_DOM",
+      "pattern": "(?<![.\\w$])Text\\b"
+    },
+    {
+      "api": "Comment",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_DOM",
+      "pattern": "(?<![.\\w$])Comment\\b"
+    },
+    {
+      "api": "DocumentFragment",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_DOM",
+      "pattern": "(?<![.\\w$])DocumentFragment\\b"
+    },
+    {
+      "api": "HTMLLinkElement",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_DOM",
+      "pattern": "(?<![.\\w$])HTMLLinkElement\\b"
+    },
+    {
+      "api": "HTMLTemplateElement",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_DOM",
+      "pattern": "(?<![.\\w$])HTMLTemplateElement\\b"
+    },
+    {
       "api": "Element.querySelector",
       "kind": "member",
       "owner": "Element.prototype",
       "member": "querySelector",
-      "status": "absent",
+      "status": "implemented",
       "code": "WEB_DOM",
       "pattern": null
     },
@@ -93,7 +128,7 @@
       "kind": "member",
       "owner": "Element.prototype",
       "member": "querySelectorAll",
-      "status": "absent",
+      "status": "implemented",
       "code": "WEB_DOM",
       "pattern": null
     },
@@ -102,7 +137,7 @@
       "kind": "member",
       "owner": "Element.prototype",
       "member": "closest",
-      "status": "absent",
+      "status": "implemented",
       "code": "WEB_DOM",
       "pattern": null
     },
@@ -111,7 +146,7 @@
       "kind": "member",
       "owner": "Element.prototype",
       "member": "matches",
-      "status": "absent",
+      "status": "implemented",
       "code": "WEB_DOM",
       "pattern": null
     },
@@ -120,7 +155,7 @@
       "kind": "member",
       "owner": "Element.prototype",
       "member": "cloneNode",
-      "status": "absent",
+      "status": "implemented",
       "code": "WEB_DOM",
       "pattern": null
     },
@@ -129,7 +164,7 @@
       "kind": "member",
       "owner": "Element.prototype",
       "member": "contains",
-      "status": "absent",
+      "status": "implemented",
       "code": "WEB_DOM",
       "pattern": null
     },
@@ -138,7 +173,7 @@
       "kind": "member",
       "owner": "Element.prototype",
       "member": "children",
-      "status": "absent",
+      "status": "implemented",
       "code": "WEB_DOM",
       "pattern": null
     },
@@ -147,7 +182,7 @@
       "kind": "member",
       "owner": "Element.prototype",
       "member": "previousSibling",
-      "status": "absent",
+      "status": "implemented",
       "code": "WEB_DOM",
       "pattern": null
     },
@@ -156,7 +191,7 @@
       "kind": "member",
       "owner": "Element.prototype",
       "member": "lastChild",
-      "status": "absent",
+      "status": "implemented",
       "code": "WEB_DOM",
       "pattern": null
     },
@@ -165,7 +200,7 @@
       "kind": "member",
       "owner": "Element.prototype",
       "member": "parentElement",
-      "status": "absent",
+      "status": "implemented",
       "code": "WEB_DOM",
       "pattern": null
     },
@@ -174,7 +209,43 @@
       "kind": "member",
       "owner": "Element.prototype",
       "member": "dataset",
-      "status": "absent",
+      "status": "implemented",
+      "code": "WEB_DOM",
+      "pattern": null
+    },
+    {
+      "api": "Element.nodeValue",
+      "kind": "member",
+      "owner": "Element.prototype",
+      "member": "nodeValue",
+      "status": "implemented",
+      "code": "WEB_DOM",
+      "pattern": null
+    },
+    {
+      "api": "Element.before",
+      "kind": "member",
+      "owner": "Element.prototype",
+      "member": "before",
+      "status": "implemented",
+      "code": "WEB_DOM",
+      "pattern": null
+    },
+    {
+      "api": "Element.after",
+      "kind": "member",
+      "owner": "Element.prototype",
+      "member": "after",
+      "status": "implemented",
+      "code": "WEB_DOM",
+      "pattern": null
+    },
+    {
+      "api": "Element.getElementsByTagName",
+      "kind": "member",
+      "owner": "Element.prototype",
+      "member": "getElementsByTagName",
+      "status": "implemented",
       "code": "WEB_DOM",
       "pattern": null
     },
@@ -215,11 +286,47 @@
       "pattern": null
     },
     {
+      "api": "HTMLLinkElement.relList",
+      "kind": "member",
+      "owner": "HTMLLinkElement.prototype",
+      "member": "relList",
+      "status": "implemented",
+      "code": "WEB_DOM",
+      "pattern": null
+    },
+    {
+      "api": "HTMLTemplateElement.content",
+      "kind": "member",
+      "owner": "HTMLTemplateElement.prototype",
+      "member": "content",
+      "status": "implemented",
+      "code": "WEB_DOM",
+      "pattern": null
+    },
+    {
+      "api": "DOMTokenList.supports",
+      "kind": "member",
+      "owner": "DOMTokenList.prototype",
+      "member": "supports",
+      "status": "implemented",
+      "code": "WEB_DOM",
+      "pattern": null
+    },
+    {
       "api": "Document.createElementNS",
       "kind": "member",
       "owner": "Document.prototype",
       "member": "createElementNS",
-      "status": "absent",
+      "status": "implemented",
+      "code": "WEB_DOM",
+      "pattern": null
+    },
+    {
+      "api": "Document.createComment",
+      "kind": "member",
+      "owner": "Document.prototype",
+      "member": "createComment",
+      "status": "implemented",
       "code": "WEB_DOM",
       "pattern": null
     },
@@ -228,7 +335,25 @@
       "kind": "member",
       "owner": "Document.prototype",
       "member": "createDocumentFragment",
-      "status": "absent",
+      "status": "implemented",
+      "code": "WEB_DOM",
+      "pattern": null
+    },
+    {
+      "api": "Document.getElementsByTagName",
+      "kind": "member",
+      "owner": "Document.prototype",
+      "member": "getElementsByTagName",
+      "status": "implemented",
+      "code": "WEB_DOM",
+      "pattern": null
+    },
+    {
+      "api": "Document.importNode",
+      "kind": "member",
+      "owner": "Document.prototype",
+      "member": "importNode",
+      "status": "implemented",
       "code": "WEB_DOM",
       "pattern": null
     },
@@ -457,16 +582,23 @@
       "pattern": "(?<![.\\w$])BlitsenViewSurface\\b"
     },
     {
+      "api": "Storage",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_STORAGE",
+      "pattern": "(?<![.\\w$])Storage\\b"
+    },
+    {
       "api": "localStorage",
       "kind": "global",
-      "status": "absent",
+      "status": "implemented",
       "code": "WEB_STORAGE",
       "pattern": "(?<![.\\w$])localStorage\\b"
     },
     {
       "api": "sessionStorage",
       "kind": "global",
-      "status": "absent",
+      "status": "implemented",
       "code": "WEB_STORAGE",
       "pattern": "(?<![.\\w$])sessionStorage\\b"
     },
@@ -866,11 +998,45 @@
       "pattern": null
     },
     {
+      "api": "Navigator",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_DEVICE",
+      "pattern": "(?<![.\\w$])Navigator\\b"
+    },
+    {
       "api": "navigator",
       "kind": "global",
-      "status": "absent",
+      "status": "implemented",
       "code": "WEB_DEVICE",
       "pattern": "(?<![.\\w$])navigator\\b"
+    },
+    {
+      "api": "navigator.userAgent",
+      "kind": "member",
+      "owner": "navigator",
+      "member": "userAgent",
+      "status": "implemented",
+      "code": "WEB_DEVICE",
+      "pattern": "\\bnavigator\\.userAgent\\b"
+    },
+    {
+      "api": "navigator.platform",
+      "kind": "member",
+      "owner": "navigator",
+      "member": "platform",
+      "status": "implemented",
+      "code": "WEB_DEVICE",
+      "pattern": "\\bnavigator\\.platform\\b"
+    },
+    {
+      "api": "navigator.language",
+      "kind": "member",
+      "owner": "navigator",
+      "member": "language",
+      "status": "implemented",
+      "code": "WEB_DEVICE",
+      "pattern": "\\bnavigator\\.language\\b"
     },
     {
       "api": "screen",
@@ -950,13 +1116,6 @@
       "pattern": "(?<![.\\w$])ShadowRoot\\b"
     },
     {
-      "api": "HTMLTemplateElement",
-      "kind": "global",
-      "status": "absent",
-      "code": "WEB_COMPONENTS",
-      "pattern": "(?<![.\\w$])HTMLTemplateElement\\b"
-    },
-    {
       "api": "DOMParser",
       "kind": "global",
       "status": "absent",
@@ -979,8 +1138,8 @@
     },
     "WEB_STORAGE": {
       "severity": "error",
-      "message": "Browser storage is not implemented.",
-      "guidance": "Use a Node filesystem/database package or feature-detect storage.",
+      "message": "IndexedDB is not implemented.",
+      "guidance": "Use a Node filesystem/database package, or the Web Storage APIs for session state.",
       "extra": null
     },
     "WEB_WORKER": {
@@ -1087,6 +1246,13 @@
       "pattern": "\\bfetch\\s*\\(\\s*[\"'`](?!https?:\\/\\/)",
       "message": "fetch resolves this URL against an address with no server behind it.",
       "guidance": "Bundle the data into the export, or request an absolute http(s) URL."
+    },
+    {
+      "code": "WEB_STORAGE_MEMORY",
+      "severity": "warning",
+      "pattern": "\\blocalStorage\\s*\\.\\s*setItem\\b",
+      "message": "localStorage is in memory only: what it stores is gone when the application exits.",
+      "guidance": "Keep anything that must survive a restart in a file the application owns."
     }
   ],
   "renderer": [
