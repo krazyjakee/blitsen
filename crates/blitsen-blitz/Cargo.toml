@@ -12,9 +12,13 @@ publish.workspace = true
 anyrender = "0.12"
 blitsen-dom = { path = "../blitsen-dom" }
 blitz = { git = "https://github.com/DioxusLabs/blitz", rev = "1efe22d2524d71ede5b94592204c21f0de644219" }
-# Blitz's meta-crate leaves the DOM-side custom-widget seam off. `<blitsen-view>`
-# is attached through it, so it is enabled here for the whole dependency graph.
-blitz-dom = { git = "https://github.com/DioxusLabs/blitz", rev = "1efe22d2524d71ede5b94592204c21f0de644219", default-features = false, features = ["custom-widget"] }
+# The meta-crate pulls blitz-dom with default features off, which drops
+# system-fonts — without it Parley has no font sources and every glyph renders
+# blank. Taken explicitly rather than via `default`, because blitz-dom's `svg`
+# feature does not compile at this pin (usvg::svgtypes is gone and
+# Tree::intrinsic_dimensions no longer exists); the meta-crate never enables it,
+# so upstream has not noticed. custom-widget is the seam `<blitsen-view>` uses.
+blitz-dom = { git = "https://github.com/DioxusLabs/blitz", rev = "1efe22d2524d71ede5b94592204c21f0de644219", default-features = false, features = ["system-fonts", "woff", "accessibility", "file-input", "custom-widget"] }
 html-escape = "0.2"
 kurbo = "0.13"
 peniko = "0.6"

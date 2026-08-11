@@ -5,7 +5,7 @@ mod dom_bridge;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
 use std::ffi::c_void;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::ptr;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -2198,6 +2198,7 @@ fn execute_document_animation_harness(
     frames: u32,
     width: u32,
     height: u32,
+    record_into: Option<&Path>,
 ) -> napi::Result<Vec<HarnessSnapshot>> {
     let source = std::fs::read_to_string(entrypoint).map_err(|error| {
         napi::Error::new(
@@ -2245,7 +2246,18 @@ fn execute_document_animation_harness(
             )
             .and_then(|_| engine.drain_microtasks().map(|_| ()))
             .map_err(napi_error)?;
-        snapshots.push(snapshot_and_render(Rc::clone(&document), width, height)?.0);
+        let (snapshot, png) = snapshot_and_render(Rc::clone(&document), width, height)?;
+        if let Some(directory) = record_into {
+            std::fs::write(directory.join(format!("frame-{frame:05}.png")), &png).map_err(
+                |error| {
+                    napi::Error::new(
+                        Status::GenericFailure,
+                        format!("could not record frame {frame}: {error}"),
+                    )
+                },
+            )?;
+        }
+        snapshots.push(snapshot);
     }
     Ok(snapshots)
 }
@@ -2366,9 +2378,51 @@ pub fn run_document_animation_harness(
         frames,
         width.unwrap_or(800),
         height.unwrap_or(600),
+        None,
     )?;
     serde_json::to_string(&snapshots)
         .map_err(|error| napi::Error::new(Status::GenericFailure, error.to_string()))
+}
+
+/// Advances a document's animation loop and writes every rendered frame as a PNG.
+///
+/// Backs the recorded demos in the documentation. The frames are the same ones the
+/// acceptance harness asserts on, so a published recording cannot drift away from
+/// what the tests actually verify.
+#[napi]
+pub fn record_document_animation_harness(
+    env: Env,
+    entrypoint: String,
+    setup_script: String,
+    directory: String,
+    frames: Option<u32>,
+    width: Option<u32>,
+    height: Option<u32>,
+) -> napi::Result<u32> {
+    let frames = frames.unwrap_or(60);
+    if frames > 10_000 {
+        return Err(napi::Error::new(
+            Status::InvalidArg,
+            "document animation harness is limited to 10000 frames",
+        ));
+    }
+    let directory = PathBuf::from(directory);
+    std::fs::create_dir_all(&directory).map_err(|error| {
+        napi::Error::new(
+            Status::GenericFailure,
+            format!("could not create {}: {error}", directory.display()),
+        )
+    })?;
+    execute_document_animation_harness(
+        env,
+        Path::new(&entrypoint),
+        &setup_script,
+        frames,
+        width.unwrap_or(800),
+        height.unwrap_or(600),
+        Some(&directory),
+    )?;
+    Ok(frames)
 }
 
 /// Renders the post-JavaScript frame as a base64-encoded PNG.
