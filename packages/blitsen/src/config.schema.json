@@ -1,0 +1,28 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://raw.githubusercontent.com/krazyjakee/blitsen/main/packages/blitsen/src/config.schema.json",
+  "title": "Blitsen configuration",
+  "description": "The \"blitsen\" key of package.json: the command Blitsen runs before ingest, and the directory of static web output it ingests.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "output"
+  ],
+  "properties": {
+    "build": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Command run before ingest, from the directory holding this package.json. Blitsen runs it and consumes its output directory; it never inspects or configures the build tool."
+    },
+    "output": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Directory of static web output, relative to this package.json. It must contain index.html."
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Application name. Sets the native window title and the default output file name."
+    }
+  }
+}

@@ -260,11 +260,16 @@ export function defaultOutfile(root) {
   return resolve(process.cwd(), basename(root));
 }
 
+function summarize(paths, limit = 5) {
+  const shown = paths.slice(0, limit).join(", ");
+  return paths.length > limit ? `${shown}, and ${paths.length - limit} more` : shown;
+}
+
 export async function buildStandalone(
   {
     root, width, height, title, outfile, force = false, include = [], assets = "embedded",
     icon = null, bundleId = null, appVersion = null, sign = null,
-    platform = process.platform,
+    platform = process.platform, progress = () => {},
   },
   nativePath,
 ) {
@@ -310,6 +315,14 @@ export async function buildStandalone(
       }
       manifest.push({ path: file.relative, hash: await hashFile(staged) });
     }
+    progress({
+      step: "collect",
+      detail: `${manifest.length} ${assets} assets`,
+      notes: plan.unreferenced.length === 0 ? [] : [
+        `dropped ${plan.unreferenced.length} files unreachable from index.html `
+        + `(--include <glob> keeps them): ${summarize(plan.unreferenced)}`,
+      ],
+    });
     await copyFile(nativePath, join(staging, "blitsen.node"));
     const launcher = join(staging, "launcher.mjs");
     await writeFile(launcher, launcherSource(manifest, {
@@ -334,6 +347,7 @@ export async function buildStandalone(
     // bun build --compile appends .exe on Windows when the requested path has no
     // extension, so the linked artifact is not always the requested path.
     const linked = await stat(destination).catch(() => null) ? destination : `${destination}.exe`;
+    progress({ step: "link", detail: linked });
     const packaged = icon || bundleId || appVersion
       ? await packageBuild({
         platform,
@@ -352,6 +366,16 @@ export async function buildStandalone(
     const signed = sign
       ? await signArtifact({ platform, command: sign, artifact: packaged?.bundle ?? executable })
       : null;
+    progress({
+      step: "package",
+      detail: packaged
+        ? `${packaged.platform}: ${packaged.artifacts.join(", ")}`
+        : "no platform artifacts requested (--icon, --bundle-id, --app-version)",
+      notes: [
+        ...packaged?.notes ?? [],
+        ...(signed ? [`signed ${signed.artifact} with: ${signed.command}`] : []),
+      ],
+    });
     return {
       outfile: executable,
       layout: assets,

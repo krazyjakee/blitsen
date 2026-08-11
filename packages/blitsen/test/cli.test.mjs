@@ -1,13 +1,15 @@
 import { describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createReloadCoordinator, main, packageVersion, parseArgs, resolveApplication } from "../src/cli.mjs";
+import { CONFIG_SCHEMA, defineConfig, loadConfig, runBuildCommand, validateConfig } from "../src/config.mjs";
 import { doctorApplication } from "../src/doctor.mjs";
 import { buildStandalone, planIngest, rewriteRootRelativeReferences } from "../src/export.mjs";
 import { packageBuild, signArgv, signArtifact } from "../src/packaging.mjs";
 
 const viteBase = join(import.meta.dir, "fixtures/vite-base");
+const configFixtures = join(import.meta.dir, "fixtures/config");
 const icon = join(import.meta.dir, "fixtures/icons/app-256.png");
 const signHook = `sh ${join(import.meta.dir, "fixtures/sign/record-artifact.sh")}`;
 
@@ -78,6 +80,34 @@ describe("directory CLI", () => {
       .toEqual({ command: "build", directory: "dist", width: 800, height: 600, title: "Blitsen",
         icon: "app.png", bundleId: "com.example.pong", appVersion: "1.2.3", sign: "codesign -s ID" });
     expect(() => parseArgs(["app", "--icon", "app.png"])).toThrow("only valid with build");
+  });
+
+  test("names the application once for the title, the output file and the metadata", () => {
+    expect(parseArgs(["build", "dist", "--out", "Demo", "--name", "My App"]))
+      .toEqual({ command: "build", directory: "dist", width: 800, height: 600,
+        title: "My App", name: "My App", outfile: "Demo" });
+    // An explicit --title wins over the name it would otherwise default to.
+    expect(parseArgs(["build", "dist", "--name", "My App", "--title", "Window"]).title).toBe("Window");
+    expect(parseArgs(["build", "dist", "--title", "Window", "--name", "My App"]).title).toBe("Window");
+    expect(() => parseArgs(["app", "--name", "My App"])).toThrow("only valid with build");
+  });
+
+  test("refuses cross-target export instead of quietly building for the host", () => {
+    const host = `${process.platform}-${process.arch}`;
+    const other = host === "linux-x64" ? "darwin-arm64" : "linux-x64";
+    expect(parseArgs(["build", "dist", "--target", host]).target).toBe(host);
+    expect(() => parseArgs(["build", "dist", "--target", other]))
+      .toThrow("is not supported yet");
+    expect(() => parseArgs(["build", "dist", "--target", other])).toThrow("see issue #72");
+    expect(() => parseArgs(["build", "dist", "--target", "sunos-x64"]))
+      .toThrow("unknown --target sunos-x64");
+  });
+
+  test("requires a directory for every command except a configured build", () => {
+    expect(parseArgs(["build"]))
+      .toEqual({ command: "build", directory: null, width: 800, height: 600, title: "Blitsen" });
+    expect(() => parseArgs(["doctor"])).toThrow("missing application directory");
+    expect(() => parseArgs(["--width", "800"])).toThrow("missing application directory");
   });
 
   test("resolves an index", async () => {
@@ -174,7 +204,9 @@ describe("directory CLI", () => {
     const runtime = { build: async () => { built = true; return {}; } };
     expect(await main(["build", fixture, "--outfile", "/tmp/blitsen-never"], output, runtime)).toBe(1);
     expect(built).toBeFalse();
-    expect(lines.some(([, line]) => line.includes("ASSET_REMOTE"))).toBeTrue();
+    // The blocking diagnostic names its file, on stderr, under the step that found it.
+    expect(lines.some(([stream, line]) => stream === "err"
+      && line.trimStart().startsWith("index.html:") && line.includes("ASSET_REMOTE"))).toBeTrue();
     expect(lines.at(-1)[1]).toContain("1 compatibility error blocks this build");
   });
 
@@ -218,11 +250,20 @@ describe("directory CLI", () => {
 
   test("packages a Linux desktop entry, icon and signature into the build", async () => {
     await withStubbedExport(async ({ directory, nativePath, outfile }) => {
+      const events = [];
       const result = await buildStandalone({
         root: viteBase, width: 800, height: 600, title: "Pong Deluxe", outfile,
-        icon, sign: signHook, platform: "linux",
+        icon, sign: signHook, platform: "linux", progress: event => events.push(event),
       }, nativePath);
       expect(result.outfile).toBe(outfile);
+      // Steps ③–⑤ announce themselves as they finish, with what they produced.
+      expect(events.map(event => event.step)).toEqual(["collect", "link", "package"]);
+      expect(events[0].detail).toBe("7 embedded assets");
+      expect(events[0].notes[0]).toBe("dropped 2 files unreachable from index.html "
+        + "(--include <glob> keeps them): assets/index-BASE.js.map, assets/orphan.txt");
+      expect(events[1].detail).toBe(outfile);
+      expect(events[2].detail).toBe(`linux: ${result.packaging.artifacts.join(", ")}`);
+      expect(events[2].notes).toEqual([`signed ${outfile} with: ${signHook}`]);
       expect(result.packaging.artifacts)
         .toEqual([join(directory, "App.desktop"), join(directory, "App.png")]);
       const entry = await readFile(join(directory, "App.desktop"), "utf8");
@@ -376,17 +417,16 @@ describe("directory CLI", () => {
     expect(pumps).toBe(3);
   });
 
-  test("builds a resolved directory through the standalone exporter", async () => {
+  test("builds a resolved directory through the standalone exporter, naming each step", async () => {
     const fixture = join(import.meta.dir, "../../../examples/pong");
     let built;
     const runtime = {
       build: async options => {
         built = options;
-        return {
-          outfile: "/tmp/pong", assets: 3, bytes: 123,
-          packaging: { platform: "linux", artifacts: ["/tmp/pong.desktop"], notes: ["note"] },
-          signed: { command: "codesign", artifact: "/tmp/pong" },
-        };
+        options.progress({ step: "collect", detail: "3 embedded assets", notes: ["dropped 1 file"] });
+        options.progress({ step: "link", detail: "/tmp/pong" });
+        options.progress({ step: "package", detail: "linux: /tmp/pong.desktop", notes: ["note"] });
+        return { outfile: "/tmp/pong", assets: 3, bytes: 123 };
       },
     };
     const { lines, output } = capture();
@@ -395,11 +435,32 @@ describe("directory CLI", () => {
     expect(built.command).toBe("build");
     expect(built.entrypoint.endsWith("examples/pong/index.html")).toBeTrue();
     expect(built.icon).toBe("app.png");
-    expect(lines[0][1]).toContain("Built /tmp/pong (3 assets, 123 bytes)");
-    expect(lines[1][1]).toBe("Packaged for linux: /tmp/pong.desktop");
-    expect(lines[2][1]).toBe("note");
-    expect(lines[3][1]).toBe("Signed /tmp/pong with: codesign");
+    expect(lines[0][1]).toBe(`① ingest  ${built.entrypoint}`);
+    expect(lines[1][1]).toMatch(/^② scan {4}\d+ files, 0 errors, \d+ warnings$/);
+    const steps = lines.map(([, line]) => line).filter(line => /^[⓪①②③④⑤]/.test(line));
+    expect(steps.slice(2)).toEqual([
+      "③ collect 3 embedded assets",
+      "④ link    /tmp/pong",
+      "⑤ package linux: /tmp/pong.desktop",
+    ]);
+    expect(lines.some(([, line]) => line === "          dropped 1 file")).toBeTrue();
+    expect(lines.some(([, line]) => line === "          note")).toBeTrue();
+    expect(lines.at(-2)[1]).toBe("Built /tmp/pong (3 assets, 123 bytes)");
     expect(lines.at(-1)[1]).toContain("not yet cleared for redistribution");
+  });
+
+  test("names the offending file and exits non-zero when ingest cannot resolve a reference", async () => {
+    await withStubbedExport(async ({ directory, nativePath, outfile }) => {
+      const root = join(directory, "app");
+      await mkdir(root);
+      await writeFile(join(root, "index.html"), '<link rel="stylesheet" href="/assets/gone.css">');
+      const { lines, output } = capture();
+      const runtime = { build: options => buildStandalone(options, nativePath) };
+      expect(await main(["build", root, "--out", outfile], output, runtime)).toBe(1);
+      expect(lines.at(-1)).toEqual(["err", "blitsen: unresolved local references in the "
+        + "application output:\n  index.html references /assets/gone.css"]);
+      expect(await stat(outfile).catch(() => null)).toBeNull();
+    });
   });
 
   test("yields timer macrotasks and microtasks before the next native pump", async () => {
@@ -477,6 +538,101 @@ describe("directory CLI", () => {
     await coordinator.settled();
     expect(calls).toEqual([["css", "styles/imported.css"], ["document"]]);
     coordinator.close();
+  });
+
+  test("publishes the schema it validates against", async () => {
+    const published = join(import.meta.dir, "../src/config.schema.json");
+    expect(JSON.parse(await readFile(published, "utf8"))).toEqual(CONFIG_SCHEMA);
+    expect(defineConfig({ build: "vite build", output: "dist", name: "My App" }))
+      .toEqual({ build: "vite build", output: "dist", name: "My App" });
+  });
+
+  test("rejects a malformed config naming the key and the file it came from", async () => {
+    expect(() => defineConfig({ output: 7 }))
+      .toThrow('invalid blitsen config in defineConfig(): "output" must be a string, found a number');
+    expect(() => validateConfig({ output: "dist", name: " " }, "/app/package.json"))
+      .toThrow('invalid blitsen config in /app/package.json: "name" must not be empty');
+    expect(() => validateConfig({}, "/app/package.json"))
+      .toThrow('invalid blitsen config in /app/package.json: missing required key "output"');
+    expect(() => validateConfig(["dist"], "/app/package.json"))
+      .toThrow("invalid blitsen config in /app/package.json: expected an object, found an array");
+    const misspelled = join(configFixtures, "misspelled");
+    await expect(loadConfig(misspelled)).rejects.toThrow(
+      `invalid blitsen config in ${join(misspelled, "package.json")}: `
+      + 'unknown key "outputs" (known keys: build, output, name)');
+  });
+
+  test("discovers the config in the nearest package.json declaring it", async () => {
+    const found = await loadConfig(join(configFixtures, "wrapped"));
+    expect(found.root).toBe(join(configFixtures, "wrapped"));
+    expect(found.config).toEqual({ build: "node emit-dist.mjs", output: "dist", name: "Wrapped App" });
+    // A package.json without the key is not a config, and neither is no package.json.
+    const bare = await mkdtemp(join(tmpdir(), "blitsen-config-"));
+    try {
+      expect(await loadConfig(bare)).toEqual({ path: null, root: null, config: null });
+      await writeFile(join(bare, "package.json"), '{"name":"bare"}');
+      expect(await loadConfig(bare))
+        .toEqual({ path: join(bare, "package.json"), root: null, config: null });
+      await writeFile(join(bare, "package.json"), "{ not json");
+      await expect(loadConfig(bare)).rejects.toThrow("package.json is not valid JSON");
+    } finally {
+      await rm(bare, { recursive: true, force: true });
+    }
+  });
+
+  test("fails the build when the configured command does", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "blitsen-command-"));
+    try {
+      await expect(runBuildCommand("exit 3", directory))
+        .rejects.toThrow("build command failed with exit code 3: exit 3");
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("runs the configured build and ingests the directory it wrote", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "blitsen-wrapped-"));
+    const project = join(workspace, "app");
+    await cp(join(configFixtures, "wrapped"), project, { recursive: true });
+    const cwd = process.cwd();
+    let built;
+    try {
+      process.chdir(project);
+      const here = process.cwd();
+      const { lines, output } = capture();
+      const runtime = {
+        build: async options => {
+          built = options;
+          return { outfile: options.outfile, assets: 1, bytes: 1 };
+        },
+      };
+      expect(await main(["build"], output, runtime)).toBe(0);
+      expect(lines[0][1])
+        .toBe(`⓪ build   node emit-dist.mjs (configured in ${join(project, "package.json")})`);
+      // The command really ran: Blitsen only knows the directory it left behind.
+      expect(await readFile(join(project, "dist/index.html"), "utf8")).toContain("wrapped");
+      expect(built.root).toBe(await realpath(join(project, "dist")));
+      expect(built.title).toBe("Wrapped App");
+      expect(built.outfile).toBe(join(here, "Wrapped App"));
+    } finally {
+      process.chdir(cwd);
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  test("asks for a directory or a config when neither is there", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "blitsen-unconfigured-"));
+    const cwd = process.cwd();
+    try {
+      process.chdir(directory);
+      const { lines, output } = capture();
+      expect(await main(["build"], output, { build: async () => ({}) })).toBe(1);
+      expect(lines[0][1]).toContain('pass one, or add a "blitsen" config to');
+      expect(lines[0][1]).toContain("package.json");
+    } finally {
+      process.chdir(cwd);
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 
   test("reports missing entrypoints and unavailable native addons", async () => {

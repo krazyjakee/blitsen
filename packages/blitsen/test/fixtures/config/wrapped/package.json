@@ -1,0 +1,9 @@
+{
+  "name": "wrapped-fixture",
+  "private": true,
+  "blitsen": {
+    "build": "node emit-dist.mjs",
+    "output": "dist",
+    "name": "Wrapped App"
+  }
+}

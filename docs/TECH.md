@@ -502,6 +502,23 @@ Step ② keeps the compatibility promise honest. Blitsen will be handed output i
 failure must arrive at build time with a named API and file, not as a blank window at runtime.
 A profile **error** fails `blitsen build`; warnings are printed and the build proceeds.
 
+Each step announces itself as it finishes, with what it produced — a link that takes ten seconds
+must not look like a hang, and a dropped file must be attributable:
+
+```
+⓪ build   vite build (configured in /app/package.json)
+① ingest  /app/dist/index.html
+② scan    6 files, 0 errors, 1 warnings
+③ collect 7 embedded assets
+          dropped 2 files unreachable from index.html (--include <glob> keeps them): …
+④ link    /app/MyApp
+⑤ package linux: /app/MyApp.desktop, /app/MyApp.png
+```
+
+Exit codes are the CI contract: `0` on success, `1` for any refusal, with the message on stderr
+naming the file that caused it (the unresolvable reference, the incompatible source, the icon).
+Compatibility errors are written to stderr under their step; warnings stay on stdout.
+
 ### Reachability, not directory recursion
 
 Step ① starts at `index.html` and follows references transitively: HTML `src`/`href`/`poster`/
@@ -536,7 +553,10 @@ records the compiled entrypoint's path inside the executable.
 
 Step ⑤ runs over the linked artifact when a packaging option (`--icon`, `--bundle-id`,
 `--app-version`) is given; without one the export is the bare executable it has always been.
-Packaging targets the host platform — there is no `--target` cross-export yet.
+Packaging targets the host platform. `--target <platform>-<arch>` accepts only the host triple:
+the Phase 1 runtime is the host's compiled addon and there are no per-target runtime packages to
+link against, so any other target fails naming issue #72 rather than quietly producing a host
+build under a foreign name.
 
 | Host | Produced beside or around the executable |
 | --- | --- |
@@ -568,8 +588,22 @@ Config in `package.json` lets Blitsen invoke the existing build first, so the us
 { "blitsen": { "build": "vite build", "output": "dist", "name": "My App" } }
 ```
 
-Blitsen shells out to `build`, then ingests `output`. It never inspects or configures the build
-tool itself — that coupling is exactly what the design avoids.
+`npx blitsen build` with no directory shells out to `build`, then ingests `output`. It never
+inspects or configures the build tool itself — that coupling is exactly what the design avoids
+(structural constraint 6). The command is handed to the platform shell exactly as written, run
+from the directory holding that `package.json` with `node_modules/.bin` on `PATH`, and a non-zero
+exit fails the build naming the command. A directory argument means "ingest this": it skips the
+wrapping entirely, and every CLI flag overrides the configured value.
+
+- **The `blitsen` key of `package.json` is the only config location.** No `blitsen.config.*`
+  file, no cascade, nothing to search for — one file per project, the one the user's build
+  scripts already live in.
+- `output` is required and resolved against that `package.json`; `name` sets the window title and
+  the default output file name; unknown or malformed keys fail before anything runs, naming the
+  key and the file.
+- The schema is published as `blitsen/src/config.schema.json` (JSON Schema draft-07) for editor
+  completion, and it is the same object the CLI validates against, so the two cannot drift.
+  `defineConfig` from the `blitsen` package runs that validation on a config object written in JS.
 
 ### Development modes
 

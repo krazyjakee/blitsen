@@ -15,7 +15,35 @@ It resolves `index.html`, preflights local entrypoint assets, and opens the resu
 in a native window. On the current platform, the Phase 1 architecture-proof exporter is:
 
 ```sh
-npx blitsen build dist --outfile MyApp
+npx blitsen build dist --out MyApp
+```
+
+The build names each step as it finishes — `⓪ build`, `① ingest`, `② scan`, `③ collect`,
+`④ link`, `⑤ package` — with what it produced, and drops to exit code 1 with the offending file
+on stderr when it refuses. `--target` accepts only the host triple: this runtime is the host's
+compiled addon, so a cross-target request fails rather than quietly producing a host build under
+a foreign name ([#72](https://github.com/krazyjakee/blitsen/issues/72)).
+
+Point Blitsen at your existing build once, in `package.json`, and `npx blitsen build` needs no
+arguments at all:
+
+```json
+{ "blitsen": { "build": "vite build", "output": "dist", "name": "My App" } }
+```
+
+Blitsen runs `build` from that directory and ingests `output`. It never inspects or configures
+your build tool — it runs the command you wrote and consumes the directory it left behind. A
+directory argument (`npx blitsen build dist`) skips the wrapping, and every flag overrides the
+configured value. `name` becomes the window title and the default output file name. The `blitsen`
+key of `package.json` is the only config location; its schema ships as
+`blitsen/src/config.schema.json`, and `defineConfig` from the package validates the same shape
+in JS:
+
+```js
+import { defineConfig } from "blitsen";
+
+// Throws here, with the error the CLI would give, instead of at build time.
+const config = defineConfig({ build: "vite build", output: "dist", name: "My App" });
 ```
 
 Check a bundler's static output against the published v0 profile before export:
@@ -44,7 +72,7 @@ the executable instead. A profile error from `doctor` fails the build.
 Give the export a platform identity, and hand the finished artifact to your own signing setup:
 
 ```sh
-npx blitsen build dist --outfile MyApp --icon icon.png --app-version 1.2.3 \
+npx blitsen build dist --out MyApp --icon icon.png --app-version 1.2.3 \
   --sign 'codesign --sign "Developer ID Application: …"'
 ```
 

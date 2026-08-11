@@ -1,0 +1,7 @@
+{
+  "name": "misspelled-fixture",
+  "private": true,
+  "blitsen": {
+    "outputs": "dist"
+  }
+}

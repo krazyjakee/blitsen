@@ -1,3 +1,1 @@
-export function defineConfig(config) {
-  return config;
-}
+export { CONFIG_SCHEMA, defineConfig, loadConfig, validateConfig } from "./src/config.mjs";
