@@ -477,6 +477,27 @@ const BOOTSTRAP: &str = r##"
     get nextSibling() { return wrap(call("nextSibling", this[handle])); }
     get previousSibling() { return wrap(call("previousSibling", this[handle])); }
     get isConnected() { return call("isConnected", this[handle]); }
+    // There are no shadow roots in this runtime, so a connected node's root is
+    // the document itself rather than the element the parent walk stops at.
+    getRootNode() {
+      if (this.isConnected) return document;
+      let root = this;
+      for (let parent = root.parentNode; parent; parent = parent.parentNode) root = parent;
+      return root;
+    }
+    // Merges adjacent text and drops the empty ones, depth first. A comment
+    // between two text nodes separates them, which is why any other child ends
+    // the run rather than being skipped over.
+    normalize() {
+      let run = null;
+      for (const child of [...this.childNodes]) {
+        if (child.nodeType !== 3) { run = null; child.normalize(); continue; }
+        if (child.textContent === "") { child.remove(); continue; }
+        if (!run) { run = child; continue; }
+        run.textContent += child.textContent;
+        child.remove();
+      }
+    }
     get textContent() { return call("textContent", this[handle]); }
     set textContent(value) {
       call("setTextContent", this[handle], String(value));
@@ -509,6 +530,10 @@ const BOOTSTRAP: &str = r##"
     },
   });
 
+  // What the variadic insertion methods accept: anything that is not a node is
+  // the text it stringifies to.
+  const insertable = value => value instanceof Node ? value : document.createTextNode(String(value));
+
   class Element extends Node {
     get tagName() {
       const name = elementTag(this);
@@ -522,9 +547,28 @@ const BOOTSTRAP: &str = r##"
       return new NodeList(call("querySelectorAllIn", this[handle], String(selector)).map(wrap));
     }
     getElementsByTagName(name) { return this.querySelectorAll(String(name)); }
+    // Static, as every collection this runtime returns is: a re-query sees the
+    // mutation, the collection handed out before it does not.
+    getElementsByClassName(names) {
+      return new NodeList(call("elementsByClassNameIn", this[handle], String(names)).map(wrap));
+    }
     matches(selector) { return call("matches", this[handle], String(selector)); }
     closest(selector) { return wrap(call("closest", this[handle], String(selector))); }
     get children() { return new NodeList(call("childElements", this[handle]).map(wrap)); }
+    get childElementCount() { return call("childElements", this[handle]).length; }
+    get firstElementChild() { return this.children[0] ?? null; }
+    get lastElementChild() { const children = this.children; return children[children.length - 1] ?? null; }
+    get nextElementSibling() { return wrap(call("nextElementSibling", this[handle])); }
+    get previousElementSibling() { return wrap(call("previousElementSibling", this[handle])); }
+    append(...nodes) { for (const node of nodes) this.appendChild(insertable(node)); }
+    prepend(...nodes) {
+      const reference = this.firstChild;
+      for (const node of nodes) this.insertBefore(insertable(node), reference);
+    }
+    replaceChildren(...nodes) {
+      for (const child of [...this.childNodes]) this.removeChild(child);
+      this.append(...nodes);
+    }
     get dataset() {
       let data = datasetCache.get(this);
       if (!data) { data = datasetMap(this); datasetCache.set(this, data); }
@@ -546,6 +590,40 @@ const BOOTSTRAP: &str = r##"
         attributeNamespace: null, oldValue });
     }
     hasAttribute(name) { return call("hasAttribute", this[handle], String(name)); }
+    hasAttributes() { return this.getAttributeNames().length > 0; }
+    getAttributeNames() { return call("attributeNames", this[handle]); }
+    get attributes() { return new NamedNodeMap(this); }
+    toggleAttribute(name, force) {
+      name = String(name);
+      const present = this.hasAttribute(name);
+      const wanted = force === undefined ? !present : Boolean(force);
+      if (wanted !== present) {
+        if (wanted) this.setAttribute(name, ""); else this.removeAttribute(name);
+      }
+      return wanted;
+    }
+    // The namespaced half of the attribute surface, which is how React and Vue
+    // write `xlink:href` and `xml:space`. A namespace of null is the space the
+    // plain accessors above use, so the two halves reach the same attribute.
+    getAttributeNS(namespace, name) {
+      return call("getAttributeNS", this[handle], namespace == null ? "" : String(namespace), String(name));
+    }
+    setAttributeNS(namespace, name, value) {
+      namespace = namespace == null ? "" : String(namespace);
+      name = String(name);
+      const oldValue = this.getAttributeNS(namespace, name);
+      call("setAttributeNS", this[handle], namespace, name, String(value));
+      notifyMutation({ type: "attributes", target: this, attributeName: name,
+        attributeNamespace: namespace || null, oldValue });
+    }
+    removeAttributeNS(namespace, name) {
+      namespace = namespace == null ? "" : String(namespace);
+      name = String(name);
+      const oldValue = this.getAttributeNS(namespace, name);
+      call("removeAttributeNS", this[handle], namespace, name);
+      notifyMutation({ type: "attributes", target: this, attributeName: name,
+        attributeNamespace: namespace || null, oldValue });
+    }
     get id() { return this.getAttribute("id") ?? ""; }
     set id(value) { this.setAttribute("id", value); }
     get className() { return this.getAttribute("class") ?? ""; }
@@ -579,6 +657,20 @@ const BOOTSTRAP: &str = r##"
     }
     get innerHTML() { return call("innerHTML", this[handle]); }
     set innerHTML(value) { call("setInnerHTML", this[handle], String(value)); }
+    get outerHTML() { return call("outerHTML", this[handle]); }
+    insertAdjacentHTML(position, html) {
+      position = String(position);
+      const inserted = call("insertAdjacentHTML", this[handle], position, String(html)).map(wrap);
+      if (inserted.length === 0) return;
+      const target = /^(?:beforebegin|afterend)$/i.test(position) ? this.parentNode : this;
+      notifyMutation({ type: "childList", target, addedNodes: new NodeList(inserted),
+        removedNodes: new NodeList([]), previousSibling: inserted[0].previousSibling,
+        nextSibling: inserted[inserted.length - 1].nextSibling });
+    }
+    // Blitz lays an element out as one box: there is no fragmentation across
+    // columns or line boxes to report, so the list is the border box and the
+    // same layout read `getBoundingClientRect` is.
+    getClientRects() { return Object.freeze([this.getBoundingClientRect()]); }
     getBoundingClientRect() {
       const { x, y, width, height } = recordForcedLayout(call("layoutMetrics", this[handle]));
       return Object.freeze({
@@ -793,6 +885,46 @@ const BOOTSTRAP: &str = r##"
       Object.freeze(this);
     }
     item(index) { return this[index] ?? null; }
+    *[Symbol.iterator]() { for (let index = 0; index < this.length; index++) yield this[index]; }
+  }
+
+  // An attribute as an object. Only its name is captured: the value is read and
+  // written through the element, so an attribute node that outlives a mutation
+  // does not answer with the value it was made from. No prefix is stored — the
+  // bridge keys an attribute by namespace and local name — so the qualified name
+  // and the local one are the same string.
+  class Attr {
+    constructor(element, namespace, name) {
+      this._element = element;
+      this._namespace = namespace;
+      this._name = name;
+    }
+    get ownerElement() { return this._element; }
+    get namespaceURI() { return this._namespace; }
+    get name() { return this._name; }
+    get localName() { return this._name; }
+    get value() { return this._element.getAttributeNS(this._namespace, this._name) ?? ""; }
+    set value(value) { this._element.setAttributeNS(this._namespace, this._name, value); }
+  }
+
+  // Static, as every collection this runtime hands out is. The attribute nodes
+  // in it are not: each of those still reads through the element.
+  class NamedNodeMap {
+    constructor(element) {
+      const nodes = call("attributeEntries", element[handle])
+        .map(entry => new Attr(element, entry.namespace, entry.name));
+      Object.defineProperty(this, "length", { value: nodes.length, enumerable: false });
+      nodes.forEach((node, index) => Object.defineProperty(this, index, { value: node, enumerable: true }));
+      Object.freeze(this);
+    }
+    item(index) { return this[index] ?? null; }
+    getNamedItem(name) { return this.getNamedItemNS(null, name); }
+    getNamedItemNS(namespace, name) {
+      const uri = namespace == null ? null : String(namespace);
+      name = uri === null ? String(name).toLowerCase() : String(name);
+      for (const attribute of this) if (attribute.namespaceURI === uri && attribute.name === name) return attribute;
+      return null;
+    }
     *[Symbol.iterator]() { for (let index = 0; index < this.length; index++) yield this[index]; }
   }
 
@@ -1064,6 +1196,9 @@ const BOOTSTRAP: &str = r##"
     querySelector(selector) { return wrap(call("querySelector", String(selector))); }
     querySelectorAll(selector) { return new NodeList(call("querySelectorAll", String(selector)).map(wrap)); }
     getElementsByTagName(name) { return this.querySelectorAll(String(name)); }
+    getElementsByClassName(names) {
+      return new NodeList(call("elementsByClassName", String(names)).map(wrap));
+    }
     getElementById(id) { return wrap(call("getElementById", String(id))); }
     createElement(name) { return wrap(call("createElement", String(name))); }
     createElementNS(namespace, name) {
@@ -1598,6 +1733,7 @@ const BOOTSTRAP: &str = r##"
     Object.defineProperty(globalThis, method, { value: EventTarget.prototype[method], configurable: true });
   const globals = {
     EventTarget, Node, Element, NodeList, Document, DocumentFragment, DOMTokenList,
+    Attr, NamedNodeMap,
     CSSStyleDeclaration, MutationObserver, ResizeObserver, HTMLElement, HTMLIFrameElement,
     SVGElement, Text, Comment, Image,
     HTMLImageElement, HTMLLinkElement, HTMLTemplateElement, Storage, Navigator, document,
@@ -2054,6 +2190,16 @@ fn namespace_uri(namespace: &Namespace) -> Option<&str> {
     }
 }
 
+fn namespace_from_uri(uri: &str) -> Namespace {
+    match uri {
+        "" => Namespace::None,
+        HTML_NAMESPACE => Namespace::Html,
+        SVG_NAMESPACE => Namespace::Svg,
+        MATHML_NAMESPACE => Namespace::MathMl,
+        other => Namespace::Other(other.to_owned()),
+    }
+}
+
 fn element_name(namespace: &str, name: &str) -> Result<DomName, JsError> {
     if name.is_empty()
         || name.chars().any(|character| {
@@ -2062,34 +2208,87 @@ fn element_name(namespace: &str, name: &str) -> Result<DomName, JsError> {
     {
         return Err(JsError::new("invalid element name"));
     }
-    Ok(match namespace {
-        "" => DomName {
-            namespace: Namespace::None,
-            local: name.to_owned(),
-        },
-        // Only HTML folds case; SVG has `linearGradient` and `clipPath`.
-        HTML_NAMESPACE => DomName::html(name.to_ascii_lowercase()),
-        SVG_NAMESPACE => DomName {
-            namespace: Namespace::Svg,
-            local: name.to_owned(),
-        },
-        MATHML_NAMESPACE => DomName {
-            namespace: Namespace::MathMl,
-            local: name.to_owned(),
-        },
-        other => DomName {
-            namespace: Namespace::Other(other.to_owned()),
-            local: name.to_owned(),
-        },
-    })
+    let namespace = namespace_from_uri(namespace);
+    // Only HTML folds case; SVG has `linearGradient` and `clipPath`.
+    let local = if namespace == Namespace::Html {
+        name.to_ascii_lowercase()
+    } else {
+        name.to_owned()
+    };
+    Ok(DomName { namespace, local })
+}
+
+/// Builds the attribute name behind the `*AttributeNS` trio.
+///
+/// A qualified name's prefix is not kept: Blitz keys an attribute by namespace
+/// and local name, which is the pair `getAttributeNS` asks back for. Case folds
+/// only in the null namespace — the one ordinary HTML attributes live in, which
+/// the rest of the bridge already lower-cases — so `xlink:href` and `xml:space`
+/// keep theirs, as `createElementNS` keeps an element's.
+fn attribute_name(namespace: &str, qualified: &str) -> Result<DomName, JsError> {
+    let local = qualified.rsplit(':').next().unwrap_or_default();
+    if local.is_empty()
+        || local.chars().any(|character| {
+            character.is_whitespace() || matches!(character, '<' | '>' | '/' | '=' | '"' | '\0')
+        })
+    {
+        return Err(JsError::new("invalid attribute name"));
+    }
+    let namespace = namespace_from_uri(namespace);
+    let local = if namespace == Namespace::None {
+        local.to_ascii_lowercase()
+    } else {
+        local.to_owned()
+    };
+    Ok(DomName { namespace, local })
+}
+
+/// Returns the descendants of `root` carrying every one of `names` as a class.
+///
+/// Matched against the class attribute's tokens rather than through a selector:
+/// a class a bundler invents contains characters (`w-1/2`, `md:flex`) that only
+/// survive a selector escaped, and the escaping is what would be guessed at.
+fn elements_by_class_name(
+    dom: &BlitzDom,
+    root: NodeId,
+    names: &str,
+) -> Result<Vec<NodeId>, JsError> {
+    let tokens = names.split_ascii_whitespace().collect::<Vec<_>>();
+    let mut found = Vec::new();
+    if tokens.is_empty() {
+        return Ok(found);
+    }
+    let mut pending = dom.children(root).map_err(dom_error)?;
+    pending.reverse();
+    while let Some(node) = pending.pop() {
+        if dom.node_kind(node).map_err(dom_error)? != NodeKind::Element {
+            continue;
+        }
+        let classes = dom
+            .attribute(node, &DomName::attribute("class"))
+            .map_err(dom_error)?
+            .unwrap_or_default();
+        if tokens
+            .iter()
+            .all(|token| classes.split_ascii_whitespace().any(|name| name == *token))
+        {
+            found.push(node);
+        }
+        let mut children = dom.children(node).map_err(dom_error)?;
+        children.reverse();
+        pending.extend(children);
+    }
+    Ok(found)
 }
 
 /// Returns an element's attribute names in document order.
 ///
 /// Read through the renderer's own view of the node: the DOM boundary can read
 /// one attribute by name but cannot enumerate them, and `dataset` has to know
-/// which `data-` attributes exist before it can answer for them.
-fn attribute_names(dom: &BlitzDom, node: NodeId) -> Result<Vec<String>, JsError> {
+/// which `data-` attributes exist before it can answer for them. Namespaced,
+/// because a clone reads its attributes back through this and `xlink:href`
+/// copied into the null namespace would be a different attribute.
+fn attribute_names(dom: &BlitzDom, node: NodeId) -> Result<Vec<DomName>, JsError> {
     Ok(dom
         .document_ref()
         .get_node(node)
@@ -2098,7 +2297,10 @@ fn attribute_names(dom: &BlitzDom, node: NodeId) -> Result<Vec<String>, JsError>
         .ok_or_else(|| dom_error(DomError::InvalidNodeType))?
         .attrs()
         .iter()
-        .map(|attribute| attribute.name.local.to_string())
+        .map(|attribute| DomName {
+            namespace: namespace_from_uri(&attribute.name.ns),
+            local: attribute.name.local.to_string(),
+        })
         .collect())
 }
 
@@ -2114,7 +2316,6 @@ fn clone_node(dom: &mut BlitzDom, node: NodeId, deep: bool) -> Result<NodeId, Js
             let name = dom.element_name(node).map_err(dom_error)?;
             let clone = dom.create_element(&name).map_err(dom_error)?;
             for attribute in attribute_names(dom, node)? {
-                let attribute = DomName::attribute(attribute);
                 if let Some(value) = dom.attribute(node, &attribute).map_err(dom_error)? {
                     dom.set_attribute(clone, &attribute, &value)
                         .map_err(dom_error)?;
@@ -2232,6 +2433,24 @@ fn dispatch(runtime: &DomRuntime, operation: &str, arguments: &[String]) -> Resu
             Ok(json!(
                 dom.query_selector_all(node, bridge_arg(arguments, 1, "selector")?)
                     .map_err(dom_error)?
+                    .into_iter()
+                    .map(DomRuntime::serialize_handle)
+                    .collect::<Vec<_>>()
+            ))
+        }
+        "elementsByClassName" => {
+            let root = dom.document();
+            Ok(json!(
+                elements_by_class_name(&dom, root, bridge_arg(arguments, 0, "class names")?)?
+                    .into_iter()
+                    .map(DomRuntime::serialize_handle)
+                    .collect::<Vec<_>>()
+            ))
+        }
+        "elementsByClassNameIn" => {
+            let node = handle(runtime, arguments, 0)?;
+            Ok(json!(
+                elements_by_class_name(&dom, node, bridge_arg(arguments, 1, "class names")?)?
                     .into_iter()
                     .map(DomRuntime::serialize_handle)
                     .collect::<Vec<_>>()
@@ -2480,6 +2699,27 @@ fn dispatch(runtime: &DomRuntime, operation: &str, arguments: &[String]) -> Resu
             dom.previous_sibling(handle(runtime, arguments, 0)?)
                 .map_err(dom_error)?,
         )),
+        // Walked in the backend rather than hop by hop from JavaScript: a text
+        // node between two elements is ordinary in rendered markup, and every
+        // one skipped would otherwise be a call of its own.
+        "nextElementSibling" | "previousElementSibling" => {
+            let forward = operation == "nextElementSibling";
+            let mut sibling = handle(runtime, arguments, 0)?;
+            loop {
+                let next = if forward {
+                    dom.next_sibling(sibling).map_err(dom_error)?
+                } else {
+                    dom.previous_sibling(sibling).map_err(dom_error)?
+                };
+                match next {
+                    None => return Ok(Value::Null),
+                    Some(node) if dom.node_kind(node).map_err(dom_error)? == NodeKind::Element => {
+                        return Ok(serialized(Some(node)));
+                    }
+                    Some(node) => sibling = node,
+                }
+            }
+        }
         "isConnected" => Ok(Value::Bool(
             dom.is_connected(handle(runtime, arguments, 0)?)
                 .map_err(dom_error)?,
@@ -2505,11 +2745,49 @@ fn dispatch(runtime: &DomRuntime, operation: &str, arguments: &[String]) -> Resu
             dom.inner_html(handle(runtime, arguments, 0)?)
                 .map_err(dom_error)?,
         )),
+        "outerHTML" => Ok(Value::String(
+            dom.outer_html(handle(runtime, arguments, 0)?)
+                .map_err(dom_error)?,
+        )),
         "setInnerHTML" => {
             let node = handle(runtime, arguments, 0)?;
             dom.set_inner_html(node, bridge_arg(arguments, 1, "HTML")?)
                 .map_err(dom_error)?;
             Ok(Value::Null)
+        }
+        // Parsed in the element the result lands in, which is what makes a `<td>`
+        // survive `beforeend` on a `<tr>` and be discarded anywhere else.
+        "insertAdjacentHTML" => {
+            let node = handle(runtime, arguments, 0)?;
+            let position = bridge_arg(arguments, 1, "position")?.to_ascii_lowercase();
+            let sibling = matches!(position.as_str(), "beforebegin" | "afterend");
+            let parent = if sibling {
+                dom.parent(node)
+                    .map_err(dom_error)?
+                    .ok_or_else(|| dom_error(DomError::NotFound))?
+            } else {
+                node
+            };
+            let reference = match position.as_str() {
+                "beforebegin" => Some(node),
+                "afterend" => dom.next_sibling(node).map_err(dom_error)?,
+                "afterbegin" => dom.children(node).map_err(dom_error)?.first().copied(),
+                "beforeend" => None,
+                _ => return Err(JsError::new("invalid insertAdjacentHTML position")),
+            };
+            let parsed = dom
+                .parse_fragment(parent, bridge_arg(arguments, 2, "HTML")?)
+                .map_err(dom_error)?;
+            for child in &parsed {
+                dom.insert_before(parent, *child, reference)
+                    .map_err(dom_error)?;
+            }
+            Ok(json!(
+                parsed
+                    .into_iter()
+                    .map(DomRuntime::serialize_handle)
+                    .collect::<Vec<_>>()
+            ))
         }
         "getAttribute" => Ok(dom
             .attribute(
@@ -2538,10 +2816,55 @@ fn dispatch(runtime: &DomRuntime, operation: &str, arguments: &[String]) -> Resu
             dom.remove_attribute(node, &name).map_err(dom_error)?;
             Ok(Value::Null)
         }
-        "attributeNames" => Ok(json!(attribute_names(
-            &dom,
-            handle(runtime, arguments, 0)?
-        )?)),
+        "getAttributeNS" => Ok(dom
+            .attribute(
+                handle(runtime, arguments, 0)?,
+                &attribute_name(
+                    bridge_arg(arguments, 1, "namespace")?,
+                    bridge_arg(arguments, 2, "attribute name")?,
+                )?,
+            )
+            .map_err(dom_error)?
+            .map(Value::String)
+            .unwrap_or(Value::Null)),
+        "setAttributeNS" => {
+            let node = handle(runtime, arguments, 0)?;
+            let name = attribute_name(
+                bridge_arg(arguments, 1, "namespace")?,
+                bridge_arg(arguments, 2, "attribute name")?,
+            )?;
+            dom.set_attribute(node, &name, bridge_arg(arguments, 3, "attribute value")?)
+                .map_err(dom_error)?;
+            Ok(Value::Null)
+        }
+        "removeAttributeNS" => {
+            let node = handle(runtime, arguments, 0)?;
+            let name = attribute_name(
+                bridge_arg(arguments, 1, "namespace")?,
+                bridge_arg(arguments, 2, "attribute name")?,
+            )?;
+            dom.remove_attribute(node, &name).map_err(dom_error)?;
+            Ok(Value::Null)
+        }
+        // Each name with the namespace it is in, which is what an attribute node
+        // needs to read its own value back and what `attributeNames` cannot say.
+        "attributeEntries" => Ok(json!(
+            attribute_names(&dom, handle(runtime, arguments, 0)?)?
+                .into_iter()
+                .map(|name| json!({
+                    "namespace": namespace_uri(&name.namespace),
+                    "name": name.local,
+                }))
+                .collect::<Vec<_>>()
+        )),
+        // Local names: an attribute is keyed by namespace and local name here,
+        // so there is no prefix left to qualify one with.
+        "attributeNames" => Ok(json!(
+            attribute_names(&dom, handle(runtime, arguments, 0)?)?
+                .into_iter()
+                .map(|name| name.local)
+                .collect::<Vec<_>>()
+        )),
         "hasAttribute" => Ok(Value::Bool(
             dom.attribute(
                 handle(runtime, arguments, 0)?,

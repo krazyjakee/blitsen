@@ -45,6 +45,20 @@
       "pattern": "(?<![.\\w$])DOMTokenList\\b"
     },
     {
+      "api": "Attr",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_DOM",
+      "pattern": "(?<![.\\w$])Attr\\b"
+    },
+    {
+      "api": "NamedNodeMap",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_DOM",
+      "pattern": "(?<![.\\w$])NamedNodeMap\\b"
+    },
+    {
       "api": "CSSStyleDeclaration",
       "kind": "global",
       "status": "implemented",
@@ -322,7 +336,7 @@
       "kind": "member",
       "owner": "Element.prototype",
       "member": "outerHTML",
-      "status": "absent",
+      "status": "implemented",
       "code": "WEB_DOM",
       "pattern": null
     },
@@ -331,7 +345,7 @@
       "kind": "member",
       "owner": "Element.prototype",
       "member": "insertAdjacentHTML",
-      "status": "absent",
+      "status": "implemented",
       "code": "WEB_DOM",
       "pattern": null
     },
@@ -350,6 +364,177 @@
       "owner": "Element.prototype",
       "member": "scrollIntoView",
       "status": "absent",
+      "code": "WEB_DOM",
+      "pattern": null
+    },
+    {
+      "api": "Element.getElementsByClassName",
+      "kind": "member",
+      "owner": "Element.prototype",
+      "member": "getElementsByClassName",
+      "status": "implemented",
+      "code": "WEB_DOM",
+      "pattern": null
+    },
+    {
+      "api": "Element.firstElementChild",
+      "kind": "member",
+      "owner": "Element.prototype",
+      "member": "firstElementChild",
+      "status": "implemented",
+      "code": "WEB_DOM",
+      "pattern": null
+    },
+    {
+      "api": "Element.lastElementChild",
+      "kind": "member",
+      "owner": "Element.prototype",
+      "member": "lastElementChild",
+      "status": "implemented",
+      "code": "WEB_DOM",
+      "pattern": null
+    },
+    {
+      "api": "Element.nextElementSibling",
+      "kind": "member",
+      "owner": "Element.prototype",
+      "member": "nextElementSibling",
+      "status": "implemented",
+      "code": "WEB_DOM",
+      "pattern": null
+    },
+    {
+      "api": "Element.previousElementSibling",
+      "kind": "member",
+      "owner": "Element.prototype",
+      "member": "previousElementSibling",
+      "status": "implemented",
+      "code": "WEB_DOM",
+      "pattern": null
+    },
+    {
+      "api": "Element.childElementCount",
+      "kind": "member",
+      "owner": "Element.prototype",
+      "member": "childElementCount",
+      "status": "implemented",
+      "code": "WEB_DOM",
+      "pattern": null
+    },
+    {
+      "api": "Element.append",
+      "kind": "member",
+      "owner": "Element.prototype",
+      "member": "append",
+      "status": "implemented",
+      "code": "WEB_DOM",
+      "pattern": null
+    },
+    {
+      "api": "Element.prepend",
+      "kind": "member",
+      "owner": "Element.prototype",
+      "member": "prepend",
+      "status": "implemented",
+      "code": "WEB_DOM",
+      "pattern": null
+    },
+    {
+      "api": "Element.replaceChildren",
+      "kind": "member",
+      "owner": "Element.prototype",
+      "member": "replaceChildren",
+      "status": "implemented",
+      "code": "WEB_DOM",
+      "pattern": null
+    },
+    {
+      "api": "Element.getAttributeNS",
+      "kind": "member",
+      "owner": "Element.prototype",
+      "member": "getAttributeNS",
+      "status": "implemented",
+      "code": "WEB_DOM",
+      "pattern": null
+    },
+    {
+      "api": "Element.setAttributeNS",
+      "kind": "member",
+      "owner": "Element.prototype",
+      "member": "setAttributeNS",
+      "status": "implemented",
+      "code": "WEB_DOM",
+      "pattern": null
+    },
+    {
+      "api": "Element.removeAttributeNS",
+      "kind": "member",
+      "owner": "Element.prototype",
+      "member": "removeAttributeNS",
+      "status": "implemented",
+      "code": "WEB_DOM",
+      "pattern": null
+    },
+    {
+      "api": "Element.hasAttributes",
+      "kind": "member",
+      "owner": "Element.prototype",
+      "member": "hasAttributes",
+      "status": "implemented",
+      "code": "WEB_DOM",
+      "pattern": null
+    },
+    {
+      "api": "Element.getAttributeNames",
+      "kind": "member",
+      "owner": "Element.prototype",
+      "member": "getAttributeNames",
+      "status": "implemented",
+      "code": "WEB_DOM",
+      "pattern": null
+    },
+    {
+      "api": "Element.toggleAttribute",
+      "kind": "member",
+      "owner": "Element.prototype",
+      "member": "toggleAttribute",
+      "status": "implemented",
+      "code": "WEB_DOM",
+      "pattern": null
+    },
+    {
+      "api": "Element.getClientRects",
+      "kind": "member",
+      "owner": "Element.prototype",
+      "member": "getClientRects",
+      "status": "implemented",
+      "code": "WEB_DOM",
+      "pattern": null
+    },
+    {
+      "api": "Element.getRootNode",
+      "kind": "member",
+      "owner": "Element.prototype",
+      "member": "getRootNode",
+      "status": "implemented",
+      "code": "WEB_DOM",
+      "pattern": null
+    },
+    {
+      "api": "Element.normalize",
+      "kind": "member",
+      "owner": "Element.prototype",
+      "member": "normalize",
+      "status": "implemented",
+      "code": "WEB_DOM",
+      "pattern": null
+    },
+    {
+      "api": "Element.attributes",
+      "kind": "member",
+      "owner": "Element.prototype",
+      "member": "attributes",
+      "status": "implemented",
       "code": "WEB_DOM",
       "pattern": null
     },
@@ -417,11 +602,29 @@
       "pattern": null
     },
     {
+      "api": "Document.getElementsByClassName",
+      "kind": "member",
+      "owner": "Document.prototype",
+      "member": "getElementsByClassName",
+      "status": "implemented",
+      "code": "WEB_DOM",
+      "pattern": null
+    },
+    {
       "api": "Document.importNode",
       "kind": "member",
       "owner": "Document.prototype",
       "member": "importNode",
       "status": "implemented",
+      "code": "WEB_DOM",
+      "pattern": null
+    },
+    {
+      "api": "Document.currentScript",
+      "kind": "member",
+      "owner": "Document.prototype",
+      "member": "currentScript",
+      "status": "absent",
       "code": "WEB_DOM",
       "pattern": null
     },

@@ -417,6 +417,25 @@ that navigates. `navigator` answers identity (`userAgent`, `platform`, `language
 capability. `localStorage` and `sessionStorage` hold data for the life of the process and say so
 through a `doctor` warning on every build; durable storage is a separate question.
 
+### Where the DOM surface is narrower than its name
+
+Three shapes the tier table cannot show, because the API is present and answers correctly within
+them.
+
+- **Collections are static.** `children`, `querySelectorAll`, `getElementsByTagName` and
+  `getElementsByClassName` all return a `NodeList` snapshot. A re-query sees a mutation; the list
+  handed out before it does not. Live `HTMLCollection` semantics need a document-versioned
+  collection object, and nothing measured has held one across a mutation.
+- **A namespaced attribute is keyed by namespace and local name, with no prefix.** That is the
+  pair `getAttributeNS` asks for, so `setAttributeNS(xlink, "xlink:href", …)` round-trips, and
+  `getAttribute("href")` correctly does not see it. What is lost is the prefix on the way back
+  out: `getAttributeNames()` reports `href`, and serialization writes `href="…"`. The same is
+  already true of markup the parser read, so this is the backend's attribute model rather than a
+  bridge choice.
+- **`getClientRects` returns one rect.** Blitz lays an element out as a single box, so there is no
+  fragmentation across columns or line boxes to report. It is the border box
+  `getBoundingClientRect` returns, off the same layout flush, charged as the same forced layout.
+
 ### Compatibility policy
 
 An unimplemented API is **absent** — the property does not exist — so feature detection works.

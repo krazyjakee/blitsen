@@ -587,6 +587,167 @@ assert.equal(reflected.attributes.class, "active forced");
 assert.equal(reflected.attributes["data-attributes"], "ok");
 assert.equal(reflected.layout.width, 220, "class mutation triggers the real Blitz cascade");
 
+// Traversal, class selection, the namespaced attribute half, the variadic
+// insertion methods and the reads that go with them — the surface enumerated
+// against the live runtime in issue #115. Behaviour, not presence: presence is
+// what the manifest check below covers.
+const surfaceGaps = JSON.parse(native.runBridgeHarness(
+  `<style>#tree { display:block; width:200px; height:40px }</style>
+   <div id="tree">head<span class="leaf tall" id="one">1</span>between<span class="leaf" id="two">2</span>tail</div>`,
+  `{ const expect = (condition, message) => { if (!condition) throw new Error(message); };
+     const ids = list => [...list].map(node => node.id).join();
+     const tree = document.getElementById("tree");
+     const one = document.getElementById("one");
+     const two = document.getElementById("two");
+     expect(tree.childNodes.length === 5 && tree.childElementCount === 2,
+       "childElementCount counts elements, not nodes");
+     expect(tree.firstElementChild === one && tree.lastElementChild === two &&
+       tree.firstChild !== one && tree.lastChild !== two,
+       "first and lastElementChild skip the text around them");
+     expect(one.nextElementSibling === two && two.previousElementSibling === one &&
+       one.previousElementSibling === null && two.nextElementSibling === null,
+       "element siblings skip the text nodes between them");
+
+     expect(ids(tree.getElementsByClassName("leaf")) === "one,two" &&
+       ids(tree.getElementsByClassName("tall")) === "one" &&
+       ids(tree.getElementsByClassName("leaf tall")) === "one",
+       "one class among several, and only the elements carrying every class asked for");
+     expect(ids(document.getElementsByClassName("leaf")) === "one,two" &&
+       ids(one.getElementsByClassName("leaf")) === "",
+       "document scope reaches the same elements, element scope excludes itself");
+     two.className = "leaf tall";
+     expect(ids(tree.getElementsByClassName("tall")) === "one,two",
+       "a re-query sees the mutation");
+     two.className = "leaf";
+
+     const XLINK = "http://www.w3.org/1999/xlink";
+     const use = document.createElementNS("http://www.w3.org/2000/svg", "use");
+     use.id = "used";
+     tree.appendChild(use);
+     use.setAttributeNS(XLINK, "xlink:href", "#glyph");
+     expect(use.getAttributeNS(XLINK, "href") === "#glyph" && use.getAttribute("href") === null &&
+       use.getAttributeNS(null, "href") === null,
+       "a namespaced attribute round-trips and is not the null-namespace one of that name");
+     // Only the any-namespace form is asserted: Blitz matches an attribute
+     // selector on the local name whatever namespace it is in, so a plain
+     // [href] would match this too and would prove nothing about the namespace.
+     expect(document.querySelector("[*|href]") === use,
+       "the attribute reached the selector engine, not just the read back");
+     use.setAttributeNS(null, "width", "10");
+     expect(use.getAttribute("width") === "10" && use.getAttributeNS(null, "width") === "10",
+       "the null namespace is the space the plain accessors already use");
+     use.removeAttributeNS(XLINK, "href");
+     expect(use.getAttributeNS(XLINK, "href") === null && use.getAttribute("width") === "10",
+       "removeAttributeNS removes the namespaced attribute and only that one");
+
+     const bare = document.createElement("i");
+     expect(!bare.hasAttributes() && bare.getAttributeNames().length === 0,
+       "an element with no attributes says so");
+     bare.setAttribute("title", "t");
+     bare.setAttribute("data-x", "1");
+     expect(bare.hasAttributes() && bare.getAttributeNames().join() === "title,data-x",
+       "attribute names come back in document order");
+     expect(bare.toggleAttribute("hidden") === true && bare.getAttribute("hidden") === "" &&
+       bare.toggleAttribute("hidden") === false && !bare.hasAttribute("hidden"),
+       "toggleAttribute flips and reports the state it left");
+     expect(bare.toggleAttribute("hidden", false) === false && !bare.hasAttribute("hidden") &&
+       bare.toggleAttribute("hidden", true) === true &&
+       bare.toggleAttribute("hidden", true) === true && bare.hasAttribute("hidden"),
+       "force pins the state rather than flipping it");
+
+     const box = document.createElement("div");
+     box.id = "box";
+     tree.appendChild(box);
+     box.append("a", document.createElement("b"), "c");
+     expect(box.childNodes.length === 3 && box.childElementCount === 1 &&
+       box.firstChild.nodeType === 3 && box.textContent === "ac",
+       "append takes strings as text nodes and elements as themselves");
+     box.prepend(document.createElement("u"), "z");
+     expect(box.childNodes.length === 5 && box.firstElementChild.tagName === "U" &&
+       box.childNodes[1].textContent === "z", "prepend inserts at the front, in order");
+     box.replaceChildren();
+     expect(box.childNodes.length === 0, "replaceChildren with nothing empties");
+     box.replaceChildren(document.createElement("i"), "tail");
+     expect(box.childNodes.length === 2 && box.lastChild.textContent === "tail",
+       "and then fills");
+     expect(box.outerHTML === '<div id="box"><i></i>tail</div>' &&
+       box.innerHTML === '<i></i>tail', "outerHTML serializes the element itself");
+
+     box.insertAdjacentHTML("afterbegin", "<em>first</em>");
+     box.insertAdjacentHTML("beforeend", "<s>last</s>");
+     expect(box.outerHTML === '<div id="box"><em>first</em><i></i>tail<s>last</s></div>',
+       "insertAdjacentHTML parses into the element at both ends");
+     box.firstElementChild.insertAdjacentHTML("beforebegin", "<q>before</q>");
+     box.lastElementChild.insertAdjacentHTML("afterend", "<q>after</q>");
+     expect(box.firstElementChild.tagName === "Q" && box.lastElementChild.textContent === "after" &&
+       box.childElementCount === 5, "and against a sibling on either side of one");
+     const row = document.createElement("tr");
+     row.insertAdjacentHTML("beforeend", "<td>cell</td>");
+     expect(row.childElementCount === 1 && row.firstElementChild.tagName === "TD",
+       "parsed in the element it lands in, which is what keeps a table cell");
+
+     const map = box.attributes;
+     expect(map.length === 1 && map[0].name === "id" && map[0].value === "box" &&
+       map[0].ownerElement === box && map[0].namespaceURI === null &&
+       map.item(1) === null && [...map].length === 1, "attributes is a NamedNodeMap over the element");
+     expect(map.getNamedItem("ID") === map[0] && map.getNamedItem("class") === null,
+       "getNamedItem folds case in the null namespace and answers null for an absent one");
+     map[0].value = "renamed";
+     expect(box.id === "renamed" && map[0].value === "renamed" && box.attributes.length === 1,
+       "an attribute node writes through to the element and reads back through it");
+     box.id = "box";
+     expect(use.attributes.length === 2 &&
+       use.attributes.getNamedItemNS(XLINK, "href") === null &&
+       use.getAttributeNames().join() === "id,width",
+       "a removed namespaced attribute is gone from the map as well");
+     use.setAttributeNS(XLINK, "xlink:href", "#glyph");
+     const namespaced = use.attributes.getNamedItemNS(XLINK, "href");
+     expect(namespaced.namespaceURI === XLINK && namespaced.value === "#glyph" &&
+       use.attributes.getNamedItem("href") === null,
+       "the map discriminates by namespace exactly as the accessors do");
+
+     expect(tree.getRootNode() === document && box.getRootNode() === document,
+       "a connected node's root is the document");
+     const detached = document.createElement("div");
+     const nested = document.createElement("span");
+     detached.appendChild(nested);
+     expect(nested.getRootNode() === detached && detached.getRootNode() === detached,
+       "a detached node's root is the top of its own tree");
+
+     const paragraph = document.createElement("p");
+     paragraph.id = "paragraph";
+     tree.appendChild(paragraph);
+     paragraph.append("a", "b");
+     paragraph.appendChild(document.createComment("gap"));
+     paragraph.append("c", "", "d");
+     expect(paragraph.childNodes.length === 6, "adjacent text nodes start out separate");
+     paragraph.normalize();
+     expect(paragraph.childNodes.length === 3 && paragraph.childNodes[0].textContent === "ab" &&
+       paragraph.childNodes[1].nodeType === 8 && paragraph.childNodes[2].textContent === "cd",
+       "normalize merges adjacent text, drops the empty, and does not merge across a comment");
+
+     __blitsenAnimationFrameTick(0);
+     tree.style.width = "180px";
+     const rects = tree.getClientRects();
+     expect(rects.length === 1 && __blitsenForcedLayoutsThisFrame() === 1,
+       "getClientRects is charged as the forced layout it is");
+     const bounds = tree.getBoundingClientRect();
+     expect(rects[0].x === bounds.x && rects[0].y === bounds.y && rects[0].width === 180 &&
+       rects[0].height === bounds.height && __blitsenForcedLayoutsThisFrame() === 1,
+       "the border box getBoundingClientRect reports, off one settled layout");
+     tree.setAttribute("data-surface-gaps", "ok"); }`,
+  320,
+  180,
+));
+const gapNodes = new Map(surfaceGaps.nodes.map(node => [node.attributes.id, node]));
+assert.equal(gapNodes.get("tree").attributes["data-surface-gaps"], "ok");
+assert.equal(gapNodes.get("used").attributes.width, "10",
+  "the namespaced element kept the null-namespace attribute written through setAttributeNS");
+assert.equal(gapNodes.get("box").attributes.id, "box",
+  "the element filled by replaceChildren reached the Rust tree");
+assert.equal(gapNodes.get("paragraph").text_content, "abcd",
+  "the normalized text is one run in the authoritative tree");
+
 const styleSnapshot = JSON.parse(native.runBridgeHarness(
   `<style>#styled { display:block; width:90px; height:10px }</style><div id="styled"></div>`,
   `{ const element = document.getElementById("styled");

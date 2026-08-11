@@ -25,7 +25,7 @@ JavaScript comes from the [generated manifest](#capability-tiers) below.
 | Application shape | One built `index.html` plus the local files reachable from it; root-relative HTML/CSS asset URLs are normalized while ingesting without changing `dist` |
 | JavaScript | ES modules already emitted by the application's bundler |
 | Framework DOM | Stable node identity, standard node type/name/value/owner fields, `MutationObserver`, creation/insertion/removal, text and attributes, elements, comments, namespaced elements, fragments and `<template>` |
-| Selection and collections | `querySelector`, `querySelectorAll` and `getElementsByTagName` on the document and on an element, `getElementById`, `closest`, `matches`, `children`, `dataset`, static `NodeList`, `classList`, `link.relList` |
+| Selection and collections | `querySelector`, `querySelectorAll`, `getElementsByTagName` and `getElementsByClassName` on the document and on an element, `getElementById`, `closest`, `matches`, `children` and the element-traversal properties, `dataset`, `attributes`, static `NodeList`, `classList`, `link.relList` |
 | Events | Capture/target/bubble listeners, click, mouse, wheel, keyboard, focus, resize and lifecycle events |
 | Style read-back | `getComputedStyle`, `matchMedia`/`MediaQueryList`, `ResizeObserver` |
 | Scheduling | `requestAnimationFrame`, timers and microtasks |
@@ -140,8 +140,10 @@ nodes in the renderer's tree, not JavaScript stand-ins.
 
 Three differences from a browser are worth knowing:
 
-- **Collections are static.** `children`, `querySelectorAll` and `getElementsByTagName` return a
-  `NodeList` snapshot rather than a live `HTMLCollection`.
+- **Collections are static.** `children`, `querySelectorAll`, `getElementsByTagName`,
+  `getElementsByClassName` and `attributes` return a snapshot rather than a live collection. A
+  re-query sees a mutation; the collection handed out before it does not. The `Attr` objects in
+  `attributes` are the exception — each still reads and writes through its element.
 - **A fragment is a detached `<template>` element underneath**, which is what gives its children a
   real parent to be parsed, serialized and cloned against — including table rows, which any other
   parsing context would discard. `cloneNode(true)` copies by serializing and reparsing, so a clone
@@ -152,8 +154,16 @@ Three differences from a browser are worth knowing:
   is what the specification says it was all along.
 
 A comment's data is fixed when it is created, and data that would close the comment early
-(`-->`) is refused rather than silently truncated. `outerHTML`, `insertAdjacentHTML`,
-`attachShadow` and `scrollIntoView` remain absent.
+(`-->`) is refused rather than silently truncated. `attachShadow` and `scrollIntoView` remain
+absent, as does `document.currentScript`: nothing in the bridge is told which script element is
+executing.
+
+`setAttributeNS`, `getAttributeNS` and `removeAttributeNS` key an attribute by namespace and
+local name, which is the pair they ask for — so `xlink:href` round-trips and `getAttribute`
+correctly does not see it. The prefix itself is not stored: `getAttributeNames()` reports `href`
+and serialization writes `href="…"`, which is already true of markup the parser read.
+`getClientRects` returns the one border box `getBoundingClientRect` does, off the same layout
+flush, because Blitz lays an element out as a single box with no fragmentation to report.
 
 `link.relList` exists chiefly so that `relList.supports("modulepreload")` can answer truthfully.
 Without it Vite's own module-preload polyfill installs itself and `fetch`es every chunk over an
@@ -309,7 +319,7 @@ determinism gate instead.
 
 | Group | Implemented | Absent |
 | --- | --- | --- |
-| WEB_DOM | `document`, `Document`, `Node`, `Element`, `NodeList`, `DOMTokenList`, `CSSStyleDeclaration`, `MutationObserver`, `HTMLElement`, `HTMLIFrameElement`, `SVGElement`, `Text`, `Comment`, `DocumentFragment`, `HTMLLinkElement`, `HTMLTemplateElement`, `HTMLImageElement`, `Image`, `HTMLImageElement.src`, `HTMLImageElement.naturalWidth`, `HTMLImageElement.naturalHeight`, `HTMLImageElement.complete`, `HTMLImageElement.onload`, `HTMLImageElement.onerror`, `Element.querySelector`, `Element.querySelectorAll`, `Element.closest`, `Element.matches`, `Element.cloneNode`, `Element.contains`, `Element.children`, `Element.previousSibling`, `Element.lastChild`, `Element.parentElement`, `Element.dataset`, `Element.nodeValue`, `Element.before`, `Element.after`, `Element.getElementsByTagName`, `HTMLLinkElement.relList`, `HTMLTemplateElement.content`, `DOMTokenList.supports`, `Document.createElementNS`, `Document.createComment`, `Document.createDocumentFragment`, `Document.getElementsByTagName`, `Document.importNode` | `Element.outerHTML`, `Element.insertAdjacentHTML`, `Element.attachShadow`, `Element.scrollIntoView` |
+| WEB_DOM | `document`, `Document`, `Node`, `Element`, `NodeList`, `DOMTokenList`, `Attr`, `NamedNodeMap`, `CSSStyleDeclaration`, `MutationObserver`, `HTMLElement`, `HTMLIFrameElement`, `SVGElement`, `Text`, `Comment`, `DocumentFragment`, `HTMLLinkElement`, `HTMLTemplateElement`, `HTMLImageElement`, `Image`, `HTMLImageElement.src`, `HTMLImageElement.naturalWidth`, `HTMLImageElement.naturalHeight`, `HTMLImageElement.complete`, `HTMLImageElement.onload`, `HTMLImageElement.onerror`, `Element.querySelector`, `Element.querySelectorAll`, `Element.closest`, `Element.matches`, `Element.cloneNode`, `Element.contains`, `Element.children`, `Element.previousSibling`, `Element.lastChild`, `Element.parentElement`, `Element.dataset`, `Element.nodeValue`, `Element.before`, `Element.after`, `Element.getElementsByTagName`, `Element.outerHTML`, `Element.insertAdjacentHTML`, `Element.getElementsByClassName`, `Element.firstElementChild`, `Element.lastElementChild`, `Element.nextElementSibling`, `Element.previousElementSibling`, `Element.childElementCount`, `Element.append`, `Element.prepend`, `Element.replaceChildren`, `Element.getAttributeNS`, `Element.setAttributeNS`, `Element.removeAttributeNS`, `Element.hasAttributes`, `Element.getAttributeNames`, `Element.toggleAttribute`, `Element.getClientRects`, `Element.getRootNode`, `Element.normalize`, `Element.attributes`, `HTMLLinkElement.relList`, `HTMLTemplateElement.content`, `DOMTokenList.supports`, `Document.createElementNS`, `Document.createComment`, `Document.createDocumentFragment`, `Document.getElementsByTagName`, `Document.getElementsByClassName`, `Document.importNode` | `Element.attachShadow`, `Element.scrollIntoView`, `Document.currentScript` |
 | WEB_EVENTS | `EventTarget`, `Event`, `CustomEvent`, `MouseEvent`, `KeyboardEvent`, `addEventListener`, `removeEventListener`, `dispatchEvent` | — |
 | WEB_SCHEDULING | `requestAnimationFrame`, `cancelAnimationFrame`, `setTimeout`, `clearTimeout`, `setInterval`, `clearInterval` | `requestIdleCallback`, `cancelIdleCallback` |
 | WEB_NETWORK | `fetch`, `Headers`, `Request`, `Response`, `Blob`, `AbortController`, `AbortSignal` | — |

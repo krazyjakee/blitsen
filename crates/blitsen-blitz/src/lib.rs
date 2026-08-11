@@ -797,6 +797,12 @@ impl DomBackend for BlitzDom {
         Ok(html)
     }
 
+    fn outer_html(&self, node: NodeId) -> Result<String, DomError> {
+        let mut html = String::new();
+        self.serialize_node(node, &mut html, false)?;
+        Ok(html)
+    }
+
     fn set_inner_html(&mut self, node: NodeId, html: &str) -> Result<(), DomError> {
         self.ensure_element(node)?;
         self.detach_children(node)?;

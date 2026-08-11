@@ -709,6 +709,8 @@ pub trait DomBackend {
     ) -> Result<Vec<Self::NodeId>, DomError>;
     /// Serializes a node's children as HTML.
     fn inner_html(&self, node: Self::NodeId) -> Result<String, DomError>;
+    /// Serializes a node and its children as HTML.
+    fn outer_html(&self, node: Self::NodeId) -> Result<String, DomError>;
     /// Contextually parses HTML and replaces a node's children with the
     /// adopted fragment.
     fn set_inner_html(&mut self, node: Self::NodeId, html: &str) -> Result<(), DomError>;
