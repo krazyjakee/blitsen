@@ -1,0 +1,34 @@
+<!-- conformance
+A stylesheet the provider cannot serve must not stop the document painting.
+
+Blitz holds a stylesheet as a pending critical resource until its handler
+completes, and the trait's only failure signal is dropping that handler — which
+never completes it. So a provider that stays silent about what it will not serve
+blocks painting for the life of the document, and the page is not degraded but
+blank.
+
+That is the whole page in a real application: shadcn-admin mounted 364 elements
+correctly and rendered 1,024,000 pixels of pure white, because its `<head>`
+links a Google Fonts stylesheet that the local provider refuses. Both links here
+are unservable — one remote, one a local file that does not exist — and the box
+below them must still paint.
+
+@oracle
+@box #painted 0 0 200 60
+@pixel 100 30 #ef4444ff
+@pixel 100 90 #ffffffff
+-->
+<!doctype html>
+<html>
+  <head>
+    <link rel="stylesheet" href="https://example.com/absent.css">
+    <link rel="stylesheet" href="./does-not-exist.css">
+    <style>
+      html, body { margin: 0; background: #ffffff }
+      #painted { width: 200px; height: 60px; background: #ef4444 }
+    </style>
+  </head>
+  <body>
+    <div id="painted"></div>
+  </body>
+</html>

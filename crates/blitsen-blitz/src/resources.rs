@@ -96,10 +96,15 @@ impl NetProvider for TrackedProvider {
     }
 }
 
-/// Marks a request loaded when bytes arrive, and failed when they never do.
+/// Marks a request loaded when bytes arrive, and failed otherwise.
 ///
-/// A provider signals failure by dropping the handler, so the drop is the only
-/// notification there is.
+/// Two things count as failure. A provider can drop the handler, which is the
+/// only failure notification the trait has. Or it can answer with nothing:
+/// [`LocalResources`] does that for a resource it will not serve, because a
+/// dropped handler leaves a stylesheet pending and blocks painting forever. An
+/// empty body is indistinguishable from a failure here, and treating it as one
+/// is what makes a broken `<img>` reach its errored state — an empty stylesheet
+/// has nothing to contribute either way.
 struct TrackedHandler {
     url: String,
     log: ResourceLog,
@@ -108,7 +113,12 @@ struct TrackedHandler {
 
 impl NetHandler for TrackedHandler {
     fn bytes(mut self: Box<Self>, resolved_url: String, bytes: Bytes) {
-        self.log.settled(&self.url, ResourceState::Loaded);
+        let state = if bytes.is_empty() {
+            ResourceState::Failed
+        } else {
+            ResourceState::Loaded
+        };
+        self.log.settled(&self.url, state);
         if let Some(inner) = self.inner.take() {
             inner.bytes(resolved_url, bytes);
         }
@@ -152,9 +162,14 @@ pub struct LocalResources;
 impl NetProvider for LocalResources {
     fn fetch(&self, _doc_id: usize, request: Request, handler: Box<dyn NetHandler>) {
         let url = request.url.as_str().to_owned();
-        if let Some(bytes) = read(&request.url) {
-            handler.bytes(url, Bytes::from(bytes));
-        }
+        // Answer even when there is nothing to serve. Blitz holds a stylesheet as
+        // a pending critical resource until its handler completes, and a handler
+        // that is only dropped never completes — so a refused remote sheet, or a
+        // local one that is missing, blocks painting for the life of the document
+        // rather than degrading. Empty bytes are a real answer: an empty
+        // stylesheet contributes nothing, and an empty image fails to decode into
+        // the errored state `complete` already reports.
+        handler.bytes(url, read(&request.url).map(Bytes::from).unwrap_or_default());
     }
 }
 
@@ -208,9 +223,16 @@ mod tests {
             &collector,
         );
 
+        // Everything is answered, including what cannot be served: Blitz holds a
+        // stylesheet pending until its handler completes, so a dropped handler
+        // blocks painting for the life of the document.
         assert_eq!(
             collector.0.lock().unwrap().as_slice(),
-            [(data.to_owned(), 5)]
+            [
+                (data.to_owned(), 5),
+                ("https://example.com/a.png".to_owned(), 0),
+                ("file:///nonexistent-blitsen-fixture.png".to_owned(), 0),
+            ]
         );
         assert_eq!(log.state(data), Some(ResourceState::Loaded));
         assert_eq!(
