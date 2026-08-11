@@ -5,14 +5,17 @@ use std::rc::Rc;
 
 use blitsen_core::{WindowState, WrapperTable, js_property_to_css};
 use blitsen_dom::{DomBackend, DomError, DomName, NodeKind};
-use blitsen_js::{ExternalId, JsEngine, JsError, NativeClass, TypedArrayKind};
+use blitsen_js::{ExternalId, JsEngine, JsError, JsType, NativeClass, TypedArray, TypedArrayKind};
 use blitz::dom::NodeId;
 use napi::{Env, Unknown, sys};
 use serde_json::{Value, json};
 
 use super::{DomRuntime, NodeApiEngine, NodeWeakRef, callback_string, check, unknown};
 
-const BOOTSTRAP: &str = r#"
+mod fetch;
+mod web_url;
+
+const BOOTSTRAP: &str = r##"
 (() => {
   const testHarness = Boolean(globalThis.__blitsenTestHarness);
   delete globalThis.__blitsenTestHarness;
@@ -70,6 +73,7 @@ const BOOTSTRAP: &str = r#"
   };
   const animationFrameTick = timestamp => {
     notifySurfaceResizes();
+    settleFetches();
     const callbacks = animationFrames;
     animationFrames = new Map();
     runningAnimationFrames = callbacks;
@@ -82,7 +86,9 @@ const BOOTSTRAP: &str = r#"
     if (__blitsenDevLayoutWarnings && forcedLayoutsThisFrame > 0)
       console.warn(`Blitsen: ${forcedLayoutsThisFrame} forced synchronous layout(s) in this frame`);
     forcedLayoutsThisFrame = 0;
-    return animationFrames.size;
+    // In-flight requests keep the host turning: their landing point is this
+    // function, so a loop that stopped would never deliver them.
+    return animationFrames.size + inflightFetches.size;
   };
 
   const eventStates = new WeakMap();
@@ -675,17 +681,423 @@ const BOOTSTRAP: &str = r#"
       return value instanceof Element && value.namespaceURI === "http://www.w3.org/2000/svg";
     }
   }
+  // Networking. Blitsen's own fetch rather than the host's, so the Phase 2
+  // engine swap is invisible to the application. There is no same-origin policy
+  // and no CORS: an exported application is trusted native software, not a
+  // document. Bodies are buffered — see COMPATIBILITY.md for why streaming is
+  // not in this tier.
+  const HEADER_NAME = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
+  const headerFields = new WeakMap();
+  const fieldsFor = headers => {
+    const fields = headerFields.get(headers);
+    if (!fields) throw new TypeError("Illegal invocation");
+    return fields;
+  };
+
+  class Headers {
+    constructor(init) {
+      headerFields.set(this, new Map());
+      if (init === undefined || init === null) return;
+      if (init instanceof Headers || Array.isArray(init)) {
+        for (const pair of init) {
+          if (!Array.isArray(pair) || pair.length !== 2)
+            throw new TypeError("Headers entries must be [name, value] pairs");
+          this.append(pair[0], pair[1]);
+        }
+        return;
+      }
+      if (typeof init !== "object") throw new TypeError("invalid Headers initializer");
+      for (const name of Object.keys(init)) this.append(name, init[name]);
+    }
+    _name(name) {
+      const key = String(name).toLowerCase();
+      if (!HEADER_NAME.test(key)) throw new TypeError(`invalid header name: ${name}`);
+      return key;
+    }
+    append(name, value) {
+      const key = this._name(name);
+      const fields = fieldsFor(this);
+      const next = String(value).trim();
+      const existing = fields.get(key);
+      fields.set(key, existing === undefined ? next : `${existing}, ${next}`);
+    }
+    set(name, value) { fieldsFor(this).set(this._name(name), String(value).trim()); }
+    get(name) { return fieldsFor(this).get(this._name(name)) ?? null; }
+    has(name) { return fieldsFor(this).has(this._name(name)); }
+    delete(name) { fieldsFor(this).delete(this._name(name)); }
+    forEach(callback, thisArg) { for (const [name, value] of this) callback.call(thisArg, value, name, this); }
+    *entries() {
+      const fields = fieldsFor(this);
+      for (const name of [...fields.keys()].sort()) yield [name, fields.get(name)];
+    }
+    *keys() { for (const [name] of this) yield name; }
+    *values() { for (const [, value] of this) yield value; }
+    [Symbol.iterator]() { return this.entries(); }
+  }
+
+  const blobBytes = new WeakMap();
+  const bytesOf = blob => {
+    const bytes = blobBytes.get(blob);
+    if (!bytes) throw new TypeError("Illegal invocation");
+    return bytes;
+  };
+  const concatBytes = chunks => {
+    const total = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+    const bytes = new Uint8Array(total);
+    let offset = 0;
+    for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; }
+    return bytes;
+  };
+  const asBytes = value => {
+    if (typeof value === "string") return __blitsenUtf8Encode(value);
+    if (value instanceof Blob) return bytesOf(value);
+    if (ArrayBuffer.isView(value)) return new Uint8Array(value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength));
+    if (value instanceof ArrayBuffer) return new Uint8Array(value.slice(0));
+    return null;
+  };
+
+  class Blob {
+    constructor(parts = [], options = {}) {
+      blobBytes.set(this, concatBytes([...parts].map(part => asBytes(part) ?? __blitsenUtf8Encode(String(part)))));
+      Object.defineProperty(this, "type", { value: String(options.type ?? "").toLowerCase(), enumerable: true });
+    }
+    get size() { return bytesOf(this).length; }
+    slice(start, end, type) { return new Blob([bytesOf(this).slice(start, end)], { type: type ?? "" }); }
+    text() { return Promise.resolve(__blitsenUtf8Decode(bytesOf(this))); }
+    arrayBuffer() { return Promise.resolve(bytesOf(this).slice().buffer); }
+  }
+
+  const signalStates = new WeakMap();
+  const signalState = signal => {
+    const state = signalStates.get(signal);
+    if (!state) throw new TypeError("Illegal invocation");
+    return state;
+  };
+  const createSignal = () => {
+    const signal = Object.create(AbortSignal.prototype);
+    signalStates.set(signal, { aborted: false, reason: undefined, onabort: null });
+    return signal;
+  };
+  const raiseAbort = (signal, reason) => {
+    const state = signalState(signal);
+    if (state.aborted) return;
+    state.aborted = true;
+    state.reason = reason ?? new DOMException("The operation was aborted", "AbortError");
+    signal.dispatchEvent(new Event("abort"));
+  };
+
+  class AbortSignal extends EventTarget {
+    constructor() { throw new TypeError("Illegal constructor"); }
+    get aborted() { return signalState(this).aborted; }
+    get reason() { return signalState(this).reason; }
+    get onabort() { return signalState(this).onabort; }
+    set onabort(callback) {
+      const state = signalState(this);
+      if (state.onabort) this.removeEventListener("abort", state.onabort);
+      state.onabort = typeof callback === "function" ? callback : null;
+      if (state.onabort) this.addEventListener("abort", state.onabort);
+    }
+    throwIfAborted() { const state = signalState(this); if (state.aborted) throw state.reason; }
+    static abort(reason) { const signal = createSignal(); raiseAbort(signal, reason); return signal; }
+    static timeout(milliseconds) {
+      const signal = createSignal();
+      setTimeout(() => raiseAbort(signal, new DOMException("The operation timed out", "TimeoutError")),
+        Number(milliseconds));
+      return signal;
+    }
+  }
+
+  class AbortController {
+    constructor() { Object.defineProperty(this, "signal", { value: createSignal(), enumerable: true }); }
+    abort(reason) { raiseAbort(this.signal, reason); }
+  }
+
+  const bodyStates = new WeakMap();
+  const bodyStateFor = target => {
+    const state = bodyStates.get(target);
+    if (!state) throw new TypeError("Illegal invocation");
+    return state;
+  };
+  // A body the application never reads still occupies Rust memory, and only the
+  // collector knows the Response was abandoned.
+  const abandonedBodies = new FinalizationRegistry(id => __blitsenFetchCancel(String(id)));
+  const readBody = (target, kind) => {
+    const state = bodyStateFor(target);
+    if (state.used) return Promise.reject(new TypeError("the body has already been read"));
+    state.used = true;
+    try {
+      if (state.id === null) {
+        const bytes = state.bytes ?? new Uint8Array(0);
+        return Promise.resolve(kind === "text" ? __blitsenUtf8Decode(bytes) : bytes);
+      }
+      const id = state.id;
+      state.id = null;
+      abandonedBodies.unregister(target);
+      return Promise.resolve(__blitsenFetchBody(String(id), kind));
+    } catch (error) {
+      return Promise.reject(error);
+    }
+  };
+  const installBodyMethods = prototype => Object.defineProperties(prototype, {
+    bodyUsed: { get() { return bodyStateFor(this).used; } },
+    text: { value() { return readBody(this, "text"); } },
+    json: { value() { return readBody(this, "text").then(text => JSON.parse(text)); } },
+    arrayBuffer: { value() { return readBody(this, "bytes").then(bytes => bytes.buffer); } },
+    blob: { value() {
+      return readBody(this, "bytes").then(bytes => new Blob([bytes], { type: this.headers.get("content-type") ?? "" }));
+    } },
+  });
+
+  const KNOWN_METHODS = ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"];
+  const normalizeMethod = method => {
+    const value = String(method);
+    const upper = value.toUpperCase();
+    return KNOWN_METHODS.includes(upper) ? upper : value;
+  };
+  const encodeBody = (body, headers) => {
+    if (body === undefined || body === null) return null;
+    const bytes = asBytes(body);
+    if (bytes === null)
+      throw new TypeError("a fetch body must be a string, Blob, ArrayBuffer, or typed array");
+    if (!headers.has("content-type")) {
+      if (typeof body === "string") headers.set("content-type", "text/plain;charset=UTF-8");
+      else if (body instanceof Blob && body.type) headers.set("content-type", body.type);
+    }
+    return body instanceof Blob ? bytes.slice() : bytes;
+  };
+
+  class Request {
+    constructor(input, options = {}) {
+      const source = input instanceof Request ? input : null;
+      const headers = new Headers(options.headers ?? source?.headers);
+      const method = normalizeMethod(options.method ?? source?.method ?? "GET");
+      const body = "body" in options
+        ? encodeBody(options.body, headers)
+        : source ? bodyStateFor(source).bytes : null;
+      if (body !== null && (method === "GET" || method === "HEAD"))
+        throw new TypeError(`a ${method} request cannot have a body`);
+      const signal = options.signal ?? source?.signal ?? null;
+      if (signal !== null && !(signal instanceof AbortSignal))
+        throw new TypeError("fetch signal must be an AbortSignal");
+      Object.defineProperties(this, {
+        method: { value: method, enumerable: true },
+        url: { value: resolveAgainstDocument(source ? source.url : String(input)).href, enumerable: true },
+        headers: { value: headers, enumerable: true },
+        signal: { value: signal, enumerable: true },
+      });
+      bodyStates.set(this, { used: false, id: null, bytes: body });
+    }
+  }
+  installBodyMethods(Request.prototype);
+
+  class Response {
+    constructor(body = null, options = {}) {
+      const status = options.status === undefined ? 200 : Number(options.status);
+      if (!Number.isInteger(status) || status < 200 || status > 599)
+        throw new RangeError(`invalid response status: ${options.status}`);
+      const headers = new Headers(options.headers);
+      Object.defineProperties(this, {
+        status: { value: status, enumerable: true },
+        statusText: { value: String(options.statusText ?? ""), enumerable: true },
+        headers: { value: headers, enumerable: true },
+        ok: { value: status >= 200 && status < 300, enumerable: true },
+        url: { value: "", enumerable: true },
+        redirected: { value: false, enumerable: true },
+      });
+      bodyStates.set(this, { used: false, id: null, bytes: encodeBody(body, headers) });
+    }
+    static json(data, options = {}) {
+      const response = new Response(JSON.stringify(data), options);
+      response.headers.set("content-type", "application/json");
+      return response;
+    }
+  }
+  installBodyMethods(Response.prototype);
+
+  const receivedResponse = record => {
+    const response = Object.create(Response.prototype);
+    Object.defineProperties(response, {
+      status: { value: record.status, enumerable: true },
+      statusText: { value: record.statusText, enumerable: true },
+      headers: { value: new Headers(record.headers), enumerable: true },
+      ok: { value: record.ok, enumerable: true },
+      url: { value: record.url, enumerable: true },
+      redirected: { value: record.redirected, enumerable: true },
+    });
+    bodyStates.set(response, { used: false, id: record.id, bytes: null });
+    abandonedBodies.register(response, record.id, response);
+    return response;
+  };
+
+  const inflightFetches = new Map();
+  const fetchFailure = error => error.name === "TypeError"
+    ? new TypeError(error.message)
+    : new DOMException(error.message, error.name);
+  // The one handoff point for network work: completions become settled promises
+  // here, before any requestAnimationFrame callback of the same turn runs.
+  const settleFetches = () => {
+    if (inflightFetches.size === 0) return;
+    for (const record of JSON.parse(__blitsenFetchPoll()).completed) {
+      const pending = inflightFetches.get(record.id);
+      if (!pending) { __blitsenFetchCancel(String(record.id)); continue; }
+      inflightFetches.delete(record.id);
+      pending.detach();
+      if (record.error) pending.reject(fetchFailure(record.error));
+      else pending.resolve(receivedResponse(record));
+    }
+  };
+
+  const fetch = (input, options = {}) => {
+    let request;
+    let id;
+    try {
+      request = new Request(input, options);
+      if (request.signal?.aborted) return Promise.reject(signalState(request.signal).reason);
+      const state = bodyStateFor(request);
+      state.used = true;
+      id = __blitsenFetchStart(JSON.stringify({
+        url: request.url, method: request.method, headers: [...request.headers],
+      }), state.bytes);
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    return new Promise((resolve, reject) => {
+      const signal = request.signal;
+      const onAbort = signal && (() => {
+        inflightFetches.delete(id);
+        __blitsenFetchCancel(String(id));
+        reject(signalState(signal).reason);
+      });
+      inflightFetches.set(id, {
+        resolve, reject,
+        detach: () => { if (onAbort) signal.removeEventListener("abort", onAbort); },
+      });
+      if (onAbort) signal.addEventListener("abort", onAbort, { once: true });
+    });
+  };
+
+  // Location and history. In-memory only: no navigation, no network, no
+  // back-forward cache. The address is synthetic because an exported
+  // application has no server and therefore no origin; it is path-rooted
+  // because that is what a client-side router reads.
+  const documentUrl = call("documentUrl");
+  let historyEntries = [{ url: documentUrl, state: null }];
+  let historyIndex = 0;
+  let scrollRestoration = "auto";
+  let locationParts = call("urlParts", documentUrl);
+  const currentUrl = () => historyEntries[historyIndex].url;
+  const refreshLocation = () => { locationParts = call("urlParts", currentUrl()); };
+  const resolveAgainstDocument = url => call("resolveUrl", currentUrl(), String(url));
+  const sameDocumentTarget = url => {
+    const target = resolveAgainstDocument(url);
+    if (!target.sameOrigin)
+      throw new DOMException(`cannot reach ${target.href} from ${currentUrl()}`, "SecurityError");
+    return target.href;
+  };
+  const pushEntry = (url, state) => {
+    historyEntries.length = historyIndex + 1;
+    historyEntries.push({ url, state });
+    historyIndex = historyEntries.length - 1;
+    refreshLocation();
+  };
+
+  class PopStateEvent extends Event {
+    constructor(type, options = {}) {
+      super(type, options);
+      Object.defineProperty(this, "state", { value: options.state ?? null, enumerable: true });
+    }
+  }
+
+  class HashChangeEvent extends Event {
+    constructor(type, options = {}) {
+      super(type, options);
+      Object.defineProperties(this, {
+        oldURL: { value: String(options.oldURL ?? ""), enumerable: true },
+        newURL: { value: String(options.newURL ?? ""), enumerable: true },
+      });
+    }
+  }
+
+  const traverseHistory = delta => {
+    const next = Math.min(historyEntries.length - 1, Math.max(0, historyIndex + delta));
+    if (next === historyIndex) return;
+    const previous = locationParts;
+    historyIndex = next;
+    refreshLocation();
+    globalThis.dispatchEvent(new PopStateEvent("popstate", { state: historyEntries[historyIndex].state }));
+    if (previous.hash !== locationParts.hash)
+      globalThis.dispatchEvent(new HashChangeEvent("hashchange",
+        { oldURL: previous.href, newURL: locationParts.href }));
+  };
+
+  class History {
+    constructor() { throw new TypeError("Illegal constructor"); }
+    get length() { return historyEntries.length; }
+    get state() { return historyEntries[historyIndex].state; }
+    get scrollRestoration() { return scrollRestoration; }
+    set scrollRestoration(value) { if (value === "auto" || value === "manual") scrollRestoration = value; }
+    pushState(state, unused, url) {
+      pushEntry(url == null ? currentUrl() : sameDocumentTarget(url), state ?? null);
+    }
+    replaceState(state, unused, url) {
+      historyEntries[historyIndex] = { url: url == null ? currentUrl() : sameDocumentTarget(url), state: state ?? null };
+      refreshLocation();
+    }
+    // Traversal is a task on the web, and routers rely on observing popstate
+    // after their own call returns.
+    go(delta = 0) { setTimeout(() => traverseHistory(Math.trunc(Number(delta)) || 0), 0); }
+    back() { this.go(-1); }
+    forward() { this.go(1); }
+  }
+
+  const noDocumentNavigation = property => {
+    throw new DOMException(
+      `Blitsen has no document navigation; use history.pushState instead of assigning location.${property}`,
+      "NotSupportedError");
+  };
+
+  class Location {
+    constructor() { throw new TypeError("Illegal constructor"); }
+    get href() { return locationParts.href; }
+    set href(value) { noDocumentNavigation("href"); }
+    get protocol() { return locationParts.protocol; }
+    get host() { return locationParts.host; }
+    get hostname() { return locationParts.hostname; }
+    get port() { return locationParts.port; }
+    get origin() { return locationParts.origin; }
+    get pathname() { return locationParts.pathname; }
+    set pathname(value) { noDocumentNavigation("pathname"); }
+    get search() { return locationParts.search; }
+    set search(value) { noDocumentNavigation("search"); }
+    get hash() { return locationParts.hash; }
+    set hash(value) {
+      const text = String(value);
+      const target = sameDocumentTarget(text.startsWith("#") ? text : `#${text}`);
+      if (target === currentUrl()) return;
+      const previous = locationParts;
+      pushEntry(target, null);
+      globalThis.dispatchEvent(new HashChangeEvent("hashchange",
+        { oldURL: previous.href, newURL: locationParts.href }));
+    }
+    toString() { return locationParts.href; }
+  }
+
+  const location = Object.create(Location.prototype);
+  const history = Object.create(History.prototype);
+
   for (const method of ["addEventListener", "removeEventListener", "dispatchEvent"])
     Object.defineProperty(globalThis, method, { value: EventTarget.prototype[method], configurable: true });
   const globals = {
     EventTarget, Node, Element, NodeList, Document, DOMTokenList, CSSStyleDeclaration,
     MutationObserver, HTMLElement, HTMLIFrameElement, SVGElement, document,
     BlitsenViewElement, BlitsenViewSurface,
-    Event, MouseEvent, KeyboardEvent, CustomEvent,
+    Event, MouseEvent, KeyboardEvent, CustomEvent, PopStateEvent, HashChangeEvent,
+    Headers, Request, Response, Blob, AbortController, AbortSignal, fetch,
+    Location, History,
     requestAnimationFrame, cancelAnimationFrame,
     setTimeout, clearTimeout, setInterval, clearInterval,
     __blitsenAnimationFrameTick: animationFrameTick,
-    __blitsenAnimationFramesPending: () => animationFrames.size > 0,
+    __blitsenAnimationFramesPending: () => animationFrames.size > 0 || inflightFetches.size > 0,
     __blitsenForcedLayoutsThisFrame: () => forcedLayoutsThisFrame,
     __blitsenEventInternals: eventInternals,
     __blitsenDispatchMouseEvent: dispatchMouseEvent,
@@ -700,10 +1112,23 @@ const BOOTSTRAP: &str = r#"
       runningAnimationFrames?.clear();
       acquiredSurfaces.clear();
       wrapperCache.clear();
+      inflightFetches.clear();
+      __blitsenFetchDispose();
+      historyEntries = [{ url: documentUrl, state: null }];
+      historyIndex = 0;
+      refreshLocation();
       Object.assign(globalThis, {
         setTimeout: hostSetTimeout, clearTimeout: hostClearTimeout,
         setInterval: hostSetInterval, clearInterval: hostClearInterval,
       });
+    },
+    // `WindowState::install` clears the host's browser globals after this
+    // script runs, so Blitsen's own `location` and `history` are attached from
+    // there rather than here.
+    __blitsenInstallRouting: () => {
+      delete globalThis.__blitsenInstallRouting;
+      for (const [name, value] of [["location", location], ["history", history]])
+        Object.defineProperty(globalThis, name, { value, enumerable: true, configurable: true });
     },
   };
   if (testHarness) globals.__blitsenInjectMouseEvent = (type, target, init = {}) => {
@@ -728,11 +1153,11 @@ const BOOTSTRAP: &str = r#"
   };
   Object.assign(globalThis, globals);
   globalThis.window = globalThis;
-  for (const key of ["location", "history", "navigator", "localStorage"]) {
+  for (const key of ["navigator", "localStorage"]) {
     try { delete globalThis[key]; } catch {}
   }
 })();
-"#;
+"##;
 
 /// Installs the real DOM object graph into a Node-API JavaScript environment.
 pub(super) fn install(
@@ -845,6 +1270,8 @@ pub(super) fn install(
         }),
     )?;
     engine.set_global("__blitsenViewportWrite", &viewport_write_function)?;
+    install_text_codec(engine, raw_env)?;
+    install_fetch(engine, raw_env)?;
     let dev_layout_warnings = std::env::var("BLITSEN_DEV_LAYOUT_WARNINGS").is_ok_and(|value| {
         !value.is_empty() && value != "0" && !value.eq_ignore_ascii_case("false")
     });
@@ -861,6 +1288,10 @@ pub(super) fn install(
         device_pixel_ratio,
     )));
     window_state.borrow().install(engine, &document)?;
+    engine.evaluate_script(
+        "globalThis.__blitsenInstallRouting()",
+        "blitsen:install-routing",
+    )?;
     let resize_state = Rc::clone(&window_state);
     let resize_runtime = runtime;
     let resize_function = engine.define_function(
@@ -891,6 +1322,110 @@ pub(super) fn install(
     )?;
     engine.set_global("__blitsenWindowResize", &resize_function)?;
     Ok(window_state)
+}
+
+/// Installs the UTF-8 conversions the body classes need.
+///
+/// `TextEncoder` and `TextDecoder` are Web IDL, not ECMAScript: relying on the
+/// host's would make the request and response bodies change shape under the
+/// Phase 2 engine.
+fn install_text_codec(engine: &mut NodeApiEngine, raw_env: sys::napi_env) -> Result<(), JsError> {
+    let encode = engine.define_function(
+        "__blitsenUtf8Encode",
+        Box::new(move |call| {
+            let text = argument(&call.arguments, 0, "text")?;
+            let bytes = TypedArray::new(TypedArrayKind::Uint8, text.into_bytes())?;
+            NodeApiEngine::new(Env::from_raw(raw_env)).typed_array(&bytes)
+        }),
+    )?;
+    engine.set_global("__blitsenUtf8Encode", &encode)?;
+    let decode = engine.define_function(
+        "__blitsenUtf8Decode",
+        Box::new(move |call| {
+            let mut engine = NodeApiEngine::new(Env::from_raw(raw_env));
+            let bytes = call
+                .arguments
+                .first()
+                .ok_or_else(|| JsError::new("missing bytes"))
+                .and_then(|value| engine.to_typed_array(value))?;
+            engine.string(&String::from_utf8_lossy(&bytes.bytes))
+        }),
+    )?;
+    engine.set_global("__blitsenUtf8Decode", &decode)
+}
+
+/// Installs the transport the bootstrap's `fetch` classes call through.
+fn install_fetch(engine: &mut NodeApiEngine, raw_env: sys::napi_env) -> Result<(), JsError> {
+    let host = Rc::new(fetch::FetchHost::new()?);
+
+    let start_host = Rc::clone(&host);
+    let start = engine.define_function(
+        "__blitsenFetchStart",
+        Box::new(move |call| {
+            let spec = argument(&call.arguments, 0, "fetch request")?;
+            let spec = serde_json::from_str(&spec)
+                .map_err(|error| JsError::new(format!("invalid fetch request: {error}")))?;
+            let mut engine = NodeApiEngine::new(Env::from_raw(raw_env));
+            let body = match call.arguments.get(1) {
+                Some(value) if engine.value_type(value)? == JsType::TypedArray => {
+                    Some(engine.to_typed_array(value)?.bytes)
+                }
+                _ => None,
+            };
+            let id = start_host.start(&spec, body)?;
+            Ok(engine.number(id as f64))
+        }),
+    )?;
+    engine.set_global("__blitsenFetchStart", &start)?;
+
+    let poll_host = Rc::clone(&host);
+    let poll = engine.define_function(
+        "__blitsenFetchPoll",
+        Box::new(move |_| json_string(raw_env, &poll_host.poll())),
+    )?;
+    engine.set_global("__blitsenFetchPoll", &poll)?;
+
+    let body_host = Rc::clone(&host);
+    let body = engine.define_function(
+        "__blitsenFetchBody",
+        Box::new(move |call| {
+            let id = fetch_id(&call.arguments)?;
+            let kind = argument(&call.arguments, 1, "body kind")?;
+            let bytes = body_host.take_body(id)?;
+            let mut engine = NodeApiEngine::new(Env::from_raw(raw_env));
+            match kind.as_str() {
+                "text" => engine.string(&String::from_utf8_lossy(&bytes)),
+                "bytes" => engine.typed_array(&TypedArray::new(TypedArrayKind::Uint8, bytes)?),
+                other => Err(JsError::new(format!("invalid body kind: {other}"))),
+            }
+        }),
+    )?;
+    engine.set_global("__blitsenFetchBody", &body)?;
+
+    let cancel_host = Rc::clone(&host);
+    let cancel = engine.define_function(
+        "__blitsenFetchCancel",
+        Box::new(move |call| {
+            cancel_host.cancel(fetch_id(&call.arguments)?);
+            Ok(call.this)
+        }),
+    )?;
+    engine.set_global("__blitsenFetchCancel", &cancel)?;
+
+    let dispose = engine.define_function(
+        "__blitsenFetchDispose",
+        Box::new(move |call| {
+            host.dispose();
+            Ok(call.this)
+        }),
+    )?;
+    engine.set_global("__blitsenFetchDispose", &dispose)
+}
+
+fn fetch_id(arguments: &[Unknown<'static>]) -> Result<u64, JsError> {
+    argument(arguments, 0, "request id")?
+        .parse::<u64>()
+        .map_err(|_| JsError::new("invalid fetch request id"))
 }
 
 fn argument(arguments: &[Unknown<'static>], index: usize, name: &str) -> Result<String, JsError> {
@@ -1231,6 +1766,13 @@ fn dispatch(runtime: &DomRuntime, operation: &str, arguments: &[String]) -> Resu
             .map_err(dom_error)?;
             Ok(Value::Null)
         }
+        "documentUrl" => Ok(Value::String(web_url::DOCUMENT_URL.into())),
+        "urlParts" => web_url::components(bridge_arg(arguments, 0, "URL")?).map_err(JsError::new),
+        "resolveUrl" => web_url::resolve(
+            bridge_arg(arguments, 0, "base URL")?,
+            bridge_arg(arguments, 1, "URL")?,
+        )
+        .map_err(JsError::new),
         _ => Err(JsError::new(format!(
             "unknown DOM bridge operation: {operation}"
         ))),

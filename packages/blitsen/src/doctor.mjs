@@ -10,10 +10,14 @@ const JS_RULES = [
     "Browser storage is not implemented.", "Use a Node filesystem/database package or feature-detect storage."],
   ["WEB_WORKER", "error", /\b(?:Worker|SharedWorker|ServiceWorkerContainer)\b/g,
     "Web workers are not implemented.", "Run the work in the main context or use a native/Node worker path."],
-  ["WEB_NAVIGATION", "error", /\b(?:document\.write|history\.(?:pushState|replaceState)|location\.(?:assign|replace|reload))\b/g,
-    "Browser navigation is deliberately absent.", "Use application state and conditional DOM rendering instead of document navigation."],
-  ["WEB_FETCH", "warning", /\bfetch\s*\(/g,
-    "fetch is a v1 API and is only supplied by the Phase 1 Bun host today.", "Feature-detect fetch; production-host portability is not yet guaranteed."],
+  ["WEB_NAVIGATION", "error", /\b(?:document\.write|window\.open|location\.(?:assign|replace|reload))\b/g,
+    "Document navigation is deliberately absent; there is no page to leave.", "Route with history.pushState and conditional DOM rendering."],
+  // `history` and `location` are in profile, but they address a synthetic
+  // document with no server behind it, so a literal relative fetch cannot work.
+  ["WEB_FETCH", "error", /\bfetch\s*\(\s*["'`](?!https?:\/\/)/g,
+    "fetch resolves this URL against an address with no server behind it.", "Bundle the data into the export, or request an absolute http(s) URL."],
+  ["WEB_STREAM", "warning", /\b(?:ReadableStream|WritableStream|TransformStream)\b|\.body\s*\.\s*getReader\b/g,
+    "Streaming bodies are not implemented; a response is buffered whole.", "Read the response with text(), json(), or arrayBuffer()."],
   ["WEB_SOCKET", "warning", /\b(?:WebSocket|EventSource)\b/g,
     "Browser network streams are v1 APIs.", "Feature-detect this API or use a Node-compatible networking package."],
   ["WEB_MEDIA", "warning", /\b(?:new\s+(?:Image|Audio)\s*\(|AudioContext|webkitAudioContext)\b/g,

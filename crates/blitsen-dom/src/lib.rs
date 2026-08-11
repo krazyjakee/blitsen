@@ -458,6 +458,65 @@ impl ViewportSurface {
     }
 }
 
+/// Loading state and intrinsic size of one `<img>` element.
+///
+/// The three fields answer HTML's `naturalWidth`/`naturalHeight` and
+/// `complete`. `errored` separates a request that finished badly from one still
+/// in flight, which is the distinction `complete` alone cannot express and the
+/// one that decides whether `load` or `error` fires.
+///
+/// No `Default`: every combination of these fields means something specific, so
+/// the named constants below are the only way to build one from nothing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ImageState {
+    /// Decoded width in CSS pixels; zero until the image is available.
+    pub natural_width: u32,
+    /// Decoded height in CSS pixels; zero until the image is available.
+    pub natural_height: u32,
+    /// Whether the element has finished loading, successfully or not.
+    ///
+    /// An element with no source has nothing to wait for and is complete.
+    pub complete: bool,
+    /// Whether the fetch was refused, or the bytes failed to decode.
+    pub errored: bool,
+}
+
+impl ImageState {
+    /// The state of an element with nothing to load.
+    pub const IDLE: Self = Self {
+        natural_width: 0,
+        natural_height: 0,
+        complete: true,
+        errored: false,
+    };
+
+    /// The state of an element whose source is still in flight.
+    pub const LOADING: Self = Self {
+        natural_width: 0,
+        natural_height: 0,
+        complete: false,
+        errored: false,
+    };
+
+    /// The state of an element whose source could not be fetched or decoded.
+    pub const FAILED: Self = Self {
+        natural_width: 0,
+        natural_height: 0,
+        complete: true,
+        errored: true,
+    };
+
+    /// The state of an element showing a decoded image of the given size.
+    pub const fn decoded(width: u32, height: u32) -> Self {
+        Self {
+            natural_width: width,
+            natural_height: height,
+            complete: true,
+            errored: false,
+        }
+    }
+}
+
 /// Result of resolving a viewport point against the laid-out document.
 #[derive(Clone, Debug, PartialEq)]
 pub struct HitTest<N> {
@@ -679,6 +738,17 @@ pub trait DomBackend {
         y: f32,
         snapshot: LayoutSnapshot,
     ) -> Result<Option<HitTest<Self::NodeId>>, DomError>;
+
+    /// Returns an `<img>` element's decode state from a validated snapshot.
+    ///
+    /// A subresource is applied while layout resolves, so this read is snapshot
+    /// gated like the geometry ones: without the flush an image whose bytes have
+    /// already arrived would still report itself as loading.
+    fn image_state(
+        &self,
+        node: Self::NodeId,
+        snapshot: LayoutSnapshot,
+    ) -> Result<ImageState, DomError>;
 
     /// Returns every connected [`NATIVE_VIEWPORT_TAG`] element in tree order.
     fn native_viewports(&self) -> Result<Vec<Self::NodeId>, DomError>;

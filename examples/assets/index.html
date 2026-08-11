@@ -1,0 +1,49 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Blitsen Assets</title>
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <main>
+      <header>
+        <p class="eyebrow">M3b / ASSETS</p>
+        <!-- Set in the web font. If @font-face had failed this would still be
+             legible in the system UI face, which is the point of a fallback —
+             but it would not be pixel-shaped, so the frame says which won. -->
+        <h1>WEB FONTS AND IMAGES</h1>
+        <p class="intro">A <code>@font-face</code> WOFF2 headline, a PNG sized from its own
+          intrinsic ratio, an inlined <code>data:</code> icon, and a repeating CSS
+          <code>background-image</code>. All four arrive over one subresource path.</p>
+      </header>
+
+      <section class="grid">
+        <figure class="card">
+          <!-- No height given: the intrinsic 320x180 ratio resolves it. -->
+          <img id="gradient" src="./gradient.png" alt="Generated gradient" width="320">
+          <figcaption><strong>&lt;img&gt;</strong><span id="gradient-box">…</span></figcaption>
+        </figure>
+
+        <figure class="card">
+          <div class="tiled"></div>
+          <figcaption><strong>background-image</strong><span>./tile.png, repeated</span></figcaption>
+        </figure>
+
+        <figure class="card">
+          <img class="icon" alt="Inlined icon"
+               src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAK0lEQVR42mOw2PvjPyWYgWoG8C19SRIe5AZ8+PkfKx41gJ4GDNGENGC5EQDMMO0/mk6FugAAAABJRU5ErkJggg==">
+          <figcaption><strong>data: URL</strong><span>inlined, 16&times;16</span></figcaption>
+        </figure>
+
+        <figure class="card">
+          <!-- Deliberately absent. A missing asset lays out at zero rather than
+               pretending to still be on its way. -->
+          <img id="broken" src="./not-shipped.png" alt="Missing asset">
+          <figcaption><strong>missing source</strong><span id="broken-box">…</span></figcaption>
+        </figure>
+      </section>
+    </main>
+    <script src="./app.js"></script>
+  </body>
+</html>

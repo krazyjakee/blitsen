@@ -136,6 +136,31 @@ describe("directory CLI", () => {
     expect(lines.at(-1)[1]).toContain("errors, 0 warnings");
   });
 
+  test("accepts the routing and fetch surface the runtime actually implements", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "blitsen-doctor-test-"));
+    try {
+      await writeFile(join(directory, "app.js"), [
+        `history.pushState({ page: 1 }, "", "/reports");`,
+        `history.replaceState(null, "", location.pathname);`,
+        `addEventListener("popstate", () => fetch("https://api.example.com/reports"));`,
+        `fetch(endpoint).then(response => response.json());`,
+      ].join("\n"));
+      const report = await doctorApplication(directory);
+      expect(report).toMatchObject({ errors: 0, warnings: 0 });
+
+      await writeFile(join(directory, "app.js"), [
+        `fetch("/api/reports");`,
+        `location.reload();`,
+        `new ReadableStream();`,
+      ].join("\n"));
+      const codes = (await doctorApplication(directory)).diagnostics
+        .map(diagnostic => `${diagnostic.severity}:${diagnostic.code}`);
+      expect(codes).toEqual(["error:WEB_FETCH", "error:WEB_NAVIGATION", "warning:WEB_STREAM"]);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   test("normalizes Vite root-relative HTML and CSS references during ingest", () => {
     expect(rewriteRootRelativeReferences(
       '<script src="/assets/app.js?v=1"></script><a href="/settings">x</a>',

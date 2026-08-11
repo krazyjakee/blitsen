@@ -4,6 +4,7 @@
 //! DOM operations into Blitz calls. It owns one authoritative `HtmlDocument`;
 //! no parallel tree or attribute store is maintained.
 
+pub mod resources;
 mod viewport;
 
 use std::cell::RefCell;
@@ -13,10 +14,11 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use blitsen_dom::{
-    DomBackend, DomError, DomName, FrameInvalidation, HitTest, InvalidationMetrics,
+    DomBackend, DomError, DomName, FrameInvalidation, HitTest, ImageState, InvalidationMetrics,
     InvalidationMode, InvalidationTracker, LayoutMetrics, LayoutSnapshot, NATIVE_VIEWPORT_TAG,
     Namespace, NodeKind, Rect, ViewportSurface,
 };
+use blitz::dom::node::ImageData;
 use blitz::dom::{DocumentConfig, LocalName, NodeData, NodeId, QualName, ns};
 use blitz::html::{HtmlDocument, HtmlProvider};
 use kurbo::Point;
@@ -24,7 +26,17 @@ use style::computed_values::pointer_events::T as PointerEvents;
 use style::computed_values::visibility::T as Visibility;
 use style::values::computed::Overflow;
 
+use resources::{ResourceLog, ResourceState};
 use viewport::{NATIVE_VIEWPORT_UA_CSS, ViewportState, ViewportWidget};
+
+/// Upper bound on resolve passes one layout flush will spend chasing resources.
+///
+/// A synchronous provider hands bytes back from inside `resolve`, after the
+/// pass that would have consumed them. Without another pass a `background-image`
+/// discovered during style resolution would first paint one frame late. Each
+/// pass can only uncover resources referenced by the previous one, so the bound
+/// caps a chain of `@import`ed stylesheets that each pull in the next.
+const RESOURCE_RESOLVE_PASSES: usize = 4;
 
 type HitCandidate = (Vec<i32>, usize, f32, f32);
 type RankedHit = (Vec<i32>, usize, usize, NodeId, f32, f32);
@@ -52,13 +64,22 @@ pub struct BlitzDom {
     last_frame_was_full_document: bool,
     js_references: HashMap<NodeId, u32>,
     native_viewports: HashMap<NodeId, Rc<RefCell<ViewportState>>>,
+    resources: ResourceLog,
 }
 
 impl BlitzDom {
     /// Parses an HTML document with the real Blitz fragment parser installed.
+    ///
+    /// The configured net provider is wrapped so subresource outcomes stay
+    /// observable, and a configuration without one gets
+    /// [`resources::LocalResources`] rather than Blitz's silent no-op provider.
     pub fn from_html(html: &str, mut config: DocumentConfig) -> Self {
         config.html_parser_provider = Some(Arc::new(HtmlProvider));
-        Self::new(HtmlDocument::from_html(html, config))
+        let (provider, log) = resources::track(config.net_provider.take());
+        config.net_provider = Some(provider);
+        let mut dom = Self::new(HtmlDocument::from_html(html, config));
+        dom.resources = log;
+        dom
     }
 
     /// Wraps an existing Blitz document and installs the fragment parser.
@@ -79,7 +100,13 @@ impl BlitzDom {
             last_frame_was_full_document: false,
             js_references: HashMap::new(),
             native_viewports: HashMap::new(),
+            resources: ResourceLog::default(),
         }
+    }
+
+    /// Returns the record of every subresource this document has requested.
+    pub fn resources(&self) -> &ResourceLog {
+        &self.resources
     }
 
     /// Borrows the authoritative Blitz document for painting or inspection.
@@ -790,7 +817,13 @@ impl DomBackend for BlitzDom {
     fn flush_layout(&mut self) -> Result<LayoutSnapshot, DomError> {
         self.take_frame_invalidation();
         self.attach_native_viewports()?;
-        self.document.resolve(0.0);
+        for _ in 0..RESOURCE_RESOLVE_PASSES {
+            let settled = self.resources.settlements();
+            self.document.resolve(0.0);
+            if self.resources.settlements() == settled {
+                break;
+            }
+        }
         self.resize_native_viewports();
         self.flushed_revision = self.revision;
         Ok(LayoutSnapshot::new(self.revision))
@@ -975,6 +1008,44 @@ impl DomBackend for BlitzDom {
         }))
     }
 
+    fn image_state(&self, node: NodeId, snapshot: LayoutSnapshot) -> Result<ImageState, DomError> {
+        if snapshot.revision() != self.revision || self.flushed_revision != self.revision {
+            return Err(DomError::LayoutNotFlushed);
+        }
+        let element = self
+            .node(node)?
+            .element_data()
+            .ok_or(DomError::InvalidNodeType)?;
+        if element.name.local.as_ref() != "img" {
+            return Err(DomError::InvalidNodeType);
+        }
+        if let Some(ImageData::Raster(raster)) = element.image_data() {
+            return Ok(ImageState::decoded(raster.width, raster.height));
+        }
+        let Some(source) = self
+            .attribute(node, &DomName::attribute("src"))?
+            .filter(|source| !source.is_empty())
+        else {
+            return Ok(ImageState::IDLE);
+        };
+        let state = self
+            .document
+            .url()
+            .join(&source)
+            .map(|url| self.resources.state(url.as_str()));
+        Ok(match state {
+            // Bytes arrived but no image came out of them, so the decode failed.
+            Ok(Some(ResourceState::Loaded | ResourceState::Failed)) => ImageState::FAILED,
+            Ok(Some(ResourceState::Loading)) => ImageState::LOADING,
+            // A source that cannot become a URL will never be requested, so
+            // waiting on it would be waiting forever.
+            Err(_) => ImageState::FAILED,
+            // Requested by nothing yet: an element whose source was set during
+            // the flush that is reading it back.
+            Ok(None) => ImageState::LOADING,
+        })
+    }
+
     fn native_viewports(&self) -> Result<Vec<NodeId>, DomError> {
         self.query_selector_all(self.document(), NATIVE_VIEWPORT_TAG)
     }
@@ -1014,12 +1085,117 @@ mod tests {
     use anyrender::recording::RenderCommand;
     use anyrender::{Paint, Scene};
     use anyrender_vello_cpu::VelloCpuImageRenderer;
-    use blitsen_dom::{DomBackend, DomError, DomName, NodeKind};
+    use std::sync::{Arc, Mutex};
+
+    use blitsen_dom::{DomBackend, DomError, DomName, ImageState, NodeKind};
     use blitz::dom::DocumentConfig;
+    use blitz::traits::net::{NetHandler, NetProvider, Request};
     use blitz::traits::shell::{ColorScheme, Viewport};
     use kurbo::{BezPath, Point, Shape as _};
 
     use super::BlitzDom;
+    use super::resources::LocalResources;
+
+    /// Base URL of the checked-in subresource fixtures.
+    ///
+    /// `file:` keeps the tests on the synchronous provider, which is the same
+    /// path a headless harness takes.
+    fn fixtures_url() -> String {
+        format!("file://{}/fixtures/", env!("CARGO_MANIFEST_DIR"))
+    }
+
+    /// Renders a document and returns straight-alpha RGBA8 rows.
+    fn render(dom: &mut BlitzDom, width: u32, height: u32) -> Vec<u8> {
+        anyrender::render_to_buffer::<VelloCpuImageRenderer, _>(
+            |scene| {
+                blitz_paint::paint_scene(
+                    scene,
+                    dom.document_mut().as_mut(),
+                    1.0,
+                    width,
+                    height,
+                    0,
+                    0,
+                );
+            },
+            width,
+            height,
+        )
+    }
+
+    fn pixel(pixels: &[u8], width: u32, x: u32, y: u32) -> [u8; 4] {
+        let start = ((y * width + x) * 4) as usize;
+        pixels[start..start + 4].try_into().expect("rgba8 pixel")
+    }
+
+    /// Bounding box `(x, y, width, height)` of everything the frame painted.
+    ///
+    /// The fixture font draws each letter as a solid em block, so the box of a
+    /// text run is the run's exact metrics — which is what makes "did the web
+    /// font actually get used" answerable from pixels alone.
+    fn inked_bounds(pixels: &[u8], width: u32) -> Option<(u32, u32, u32, u32)> {
+        let inked = pixels
+            .chunks_exact(4)
+            .enumerate()
+            .filter(|(_, pixel)| pixel[3] > 0)
+            .map(|(index, _)| (index as u32 % width, index as u32 / width));
+        inked
+            .fold(None, |bounds: Option<[u32; 4]>, (x, y)| {
+                Some(match bounds {
+                    Some([left, top, right, bottom]) => {
+                        [left.min(x), top.min(y), right.max(x), bottom.max(y)]
+                    }
+                    None => [x, y, x, y],
+                })
+            })
+            .map(|[left, top, right, bottom]| (left, top, right - left + 1, bottom - top + 1))
+    }
+
+    /// A provider that answers nothing until it is told to.
+    ///
+    /// Every other subresource in these tests resolves before `fetch` returns,
+    /// which is precisely the case where an in-flight state can never be
+    /// observed. Deferring reinstates the asynchrony a real window has.
+    type HeldRequest = (Request, Box<dyn NetHandler>);
+
+    #[derive(Clone, Default)]
+    struct DeferredResources(Arc<Mutex<Vec<HeldRequest>>>);
+
+    impl NetProvider for DeferredResources {
+        fn fetch(&self, _doc_id: usize, request: Request, handler: Box<dyn NetHandler>) {
+            self.0
+                .lock()
+                .expect("deferred requests")
+                .push((request, handler));
+        }
+    }
+
+    impl DeferredResources {
+        fn deliver(&self) {
+            let held = self
+                .0
+                .lock()
+                .expect("deferred requests")
+                .drain(..)
+                .collect::<Vec<_>>();
+            for (request, handler) in held {
+                LocalResources.fetch(0, request, handler);
+            }
+        }
+    }
+
+    /// A document whose relative URLs resolve against the checked-in fixtures.
+    fn fixture_document(html: &str, provider: Option<Arc<dyn NetProvider>>) -> BlitzDom {
+        BlitzDom::from_html(
+            &format!("<style>html, body {{ margin: 0 }}</style>{html}"),
+            DocumentConfig {
+                base_url: Some(fixtures_url()),
+                net_provider: provider,
+                viewport: Some(Viewport::new(400, 200, 1.0, ColorScheme::Light)),
+                ..Default::default()
+            },
+        )
+    }
 
     fn backend() -> BlitzDom {
         BlitzDom::from_html(
@@ -1544,6 +1720,282 @@ mod tests {
         assert!(
             inked > 200,
             "text rendered {inked} non-transparent pixels; system fonts are not loaded"
+        );
+    }
+
+    /// Guards `@font-face` end to end: fetch, WOFF2 decompression, registration
+    /// under the CSS family name, and shaping with the registered face.
+    ///
+    /// Real framework output almost always ships a web font, so a build that
+    /// quietly fell back to the system UI font would not look like itself. Every
+    /// letter in the fixture is a solid em block, which no fallback paints, so
+    /// the frame says which font was used rather than merely that one was.
+    #[test]
+    fn web_fonts_load_from_woff2_and_replace_the_fallback() {
+        let mut dom = fixture_document(
+            r#"<style>
+                 @font-face { font-family: "Block"; src: url("block-regular.woff2") format("woff2") }
+                 div { font: 50px "Block", sans-serif; color: #000 }
+               </style>
+               <div>AAAA</div>"#,
+            None,
+        );
+        dom.flush_layout().unwrap();
+        let pixels = render(&mut dom, 400, 200);
+        let (x, y, width, height) = inked_bounds(&pixels, 400).expect("the run painted nothing");
+        assert_eq!(
+            (x, width, height),
+            (0, 200, 50),
+            "four 50px em blocks, so the web font shaped and drew the run"
+        );
+        assert!(
+            (y..y + height)
+                .flat_map(|row| (x..x + width).map(move |column| (column, row)))
+                .all(|(column, row)| pixel(&pixels, 400, column, row) == [0, 0, 0, 255]),
+            "the block glyph is solid, so nothing else contributed to the run"
+        );
+    }
+
+    /// Faces of one family are told apart by `@font-face` descriptor, not by
+    /// the metadata inside the font file.
+    ///
+    /// The three fixtures are internally indistinguishable — same family name,
+    /// same "Regular" style, same weight 400, none of them the family the CSS
+    /// declares — so only the descriptors can pick one. They differ only in
+    /// block height, which turns a wrong match into a wrong painted height.
+    ///
+    /// Also covers an uncompressed `truetype` source alongside the WOFF2 above.
+    #[test]
+    fn font_face_descriptors_select_the_face_within_a_family() {
+        let mut dom = fixture_document(
+            r#"<style>
+                 @font-face { font-family: "Block"; src: url("block-regular.ttf") format("truetype") }
+                 @font-face { font-family: "Block"; font-weight: 700;
+                              src: url("block-bold.ttf") format("truetype") }
+                 @font-face { font-family: "Block"; font-style: italic;
+                              src: url("block-italic.ttf") format("truetype") }
+                 div { position: absolute; left: 0; font: 50px "Block"; color: #000 }
+                 #bold { top: 60px; font-weight: bold }
+                 #italic { top: 120px; font-style: italic }
+               </style>
+               <div id="regular">A</div>
+               <div id="bold">A</div>
+               <div id="italic">A</div>"#,
+            None,
+        );
+        dom.flush_layout().unwrap();
+        let pixels = render(&mut dom, 400, 200);
+        let band = |top: usize, bottom: usize| {
+            inked_bounds(&pixels[top * 400 * 4..bottom * 400 * 4], 400)
+                .expect("a run painted nothing")
+        };
+        assert_eq!(band(0, 60).3, 50, "the 400 face fills the em box");
+        assert_eq!(band(60, 120).3, 25, "the 700 face fills half of it");
+        assert_eq!(
+            band(120, 200).3,
+            13,
+            "the italic face fills a quarter of it"
+        );
+        assert_eq!(band(0, 60).2, band(60, 120).2, "every face advances one em");
+    }
+
+    /// Nothing registers a font as a critical resource, so a document paints
+    /// while its web fonts are still in flight: Blitsen is FOUT, never FOIT.
+    ///
+    /// The alternative — withholding the frame until the font arrives — would
+    /// trade a restyle for a blank window on every cold start.
+    #[test]
+    fn text_paints_in_the_fallback_while_a_web_font_is_still_loading() {
+        let network = DeferredResources::default();
+        let mut dom = fixture_document(
+            r#"<style>
+                 @font-face { font-family: "Block"; src: url("block-regular.woff2") format("woff2") }
+                 div { font: 50px "Block", sans-serif; color: #000 }
+               </style>
+               <div>AAAA</div>"#,
+            Some(Arc::new(network.clone())),
+        );
+        dom.flush_layout().unwrap();
+        let waiting = render(&mut dom, 400, 200);
+        let (_, _, _, fallback_height) =
+            inked_bounds(&waiting, 400).expect("no text painted while the web font loaded");
+        assert_ne!(
+            fallback_height, 50,
+            "the fallback face painted, not the block glyph"
+        );
+
+        network.deliver();
+        dom.flush_layout().unwrap();
+        let loaded = render(&mut dom, 400, 200);
+        assert_eq!(
+            inked_bounds(&loaded, 400).map(|bounds| (bounds.2, bounds.3)),
+            Some((200, 50)),
+            "the arriving font reshapes the already-painted run"
+        );
+    }
+
+    /// `<img>` end to end: fetch, decode, intrinsic sizing and paint.
+    ///
+    /// The intrinsic size is what CSS resolves the unspecified dimension
+    /// against, so a decode that silently produced nothing would lay the
+    /// element out at zero height rather than fail visibly.
+    #[test]
+    fn images_decode_paint_and_report_their_intrinsic_size() {
+        let mut dom = fixture_document(
+            r#"<img id="swatch" src="swatch.png" style="display: block; width: 80px">"#,
+            None,
+        );
+        let snapshot = dom.flush_layout().unwrap();
+        let swatch = dom.get_element_by_id("swatch").unwrap().unwrap();
+        assert_eq!(
+            dom.image_state(swatch, snapshot),
+            Ok(ImageState::decoded(8, 4))
+        );
+        let rect = dom.bounding_rect(swatch, snapshot).unwrap();
+        assert_eq!(
+            (rect.width, rect.height),
+            (80.0, 40.0),
+            "the intrinsic ratio resolves the dimension CSS left out"
+        );
+
+        let pixels = render(&mut dom, 400, 200);
+        assert_eq!(pixel(&pixels, 400, 20, 20), [220, 20, 20, 255]);
+        assert_eq!(pixel(&pixels, 400, 60, 20), [20, 40, 220, 255]);
+        assert_eq!(inked_bounds(&pixels, 400), Some((0, 0, 80, 40)));
+    }
+
+    /// Bundlers inline small assets, so a drop-in build's icons arrive as
+    /// `data:` URLs rather than files.
+    #[test]
+    fn images_decode_from_inlined_data_urls() {
+        // The `swatch.png` fixture, encoded the way a bundler would inline it.
+        let inlined = concat!(
+            "data:image/png;base64,",
+            "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAECAYAAACzzX7wAAAAF0lEQVR42mO4IyLy",
+            "HxmLaNxBwQy0VwAAw8RBoVkySsgAAAAASUVORK5CYII="
+        );
+        let mut dom = fixture_document(
+            &format!(r#"<img id="inlined" src="{inlined}" style="display: block; width: 80px">"#),
+            None,
+        );
+        let snapshot = dom.flush_layout().unwrap();
+        let inlined = dom.get_element_by_id("inlined").unwrap().unwrap();
+        assert_eq!(
+            dom.image_state(inlined, snapshot),
+            Ok(ImageState::decoded(8, 4))
+        );
+        assert_eq!(
+            inked_bounds(&render(&mut dom, 400, 200), 400),
+            Some((0, 0, 80, 40))
+        );
+    }
+
+    /// A `background-image` is only discovered once style resolves, which is
+    /// after the pass that would have applied it. It still has to be in the
+    /// frame that asked for it, or every backdrop flashes empty for one frame.
+    #[test]
+    fn background_images_paint_in_the_frame_that_asks_for_them() {
+        let mut dom = fixture_document(
+            r#"<div style="width: 80px; height: 40px; background-image: url('swatch.png');
+                 background-size: 80px 40px"></div>"#,
+            None,
+        );
+        dom.flush_layout().unwrap();
+        let pixels = render(&mut dom, 400, 200);
+        assert_eq!(pixel(&pixels, 400, 20, 20), [220, 20, 20, 255]);
+        assert_eq!(pixel(&pixels, 400, 60, 20), [20, 40, 220, 255]);
+    }
+
+    /// An image that will never arrive must not be reported as still arriving:
+    /// `complete` is what a script polls, and a stuck `false` never resolves.
+    #[test]
+    fn a_failed_image_is_complete_and_errored_rather_than_loading_forever() {
+        let dom = fixture_document(
+            r#"<img id="missing" src="does-not-exist.png">
+               <img id="remote" src="https://example.com/logo.png">
+               <img id="undecodable" src="data:image/png;base64,bm90IGEgcG5n">
+               <img id="sourceless">
+               <p id="paragraph">not an image</p>"#,
+            None,
+        );
+        let mut dom = dom;
+        let snapshot = dom.flush_layout().unwrap();
+        let state =
+            |id: &str| dom.image_state(dom.get_element_by_id(id).unwrap().unwrap(), snapshot);
+        assert_eq!(state("missing"), Ok(ImageState::FAILED));
+        assert_eq!(
+            state("remote"),
+            Ok(ImageState::FAILED),
+            "a refused remote fetch is an error, not an unfinished one"
+        );
+        assert_eq!(
+            state("undecodable"),
+            Ok(ImageState::FAILED),
+            "bytes that arrived but did not decode are an error too"
+        );
+        assert_eq!(
+            state("sourceless"),
+            Ok(ImageState::IDLE),
+            "an image with nothing to load is already complete"
+        );
+        assert_eq!(state("paragraph"), Err(DomError::InvalidNodeType));
+    }
+
+    /// The state a script actually observes on a cold window: in flight first,
+    /// decoded afterwards, with the frame that decodes it also painting it.
+    #[test]
+    fn an_image_still_in_flight_is_not_complete() {
+        let network = DeferredResources::default();
+        let mut dom = fixture_document(
+            r#"<img id="swatch" src="swatch.png" style="display: block; width: 80px">"#,
+            Some(Arc::new(network.clone())),
+        );
+        let snapshot = dom.flush_layout().unwrap();
+        let swatch = dom.get_element_by_id("swatch").unwrap().unwrap();
+        assert_eq!(dom.image_state(swatch, snapshot), Ok(ImageState::LOADING));
+        assert_eq!(inked_bounds(&render(&mut dom, 400, 200), 400), None);
+
+        network.deliver();
+        let snapshot = dom.flush_layout().unwrap();
+        assert_eq!(
+            dom.image_state(swatch, snapshot),
+            Ok(ImageState::decoded(8, 4))
+        );
+        assert_eq!(
+            inked_bounds(&render(&mut dom, 400, 200), 400),
+            Some((0, 0, 80, 40))
+        );
+    }
+
+    /// The `new Image()` path: an element built by script, given a source and
+    /// then connected, has to load exactly like a parsed one.
+    #[test]
+    fn a_scripted_image_loads_when_its_source_is_set() {
+        let mut dom = fixture_document(r#"<div id="host"></div>"#, None);
+        let host = dom.get_element_by_id("host").unwrap().unwrap();
+        let image = dom.create_element(&DomName::html("img")).unwrap();
+        let snapshot = dom.flush_layout().unwrap();
+        assert_eq!(
+            dom.image_state(image, snapshot),
+            Ok(ImageState::IDLE),
+            "a detached image with no source has nothing to wait for"
+        );
+
+        dom.set_attribute(image, &DomName::attribute("src"), "swatch.png")
+            .unwrap();
+        dom.append_child(host, image).unwrap();
+        let snapshot = dom.flush_layout().unwrap();
+        assert_eq!(
+            dom.image_state(image, snapshot),
+            Ok(ImageState::decoded(8, 4))
+        );
+
+        dom.set_attribute(image, &DomName::attribute("alt"), "swatch")
+            .unwrap();
+        assert_eq!(
+            dom.image_state(image, snapshot),
+            Err(DomError::LayoutNotFlushed),
+            "decode state is applied while layout resolves, so it is snapshot gated"
         );
     }
 }

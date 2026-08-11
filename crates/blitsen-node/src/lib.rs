@@ -17,7 +17,7 @@ use std::time::{Duration, Instant};
 use anyrender::{PaintScene as _, render_to_buffer};
 use anyrender_vello_cpu::VelloCpuImageRenderer;
 use base64::Engine as _;
-use blitsen_blitz::BlitzDom;
+use blitsen_blitz::{BlitzDom, resources::LocalResources};
 use blitsen_core::{
     DocumentScript, ScriptDocument, WindowState, WrapperTable, execute_collected_document_scripts,
 };
@@ -31,7 +31,7 @@ use blitz::dom::{
 };
 use blitz::paint::paint_scene;
 use blitz::shell::{BlitzApplication, BlitzShellProxy, WindowConfig, create_default_event_loop};
-use blitz::traits::net::{Bytes, NetHandler, NetProvider};
+use blitz::traits::net::NetProvider;
 use blitz::traits::shell::{ColorScheme, Viewport};
 use napi::bindgen_prelude::{FromNapiValue, Unknown};
 use napi::{Env, JsValue, Status, ValueType, sys};
@@ -746,6 +746,17 @@ struct HarnessNode {
     scroll_x: f64,
     scroll_y: f64,
     layout: HarnessLayout,
+    /// Present only on `<img>`, where loading state is observable.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    image: Option<HarnessImage>,
+}
+
+#[derive(Serialize)]
+struct HarnessImage {
+    natural_width: u32,
+    natural_height: u32,
+    complete: bool,
+    errored: bool,
 }
 
 #[derive(Serialize)]
@@ -1830,6 +1841,15 @@ fn validate_local_assets(
 }
 
 fn validate_local_asset(root: &Path, from: &Path, specifier: &str) -> Result<(), JsError> {
+    // An inlined asset is already in the document; there is no file to find.
+    // Bundlers inline small images by default, so rejecting `data:` would
+    // refuse an ordinary framework build over an asset that cannot be missing.
+    if specifier
+        .get(..5)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("data:"))
+    {
+        return Ok(());
+    }
     let has_scheme = specifier.split_once(':').is_some_and(|(scheme, _)| {
         let mut characters = scheme.chars();
         characters
@@ -2079,6 +2099,15 @@ fn snapshot_document(
                 width: layout.width,
                 height: layout.height,
             },
+            image: document
+                .image_state(id, snapshot)
+                .ok()
+                .map(|state| HarnessImage {
+                    natural_width: state.natural_width,
+                    natural_height: state.natural_height,
+                    complete: state.complete,
+                    errored: state.errored,
+                }),
         });
     }
     let mut paint_colors = BTreeMap::<[u8; 4], usize>::new();
@@ -2126,44 +2155,6 @@ fn encode_png(pixels: &[u8], width: u32, height: u32) -> napi::Result<Vec<u8>> {
     Ok(png)
 }
 
-/// Resolves `file:` and `data:` subresources synchronously, on the calling thread.
-///
-/// The windowed host answers subresource requests through the winit event loop, which
-/// a headless harness does not run. Without a provider the document parses with its
-/// external stylesheets missing, so every layout assertion silently measures unstyled
-/// boxes. This one hands the bytes back before `fetch` returns, so style is complete
-/// by the time parsing finishes.
-struct LocalNetProvider;
-
-impl NetProvider for LocalNetProvider {
-    fn fetch(
-        &self,
-        _doc_id: usize,
-        request: blitz::traits::net::Request,
-        handler: Box<dyn NetHandler>,
-    ) {
-        let url = request.url.as_str().to_string();
-        let bytes = match request.url.scheme() {
-            "file" => request
-                .url
-                .to_file_path()
-                .ok()
-                .and_then(|path| std::fs::read(path).ok()),
-            "data" => data_url::DataUrl::process(&url)
-                .ok()
-                .and_then(|data| data.decode_to_vec().ok())
-                .map(|(bytes, _)| bytes),
-            // Remote subresources are refused rather than fetched: an offline harness
-            // that silently skipped them would report a different layout than a machine
-            // that could reach the network.
-            _ => None,
-        };
-        if let Some(bytes) = bytes {
-            handler.bytes(url, Bytes::from(bytes));
-        }
-    }
-}
-
 fn execute_document_harness(
     env: Env,
     entrypoint: &Path,
@@ -2198,7 +2189,7 @@ fn load_document_harness(
         &source,
         DocumentConfig {
             base_url: Some(format!("file://{}/", root.display())),
-            net_provider: Some(Arc::new(LocalNetProvider) as Arc<dyn NetProvider>),
+            net_provider: Some(Arc::new(LocalResources) as Arc<dyn NetProvider>),
             viewport: Some(Viewport::new(width, height, 1.0, ColorScheme::Light)),
             ..Default::default()
         },
@@ -2732,7 +2723,10 @@ mod tests {
                 },
             )
         };
-        let valid = document("<link href='#local'><img src='./dependency.js?cache=1'>");
+        let valid = document(
+            "<link href='#local'><img src='./dependency.js?cache=1'>\
+             <img src='data:image/gif;base64,R0lGODlhAQABAAAAACw='>",
+        );
         validate_local_assets(&valid, &root, &entrypoint).unwrap();
 
         for (source, expected) in [

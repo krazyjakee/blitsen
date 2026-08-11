@@ -19,7 +19,16 @@ blitz = { git = "https://github.com/DioxusLabs/blitz", rev = "1efe22d2524d71ede5
 # Tree::intrinsic_dimensions no longer exists); the meta-crate never enables it,
 # so upstream has not noticed. custom-widget is the seam `<blitsen-view>` uses.
 blitz-dom = { git = "https://github.com/DioxusLabs/blitz", rev = "1efe22d2524d71ede5b94592204c21f0de644219", default-features = false, features = ["system-fonts", "woff", "accessibility", "file-input", "custom-widget"] }
+data-url = "0.3.2"
 html-escape = "0.2"
+# blitz-dom decodes `<img>` and `background-image` with the `image` crate but
+# takes it with `default-features = false`, which leaves it with no codecs at
+# all: every image fails to decode and the element silently lays out at zero
+# height. Depending on it here selects the formats through feature unification.
+# Not `default`, which drags in TIFF/EXR/AVIF and friends that no drop-in
+# framework build emits. SVG images are out because they need blitz-dom's `svg`
+# feature, which does not compile at this pin (see the blitz-dom entry above).
+image = { version = "0.25", default-features = false, features = ["gif", "jpeg", "png", "webp"] }
 kurbo = "0.13"
 peniko = "0.6"
 style = { package = "stylo", version = "0.20" }

@@ -396,8 +396,9 @@ Rust crates rather than bloating the engine, which suits this structure exactly.
 | DOM, CSSOM, events | v0 | bridge + Blitz |
 | `fetch`, `Headers`, `Request`, `Response` | v1 | reqwest / hyper (or Bun's, in Phase 1) |
 | `WebSocket` | v1 | tokio-tungstenite |
-| `Image`, `<img>` decode | v1 | image / resvg |
+| `<img>` decode and paint, `background-image` | v1 | image, through Blitz |
 | Web fonts, `@font-face` | v1 | Blitz font stack |
+| `Image` constructor, `load`/`error` events | v1 | bridge over the above |
 | `Audio`, basic Web Audio | v1 | rodio / cpal |
 | `localStorage`, `sessionStorage` | v2 | SQLite or a keyed file store |
 | `Worker` | v2 | second JS context + channel |
@@ -416,6 +417,46 @@ service workers, `document.write`, quirks mode.
 An unimplemented API is **absent** — the property does not exist — so feature detection works.
 Never a stub that resolves to nothing, and never a silent no-op. `blitsen doctor` reports which
 web APIs a bundle references but the target runtime does not provide, at build time.
+
+### Subresources: images and web fonts
+
+`<img>`, CSS `background-image` and `mask-image`, `@font-face` and external stylesheets all load
+through one seam — the Blitz net provider — and Blitz decodes and paints all of them. Blitsen
+supplies the provider, the codec selection and the observable loading state.
+
+**Providers.** Headless harnesses use `LocalResources`: `file:` and `data:` resolved
+synchronously on the calling thread, everything remote refused. Answering before `fetch` returns
+matters, because an unanswered subresource is invisible — the document lays out unstyled,
+textless and imageless and every assertion still passes. Refusing remote rather than skipping it
+keeps an offline machine's frame identical to a connected one's. A window uses Blitz's real
+provider over the winit event loop; either way the provider is wrapped so that each request's
+outcome is recorded, since a failed fetch otherwise drops its handler in silence and leaves an
+`<img>` in exactly the state it had while still loading.
+
+**Image formats: PNG, JPEG, GIF (first frame), WebP.** Blitz decodes with the `image` crate but
+declares it `default-features = false`, which compiles in *no* codecs at all; the format set is
+chosen by depending on `image` directly from `blitsen-blitz` and letting feature unification
+apply it. Without that every image fails to decode and the element silently lays out at zero
+height — the same shape of failure as the `system-fonts` one. **SVG images are absent**: they
+need blitz-dom's `svg` feature, which does not compile at this pin (upstream blitz#687).
+
+**Font formats: WOFF2, WOFF, TTF, OTF.** SVG and EOT fonts are refused by Blitz and are not
+coming. `@font-face` descriptors — `font-family`, `font-weight`, `font-style` — are what select a
+face, not the metadata inside the file, so a family whose files disagree with the CSS about their
+own name still matches.
+
+**Blitsen is FOUT, never FOIT.** Nothing registers a font as a render-blocking resource, so text
+paints in the fallback face immediately and reshapes when the web font arrives. The alternative
+trades a restyle for a blank window on every cold start.
+
+One layout flush resolves repeatedly while subresources are still landing, because a
+`background-image` is only discovered once style resolves — after the pass that would have
+applied it. Without that, every backdrop flashes empty for one frame.
+
+**`naturalWidth`, `naturalHeight`, `complete`.** Read from the backend through
+`DomBackend::image_state`, gated on a layout snapshot like the geometry reads, because decoded
+data is applied while layout resolves. `complete` is true for an image with no source and for one
+whose request is over — including one that failed, so a script polling it is never stuck.
 
 ---
 

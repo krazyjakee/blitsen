@@ -27,6 +27,8 @@ conservative: it finds references, not only executed paths.
 | Selection and collections | `querySelector`, `querySelectorAll`, `getElementById`, static `NodeList`, `classList` |
 | Events | Capture/target/bubble listeners, click, mouse, wheel, keyboard, focus, resize and lifecycle events |
 | Scheduling | `requestAnimationFrame`, timers and microtasks |
+| Networking | `fetch`, `Headers`, `Request`, `Response`, `Blob`, `AbortController` over `http`/`https`, with buffered bodies |
+| Routing | In-memory `history` and `location`, `popstate` and `hashchange` |
 | CSS | Static block, flex and grid layout; bounded absolute positioning; spacing, borders, backgrounds, colors and system typography |
 
 The M3b acceptance app intentionally uses the normal Vite default output, including
@@ -53,9 +55,78 @@ at runtime cannot be safely edited by a regular expression. In practice:
 
 - `new URL('./x.png', import.meta.url)` and a relative `import()` **work** — the export preserves
   your directory layout, so relative resolution lands on the same file it did on a server.
-- `new URL('/assets/x.png', …)`, `fetch('/data.json')`, and any specifier built from a variable or
-  template literal **do not work**, and are not diagnosed. Configure your bundler with a relative
-  base (Vite: `base: './'`) if your application computes asset URLs from a server root.
+- `new URL('/assets/x.png', …)` and any specifier built from a variable or template literal **do
+  not work**, and are not diagnosed. Configure your bundler with a relative base (Vite:
+  `base: './'`) if your application computes asset URLs from a server root.
+- `fetch('/data.json')` does not work either — see [Networking](#networking) — but a literal URL
+  is diagnosed as an error.
+
+## Networking
+
+`fetch`, `Headers`, `Request`, `Response`, `Blob`, `AbortController` and `AbortSignal` are
+Blitsen's own, backed by `reqwest`. They are not the host's: the Phase 1 Bun globals are replaced
+so that the Phase 2 engine swap changes nothing an application can observe.
+
+**There is no same-origin policy and no CORS, and this is deliberate.** An exported application
+is trusted native software that happens to be written in HTML, not a document downloaded from a
+site, so there is no origin to protect it from and no server to ask for permission. A request
+goes where the application sends it. `mode`, `credentials`, `integrity` and `referrerPolicy`
+describe a policy Blitsen does not have; they are not exposed on `Request` and passing them to
+`fetch` changes nothing.
+
+Requests run on a worker pool, never on the thread that owns the DOM. **Results land at one
+defined point in the frame turn** — the start of the animation-frame stage, before any
+`requestAnimationFrame` callback of that turn — so a response can never arrive in the middle of
+one. The promise reactions themselves run at the microtask checkpoint that ends the turn, which
+means a handler that mutates the DOM is painted by the following frame.
+
+**Streaming bodies are not implemented, and will not be in v1.** `fetch` buffers a whole
+response. `Response.prototype.body`, `ReadableStream` and `Response.clone` are *absent*, not
+null-valued, so `if (response.body)` selects a buffered fallback correctly. The reason is
+coherence rather than difficulty: WHATWG streams are a large surface Blitsen does not otherwise
+provide, and exposing the host's would reintroduce exactly the Phase 1/Phase 2 divergence this
+API exists to remove. A per-chunk delivery path also has no defined place in the frame turn
+above, which is the contract the rest of the runtime is built on. Revisit when an application
+needs a download progress bar or a long-lived response, not before.
+
+| You wrote | What happens |
+| --- | --- |
+| `fetch("https://api…")` | Runs off-thread; resolves at the next frame turn. |
+| `fetch("/api/data")` | Fails. There is no server behind the document address; `doctor` reports it as an error. |
+| `new Request(…)`, `new Headers(…)`, `new Response(…)` | Full subset above, including `AbortSignal`. |
+| `response.text/json/arrayBuffer/blob()` | Supported; a body is readable once. |
+| `response.body`, `response.clone()`, `FormData` bodies | Absent. |
+
+## Routing
+
+`history` and `location` exist and are **in memory only**. There is no navigation, no network and
+no back-forward cache — the document is never left, so nothing to navigate to and nothing to
+restore. This is the surface a client-side router needs (React Router, Vue Router and
+equivalents), and it is deliberately not more than that.
+
+The document address is `blitsen://app/`. It is synthetic because an exported application has no
+server and therefore no origin, and it is path-rooted because that is what a router reads. The
+scheme makes the absence of an HTTP origin visible rather than pretending to be `localhost`.
+
+| Supported | Absent |
+| --- | --- |
+| `location.href/protocol/host/hostname/port/origin/pathname/search/hash` | `location.assign/replace/reload`, `ancestorOrigins` |
+| `location.hash = …` (pushes an entry, fires `hashchange`) | Assigning `href`, `pathname` or `search` — refused with a `NotSupportedError` naming `pushState`, never silently |
+| `history.pushState/replaceState/go/back/forward`, `length`, `state`, `scrollRestoration` | Cross-origin entries — refused with a `SecurityError`, as in a browser |
+| `popstate` and `hashchange` on `window`, `PopStateEvent`, `HashChangeEvent` | `navigation` (the Navigation API), `document.location` |
+
+Two differences from a browser worth knowing. `history.state` holds the value you pushed rather
+than a structured clone of it, so mutating that object mutates the entry. And `scrollRestoration`
+is recorded and reported but restores nothing, because a traversal never reloads a document.
+
+An anchor still does nothing: `<a href="/settings">` is navigation, and a router that calls
+`preventDefault` and `pushState` is what makes it work — which is what every client-side router
+already does.
+
+Checked against the real libraries rather than a reading of their source: React Router 7
+(`createBrowserRouter` and `createHashRouter`, including `navigate(-1)` traversal through
+`popstate`) and Vue Router 4 (`createWebHistory` and `createWebHashHistory`, including
+`router.back()`) resolve, match and traverse routes unmodified on this surface.
 
 ## Unreferenced files
 
@@ -82,12 +153,13 @@ executable.
 ## Diagnosed outside the profile
 
 - Canvas, WebGL and WebGPU.
-- Browser storage, workers, service workers and browser navigation.
+- Browser storage, workers, service workers and document navigation.
 - Composited CSS layers (`opacity`, `visibility`), transforms, fixed/sticky positioning, filters,
   masks and clipping effects.
 - Remote subresources in what must be a self-contained export.
-- Images, media, SVG, web fonts, `fetch` and browser stream APIs produce portability warnings at
-  their current implementation tier.
+- Streaming bodies, `WebSocket` and `EventSource`.
+- Images, media, SVG and web fonts produce portability warnings at their current implementation
+  tier.
 
 The scanner cannot prove visual equivalence or determine that an unsupported reference is dead
 code. Treat a zero-error report as the build-time gate and retain visual/interaction acceptance tests

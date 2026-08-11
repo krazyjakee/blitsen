@@ -1,4 +1,5 @@
 import { strict as assert } from "node:assert";
+import { createServer } from "node:http";
 import { createRequire } from "node:module";
 import { join } from "node:path";
 
@@ -75,8 +76,12 @@ const snapshot = JSON.parse(native.runBridgeHarness(
   `<style>#x { display:block; width:100px; height:20px }</style><div id="x">old</div>`,
   `{ if (window !== globalThis || window.document !== document || innerWidth !== 320 || innerHeight !== 180 || devicePixelRatio !== 1)
        throw new Error("window identity, document, or initial viewport failed");
-     if ("location" in window || "history" in window || "navigator" in window || "localStorage" in window)
+     if ("navigator" in window || "localStorage" in window)
        throw new Error("unsupported browser globals must be omitted");
+     if (!(location instanceof Location) || !(history instanceof History))
+       throw new Error("client-side routers need location and history");
+     for (const absent of ["assign", "replace", "reload", "ancestorOrigins"])
+       if (absent in location) throw new Error("document navigation must be absent: " + absent);
      let resizeCount = 0;
      window.addEventListener("resize", () => {
        resizeCount++;
@@ -567,4 +572,168 @@ const metricsNode = layoutReads.nodes.find(node => node.attributes.id === "metri
 assert.equal(metricsNode.attributes["data-layout-reads"], "ok");
 assert.equal(metricsNode.scroll_x, 25);
 assert.equal(metricsNode.scroll_y, 35);
+const routing = JSON.parse(native.runBridgeHarness(
+  `<div id="routing"></div>`,
+  `{ const trail = globalThis.__blitsenRouting = { entries: [], pops: [], hashes: [] };
+     if (location.href !== "blitsen://app/" || location.pathname !== "/" || location.origin !== "blitsen://app" ||
+         location.search !== "" || location.hash !== "" || String(location) !== location.href)
+       throw new Error("initial address: " + location.href);
+     if (history.length !== 1 || history.state !== null || history.scrollRestoration !== "auto")
+       throw new Error("initial history entry");
+     history.scrollRestoration = "manual";
+     window.addEventListener("popstate", event => trail.pops.push([location.pathname, event.state?.idx ?? null]));
+     window.addEventListener("hashchange", event => trail.hashes.push([event.oldURL, event.newURL]));
+     history.replaceState({ idx: 0 }, "", "/");
+     history.pushState({ idx: 1 }, "", "/reports?range=30d");
+     trail.entries.push([location.pathname, location.search, history.state.idx, history.length]);
+     history.pushState({ idx: 2 }, "", "detail");
+     trail.entries.push([location.pathname, history.length]);
+     history.replaceState({ idx: 9 }, "", "./renamed");
+     trail.entries.push([location.pathname, history.state.idx, history.length]);
+     location.hash = "section";
+     trail.entries.push([location.hash, location.href, history.length]);
+     // Traversal is a task, exactly as it is in a browser.
+     if (trail.pops.length !== 0) throw new Error("history.go must not dispatch synchronously");
+     history.go(-2);
+     for (const [name, argument] of [["href", "https://example.com/"], ["pathname", "/x"], ["search", "?a=1"]]) {
+       let refused;
+       try { location[name] = argument; } catch (error) { refused = error.name; }
+       if (refused !== "NotSupportedError") throw new Error("assigning location." + name + " must refuse loudly");
+     }
+     let crossOrigin;
+     try { history.pushState(null, "", "https://example.com/x"); }
+     catch (error) { crossOrigin = error.name; }
+     if (crossOrigin !== "SecurityError") throw new Error("cross-origin history entries must be refused");
+     document.getElementById("routing").setAttribute("data-routing", "ok"); }`,
+  200,
+  100,
+));
+assert.equal(routing.nodes.find(node => node.attributes.id === "routing").attributes["data-routing"], "ok");
+assert.deepEqual(globalThis.__blitsenRouting.entries, [
+  ["/reports", "?range=30d", 1, 2],
+  ["/detail", 3],
+  ["/renamed", 9, 3],
+  ["#section", "blitsen://app/renamed#section", 4],
+], "pushState, replaceState and location.hash keep an in-memory entry list");
+assert.deepEqual(globalThis.__blitsenRouting.hashes,
+  [["blitsen://app/renamed", "blitsen://app/renamed#section"]], "a fragment change reports both addresses");
+await Bun.sleep(10);
+assert.deepEqual(globalThis.__blitsenRouting.pops, [["/reports", 1]],
+  "history.go traverses to the earlier entry in a later task");
+assert.equal(globalThis.__blitsenRouting.hashes.length, 2, "traversal off a fragment also reports hashchange");
+delete globalThis.__blitsenRouting;
+
+// Blitsen's own fetch, not the Phase 1 host's. `runBridgeHarness` installs the
+// bridge into this very context, so these are the classes an exported
+// application sees — which is also why the probe server is `node:http`:
+// `Bun.serve` would be handed the replaced `Response`.
+const probe = createServer((request, response) => {
+  let body = "";
+  request.on("data", chunk => { body += chunk; });
+  request.on("end", () => {
+    if (request.url === "/missing") {
+      response.writeHead(404, { "content-type": "text/plain" });
+      response.end("gone");
+      return;
+    }
+    response.writeHead(200, { "content-type": "application/json", "x-probe": "kept" });
+    response.end(JSON.stringify({
+      method: request.method, sent: body, probe: request.headers["x-probe"] ?? null,
+    }));
+  });
+});
+await new Promise(resolve => probe.listen(0, "127.0.0.1", resolve));
+const probeOrigin = `http://127.0.0.1:${probe.address().port}`;
+
+try {
+  const network = JSON.parse(native.runBridgeHarness(
+    `<div id="network"></div>`,
+    `{ const results = globalThis.__blitsenNetwork = { settled: [] };
+       const headers = new Headers([["X-One", "1"]]);
+       headers.append("x-one", "2");
+       if (headers.get("X-ONE") !== "1, 2" || !headers.has("x-one") || [...headers].length !== 1)
+         throw new Error("Headers case-folding or combination");
+       headers.delete("X-One");
+       if (headers.get("x-one") !== null || headers.has("x-one")) throw new Error("Headers delete");
+       const request = new Request("/reports", { method: "post", headers: { "x-probe": "yes" }, body: "payload" });
+       if (request.method !== "POST" || request.url !== "blitsen://app/reports" ||
+           request.headers.get("content-type") !== "text/plain;charset=UTF-8" || request.bodyUsed)
+         throw new Error("Request normalization: " + request.url);
+       let bodylessGet;
+       try { new Request("/x", { body: "no" }); } catch (error) { bodylessGet = error.constructor.name; }
+       if (bodylessGet !== "TypeError") throw new Error("a GET request must refuse a body");
+
+       const response = new Response("hi", { status: 202, statusText: "Accepted",
+         headers: { "content-type": "text/plain" } });
+       if (response.status !== 202 || !response.ok || response.statusText !== "Accepted" || response.bodyUsed)
+         throw new Error("Response construction");
+       // Streaming bodies are not in this tier, so the property is absent and
+       // a feature test can branch on it rather than on a null.
+       if ("body" in response || "clone" in response || "getSetCookie" in Headers.prototype)
+         throw new Error("unimplemented body/cookie surface must be absent");
+
+       const blob = new Blob(["chunk-", "one"], { type: "TEXT/plain" });
+       if (blob.size !== 9 || blob.type !== "text/plain") throw new Error("Blob assembly");
+
+       const controller = new AbortController();
+       if (controller.signal.aborted || !(controller.signal instanceof AbortSignal))
+         throw new Error("AbortController signal");
+
+       Promise.all([
+         response.text().then(text => ["response-text", text, response.bodyUsed]),
+         response.text().then(() => "re-read", error => ["re-read", error.constructor.name]),
+         blob.text().then(text => ["blob-text", text]),
+         new Response(new Uint8Array([104, 105])).arrayBuffer().then(buffer => ["bytes", buffer.byteLength]),
+         Response.json({ n: 7 }).json().then(value => ["json", value.n]),
+         fetch("/local.json").then(() => "resolved", error => ["no-server", String(error.message).includes("no server behind it")]),
+         fetch("${probeOrigin}/missing").then(async result => ["missing", result.status, result.ok, await result.text()]),
+         fetch("${probeOrigin}/echo", { method: "PUT", headers: { "x-probe": "yes" }, body: "payload" })
+           .then(async result => ["echo", result.status, result.headers.get("x-probe"), result.url,
+             result.redirected, await result.json()]),
+         (() => {
+           const aborter = new AbortController();
+           const pending = fetch("${probeOrigin}/echo", { signal: aborter.signal });
+           aborter.abort();
+           return pending.then(() => "resolved", error => ["aborted", error.name, controller.signal.aborted]);
+         })(),
+         fetch("http://127.0.0.1:1/refused").then(() => "resolved", error => ["refused", error.constructor.name]),
+       ]).then(settled => { results.settled = settled; results.done = true; });
+       document.getElementById("network").setAttribute("data-network", "ok"); }`,
+    200,
+    100,
+  ));
+  assert.equal(network.nodes.find(node => node.attributes.id === "network").attributes["data-network"], "ok");
+
+  // The frame turn is the landing point: nothing settles between turns, however
+  // long the worker pool has been finished.
+  await Bun.sleep(250);
+  assert.equal(globalThis.__blitsenNetwork.done, undefined,
+    "network results wait for the frame turn rather than arriving between them");
+  assert.equal(globalThis.__blitsenAnimationFramesPending(), true,
+    "an in-flight request keeps the host turning so its results can land");
+  for (let turn = 0; turn < 200 && !globalThis.__blitsenNetwork.done; turn++) {
+    globalThis.__blitsenAnimationFrameTick(0);
+    await Bun.sleep(5);
+  }
+  assert.equal(globalThis.__blitsenAnimationFramesPending(), false,
+    "a settled queue stops asking for frames");
+  const settled = new Map(globalThis.__blitsenNetwork.settled.map(entry => [entry[0], entry]));
+  assert.deepEqual(settled.get("response-text"), ["response-text", "hi", true]);
+  assert.deepEqual(settled.get("re-read"), ["re-read", "TypeError"], "a body is readable once");
+  assert.deepEqual(settled.get("blob-text"), ["blob-text", "chunk-one"]);
+  assert.deepEqual(settled.get("bytes"), ["bytes", 2]);
+  assert.deepEqual(settled.get("json"), ["json", 7]);
+  assert.deepEqual(settled.get("no-server"), ["no-server", true],
+    "a document-relative URL has no server behind it and says so");
+  assert.deepEqual(settled.get("missing"), ["missing", 404, false, "gone"]);
+  assert.deepEqual(settled.get("echo"),
+    ["echo", 200, "kept", `${probeOrigin}/echo`, false, { method: "PUT", sent: "payload", probe: "yes" }]);
+  assert.deepEqual(settled.get("aborted"), ["aborted", "AbortError", false],
+    "AbortController rejects its own request and no other");
+  assert.deepEqual(settled.get("refused"), ["refused", "TypeError"]);
+  delete globalThis.__blitsenNetwork;
+} finally {
+  probe.close();
+}
+
 console.log("bridge harness passed", process.platform, process.arch, `style=${styled.attributes["data-style-call-us"]}us/call`);
