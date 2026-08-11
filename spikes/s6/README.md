@@ -86,6 +86,13 @@ kept as the direct evidence for the unmodified-build result.
 
 ## Divergence catalogue
 
+> **Superseded.** This table is a dated snapshot from one run, kept as evidence. The live list
+> with current status is [`docs/BLITZ-GAPS.md`](../../docs/BLITZ-GAPS.md). One entry below has
+> since been corrected: the React digit loss is **not** explained by Blitsen's missing-fonts bug
+> (this spike builds upstream Blitz's own `screenshot` example, so it never had that bug), and it
+> is not a numeric font-feature bug either. See G1.
+
+
 | Application | Visible divergence | Classification | Likely work |
 | --- | --- | --- | --- |
 | All raw builds | Empty framework mount element; module script is not run | Out of scope for Blitz alone; required Blitsen runtime work | JS engine, module loader, DOM bridge (the core product) |
