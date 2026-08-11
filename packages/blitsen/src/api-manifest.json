@@ -1408,13 +1408,13 @@
       "extra": null
     },
     "WEB_STORAGE": {
-      "severity": "error",
+      "severity": "warning",
       "message": "IndexedDB is not implemented.",
       "guidance": "Use a Node filesystem/database package, or the Web Storage APIs for session state.",
       "extra": null
     },
     "WEB_WORKER": {
-      "severity": "error",
+      "severity": "warning",
       "message": "Web workers are not implemented.",
       "guidance": "Run the work in the main context or use a native/Node worker path.",
       "extra": null
@@ -1432,7 +1432,7 @@
       "extra": null
     },
     "WEB_XHR": {
-      "severity": "error",
+      "severity": "warning",
       "message": "XMLHttpRequest is not implemented.",
       "guidance": "Use fetch with an absolute URL.",
       "extra": null
@@ -1450,13 +1450,13 @@
       "extra": null
     },
     "WEB_CANVAS": {
-      "severity": "error",
+      "severity": "warning",
       "message": "Canvas is not in the v0 compatibility profile.",
       "guidance": "Use DOM/CSS rendering or a native viewport until canvas support lands.",
       "extra": "\\.getContext\\s*\\("
     },
     "WEB_GPU": {
-      "severity": "error",
+      "severity": "warning",
       "message": "WebGL and WebGPU are not implemented.",
       "guidance": "Remove the GPU-web API path or replace it with a native addon/viewport.",
       "extra": null
@@ -1468,19 +1468,19 @@
       "extra": null
     },
     "WEB_DIALOG": {
-      "severity": "error",
+      "severity": "warning",
       "message": "Modal browser dialogs are not implemented.",
       "guidance": "Use the native dialog module, or render the prompt as DOM.",
       "extra": null
     },
     "WEB_NAVIGATION": {
-      "severity": "error",
+      "severity": "warning",
       "message": "Document navigation is deliberately absent; there is no page to leave.",
       "guidance": "Route with history.pushState and conditional DOM rendering.",
       "extra": null
     },
     "WEB_COOKIE": {
-      "severity": "error",
+      "severity": "warning",
       "message": "There is no origin and no cookie jar behind an exported application.",
       "guidance": "Keep session state in memory or in a file the application owns.",
       "extra": null
@@ -1498,13 +1498,13 @@
       "extra": null
     },
     "WEB_STYLE": {
-      "severity": "error",
+      "severity": "warning",
       "message": "The CSSOM stylesheet objects are not implemented.",
       "guidance": "Read a value with getComputedStyle, or drive it from a class.",
       "extra": null
     },
     "WEB_COMPONENTS": {
-      "severity": "error",
+      "severity": "warning",
       "message": "Custom elements, shadow DOM and DOM parsing are not implemented.",
       "guidance": "Render with ordinary elements the bundler already emits.",
       "extra": null
@@ -1574,6 +1574,32 @@
       "pattern": "<svg\\b",
       "message": "SVG rendering is currently limited and not in the strict profile.",
       "guidance": "Verify this asset visually or replace it with profiled HTML/CSS."
+    }
+  ],
+  "assets": [
+    {
+      "kind": "html",
+      "code": "ASSET_REMOTE_SCRIPT",
+      "severity": "error",
+      "pattern": "<script\\b[^>]*\\bsrc\\s*=\\s*[\"'](?:https?:)?//",
+      "message": "A remote <script src> stops the document loading; no script on the page runs.",
+      "guidance": "Bundle the script into the output directory and reference its local path."
+    },
+    {
+      "kind": "html",
+      "code": "ASSET_REMOTE",
+      "severity": "warning",
+      "pattern": "<(?:img|source|audio|video|track|embed|input)\\b[^>]*\\bsrc\\s*=\\s*[\"'](?:https?:)?//|<link\\b[^>]*\\bhref\\s*=\\s*[\"'](?:https?:)?//|<video\\b[^>]*\\bposter\\s*=\\s*[\"'](?:https?:)?//|<object\\b[^>]*\\bdata\\s*=\\s*[\"'](?:https?:)?//",
+      "message": "A remote asset is not part of a self-contained export; the request is answered with nothing.",
+      "guidance": "Bundle the asset into the output directory and reference its local path, and check the page still reads without it."
+    },
+    {
+      "kind": "css",
+      "code": "ASSET_REMOTE",
+      "severity": "warning",
+      "pattern": "url\\(\\s*[\"']?(?:https?:)?//",
+      "message": "A remote asset is not part of a self-contained export; the request is answered with nothing.",
+      "guidance": "Bundle the asset into the output directory and reference its local path, and check the page still reads without it."
     }
   ]
 }

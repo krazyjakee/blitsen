@@ -71,43 +71,63 @@ const CATALOGUE = {
 
 // What `doctor` says about a group whose APIs turn out to be absent, plus an
 // optional pattern for a usage that names no API at all.
+//
+// Every entry here is a warning, and that is a decision rather than an omission.
+// What takes a page down is an *unguarded* reference to an absent global; a
+// guarded one selects a fallback and the page survives. This scan sees
+// references, not guards, and the references it finds in real bundles are
+// overwhelmingly guarded: `typeof XMLHttpRequest<"u"`, `typeof ShadowRoot<"u"`,
+// `"serviceWorker" in navigator`, a try/catch around `document.cookie`. Measured
+// on unmodified third-party builds: shadcn-admin carried 19 of these and renders
+// its whole admin shell, 364 elements in 16 colours; vue3-realworld carried 5 and
+// renders. Blocking those builds was the diagnostic being wrong, loudly, and
+// pointing at an override that does not exist.
+//
+// Detecting the guard was the alternative. It is not reliable — the guard is
+// arbitrary minified JavaScript and may be several frames from the reference —
+// and a half-working detector would trade these false errors for false silence
+// on the unguarded reference that does kill a page. So the finding is still
+// reported, at the severity a finding this imprecise is worth. The field stays
+// declared per group: the day an absence is fatal however it is written, it is
+// graded here rather than around here.
 const DIAGNOSTICS = {
   WEB_DOM: ["warning", "This DOM method is not implemented.",
     "Use the document-level lookups and node methods listed in COMPATIBILITY.md."],
   WEB_SCHEDULING: ["warning", "Idle-callback scheduling is not implemented.",
     "Schedule the work with requestAnimationFrame or a timer."],
-  WEB_STORAGE: ["error", "IndexedDB is not implemented.",
+  WEB_STORAGE: ["warning", "IndexedDB is not implemented.",
     "Use a Node filesystem/database package, or the Web Storage APIs for session state."],
-  WEB_WORKER: ["error", "Web workers are not implemented.",
+  WEB_WORKER: ["warning", "Web workers are not implemented.",
     "Run the work in the main context or use a native/Node worker path."],
   WEB_MESSAGING: ["warning", "Message channels are not implemented.",
     "Feature-detect the channel; a scheduler that falls back to a timer keeps working."],
   WEB_SOCKET: ["warning", "Browser network streams are not implemented.",
     "Feature-detect this API or use a Node-compatible networking package."],
-  WEB_XHR: ["error", "XMLHttpRequest is not implemented.", "Use fetch with an absolute URL."],
+  WEB_XHR: ["warning", "XMLHttpRequest is not implemented.", "Use fetch with an absolute URL."],
   WEB_STREAM: ["warning", "Streaming bodies are not implemented; a response is buffered whole.",
     "Read the response with text(), json(), or arrayBuffer().", /\.body\s*\.\s*getReader\b/],
   WEB_FORM: ["warning", "Multipart form bodies and file objects are not implemented.",
     "Send a string, Blob, ArrayBuffer, or typed array body."],
-  WEB_CANVAS: ["error", "Canvas is not in the v0 compatibility profile.",
+  WEB_CANVAS: ["warning", "Canvas is not in the v0 compatibility profile.",
     "Use DOM/CSS rendering or a native viewport until canvas support lands.", /\.getContext\s*\(/],
-  WEB_GPU: ["error", "WebGL and WebGPU are not implemented.",
+  WEB_GPU: ["warning", "WebGL and WebGPU are not implemented.",
     "Remove the GPU-web API path or replace it with a native addon/viewport."],
   WEB_MEDIA: ["warning", "Audio and the media element constructors are not implemented.",
     "Use <img> and CSS assets, or feature-detect the media path."],
-  WEB_DIALOG: ["error", "Modal browser dialogs are not implemented.",
+  WEB_DIALOG: ["warning", "Modal browser dialogs are not implemented.",
     "Use the native dialog module, or render the prompt as DOM."],
-  WEB_NAVIGATION: ["error", "Document navigation is deliberately absent; there is no page to leave.",
+  WEB_NAVIGATION: ["warning",
+    "Document navigation is deliberately absent; there is no page to leave.",
     "Route with history.pushState and conditional DOM rendering."],
-  WEB_COOKIE: ["error", "There is no origin and no cookie jar behind an exported application.",
+  WEB_COOKIE: ["warning", "There is no origin and no cookie jar behind an exported application.",
     "Keep session state in memory or in a file the application owns."],
   WEB_DEVICE: ["warning", "This device API is not implemented.",
     "Feature-detect it, or use the native modules for capability the web does not have."],
   WEB_OBSERVER: ["warning", "This observer is not implemented; only ResizeObserver is.",
     "Read geometry in a requestAnimationFrame callback, or observe the element's size instead."],
-  WEB_STYLE: ["error", "The CSSOM stylesheet objects are not implemented.",
+  WEB_STYLE: ["warning", "The CSSOM stylesheet objects are not implemented.",
     "Read a value with getComputedStyle, or drive it from a class."],
-  WEB_COMPONENTS: ["error", "Custom elements, shadow DOM and DOM parsing are not implemented.",
+  WEB_COMPONENTS: ["warning", "Custom elements, shadow DOM and DOM parsing are not implemented.",
     "Render with ordinary elements the bundler already emits."],
 };
 
@@ -122,6 +142,35 @@ const USAGE_RULES = [
   ["WEB_STORAGE_MEMORY", "warning", "\\blocalStorage\\s*\\.\\s*setItem\\b",
     "localStorage is in memory only: what it stores is gone when the application exits.",
     "Keep anything that must survive a restart in a file the application owns."],
+];
+
+// Subresources an exported application cannot fetch: there is no server behind
+// the document, and the renderer serves local files only.
+//
+// Severity is the same survival question. The renderer now answers a request it
+// will not serve with empty bytes rather than dropping it, so a refused
+// stylesheet, font or image degrades: shadcn-admin renders its whole admin shell
+// with three remote links refused, Google Fonts among them, and vue3-realworld
+// renders with two. A remote `<script src>` is the one that does not degrade —
+// the loader refuses the src outright and then no script on the page runs at
+// all, which is exactly what stops wordle-plus loading. Nothing about that
+// reference is conditional, and there is no fallback for it to select.
+const REMOTE_ASSET = [
+  "A remote asset is not part of a self-contained export; the request is answered with nothing.",
+  "Bundle the asset into the output directory and reference its local path, and check the page "
+  + "still reads without it.",
+];
+const ASSET_RULES = [
+  ["html", "ASSET_REMOTE_SCRIPT", "error",
+    "<script\\b[^>]*\\bsrc\\s*=\\s*[\"'](?:https?:)?//",
+    "A remote <script src> stops the document loading; no script on the page runs.",
+    "Bundle the script into the output directory and reference its local path."],
+  ["html", "ASSET_REMOTE", "warning",
+    "<(?:img|source|audio|video|track|embed|input)\\b[^>]*\\bsrc\\s*=\\s*[\"'](?:https?:)?//"
+    + "|<link\\b[^>]*\\bhref\\s*=\\s*[\"'](?:https?:)?//"
+    + "|<video\\b[^>]*\\bposter\\s*=\\s*[\"'](?:https?:)?//"
+    + "|<object\\b[^>]*\\bdata\\s*=\\s*[\"'](?:https?:)?//", ...REMOTE_ASSET],
+  ["css", "ASSET_REMOTE", "warning", "url\\(\\s*[\"']?(?:https?:)?//", ...REMOTE_ASSET],
 ];
 
 // Renderer capability, which no JavaScript declaration describes.
@@ -290,6 +339,10 @@ function apiEntry(surface, entry, code) {
     pattern: override === undefined ? pattern : override };
 }
 
+// A rule matched against a source file of one kind, rather than against an API.
+const sourceScanRule = ([kind, code, severity, pattern, message, guidance]) =>
+  ({ kind, code, severity, pattern, message, guidance });
+
 // Builds the manifest from the runtime source, refusing anything the two disagree about.
 export function buildManifest(source) {
   const surface = extractRuntimeSurface(source);
@@ -323,8 +376,8 @@ export function buildManifest(source) {
         [code, { severity, message, guidance, extra: extra?.source ?? null }])),
     usage: USAGE_RULES.map(([code, severity, pattern, message, guidance]) =>
       ({ code, severity, pattern, message, guidance })),
-    renderer: RENDERER_RULES.map(([kind, code, severity, pattern, message, guidance]) =>
-      ({ kind, code, severity, pattern, message, guidance })),
+    renderer: RENDERER_RULES.map(sourceScanRule),
+    assets: ASSET_RULES.map(sourceScanRule),
   };
 }
 
@@ -353,7 +406,11 @@ export function renderCapabilityTiers(manifest) {
       .filter(code => manifest.apis.some(entry => entry.code === code && entry.status === "absent"))
       .map(code => ({ code, ...manifest.diagnostics[code] })),
     ...manifest.renderer,
-  ].map(rule => `| \`${rule.code}\` | ${rule.severity} | ${rule.message} |`);
+    ...manifest.assets,
+  ]
+    // A code declared for more than one file kind is still one diagnostic.
+    .filter((rule, index, rules) => rules.findIndex(other => other.code === rule.code) === index)
+    .map(rule => `| \`${rule.code}\` | ${rule.severity} | ${rule.message} |`);
   return ["| Group | Implemented | Absent |", "| --- | --- | --- |", ...surface, "",
     "| Diagnostic | Severity | Reported as |", "| --- | --- | --- |", ...diagnosed].join("\n");
 }

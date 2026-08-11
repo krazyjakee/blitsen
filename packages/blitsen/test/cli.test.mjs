@@ -137,7 +137,50 @@ describe("directory CLI", () => {
     expect(lines.some(([, line]) =>
       line.includes("WEB_STORAGE_MEMORY") && line.includes("gone when the application exits")))
       .toBeTrue();
-    expect(lines.at(-1)[1]).toContain("errors, 1 warnings");
+    expect(lines.at(-1)[1]).toContain("1 errors, 2 warnings");
+  });
+
+  // The severities the third-party evidence settled. A subresource the export
+  // will not serve is answered with empty bytes, so the page renders without it;
+  // a remote <script src> is refused by the loader and then nothing runs at all.
+  test("grades a remote subresource a warning and a remote script an error", async () => {
+    const fixtures = join(import.meta.dir, "fixtures/doctor");
+    const subresource = await doctorApplication(join(fixtures, "remote-subresource"));
+    expect(subresource).toMatchObject({ errors: 0, warnings: 5 });
+    // A preconnect, a Google Fonts stylesheet, a remote <img>, a CSS url().
+    expect(subresource.diagnostics.map(diagnostic => `${diagnostic.severity}:${diagnostic.code}`))
+      .toEqual(["warning:WEB_XHR", "warning:ASSET_REMOTE", "warning:ASSET_REMOTE",
+        "warning:ASSET_REMOTE", "warning:ASSET_REMOTE"]);
+
+    const script = await doctorApplication(join(fixtures, "remote"));
+    expect(script.diagnostics.map(diagnostic => `${diagnostic.severity}:${diagnostic.code}`))
+      .toEqual(["error:ASSET_REMOTE_SCRIPT"]);
+  });
+
+  // Every one of these shapes is verbatim from an unmodified third-party build
+  // that renders correctly. A reference is not a call, and the scan cannot see
+  // the guard around it, so none of them may block a build.
+  test("does not block a build on absent APIs a bundle feature-detects", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "blitsen-guarded-test-"));
+    try {
+      await writeFile(join(directory, "app.js"), [
+        `typeof XMLHttpRequest<"u"&&new XMLHttpRequest;`,
+        `typeof ShadowRoot<"u"&&e instanceof ShadowRoot;`,
+        `typeof customElements<"u"&&customElements.get(n);`,
+        `try{document.cookie="theme=dark"}catch{}`,
+        `typeof Worker<"u"&&new Worker(u);`,
+        `if(t.getContext)t.getContext("2d");`,
+        `e?window.open(u,"_blank"):0;`,
+        `typeof indexedDB<"u"&&indexedDB.open("x");`,
+      ].join("\n"));
+      const report = await doctorApplication(directory);
+      expect(report.errors).toBe(0);
+      expect([...new Set(report.diagnostics.map(diagnostic => diagnostic.code))].sort())
+        .toEqual(["WEB_CANVAS", "WEB_COMPONENTS", "WEB_COOKIE", "WEB_NAVIGATION", "WEB_STORAGE",
+          "WEB_WORKER", "WEB_XHR"]);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 
   test("accepts the routing and fetch surface the runtime actually implements", async () => {
@@ -159,7 +202,7 @@ describe("directory CLI", () => {
       ].join("\n"));
       const codes = (await doctorApplication(directory)).diagnostics
         .map(diagnostic => `${diagnostic.severity}:${diagnostic.code}`);
-      expect(codes).toEqual(["error:WEB_FETCH", "error:WEB_NAVIGATION", "warning:WEB_STREAM"]);
+      expect(codes).toEqual(["error:WEB_FETCH", "warning:WEB_NAVIGATION", "warning:WEB_STREAM"]);
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
@@ -299,8 +342,20 @@ describe("directory CLI", () => {
     expect(built).toBeFalse();
     // The blocking diagnostic names its file, on stderr, under the step that found it.
     expect(lines.some(([stream, line]) => stream === "err"
-      && line.trimStart().startsWith("index.html:") && line.includes("ASSET_REMOTE"))).toBeTrue();
+      && line.trimStart().startsWith("index.html:") && line.includes("ASSET_REMOTE_SCRIPT")))
+      .toBeTrue();
     expect(lines.at(-1)[1]).toContain("1 compatibility error blocks this build");
+  });
+
+  test("builds output whose only diagnostics are warnings, and reports them", async () => {
+    const fixture = join(import.meta.dir, "fixtures/doctor/remote-subresource");
+    const { lines, output } = capture();
+    const runtime = { build: async ({ outfile }) => ({ outfile, assets: 3, bytes: 1024 }) };
+    expect(await main(["build", fixture, "--outfile", "/tmp/blitsen-never"], output, runtime))
+      .toBe(0);
+    expect(lines.some(([stream, line]) => stream === "out" && line.includes("ASSET_REMOTE")))
+      .toBeTrue();
+    expect(lines.every(([stream]) => stream === "out")).toBeTrue();
   });
 
   test("hashes collected assets and compiles the same input to identical bytes", async () => {

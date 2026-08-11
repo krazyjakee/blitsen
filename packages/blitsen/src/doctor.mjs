@@ -18,9 +18,10 @@ async function compatibilityRules() {
     javascript.push([code, rule.severity, new RegExp([...patterns, rule.extra].filter(Boolean)
       .join("|"), "g"), rule.message, rule.guidance]);
   }
-  const renderer = kind => manifest.renderer.filter(rule => rule.kind === kind).map(rule =>
-    [rule.code, rule.severity, new RegExp(rule.pattern, "gi"), rule.message, rule.guidance]);
-  return { javascript, css: renderer("css"), html: renderer("html") };
+  const bySource = kind => [...manifest.renderer, ...manifest.assets]
+    .filter(rule => rule.kind === kind).map(rule =>
+      [rule.code, rule.severity, new RegExp(rule.pattern, "gi"), rule.message, rule.guidance]);
+  return { javascript, css: bySource("css"), html: bySource("html") };
 }
 
 let loaded;
@@ -42,20 +43,6 @@ function scanRules(source, file, rules) {
       if (match[0].length === 0) expression.lastIndex += 1;
     }
   }
-  return diagnostics;
-}
-
-function scanExternalAssets(source, file, kind) {
-  const expression = kind === ".css"
-    ? /url\(\s*["']?(https?:\/\/|\/\/)/gi
-    : /<(?:script|img|source|audio|video|track|embed|input)\b[^>]*\bsrc\s*=\s*["'](https?:\/\/|\/\/)|<link\b[^>]*\bhref\s*=\s*["'](https?:\/\/|\/\/)|<video\b[^>]*\bposter\s*=\s*["'](https?:\/\/|\/\/)|<object\b[^>]*\bdata\s*=\s*["'](https?:\/\/|\/\/)/gi;
-  const diagnostics = [];
-  let match;
-  while ((match = expression.exec(source))) diagnostics.push({
-    file, ...position(source, match.index), severity: "error", code: "ASSET_REMOTE",
-    message: "Remote assets are not part of a self-contained static export.",
-    guidance: "Bundle the asset into the output directory and reference its local path.",
-  });
   return diagnostics;
 }
 
@@ -81,10 +68,8 @@ export async function doctorApplication(root) {
     const extension = extname(file.relative).toLowerCase();
     if ([".html", ".htm"].includes(extension)) {
       diagnostics.push(...scanRules(source, file.relative, html));
-      diagnostics.push(...scanExternalAssets(source, file.relative, extension));
     } else if (extension === ".css") {
       diagnostics.push(...scanRules(source, file.relative, css));
-      diagnostics.push(...scanExternalAssets(source, file.relative, extension));
     } else {
       diagnostics.push(...scanRules(source, file.relative, javascript));
     }

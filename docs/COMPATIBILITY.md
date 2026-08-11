@@ -11,11 +11,10 @@ npx blitsen doctor dist
 npx blitsen doctor dist --json
 ```
 
-`doctor` exits non-zero for profile errors. Warnings identify absent APIs a library normally
-feature-detects, and renderer features that are not yet portable to the production-shaped Phase 2
-host. A build repeats every diagnostic and **fails on any error** — an export that cannot run is
-not worth producing — while warnings let feature-detected fallback paths through. The scan is
-static and conservative: it finds references, not only executed paths. Every rule it applies to
+`doctor` exits non-zero for profile errors. A build repeats every diagnostic and **fails on any
+error** — an export that cannot run is not worth producing — while warnings let feature-detected
+fallback paths through. The scan is static and conservative: it finds references, not only
+executed paths, which is why [severity](#diagnostic-severity) is narrow. Every rule it applies to
 JavaScript comes from the [generated manifest](#capability-tiers) below.
 
 ## Strict v0 surface
@@ -32,7 +31,7 @@ JavaScript comes from the [generated manifest](#capability-tiers) below.
 | Networking | `fetch`, `Headers`, `Request`, `Response`, `Blob`, `AbortController` over `http`/`https`, with buffered bodies |
 | Routing | In-memory `history` and `location`, `popstate` and `hashchange` |
 | CSS | Static block, flex and grid layout; bounded absolute positioning; spacing, borders, backgrounds, colors and system typography |
-| Subresources | `<img>` and CSS `background-image` (PNG, JPEG, GIF, WebP), and `@font-face` web fonts (WOFF2, WOFF, TTF, OTF), loaded from local files; SVG images, `<audio>` and `<video>` are not |
+| Subresources | `<img>` and CSS `background-image` (PNG, JPEG, GIF, WebP), and `@font-face` web fonts (WOFF2, WOFF, TTF, OTF), loaded from local files; SVG images, `<audio>` and `<video>` are not. A subresource the export cannot serve — a remote URL, or a local file that is missing — is answered with an empty body, so the document paints without it rather than waiting on it |
 
 The M3b acceptance app intentionally uses the normal Vite default output, including
 root-relative `/assets/...` references and Vite's module-preload bootstrap. It contains no
@@ -51,7 +50,8 @@ copy — your `dist` directory is never modified.**
 | `src="/app/assets/app.js"` (custom `base: "/app/"`) | Drops the base prefix that does not exist in the output, then rewrites. |
 | `url("/assets/hero.png")` in CSS, and `@import` | Same rewrite, applied transitively. |
 | `<a href="/settings">` | Nothing; anchors are navigation, not subresources. |
-| `src="https://cdn…"` or `//cdn…` | Fails the build. A self-contained export cannot fetch it. |
+| `href="https://cdn…"` or `//cdn…` on a subresource | Warns. The request is answered with nothing, so the page renders without that stylesheet, font or image. |
+| `<script src="https://cdn…">` | Fails the build. The loader refuses the src and then no script on the page runs at all. |
 
 **Only HTML and CSS are rewritten.** JavaScript is left byte-identical, because a path assembled
 at runtime cannot be safely edited by a regular expression. In practice:
@@ -295,6 +295,41 @@ the binary is wasteful. Each asset is content-hashed with SHA-256 either way, an
 build from the same input directory, output path and working directory produces a byte-identical
 executable.
 
+## Diagnostic severity
+
+Severity answers one question: **does the page survive?** It is not a measure of how far outside
+the profile something is. An ignored paint property, a refused web font, an absent API a library
+feature-detects — the page is still there, slightly plainer or on its fallback path. Those are
+warnings, reported on every build, and they do not block one.
+
+An error is reserved for the few constructs a page cannot come back from, and the scanner has to
+be able to see that the construct is unconditional — a guarded one is not one of these:
+
+| Error | Why the page does not come back from it |
+| --- | --- |
+| `ASSET_REMOTE_SCRIPT` | The script loader refuses a remote `src` outright and the document then runs no script at all — not the remote one, not the local ones. It is markup: there is no guard around it and no fallback for it to select. |
+| `WEB_FETCH` | A literal server-root URL at a `fetch` call site is not a capability test, so nothing selects a fallback. The data never arrives, and what renders from it never renders. |
+| `HTML_CANVAS` | `<canvas>` is in the document the export ships, and the renderer paints nothing inside it. Unlike an image or a font, the element has no degraded appearance to fall back to. |
+
+**Everything the scanner finds by naming an absent API is a warning**, including `WEB_XHR`,
+`WEB_COOKIE`, `WEB_COMPONENTS`, `WEB_CANVAS`, `WEB_NAVIGATION`, `WEB_WORKER`, `WEB_GPU`,
+`WEB_DIALOG`, `WEB_STYLE` and `WEB_STORAGE`. What takes a page down is an *unguarded* reference to
+an absent global; a guarded one selects a fallback and the page carries on. This scan sees
+references, not guards, and in real bundles those references are overwhelmingly guarded —
+`typeof XMLHttpRequest<"u"`, `typeof ShadowRoot<"u"`, `"serviceWorker" in navigator`, a
+`try`/`catch` around `document.cookie`. Unmodified third-party builds are the evidence:
+shadcn-admin carried nineteen such findings and renders its entire admin dashboard, 364 elements
+in 16 colours; vue3-realworld carried five and renders. Refusing those builds was the diagnostic
+being confidently wrong, and it pointed users at an override that does not exist.
+
+Detecting the guard was the alternative, and it was rejected rather than deferred: the guard is
+arbitrary minified JavaScript and may be several frames away from the reference, so a detector
+would work often enough to be trusted and then go quiet on the unguarded reference that does kill
+a page. Trading a false error for a false silence is a bad trade. The finding is still reported —
+every one of them, on every build — at the severity a static reference is actually worth. If your
+application uses one of these APIs on a path that runs, the warning is the notice that it will
+fail, and the render is what proves it either way.
+
 ## Capability tiers
 
 **An unimplemented API is absent — the property does not exist — so feature detection works.**
@@ -349,29 +384,31 @@ determinism gate instead.
 | `WEB_STORAGE_MEMORY` | warning | localStorage is in memory only: what it stores is gone when the application exits. |
 | `WEB_DOM` | warning | This DOM method is not implemented. |
 | `WEB_SCHEDULING` | warning | Idle-callback scheduling is not implemented. |
-| `WEB_STORAGE` | error | IndexedDB is not implemented. |
-| `WEB_WORKER` | error | Web workers are not implemented. |
+| `WEB_STORAGE` | warning | IndexedDB is not implemented. |
+| `WEB_WORKER` | warning | Web workers are not implemented. |
 | `WEB_MESSAGING` | warning | Message channels are not implemented. |
 | `WEB_SOCKET` | warning | Browser network streams are not implemented. |
-| `WEB_XHR` | error | XMLHttpRequest is not implemented. |
+| `WEB_XHR` | warning | XMLHttpRequest is not implemented. |
 | `WEB_STREAM` | warning | Streaming bodies are not implemented; a response is buffered whole. |
 | `WEB_FORM` | warning | Multipart form bodies and file objects are not implemented. |
-| `WEB_CANVAS` | error | Canvas is not in the v0 compatibility profile. |
-| `WEB_GPU` | error | WebGL and WebGPU are not implemented. |
+| `WEB_CANVAS` | warning | Canvas is not in the v0 compatibility profile. |
+| `WEB_GPU` | warning | WebGL and WebGPU are not implemented. |
 | `WEB_MEDIA` | warning | Audio and the media element constructors are not implemented. |
-| `WEB_DIALOG` | error | Modal browser dialogs are not implemented. |
-| `WEB_NAVIGATION` | error | Document navigation is deliberately absent; there is no page to leave. |
-| `WEB_COOKIE` | error | There is no origin and no cookie jar behind an exported application. |
+| `WEB_DIALOG` | warning | Modal browser dialogs are not implemented. |
+| `WEB_NAVIGATION` | warning | Document navigation is deliberately absent; there is no page to leave. |
+| `WEB_COOKIE` | warning | There is no origin and no cookie jar behind an exported application. |
 | `WEB_DEVICE` | warning | This device API is not implemented. |
 | `WEB_OBSERVER` | warning | This observer is not implemented; only ResizeObserver is. |
-| `WEB_STYLE` | error | The CSSOM stylesheet objects are not implemented. |
-| `WEB_COMPONENTS` | error | Custom elements, shadow DOM and DOM parsing are not implemented. |
+| `WEB_STYLE` | warning | The CSSOM stylesheet objects are not implemented. |
+| `WEB_COMPONENTS` | warning | Custom elements, shadow DOM and DOM parsing are not implemented. |
 | `CSS_TRANSITION` | warning | A property named by `transition` keeps its pre-stylesheet value (Blitz bug 689). |
 | `CSS_FIXED` | warning | Fixed and sticky boxes resolve against the root box, not the viewport (Blitz bug 690). |
 | `CSS_EFFECT` | warning | This paint effect is ignored rather than applied. |
 | `HTML_CANVAS` | error | <canvas> is not implemented. |
 | `HTML_MEDIA` | warning | Audio and video elements are not implemented. |
 | `HTML_SVG` | warning | SVG rendering is currently limited and not in the strict profile. |
+| `ASSET_REMOTE_SCRIPT` | error | A remote <script src> stops the document loading; no script on the page runs. |
+| `ASSET_REMOTE` | warning | A remote asset is not part of a self-contained export; the request is answered with nothing. |
 
 <!-- /generated -->
 
