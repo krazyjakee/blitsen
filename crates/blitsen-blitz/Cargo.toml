@@ -9,11 +9,20 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
+anyrender = "0.12"
 blitsen-dom = { path = "../blitsen-dom" }
 blitz = { git = "https://github.com/DioxusLabs/blitz", rev = "1efe22d2524d71ede5b94592204c21f0de644219" }
+# Blitz's meta-crate leaves the DOM-side custom-widget seam off. `<blitsen-view>`
+# is attached through it, so it is enabled here for the whole dependency graph.
+blitz-dom = { git = "https://github.com/DioxusLabs/blitz", rev = "1efe22d2524d71ede5b94592204c21f0de644219", default-features = false, features = ["custom-widget"] }
 html-escape = "0.2"
 kurbo = "0.13"
+peniko = "0.6"
 style = { package = "stylo", version = "0.20" }
+
+[dev-dependencies]
+anyrender_vello_cpu = "0.15"
+blitz-paint = { git = "https://github.com/DioxusLabs/blitz", rev = "1efe22d2524d71ede5b94592204c21f0de644219", default-features = false, features = ["custom-widget"] }
 
 [lints]
 workspace = true

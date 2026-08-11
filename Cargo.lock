@@ -284,10 +284,15 @@ version = "0.0.1"
 name = "blitsen-blitz"
 version = "0.0.0"
 dependencies = [
+ "anyrender",
+ "anyrender_vello_cpu",
  "blitsen-dom",
  "blitz",
+ "blitz-dom",
+ "blitz-paint",
  "html-escape",
  "kurbo",
+ "peniko",
  "stylo",
 ]
 
@@ -329,6 +334,7 @@ dependencies = [
  "blitsen-js",
  "blitsen-platform",
  "blitz",
+ "blitz-paint",
  "data-url",
  "napi",
  "napi-build",
@@ -368,6 +374,7 @@ version = "0.3.0-beta.1"
 source = "git+https://github.com/DioxusLabs/blitz?rev=1efe22d2524d71ede5b94592204c21f0de644219#1efe22d2524d71ede5b94592204c21f0de644219"
 dependencies = [
  "accesskit",
+ "anyrender",
  "app_units",
  "atomic_refcell",
  "bitflags",

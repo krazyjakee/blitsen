@@ -5,7 +5,7 @@ use std::rc::Rc;
 
 use blitsen_core::{WindowState, WrapperTable, js_property_to_css};
 use blitsen_dom::{DomBackend, DomError, DomName, NodeKind};
-use blitsen_js::{ExternalId, JsEngine, JsError, NativeClass};
+use blitsen_js::{ExternalId, JsEngine, JsError, NativeClass, TypedArrayKind};
 use blitz::dom::NodeId;
 use napi::{Env, Unknown, sys};
 use serde_json::{Value, json};
@@ -69,6 +69,7 @@ const BOOTSTRAP: &str = r#"
     runningAnimationFrames?.delete(Number(id));
   };
   const animationFrameTick = timestamp => {
+    notifySurfaceResizes();
     const callbacks = animationFrames;
     animationFrames = new Map();
     runningAnimationFrames = callbacks;
@@ -523,6 +524,54 @@ const BOOTSTRAP: &str = r#"
     blur() { if (activeElement === this) setFocus(document.body); }
   }
 
+  // Acquired surfaces are held strongly: the element is what the application
+  // draws into, and it releases the claim by releasing the surface.
+  const acquiredSurfaces = new Map();
+  const surfaceElements = new WeakMap();
+  const surfaceElement = surface => {
+    const element = surfaceElements.get(surface);
+    if (!element) throw new TypeError("Illegal invocation");
+    if (!acquiredSurfaces.has(element)) throw new DOMException("The surface has been released", "InvalidStateError");
+    return element;
+  };
+  const surfaceInfo = surface =>
+    recordForcedLayout(call("viewportSurface", surfaceElement(surface)[handle]));
+  const notifySurfaceResizes = () => {
+    for (const [element, record] of acquiredSurfaces) {
+      const generation = call("viewportSurface", element[handle]).generation;
+      if (generation === record.generation) continue;
+      record.generation = generation;
+      element.dispatchEvent(new Event("resize"));
+    }
+  };
+
+  class BlitsenViewSurface {
+    constructor(element) { surfaceElements.set(this, element); }
+    // Physical-pixel dimensions: what the application must fill, not the CSS box.
+    get width() { return surfaceInfo(this).width; }
+    get height() { return surfaceInfo(this).height; }
+    get devicePixelRatio() { return surfaceInfo(this).devicePixelRatio; }
+    get generation() { return surfaceInfo(this).generation; }
+    get byteLength() { return surfaceInfo(this).byteLength; }
+    write(pixels) {
+      const element = surfaceElement(this);
+      if (!ArrayBuffer.isView(pixels)) throw new TypeError("surface contents must be a typed array");
+      __blitsenViewportWrite(String(element[handle]), pixels);
+    }
+    release() { acquiredSurfaces.delete(surfaceElements.get(this)); }
+  }
+
+  class BlitsenViewElement extends Element {
+    acquireSurface() {
+      if (acquiredSurfaces.has(this))
+        throw new DOMException("The surface is already acquired", "InvalidStateError");
+      const generation = call("viewportSurface", this[handle]).generation;
+      const surface = new BlitsenViewSurface(this);
+      acquiredSurfaces.set(this, { surface, generation });
+      return surface;
+    }
+  }
+
   class NodeList {
     constructor(items) {
       Object.defineProperty(this, "length", { value: items.length, enumerable: false });
@@ -587,7 +636,9 @@ const BOOTSTRAP: &str = r#"
     const wrapper = __blitsenWrap(rawHandle);
     if (!(handle in wrapper)) {
       Object.defineProperty(wrapper, handle, { value: rawHandle });
-      Object.setPrototypeOf(wrapper, call("kind", rawHandle) === "element" ? Element.prototype : Node.prototype);
+      Object.setPrototypeOf(wrapper, call("kind", rawHandle) !== "element" ? Node.prototype
+        : call("tagName", rawHandle) === "blitsen-view" ? BlitsenViewElement.prototype
+        : Element.prototype);
     }
     wrapperCache.set(rawHandle, wrapper);
     return wrapper;
@@ -629,6 +680,7 @@ const BOOTSTRAP: &str = r#"
   const globals = {
     EventTarget, Node, Element, NodeList, Document, DOMTokenList, CSSStyleDeclaration,
     MutationObserver, HTMLElement, HTMLIFrameElement, SVGElement, document,
+    BlitsenViewElement, BlitsenViewSurface,
     Event, MouseEvent, KeyboardEvent, CustomEvent,
     requestAnimationFrame, cancelAnimationFrame,
     setTimeout, clearTimeout, setInterval, clearInterval,
@@ -646,6 +698,7 @@ const BOOTSTRAP: &str = r#"
       contextIntervals.clear();
       animationFrames.clear();
       runningAnimationFrames?.clear();
+      acquiredSurfaces.clear();
       wrapperCache.clear();
       Object.assign(globalThis, {
         setTimeout: hostSetTimeout, clearTimeout: hostClearTimeout,
@@ -763,6 +816,35 @@ pub(super) fn install(
         }),
     )?;
     engine.set_global("__blitsenScrollDefault", &default_scroll_function)?;
+    let viewport_runtime = runtime.clone();
+    let viewport_write_function = engine.define_function(
+        "__blitsenViewportWrite",
+        Box::new(move |call| {
+            let handle = argument(&call.arguments, 0, "viewport handle")?;
+            let node = viewport_runtime.resolve_handle(&handle)?;
+            let pixels = call
+                .arguments
+                .get(1)
+                .ok_or_else(|| JsError::new("viewport surface contents are required"))?;
+            let mut callback_engine = NodeApiEngine::new(Env::from_raw(raw_env));
+            let pixels = callback_engine.to_typed_array(pixels)?;
+            if !matches!(
+                pixels.kind,
+                TypedArrayKind::Uint8 | TypedArrayKind::Uint8Clamped
+            ) {
+                return Err(JsError::new(
+                    "viewport surface contents must be a Uint8Array or Uint8ClampedArray",
+                ));
+            }
+            viewport_runtime
+                .document
+                .borrow_mut()
+                .write_native_viewport(node, &pixels.bytes)
+                .map_err(|error| JsError::new(error.to_string()))?;
+            Ok(call.this)
+        }),
+    )?;
+    engine.set_global("__blitsenViewportWrite", &viewport_write_function)?;
     let dev_layout_warnings = std::env::var("BLITSEN_DEV_LAYOUT_WARNINGS").is_ok_and(|value| {
         !value.is_empty() && value != "0" && !value.eq_ignore_ascii_case("false")
     });
@@ -896,6 +978,22 @@ fn dispatch(runtime: &DomRuntime, operation: &str, arguments: &[String]) -> Resu
                 "clientHeight": metrics.client_height,
                 "scrollLeft": metrics.scroll_left,
                 "scrollTop": metrics.scroll_top,
+            }))
+        }
+        "viewportSurface" => {
+            let forced = dom.layout_is_dirty();
+            let node = handle(runtime, arguments, 0)?;
+            let snapshot = dom.flush_layout().map_err(dom_error)?;
+            let surface = dom
+                .native_viewport_surface(node, snapshot)
+                .map_err(dom_error)?;
+            Ok(json!({
+                "forced": forced,
+                "width": surface.width,
+                "height": surface.height,
+                "devicePixelRatio": surface.device_pixel_ratio,
+                "generation": surface.generation,
+                "byteLength": surface.byte_length(),
             }))
         }
         "hitTest" => {

@@ -423,6 +423,41 @@ pub struct LayoutMetrics {
     pub scroll_top: f64,
 }
 
+/// Local name of the native viewport element.
+pub const NATIVE_VIEWPORT_TAG: &str = "blitsen-view";
+
+/// Bytes per pixel of a native viewport surface.
+///
+/// Contents are RGBA8 with straight (unpremultiplied) alpha, which is what the
+/// compositor samples, so a written frame reaches the screen without a
+/// conversion pass in between.
+pub const NATIVE_VIEWPORT_BYTES_PER_PIXEL: usize = 4;
+
+/// The physical-pixel drawing surface behind one native viewport element.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ViewportSurface {
+    /// Viewport-relative CSS-pixel border box the surface is composited into.
+    pub rect: Rect,
+    /// Surface width in physical pixels.
+    pub width: u32,
+    /// Surface height in physical pixels.
+    pub height: u32,
+    /// Physical pixels per CSS pixel at the last layout flush.
+    pub device_pixel_ratio: f64,
+    /// Counter incremented whenever the physical size or ratio changed.
+    ///
+    /// An application compares this against the value it last drew for to learn
+    /// that a resize or a display-density change invalidated its own buffers.
+    pub generation: u64,
+}
+
+impl ViewportSurface {
+    /// Returns the byte length of one complete frame for this surface.
+    pub const fn byte_length(self) -> usize {
+        self.width as usize * self.height as usize * NATIVE_VIEWPORT_BYTES_PER_PIXEL
+    }
+}
+
 /// Result of resolving a viewport point against the laid-out document.
 #[derive(Clone, Debug, PartialEq)]
 pub struct HitTest<N> {
@@ -644,6 +679,20 @@ pub trait DomBackend {
         y: f32,
         snapshot: LayoutSnapshot,
     ) -> Result<Option<HitTest<Self::NodeId>>, DomError>;
+
+    /// Returns every connected [`NATIVE_VIEWPORT_TAG`] element in tree order.
+    fn native_viewports(&self) -> Result<Vec<Self::NodeId>, DomError>;
+    /// Returns a native viewport element's surface from a validated snapshot.
+    fn native_viewport_surface(
+        &self,
+        node: Self::NodeId,
+        snapshot: LayoutSnapshot,
+    ) -> Result<ViewportSurface, DomError>;
+    /// Replaces a native viewport's contents with tightly packed RGBA8 rows.
+    ///
+    /// The slice must be exactly [`ViewportSurface::byte_length`] long: a
+    /// partial write has no meaning for a surface that is composited whole.
+    fn write_native_viewport(&mut self, node: Self::NodeId, pixels: &[u8]) -> Result<(), DomError>;
 }
 
 #[cfg(test)]
@@ -661,6 +710,24 @@ mod tests {
         assert!(rect.contains(10.0, 20.0));
         assert!(rect.contains(39.99, 59.99));
         assert!(!rect.contains(40.0, 60.0));
+    }
+
+    #[test]
+    fn viewport_surfaces_are_measured_in_whole_physical_frames() {
+        let surface = ViewportSurface {
+            rect: Rect {
+                x: 0.0,
+                y: 0.0,
+                width: 40.0,
+                height: 20.0,
+            },
+            width: 80,
+            height: 40,
+            device_pixel_ratio: 2.0,
+            generation: 3,
+        };
+        assert_eq!(surface.byte_length(), 80 * 40 * 4);
+        assert_eq!(ViewportSurface::default().byte_length(), 0);
     }
 
     #[test]

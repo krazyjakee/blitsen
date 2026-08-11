@@ -4,14 +4,18 @@
 //! DOM operations into Blitz calls. It owns one authoritative `HtmlDocument`;
 //! no parallel tree or attribute store is maintained.
 
+mod viewport;
+
+use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::collections::HashMap;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use blitsen_dom::{
     DomBackend, DomError, DomName, FrameInvalidation, HitTest, InvalidationMetrics,
-    InvalidationMode, InvalidationTracker, LayoutMetrics, LayoutSnapshot, Namespace, NodeKind,
-    Rect,
+    InvalidationMode, InvalidationTracker, LayoutMetrics, LayoutSnapshot, NATIVE_VIEWPORT_TAG,
+    Namespace, NodeKind, Rect, ViewportSurface,
 };
 use blitz::dom::{DocumentConfig, LocalName, NodeData, NodeId, QualName, ns};
 use blitz::html::{HtmlDocument, HtmlProvider};
@@ -19,6 +23,8 @@ use kurbo::Point;
 use style::computed_values::pointer_events::T as PointerEvents;
 use style::computed_values::visibility::T as Visibility;
 use style::values::computed::Overflow;
+
+use viewport::{NATIVE_VIEWPORT_UA_CSS, ViewportState, ViewportWidget};
 
 type HitCandidate = (Vec<i32>, usize, f32, f32);
 type RankedHit = (Vec<i32>, usize, usize, NodeId, f32, f32);
@@ -45,6 +51,7 @@ pub struct BlitzDom {
     last_invalidation_metrics: InvalidationMetrics,
     last_frame_was_full_document: bool,
     js_references: HashMap<NodeId, u32>,
+    native_viewports: HashMap<NodeId, Rc<RefCell<ViewportState>>>,
 }
 
 impl BlitzDom {
@@ -57,6 +64,7 @@ impl BlitzDom {
     /// Wraps an existing Blitz document and installs the fragment parser.
     pub fn new(mut document: HtmlDocument) -> Self {
         document.set_html_parser_provider(Arc::new(HtmlProvider));
+        document.add_user_agent_stylesheet(NATIVE_VIEWPORT_UA_CSS);
         let invalidation_mode = if document.incremental_layout() {
             InvalidationMode::FineGrained
         } else {
@@ -70,6 +78,7 @@ impl BlitzDom {
             last_invalidation_metrics: InvalidationMetrics::default(),
             last_frame_was_full_document: false,
             js_references: HashMap::new(),
+            native_viewports: HashMap::new(),
         }
     }
 
@@ -131,6 +140,54 @@ impl BlitzDom {
             self.last_invalidation_metrics,
             self.last_frame_was_full_document,
         )
+    }
+
+    /// Gives every connected viewport element a surface, and forgets dead ones.
+    ///
+    /// Attaching is a tree mutation, so it runs before layout resolves: a
+    /// surface installed afterwards would first paint against the layout of the
+    /// frame that created it. A detached element keeps its surface, because a
+    /// reparented viewport is the same viewport.
+    fn attach_native_viewports(&mut self) -> Result<(), DomError> {
+        for node in self.query_selector_all(self.document(), NATIVE_VIEWPORT_TAG)? {
+            if self.native_viewports.contains_key(&node) {
+                continue;
+            }
+            let state = Rc::new(RefCell::new(ViewportState::default()));
+            let widget = ViewportWidget::new(Rc::clone(&state));
+            self.document
+                .mutate()
+                .set_custom_widget(node, Box::new(widget));
+            self.native_viewports.insert(node, state);
+        }
+        let dropped: Vec<NodeId> = self
+            .native_viewports
+            .keys()
+            .copied()
+            .filter(|node| self.document.get_node(*node).is_none())
+            .collect();
+        for node in dropped {
+            self.native_viewports.remove(&node);
+        }
+        Ok(())
+    }
+
+    /// Propagates the resolved box and display density into each surface.
+    fn resize_native_viewports(&mut self) {
+        let scale = self.document.viewport().scale_f64();
+        for (node, state) in &self.native_viewports {
+            let Some(element) = self.document.get_node(*node) else {
+                continue;
+            };
+            // Matches the size Blitz hands the widget when it paints, so the
+            // buffer the application allocates is the buffer it is asked for.
+            let size = element.final_layout().size;
+            state.borrow_mut().resize(
+                (f64::from(size.width) * scale) as u32,
+                (f64::from(size.height) * scale) as u32,
+                scale,
+            );
+        }
     }
 
     fn node(&self, node: NodeId) -> Result<&blitz::dom::Node, DomError> {
@@ -732,7 +789,9 @@ impl DomBackend for BlitzDom {
 
     fn flush_layout(&mut self) -> Result<LayoutSnapshot, DomError> {
         self.take_frame_invalidation();
+        self.attach_native_viewports()?;
         self.document.resolve(0.0);
+        self.resize_native_viewports();
         self.flushed_revision = self.revision;
         Ok(LayoutSnapshot::new(self.revision))
     }
@@ -915,13 +974,50 @@ impl DomBackend for BlitzDom {
             offset_y,
         }))
     }
+
+    fn native_viewports(&self) -> Result<Vec<NodeId>, DomError> {
+        self.query_selector_all(self.document(), NATIVE_VIEWPORT_TAG)
+    }
+
+    fn native_viewport_surface(
+        &self,
+        node: NodeId,
+        snapshot: LayoutSnapshot,
+    ) -> Result<ViewportSurface, DomError> {
+        let rect = self.bounding_rect(node, snapshot)?;
+        let state = self
+            .native_viewports
+            .get(&node)
+            .ok_or(DomError::InvalidNodeType)?
+            .borrow();
+        let (width, height) = state.size();
+        Ok(ViewportSurface {
+            rect,
+            width,
+            height,
+            device_pixel_ratio: state.device_pixel_ratio(),
+            generation: state.generation(),
+        })
+    }
+
+    fn write_native_viewport(&mut self, node: NodeId, pixels: &[u8]) -> Result<(), DomError> {
+        self.native_viewports
+            .get(&node)
+            .ok_or(DomError::InvalidNodeType)?
+            .borrow_mut()
+            .write(pixels)
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use anyrender::recording::RenderCommand;
+    use anyrender::{Paint, Scene};
+    use anyrender_vello_cpu::VelloCpuImageRenderer;
     use blitsen_dom::{DomBackend, DomError, DomName, NodeKind};
     use blitz::dom::DocumentConfig;
     use blitz::traits::shell::{ColorScheme, Viewport};
+    use kurbo::{BezPath, Point, Shape as _};
 
     use super::BlitzDom;
 
@@ -1108,6 +1204,320 @@ mod tests {
                 .target,
             nested_high,
             "a child cannot escape its ancestor's lower stacking context"
+        );
+    }
+
+    fn viewport_document(body: &str, scale: f32) -> BlitzDom {
+        BlitzDom::from_html(
+            &format!("<style>html, body {{ margin: 0 }}</style><body>{body}</body>"),
+            DocumentConfig {
+                viewport: Some(Viewport::new(400, 300, scale, ColorScheme::Light)),
+                ..Default::default()
+            },
+        )
+    }
+
+    #[test]
+    fn viewport_elements_are_replaced_boxes_with_a_physical_pixel_surface() {
+        let mut dom = viewport_document(
+            r#"<blitsen-view id="default"></blitsen-view>
+               <blitsen-view id="sized" style="width: 80px; height: 40px"><b>fallback</b></blitsen-view>"#,
+            2.0,
+        );
+        let snapshot = dom.flush_layout().unwrap();
+        let default = dom.get_element_by_id("default").unwrap().unwrap();
+        let sized = dom.get_element_by_id("sized").unwrap().unwrap();
+        assert_eq!(dom.native_viewports().unwrap(), vec![default, sized]);
+
+        let unsized_surface = dom.native_viewport_surface(default, snapshot).unwrap();
+        assert_eq!(
+            (unsized_surface.rect.width, unsized_surface.rect.height),
+            (300.0, 150.0),
+            "an unsized viewport uses the default object size"
+        );
+        assert_eq!((unsized_surface.width, unsized_surface.height), (600, 300));
+        assert_eq!(unsized_surface.device_pixel_ratio, 2.0);
+        assert_eq!(unsized_surface.byte_length(), 600 * 300 * 4);
+
+        let sized_surface = dom.native_viewport_surface(sized, snapshot).unwrap();
+        assert_eq!(
+            (sized_surface.rect.width, sized_surface.rect.height),
+            (80.0, 40.0)
+        );
+        assert_eq!((sized_surface.width, sized_surface.height), (160, 80));
+        assert_eq!(
+            sized_surface.rect.y, 150.0,
+            "a viewport is a block box that displaces the ones after it"
+        );
+
+        let body = dom.body().unwrap();
+        assert_eq!(
+            dom.native_viewport_surface(body, snapshot),
+            Err(DomError::InvalidNodeType),
+            "only viewport elements have a surface"
+        );
+
+        let created = dom.create_element(&DomName::html("blitsen-view")).unwrap();
+        assert_eq!(
+            dom.native_viewport_surface(created, snapshot),
+            Err(DomError::InvalidNodeType),
+            "a detached viewport has no box and therefore no surface"
+        );
+        dom.append_child(body, created).unwrap();
+        let snapshot = dom.flush_layout().unwrap();
+        assert_eq!(
+            dom.native_viewport_surface(created, snapshot)
+                .unwrap()
+                .width,
+            600,
+            "a scripted viewport gets its surface at the next layout flush"
+        );
+    }
+
+    #[test]
+    fn viewport_surfaces_follow_resize_and_display_density() {
+        let mut dom = viewport_document(
+            r#"<blitsen-view id="view" style="width: 100px; height: 50px"></blitsen-view>"#,
+            1.0,
+        );
+        let snapshot = dom.flush_layout().unwrap();
+        let view = dom.get_element_by_id("view").unwrap().unwrap();
+        let first = dom.native_viewport_surface(view, snapshot).unwrap();
+        assert_eq!((first.width, first.height), (100, 50));
+
+        dom.flush_layout().unwrap();
+        let snapshot = dom.flush_layout().unwrap();
+        assert_eq!(
+            dom.native_viewport_surface(view, snapshot).unwrap(),
+            first,
+            "a frame that changes nothing does not invalidate the surface"
+        );
+
+        dom.set_inline_style(view, "width", "120px").unwrap();
+        let snapshot = dom.flush_layout().unwrap();
+        let resized = dom.native_viewport_surface(view, snapshot).unwrap();
+        assert_eq!((resized.width, resized.height), (120, 50));
+        assert_eq!(resized.generation, first.generation + 1);
+
+        let mut viewport = dom.document_ref().viewport().clone();
+        viewport.set_hidpi_scale(3.0);
+        dom.document_mut().set_viewport(viewport);
+        let snapshot = dom.flush_layout().unwrap();
+        let dense = dom.native_viewport_surface(view, snapshot).unwrap();
+        assert_eq!((dense.width, dense.height), (360, 150));
+        assert_eq!(dense.device_pixel_ratio, 3.0);
+        assert_eq!(
+            dense.rect.width, 120.0,
+            "CSS geometry is density-independent"
+        );
+        assert_eq!(dense.generation, resized.generation + 1);
+    }
+
+    #[test]
+    fn viewport_writes_must_be_one_complete_frame() {
+        let mut dom = viewport_document(
+            r#"<blitsen-view id="view" style="width: 4px; height: 2px"></blitsen-view>"#,
+            1.0,
+        );
+        let snapshot = dom.flush_layout().unwrap();
+        let view = dom.get_element_by_id("view").unwrap().unwrap();
+        let surface = dom.native_viewport_surface(view, snapshot).unwrap();
+        assert_eq!(surface.byte_length(), 32);
+
+        assert_eq!(
+            dom.write_native_viewport(view, &[0; 16]),
+            Err(DomError::Backend(
+                "<blitsen-view> surface needs 32 RGBA bytes, received 16".into()
+            ))
+        );
+        assert!(dom.write_native_viewport(view, &[0; 32]).is_ok());
+
+        let body = dom.body().unwrap();
+        assert_eq!(
+            dom.write_native_viewport(body, &[0; 32]),
+            Err(DomError::InvalidNodeType)
+        );
+
+        // A resize invalidates the frame the application drew for the old size.
+        dom.set_inline_style(view, "width", "8px").unwrap();
+        dom.flush_layout().unwrap();
+        assert!(dom.write_native_viewport(view, &[0; 32]).is_err());
+        assert!(dom.write_native_viewport(view, &[0; 64]).is_ok());
+    }
+
+    #[test]
+    fn viewport_elements_hit_test_like_any_other_element() {
+        let mut dom = viewport_document(
+            r#"<div id="backdrop" style="position: absolute; left: 0; top: 0;
+                  width: 400px; height: 300px"></div>
+               <div id="host" style="position: relative">
+                 <blitsen-view id="view" style="position: absolute; left: 20px; top: 10px;
+                    width: 100px; height: 50px"></blitsen-view>
+               </div>
+               <blitsen-view id="transparent" style="position: absolute; left: 20px; top: 10px;
+                  width: 100px; height: 50px; pointer-events: none"></blitsen-view>"#,
+            1.0,
+        );
+        let snapshot = dom.flush_layout().unwrap();
+        let backdrop = dom.get_element_by_id("backdrop").unwrap().unwrap();
+        let host = dom.get_element_by_id("host").unwrap().unwrap();
+        let view = dom.get_element_by_id("view").unwrap().unwrap();
+
+        let hit = dom.hit_test(50.0, 25.0, snapshot).unwrap().unwrap();
+        assert_eq!(
+            hit.target, view,
+            "a later viewport with pointer-events: none does not swallow the hit"
+        );
+        assert_eq!((hit.offset_x, hit.offset_y), (30.0, 15.0));
+        assert_eq!(hit.path.last(), Some(&view));
+        assert!(
+            hit.path.contains(&host),
+            "propagation reaches a viewport through its ordinary ancestors"
+        );
+        assert_eq!(
+            dom.hit_test(10.0, 5.0, snapshot).unwrap().unwrap().target,
+            backdrop,
+            "a viewport claims no more than its own box"
+        );
+    }
+
+    /// Clip shapes in force where the composited surface is recorded, together
+    /// with the paint order of the surrounding solid DOM fills.
+    ///
+    /// Each clip is returned in scene coordinates so a document-space point can
+    /// be tested against every layer that encloses the surface.
+    fn composited_surface(scene: &Scene) -> (Vec<&'static str>, Vec<BezPath>) {
+        let positioned = |transform: kurbo::Affine, clip: &BezPath| {
+            let mut path = clip.clone();
+            path.apply_affine(transform);
+            // Blitz leaves clip subpaths implicitly closed; `contains` counts
+            // windings over explicit segments only.
+            if !matches!(path.elements().last(), Some(kurbo::PathEl::ClosePath)) {
+                path.close_path();
+            }
+            path
+        };
+        let mut clips: Vec<BezPath> = Vec::new();
+        let mut active: Vec<BezPath> = Vec::new();
+        let mut order = Vec::new();
+        for command in &scene.commands {
+            match command {
+                RenderCommand::PushLayer(layer) => {
+                    active.push(positioned(layer.transform, &layer.clip));
+                }
+                RenderCommand::PushClipLayer(clip) => {
+                    active.push(positioned(clip.transform, &clip.clip));
+                }
+                RenderCommand::PopLayer => {
+                    active.pop();
+                }
+                RenderCommand::Fill(fill) => match &fill.brush {
+                    Paint::Solid(color) => {
+                        let rgba = color.to_rgba8();
+                        match [rgba.r, rgba.g, rgba.b] {
+                            [230, 30, 30] => order.push("below"),
+                            [30, 60, 230] => order.push("above"),
+                            _ => {}
+                        }
+                    }
+                    Paint::Image(_) => {
+                        order.push("surface");
+                        clips = active.clone();
+                    }
+                    _ => {}
+                },
+                _ => {}
+            }
+        }
+        (order, clips)
+    }
+
+    #[test]
+    fn viewport_contents_composite_between_dom_layers_and_inside_every_clip() {
+        let mut dom = viewport_document(
+            r#"<style>
+                 #stage { position: relative; width: 80px; height: 300px; overflow: hidden }
+                 #below { position: absolute; left: 0; top: 0; width: 200px; height: 200px;
+                          background: rgb(230, 30, 30); z-index: -1 }
+                 #view { position: absolute; left: 10px; top: 10px; width: 100px; height: 50px;
+                         border-radius: 12px }
+                 #above { position: absolute; left: 0; top: 0; width: 60px; height: 60px;
+                          background: rgb(30, 60, 230); z-index: 1 }
+               </style>
+               <div id="stage">
+                 <div id="below"></div>
+                 <blitsen-view id="view"></blitsen-view>
+                 <div id="above"></div>
+               </div>"#,
+            1.0,
+        );
+        let snapshot = dom.flush_layout().unwrap();
+        let view = dom.get_element_by_id("view").unwrap().unwrap();
+        let surface = dom.native_viewport_surface(view, snapshot).unwrap();
+        dom.write_native_viewport(view, &vec![0xff; surface.byte_length()])
+            .unwrap();
+
+        let mut scene = Scene::new();
+        blitz_paint::paint_scene(&mut scene, dom.document_mut().as_mut(), 1.0, 400, 300, 0, 0);
+        let (order, clips) = composited_surface(&scene);
+
+        assert_eq!(order, ["below", "surface", "above"]);
+        assert!(!clips.is_empty());
+        assert!(
+            clips
+                .iter()
+                .all(|clip| clip.contains(Point::new(50.0, 35.0))),
+            "the middle of the surface survives every clip"
+        );
+        assert!(
+            clips
+                .iter()
+                .any(|clip| !clip.contains(Point::new(11.0, 11.0))),
+            "the element's own border-radius rounds the surface"
+        );
+        assert!(
+            clips
+                .iter()
+                .any(|clip| !clip.contains(Point::new(90.0, 35.0))),
+            "the ancestor scrollport clips the surface"
+        );
+    }
+
+    #[test]
+    fn viewport_pixels_reach_the_composited_frame() {
+        let mut dom = viewport_document(
+            r#"<blitsen-view id="view" style="width: 40px; height: 20px"></blitsen-view>"#,
+            1.0,
+        );
+        let snapshot = dom.flush_layout().unwrap();
+        let view = dom.get_element_by_id("view").unwrap().unwrap();
+        let surface = dom.native_viewport_surface(view, snapshot).unwrap();
+        let frame: Vec<u8> = std::iter::repeat_n([0, 200, 40, 255], surface.byte_length() / 4)
+            .flatten()
+            .collect();
+        dom.write_native_viewport(view, &frame).unwrap();
+
+        let pixels = anyrender::render_to_buffer::<VelloCpuImageRenderer, _>(
+            |scene| {
+                blitz_paint::paint_scene(scene, dom.document_mut().as_mut(), 1.0, 60, 40, 0, 0);
+            },
+            60,
+            40,
+        );
+        let pixel = |x: usize, y: usize| {
+            let start = (y * 60 + x) * 4;
+            [
+                pixels[start],
+                pixels[start + 1],
+                pixels[start + 2],
+                pixels[start + 3],
+            ]
+        };
+        assert_eq!(pixel(20, 10), [0, 200, 40, 255]);
+        assert_eq!(
+            pixel(50, 30),
+            [0, 0, 0, 0],
+            "the surface does not paint outside its own box"
         );
     }
 }
