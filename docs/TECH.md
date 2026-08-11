@@ -657,7 +657,8 @@ implements roughly 95% of Node-API, which is also what makes the addon strategy 
 ## 14. Testing
 
 Interactive verification is the user's job; everything below is designed to run headlessly.
-GitHub-hosted CI is deliberately disabled. Run the cross-platform bridge suite locally with
+GitHub-hosted CI runs the JavaScript, Rust, acceptance and metrics jobs on Linux x64; the other
+five platform targets have no runner yet. Run the cross-platform bridge suite locally with
 `bun run --cwd packages/blitsen test:native`; it builds and stages the platform's addon before
 executing the same native assertions on Linux, macOS, or Windows.
 
@@ -669,13 +670,15 @@ executing the same native assertions on Linux, macOS, or Windows.
 - **Event dispatch tests** — synthetic events injected at the bridge boundary (below the OS), so
   propagation order, `preventDefault` and `stopPropagation` are testable without touching a real
   input device. The target-based injection helper is installed only by the headless native
-  harness and is absent from shipped windows. It runs under the local `test:native` gate while
-  hosted CI remains deliberately disabled.
+  harness and is absent from shipped windows.
 - **Frame determinism** — record/replay of an input trace at a fixed timestep, producing a
   deterministic frame hash sequence.
-- **Size regression** — the local release verification records bare-app size and fails on
-  regression beyond a threshold. Restore this check to automation only when CI is re-enabled.
-- **Startup benchmark** — cold start to first frame, tracked per commit (P2).
+- **Size regression** — installed and gzip size are recorded against a committed per-platform
+  baseline, and CI fails on growth beyond 2%. The toolchain is pinned in that job so a compiler
+  bump is a deliberate re-baseline rather than a mystery failure.
+- **Startup benchmark** — cold start and idle RSS, recorded per commit but not gated: hosted
+  runners are too noisy to fail a build on. Headless runs measure documented proxies; the real
+  windowed metrics need a desktop session and are opt-in (`bench:windowed`).
 
 ---
 

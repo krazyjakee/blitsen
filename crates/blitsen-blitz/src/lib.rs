@@ -1520,4 +1520,30 @@ mod tests {
             "the surface does not paint outside its own box"
         );
     }
+
+    /// Guards the `system-fonts` feature on `blitz-dom`.
+    ///
+    /// Without it Parley has no font sources, every glyph paints nothing, and the
+    /// failure is invisible to any assertion that reads the DOM instead of the
+    /// frame. That is exactly how it went unnoticed until a demo was recorded.
+    #[test]
+    fn text_paints_glyphs_rather_than_nothing() {
+        let mut dom = viewport_document(
+            r#"<div style="font: 48px sans-serif; color: #000">HELLO 12345</div>"#,
+            1.0,
+        );
+        dom.flush_layout().unwrap();
+        let pixels = anyrender::render_to_buffer::<VelloCpuImageRenderer, _>(
+            |scene| {
+                blitz_paint::paint_scene(scene, dom.document_mut().as_mut(), 1.0, 300, 80, 0, 0);
+            },
+            300,
+            80,
+        );
+        let inked = pixels.chunks_exact(4).filter(|pixel| pixel[3] > 0).count();
+        assert!(
+            inked > 200,
+            "text rendered {inked} non-transparent pixels; system fonts are not loaded"
+        );
+    }
 }

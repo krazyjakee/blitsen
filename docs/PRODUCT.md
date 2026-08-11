@@ -363,7 +363,8 @@ S3 Phase 1 prototype, full Bun runtime embedded (Linux x64)
   compiled executable          105,814,144 B  measured
 
 M3 Phase 1 standalone Pong, optimized Rust host (Linux x64)
-  compiled executable          132,184,192 B  measured
+  compiled executable                    tracked  packages/blitsen/test/metrics/size-baseline.json
+  gzip -9                                tracked  (same file; CI fails on >2% growth)
 
 S0 Phase 2 floor, stripped + LTO (Linux x64)
   JSC + Blitz only              52,480,904 B  measured

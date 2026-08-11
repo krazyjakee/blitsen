@@ -66,3 +66,43 @@ jobs:
       - run: bun run --cwd packages/blitsen test:m2
       - run: bun run --cwd packages/blitsen test:standalone
       - run: bun run --cwd packages/blitsen test:m3b
+
+  # Product requirements P1 (size), P2 (cold start) and P3 (idle RAM). One export
+  # build feeds both consumers: the size gate fails on regression, the benchmarks
+  # only record and report, because a hosted runner's timings are too noisy to
+  # gate on. Everything here is headless, so P2 and P3 are measured through the
+  # proxies documented in docs/M3.md.
+  metrics:
+    name: Size gate and benchmarks (headless)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      # Pinned rather than floating: a compiler upgrade moves the native addon's
+      # size and would trip the size gate as though Blitsen had regressed.
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.97.1
+      - uses: Swatinem/rust-cache@v2
+      - name: Install Blitz system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libfontconfig1-dev libxkbcommon-dev libwayland-dev \
+            libx11-dev libxcursor-dev libxi-dev libxrandr-dev
+      - run: bun install --frozen-lockfile
+      - name: Measure the export
+        run: bun run --cwd packages/blitsen measure --runs 5 --out ${{ github.workspace }}/measurements.json
+      - name: Size gate
+        run: bun run --cwd packages/blitsen size:gate --measurements ${{ github.workspace }}/measurements.json
+      - name: Startup and idle RAM
+        run: bun run --cwd packages/blitsen bench --measurements ${{ github.workspace }}/measurements.json
+      # The committed time series only grows from local runs: CI cannot push, so
+      # it keeps its own per-commit copy here instead.
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: metrics-${{ github.sha }}
+          path: ${{ github.workspace }}/measurements.json
