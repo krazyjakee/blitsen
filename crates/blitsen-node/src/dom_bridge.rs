@@ -1213,6 +1213,9 @@ const BOOTSTRAP: &str = r##"
     get head() { return this.querySelector("head"); }
     get documentElement() { return wrap(call("documentElement")); }
     get defaultView() { return globalThis; }
+    // The same Location the window exposes. Assignment stays absent for the same
+    // reason `location.href =` throws: it would be a navigation, which is not.
+    get location() { return location; }
     get activeElement() { return activeElement?.isConnected ? activeElement : this.body; }
     get readyState() { return readyState; }
   }

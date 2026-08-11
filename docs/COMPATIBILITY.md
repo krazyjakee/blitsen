@@ -116,7 +116,7 @@ scheme makes the absence of an HTTP origin visible rather than pretending to be 
 | `location.href/protocol/host/hostname/port/origin/pathname/search/hash` | `location.assign/replace/reload`, `ancestorOrigins` |
 | `location.hash = …` (pushes an entry, fires `hashchange`) | Assigning `href`, `pathname` or `search` — refused with a `NotSupportedError` naming `pushState`, never silently |
 | `history.pushState/replaceState/go/back/forward`, `length`, `state`, `scrollRestoration` | Cross-origin entries — refused with a `SecurityError`, as in a browser |
-| `popstate` and `hashchange` on `window`, `PopStateEvent`, `HashChangeEvent` | `navigation` (the Navigation API), `document.location` |
+| `popstate` and `hashchange` on `window`, `PopStateEvent`, `HashChangeEvent`, `document.location` | `navigation` (the Navigation API) |
 
 Two differences from a browser worth knowing. `history.state` holds the value you pushed rather
 than a structured clone of it, so mutating that object mutates the entry. And `scrollRestoration`
