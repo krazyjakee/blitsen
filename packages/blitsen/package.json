@@ -73,6 +73,7 @@
     "test:m2": "bun test/run-m2.mjs",
     "test:bundlers": "bun test/run-bundlers.mjs",
     "test:m3b": "bun test/run-m3b.mjs",
+    "test:third-party": "bun test/run-third-party.mjs",
     "test:standalone": "bun test/run-standalone.mjs"
   },
   "publishConfig": {
