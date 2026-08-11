@@ -42,6 +42,27 @@ try {
   });
   assert.equal(check.exitCode, 0, check.stderr.toString());
   assert.match(check.stdout.toString(), /standalone check passed \(3 embedded assets\)/);
+
+  const sideLoaded = await buildStandalone({
+    root: join(repository, "examples/pong"),
+    width: 720,
+    height: 520,
+    title: "Blitsen Pong",
+    outfile: join(testDirectory, "pong-side-loaded"),
+    assets: "side-loaded",
+  }, addon);
+  assert.equal(sideLoaded.assetDirectory, join(testDirectory, "pong-side-loaded.assets"));
+  // Run from an unrelated working directory: assets resolve beside the executable.
+  const sideCheck = Bun.spawnSync({
+    cmd: [sideLoaded.outfile],
+    cwd: repository,
+    env: { BLITSEN_STANDALONE_CHECK: "1", PATH: "" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  assert.equal(sideCheck.exitCode, 0, sideCheck.stderr.toString());
+  assert.match(sideCheck.stdout.toString(), /standalone check passed \(3 side-loaded assets\)/);
+
   let nativeCadence = null;
   if (process.env.DISPLAY || process.env.WAYLAND_DISPLAY) {
     const nativeFrames = Bun.spawnSync({

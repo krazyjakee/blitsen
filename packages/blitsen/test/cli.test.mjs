@@ -1,8 +1,25 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createReloadCoordinator, main, packageVersion, parseArgs, resolveApplication } from "../src/cli.mjs";
 import { doctorApplication } from "../src/doctor.mjs";
-import { rewriteRootRelativeReferences } from "../src/export.mjs";
+import { buildStandalone, planIngest, rewriteRootRelativeReferences } from "../src/export.mjs";
+
+const viteBase = join(import.meta.dir, "fixtures/vite-base");
+
+// Bun.build --compile refuses to start without the addon file, but never loads
+// it, so a placeholder is enough to exercise the whole export pipeline.
+async function withStubbedExport(run) {
+  const directory = await mkdtemp(join(tmpdir(), "blitsen-export-test-"));
+  const nativePath = join(directory, "blitsen.node");
+  await writeFile(nativePath, "// placeholder addon\n");
+  try {
+    return await run({ directory, nativePath, outfile: join(directory, "App") });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+}
 
 function capture() {
   const lines = [];
@@ -31,9 +48,15 @@ describe("directory CLI", () => {
     expect(parseArgs(["doctor", "dist", "--json"]))
       .toEqual({ command: "doctor", directory: "dist", width: 800, height: 600,
         title: "Blitsen", json: true });
+    expect(parseArgs(["build", "dist", "--include", "*.txt", "--include", "meta/**",
+      "--assets", "side-loaded"]))
+      .toEqual({ command: "build", directory: "dist", width: 800, height: 600,
+        title: "Blitsen", include: ["*.txt", "meta/**"], assets: "side-loaded" });
     expect(() => parseArgs(["app", "--width", "nope"])).toThrow("positive integer");
     expect(() => parseArgs(["app", "--force"])).toThrow("only valid with build");
     expect(() => parseArgs(["doctor", "dist", "--outfile", "x"])).toThrow("not valid with doctor");
+    expect(() => parseArgs(["build", "dist", "--assets", "inline"])).toThrow("embedded or side-loaded");
+    expect(() => parseArgs(["app", "--include", "*.txt"])).toThrow("only valid with build");
   });
 
   test("resolves an index", async () => {
@@ -71,6 +94,105 @@ describe("directory CLI", () => {
       '.hero{background:url("/assets/hero.png#main")}',
       "assets/app.css",
     )).toBe('.hero{background:url("./hero.png#main")}');
+  });
+
+  // The fixture is shaped like minified bundler output with base "/app/": an
+  // unspaced side-effect import, a base-prefixed import(), a transitive
+  // @import, and new URL(…, import.meta.url).
+  test("walks the module and stylesheet graph from the HTML entrypoint", async () => {
+    const plan = await planIngest(viteBase);
+    expect(plan.files.map(file => file.relative)).toEqual([
+      "assets/chunk-BASE.js",
+      "assets/index-BASE.css",
+      "assets/index-BASE.js",
+      "assets/lazy-BASE.js",
+      "assets/panel.svg",
+      "assets/theme.css",
+      "index.html",
+    ]);
+    expect(plan.unreferenced).toEqual(["assets/index-BASE.js.map", "assets/orphan.txt"]);
+  });
+
+  test("keeps unreferenced output that an --include glob asks for", async () => {
+    const plan = await planIngest(viteBase, { include: ["assets/*.txt"] });
+    expect(plan.files.some(file => file.relative === "assets/orphan.txt")).toBeTrue();
+    expect(plan.files.some(file => file.relative === "assets/index-BASE.js.map")).toBeFalse();
+    expect(plan.unreferenced).toEqual(["assets/index-BASE.js.map"]);
+    const everything = await planIngest(viteBase, { include: ["**"] });
+    expect(everything.files).toHaveLength(9);
+    expect(everything.unreferenced).toEqual([]);
+  });
+
+  test("resolves a custom bundler base against the real output layout", async () => {
+    const plan = await planIngest(viteBase);
+    const resolutions = plan.resolutions.get("index.html");
+    expect(resolutions.get("/app/assets/index-BASE.js")).toBe("assets/index-BASE.js");
+    const source = await readFile(join(viteBase, "index.html"), "utf8");
+    const rewritten = rewriteRootRelativeReferences(source, "index.html",
+      path => resolutions.get(path) ?? null);
+    expect(rewritten).toContain('src="./assets/index-BASE.js"');
+    expect(rewritten).toContain('href="./assets/index-BASE.css"');
+    // Navigation targets are not subresources and stay exactly as authored.
+    expect(rewritten).toContain('<a href="/app/docs">');
+  });
+
+  test("fails the build on references it cannot resolve inside the output", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "blitsen-missing-"));
+    try {
+      await writeFile(join(directory, "index.html"), '<link rel="stylesheet" href="/assets/gone.css">');
+      await expect(planIngest(directory)).rejects.toThrow("index.html references /assets/gone.css");
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("refuses to build output with compatibility errors", async () => {
+    const fixture = join(import.meta.dir, "fixtures/doctor/remote");
+    let built = false;
+    const { lines, output } = capture();
+    const runtime = { build: async () => { built = true; return {}; } };
+    expect(await main(["build", fixture, "--outfile", "/tmp/blitsen-never"], output, runtime)).toBe(1);
+    expect(built).toBeFalse();
+    expect(lines.some(([, line]) => line.includes("ASSET_REMOTE"))).toBeTrue();
+    expect(lines.at(-1)[1]).toContain("1 compatibility error blocks this build");
+  });
+
+  test("hashes collected assets and compiles the same input to identical bytes", async () => {
+    await withStubbedExport(async ({ nativePath, outfile }) => {
+      const options = { root: viteBase, width: 800, height: 600, title: "Base", outfile, force: true };
+      const first = await buildStandalone(options, nativePath);
+      const bytes = await readFile(outfile);
+      const second = await buildStandalone(options, nativePath);
+
+      expect(first.layout).toBe("embedded");
+      expect(first.assets).toBe(7);
+      expect(first.unreferenced).toEqual(["assets/index-BASE.js.map", "assets/orphan.txt"]);
+      expect(first.manifest.every(asset => /^[0-9a-f]{64}$/.test(asset.hash))).toBeTrue();
+      // The hash covers the staged copy, so it reflects the rewritten references.
+      const staged = first.manifest.find(asset => asset.path === "assets/index-BASE.css");
+      expect(staged.hash).toBe(new Bun.CryptoHasher("sha256")
+        .update('#root { background: url("./panel.svg") }\n@import "./theme.css";\n')
+        .digest("hex"));
+      expect(second.manifest).toEqual(first.manifest);
+      // Byte equality holds for one input directory, output path, working
+      // directory and Bun version: Bun records the compiled entrypoint's path.
+      expect(Buffer.compare(bytes, await readFile(outfile))).toBe(0);
+    });
+  });
+
+  test("lays assets out beside the executable when asked", async () => {
+    await withStubbedExport(async ({ nativePath, outfile }) => {
+      const result = await buildStandalone({
+        root: viteBase, width: 800, height: 600, title: "Base", outfile, assets: "side-loaded",
+      }, nativePath);
+      expect(result.layout).toBe("side-loaded");
+      expect(result.assetDirectory).toBe(`${outfile}.assets`);
+      expect((await readdir(result.assetDirectory)).sort()).toEqual(["assets", "index.html"]);
+      const side = await readFile(join(result.assetDirectory, "index.html"), "utf8");
+      expect(side).toContain('src="./assets/index-BASE.js"');
+      expect(new Bun.CryptoHasher("sha256").update(side).digest("hex"))
+        .toBe(result.manifest.find(asset => asset.path === "index.html").hash);
+    });
   });
 
   test("opens a resolved directory through the native runtime", async () => {

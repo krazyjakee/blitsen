@@ -448,7 +448,12 @@ dashboard) is built by someone who is not us.
 4. **Do multiple windows share one JS context** or get isolated ones?
 5. **Is TypeScript first-class?** Mostly moot under the export model — the user's existing
    bundler handles TS before Blitsen sees the output. Still open for the no-build-step path.
-6. **Where do assets live** in the exported binary — embedded, side-loaded, or either?
+6. ~~Where do assets live in the exported binary~~ — **settled: either, embedded by default.**
+   `blitsen build --assets embedded` (the default) carries every asset inside the executable,
+   which is what makes the single-file distribution claim true. `--assets side-loaded` writes them
+   to `<outfile>.assets/` next to the executable for applications whose assets must stay patchable
+   after shipping, or whose media is large enough that embedding is wasteful. Assets are
+   content-hashed either way and the export is byte-for-byte reproducible (TECH.md §10).
 7. ~~Does the dev-server mode ship in v0?~~ — **settled by S7: no; target v1.** Bun can fetch
    and execute a pre-scanned Vite module graph and service its WebSocket transport, but its
    plugin loader does not preserve HTTP module identity or source-map URLs, async resolution is

@@ -485,8 +485,8 @@ that, and duplicating it would make Blitsen a competitor to Vite instead of a ta
 | Step | Action |
 | --- | --- |
 | ① **Ingest** | Walk the output directory from its HTML entrypoint. Preserve relative references, normalize local server-root HTML/CSS references inside staging, and refuse remote subresources. |
-| ② **Scan** | Static analysis of the bundle for web API usage; anything the target runtime lacks is reported (`blitsen doctor`, and as a build warning). |
-| ③ **Collect** | Hash and collect assets. Embedded in the binary or laid out beside it, per config. |
+| ② **Scan** | Static analysis of the bundle for web API usage; anything the target runtime lacks is reported (`blitsen doctor`, and as a build error or warning). |
+| ③ **Collect** | Hash and collect the reachable assets. Embedded in the binary or laid out beside it, per config. |
 | ④ **Link** | Runtime + application bundle + assets → one executable. |
 | ⑤ **Package** | Icon, Windows manifest/version info, macOS `.app` bundle and `Info.plist`, code signing hooks. |
 
@@ -500,6 +500,37 @@ that, and duplicating it would make Blitsen a competitor to Vite instead of a ta
 
 Step ② keeps the compatibility promise honest. Blitsen will be handed output it cannot run; the
 failure must arrive at build time with a named API and file, not as a blank window at runtime.
+A profile **error** fails `blitsen build`; warnings are printed and the build proceeds.
+
+### Reachability, not directory recursion
+
+Step ① starts at `index.html` and follows references transitively: HTML `src`/`href`/`poster`/
+`data` subresource attributes, CSS `url()` and `@import`, and the statically analysable module
+edges in reachable scripts (`import`/`export … from`, a literal `import("…")`, and
+`new URL("…", import.meta.url)`). Anchor `href`s are navigation targets, not subresources, and
+are left exactly as authored.
+
+- A local HTML or CSS reference that resolves to nothing fails the build, naming the referring
+  file. Script references are matched heuristically, so an unresolved one is ignored rather than
+  treated as a broken build.
+- Files the walk never reaches are reported and dropped — an unreferenced file is pure export
+  size. `--include <glob>` keeps them, which is also the escape hatch for a URL the walk cannot
+  see because the application computes it at runtime.
+
+### Collect and layout
+
+Every collected asset is hashed with SHA-256 over its **staged** bytes, so the hash describes what
+ships rather than what the bundler emitted. `--assets embedded` (the default) imports each asset
+into the executable and materializes it into a private temporary directory at launch;
+`--assets side-loaded` writes them to `<outfile>.assets/` next to the executable and the runtime
+opens them in place. Embedded is the default because single-file distribution is the product
+claim; side-loaded exists for patchable assets and for media too large to justify carrying in the
+binary.
+
+Export is reproducible: the same input directory, output path, working directory, Bun version and
+platform produce a byte-identical executable. Staging therefore lives at a stable path derived
+from the output path rather than in a randomly named temporary directory — `bun build --compile`
+records the compiled entrypoint's path inside the executable.
 
 ### Optional build wrapping
 
@@ -680,10 +711,14 @@ Rules that, if broken, cost a rewrite rather than a refactor:
 7. **Font fallback and shaping** across platforms without pulling in a large font stack.
 8. **Hot reload state** — accept full restart, or attempt module-level replacement? Largely moot
    in proxy mode, where the user's own HMR handles it.
-9. **Absolute-path assets.** Bundler output routinely references `/assets/index.js`, assuming a
-   server root. Rewrite at ingest, or serve the embedded bundle through an internal origin so
-   absolute paths resolve unchanged? The latter is more faithful and probably necessary for
-   frameworks with a configurable base path.
+9. **Absolute-path assets: decided.** Rewrite at ingest. Server-root subresource URLs in HTML and
+   CSS are resolved against the output directory and rewritten to document-relative paths **in the
+   staged copy only**; the user's `dist` is never modified. A configured bundler base (`/app/…`)
+   is handled by dropping leading URL segments until one resolves against the real output layout,
+   so default and custom `base` builds both ingest without configuration. An internal origin was
+   rejected for v0: it needs a loader that resolves an embedded namespace for every subresource
+   kind, and it buys nothing the rewrite does not already deliver for static output. The cost is
+   that URLs computed at runtime are not rewritten — see §10 and `COMPATIBILITY.md`.
 10. **Client-side routers.** History API and `location` are on the "deliberately absent" list
     (§8), but React Router and equivalents are ubiquitous in exactly the apps being courted.
     Reconsider: a minimal in-memory `history` may be a v1 requirement rather than a "later".

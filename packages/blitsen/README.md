@@ -29,7 +29,17 @@ normalizes those references in its private staging directory, mounts React in th
 executable, and preserves delegated event state. See the repository's compatibility profile for
 the deliberately unsupported browser and renderer features reported by `doctor`.
 
-This creates one executable containing the Bun host, native addon, and application assets.
+The build starts at `index.html` and collects only what it can reach through HTML, CSS, and static
+module references. Anything left over is reported and dropped; keep it with a repeatable glob, and
+choose where the collected assets live:
+
+```sh
+npx blitsen build dist --include 'locales/**' --assets side-loaded
+```
+
+`--assets embedded` is the default and produces one executable containing the Bun host, native
+addon, and application assets. `--assets side-loaded` writes them to `<outfile>.assets/` beside
+the executable instead. A profile error from `doctor` fails the build.
 Phase 1 exports are not yet cleared for redistribution: the automated notice and JSC relinking
 gate is still outstanding. Follow development and read the feasibility results at
 [github.com/krazyjakee/blitsen](https://github.com/krazyjakee/blitsen).
