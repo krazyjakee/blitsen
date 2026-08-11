@@ -25,7 +25,20 @@
     ".": {
       "types": "./index.d.ts",
       "import": "./index.mjs"
-    }
+    },
+    "./bundler": {
+      "types": "./src/bundler.d.ts",
+      "import": "./src/bundler.mjs"
+    },
+    "./config.schema.json": "./src/config.schema.json",
+    "./app": { "types": "./src/native/native.d.ts", "import": "./src/native/app.mjs" },
+    "./window": { "types": "./src/native/native.d.ts", "import": "./src/native/window.mjs" },
+    "./dialog": { "types": "./src/native/native.d.ts", "import": "./src/native/dialog.mjs" },
+    "./clipboard": { "types": "./src/native/native.d.ts", "import": "./src/native/clipboard.mjs" },
+    "./tray": { "types": "./src/native/native.d.ts", "import": "./src/native/tray.mjs" },
+    "./notify": { "types": "./src/native/native.d.ts", "import": "./src/native/notify.mjs" },
+    "./input": { "types": "./src/native/native.d.ts", "import": "./src/native/input.mjs" },
+    "./os": { "types": "./src/native/native.d.ts", "import": "./src/native/os.mjs" }
   },
   "types": "./index.d.ts",
   "files": [
@@ -54,6 +67,7 @@
     "golden:record": "bun test/run-determinism.mjs --update",
     "test:native": "bun test/run-native-harness.mjs",
     "test:m2": "bun test/run-m2.mjs",
+    "test:bundlers": "bun test/run-bundlers.mjs",
     "test:m3b": "bun test/run-m3b.mjs",
     "test:standalone": "bun test/run-standalone.mjs"
   },

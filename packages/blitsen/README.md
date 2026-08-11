@@ -84,6 +84,52 @@ not embed icon or version-info resources into the PE image, and the build says s
 pretending otherwise. `--sign` runs your command with the artifact path as its only argument — the
 `.app` bundle on macOS, the executable elsewhere — and a non-zero exit fails the build. Blitsen
 never handles certificates.
+## Native modules
+
+Import them as ordinary package subpaths:
+
+```js
+import dialog from "blitsen/dialog";
+import window from "blitsen/window";
+```
+
+**`blitsen/*` is the recommended form**, because it is a real npm path that every bundler already
+resolves with no configuration. The bare `native:*` spelling reads better but is not resolvable:
+measured against default configs, esbuild, Vite, webpack and Bun all fail on it, and Rollup only
+warns and externalizes it — which is worse, because it silently produces a bundle whose import
+resolves nowhere but inside Blitsen.
+
+Both spellings work. If you prefer `native:*`, mark it external with the optional plugin:
+
+```js
+import { blitsenVite } from "blitsen/bundler";        // also blitsenRollup, blitsenEsbuild
+export default { plugins: [blitsenVite()] };
+```
+
+webpack uses `externals` instead, and needs ESM output, which a Blitsen application has anyway:
+
+```js
+import { blitsenWebpackExternals } from "blitsen/bundler";
+export default {
+  externals: [blitsenWebpackExternals()],
+  experiments: { outputModule: true },
+  output: { module: true, chunkFormat: "module" },
+};
+```
+
+A module namespace exposes exactly what the running Blitsen version installed, so a capability
+this version does not implement yet is `undefined` rather than a function that throws — feature
+detection works:
+
+```js
+if (dialog.openFile) { … }
+```
+
+Outside the Blitsen runtime — a browser, a plain Node script — every access throws instead, because
+that is a mistake rather than a missing capability. Note that the native modules themselves are not
+implemented yet; the specifier layer above is, so bundlers resolve today and the capabilities
+appear as they land.
+
 Phase 1 exports are not yet cleared for redistribution: the automated notice and JSC relinking
 gate is still outstanding. Follow development and read the feasibility results at
 [github.com/krazyjakee/blitsen](https://github.com/krazyjakee/blitsen).
