@@ -67,6 +67,47 @@ jobs:
       - run: bun run --cwd packages/blitsen test:standalone
       - run: bun run --cwd packages/blitsen test:m3b
 
+  # Frame determinism (issue #48). Replays one committed input trace twice, in
+  # separate processes, and compares the digest sequences with each other and
+  # with the committed golden. The DOM digest is portable and always gated; the
+  # layout and pixel digests depend on installed fonts and CPU feature
+  # detection, so they are gated only when this runner's rendering fingerprint
+  # matches the golden's — see docs/M3.md. Diverging frames are uploaded as PNGs.
+  determinism:
+    name: Frame determinism (headless)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install Blitz system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libfontconfig1-dev libxkbcommon-dev libwayland-dev \
+            libx11-dev libxcursor-dev libxi-dev libxrandr-dev
+      - run: bun install --frozen-lockfile
+      - run: bun run --cwd packages/blitsen test:determinism
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: determinism-divergence-${{ github.sha }}
+          path: ${{ github.workspace }}/target/determinism-divergence
+          if-no-files-found: ignore
+      # P4 evidence (issue #47): frame-time histogram with tail percentiles and
+      # per-stage cost, measured with the wall clock while JavaScript is fed a
+      # fixed timestep. Recorded and reported, never gated: see docs/M3.md.
+      - name: Frame cost
+        run: bun run --cwd packages/blitsen frames --out ${{ github.workspace }}/frame-metrics.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: frame-metrics-${{ github.sha }}
+          path: ${{ github.workspace }}/frame-metrics.json
+
   # Product requirements P1 (size), P2 (cold start) and P3 (idle RAM). One export
   # build feeds both consumers: the size gate fails on regression, the benchmarks
   # only record and report, because a hosted runner's timings are too noisy to

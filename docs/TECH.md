@@ -768,8 +768,17 @@ Rules that, if broken, cost a rewrite rather than a refactor:
    runtime resolver against embedded files (supports dynamic `import()`)?
 3. **Multi-window JS contexts** — one shared context or one per window? Shared is simpler and
    matches the single-thread model; isolated is safer and matches the web.
-4. **DOM property access cost** — is a Rust call per property read fast enough under JSC, or do
-   hot properties need caching on the JS wrapper with invalidation?
+4. **DOM property access cost: decided — no wrapper-side cache.** Measured on the Phase 1 host
+   (Linux x64, release): a `style.top` write costs 3.37 µs, a style read 1.41 µs, `setAttribute`
+   1.69 µs, `getAttribute` 0.61 µs, `textContent` 1.04/0.48 µs, `getElementById` 2.03 µs, against
+   0.05 µs for a plain JS property write. So a bridge call is roughly 30–60× a JS property access,
+   and that ratio is the tempting case for a cache. It is not worth taking: Pong's four writes per
+   frame total ~14 µs, which is 1.7% of its measured 0.81 ms frame and 0.08% of the 16.7 ms budget,
+   while a cache would have to be invalidated by `cssText`, `setAttribute("style")`,
+   `removeProperty` and `innerHTML` — four ways to serve a stale value in exchange for saving
+   nothing that is currently spent. Revisit only if a profile shows property access on a hot path.
+   Note what *does* cost: `getBoundingClientRect` is 10.5 µs clean and 66.8 µs after a write, so
+   layout flushing, not property access, is the thing worth avoiding in a frame.
 5. **Text input and IME** — a large, easily underestimated surface; where does it live?
 6. **Accessibility** — Blitz's AccessKit story, and whether v0 can defer it. Deferring has a
    real cost for the dashboard/tooling audience.

@@ -54,8 +54,11 @@ assert(pongNode(pongFrames.at(-1), "left-paddle").layout.y
   < pongNode(pongFrames[0], "left-paddle").layout.y, "W moves player one's paddle");
 assert.notEqual(pongNode(pongFrames.at(-1), "ball").layout.x,
   pongNode(pongFrames[0], "ball").layout.x, "the ball advances through requestAnimationFrame");
-assert(Number(pongNode(pongFrames.at(-1), "fps").text_content) >= 59,
-  "the game reports its 60 Hz acceptance cadence");
+// The game's own #fps readout is deliberately not asserted. The harness feeds
+// JavaScript a fixed 1000/60 ms timestep and the game divides frames by those
+// timestamps, so the readout reports ~60 however slow the renderer actually is.
+// Real frame cost is measured against wall clock by `frames`; determinism of the
+// rendered output is gated by `test:determinism`.
 let scriptError;
 try {
   native.runDocumentScriptsHarness(join(scriptFixture, "error.html"), 320, 180);

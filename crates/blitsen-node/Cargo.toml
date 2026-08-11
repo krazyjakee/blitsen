@@ -41,3 +41,7 @@ napi-build = "2.2"
 
 [lints]
 workspace = true
+
+[features]
+# Wraps the global allocator to count per-frame allocations; see src/alloc.rs.
+alloc-audit = []

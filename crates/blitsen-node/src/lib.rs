@@ -1,6 +1,9 @@
 //! Bun-loadable Node-API addon and JavaScript-engine implementation.
 
+mod alloc;
 mod dom_bridge;
+mod frame_loop;
+mod replay;
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
@@ -18,7 +21,7 @@ use blitsen_blitz::BlitzDom;
 use blitsen_core::{
     DocumentScript, ScriptDocument, WindowState, WrapperTable, execute_collected_document_scripts,
 };
-use blitsen_dom::{DomBackend, DomError, DomName};
+use blitsen_dom::{DomBackend, DomError, DomName, LayoutSnapshot};
 use blitsen_js::{
     ExternalId, JsEngine, JsError, JsType, LoopTurn, NativeCall, NativeCallback, NativeClass,
     NativeMethod, TypedArray, TypedArrayKind,
@@ -1988,7 +1991,47 @@ fn snapshot_and_render(
     width: u32,
     height: u32,
 ) -> napi::Result<(HarnessSnapshot, Vec<u8>)> {
-    let snapshot = document.borrow_mut().flush_layout().map_err(dom_error)?;
+    let layout = document.borrow_mut().flush_layout().map_err(dom_error)?;
+    let pixels = render_document(&document, width, height);
+    let snapshot = snapshot_document(&document, layout, &pixels)?;
+    Ok((snapshot, encode_png(&pixels, width, height)?))
+}
+
+fn render_document(document: &Rc<RefCell<BlitzDom>>, width: u32, height: u32) -> Vec<u8> {
+    let mut document = document.borrow_mut();
+    render_to_buffer::<VelloCpuImageRenderer, _>(
+        |scene| {
+            scene.fill(
+                Fill::NonZero,
+                Default::default(),
+                Color::WHITE,
+                Default::default(),
+                &Rect::new(0.0, 0.0, f64::from(width), f64::from(height)),
+            );
+            paint_scene(
+                scene,
+                document.document_mut().as_mut(),
+                1.0,
+                width,
+                height,
+                0,
+                0,
+            );
+        },
+        width,
+        height,
+    )
+}
+
+/// Serializes the tree and the frame that was just rasterized from it.
+///
+/// Takes the layout token rather than flushing: a second flush would clear the
+/// invalidation counters this snapshot is reporting.
+fn snapshot_document(
+    document: &Rc<RefCell<BlitzDom>>,
+    snapshot: LayoutSnapshot,
+    pixels: &[u8],
+) -> napi::Result<HarnessSnapshot> {
     let (invalidation_metrics, full_document) = document.borrow().last_frame_invalidation();
     let invalidation = HarnessInvalidation {
         restyled_nodes: invalidation_metrics.restyled_nodes,
@@ -1996,7 +2039,7 @@ fn snapshot_and_render(
         full_document,
     };
 
-    let mut document = document.borrow_mut();
+    let document = document.borrow();
     let ids = document
         .query_selector_all(document.document(), "*")
         .map_err(dom_error)?;
@@ -2038,28 +2081,6 @@ fn snapshot_and_render(
             },
         });
     }
-    let pixels = render_to_buffer::<VelloCpuImageRenderer, _>(
-        |scene| {
-            scene.fill(
-                Fill::NonZero,
-                Default::default(),
-                Color::WHITE,
-                Default::default(),
-                &Rect::new(0.0, 0.0, width as f64, height as f64),
-            );
-            paint_scene(
-                scene,
-                document.document_mut().as_mut(),
-                1.0,
-                width,
-                height,
-                0,
-                0,
-            );
-        },
-        width,
-        height,
-    );
     let mut paint_colors = BTreeMap::<[u8; 4], usize>::new();
     for pixel in pixels.chunks_exact(4) {
         *paint_colors
@@ -2083,26 +2104,26 @@ fn snapshot_and_render(
             .then_with(|| left.rgba.cmp(&right.rgba))
     });
     paint_colors.truncate(16);
+    Ok(HarnessSnapshot {
+        nodes,
+        invalidation,
+        paint_colors,
+    })
+}
+
+fn encode_png(pixels: &[u8], width: u32, height: u32) -> napi::Result<Vec<u8>> {
     let mut png = Vec::new();
-    {
-        let mut encoder = png::Encoder::new(&mut png, width, height);
-        encoder.set_color(png::ColorType::Rgba);
-        encoder.set_depth(png::BitDepth::Eight);
-        let mut writer = encoder
-            .write_header()
-            .map_err(|error| napi::Error::new(Status::GenericFailure, error.to_string()))?;
-        writer
-            .write_image_data(&pixels)
-            .map_err(|error| napi::Error::new(Status::GenericFailure, error.to_string()))?;
-    }
-    Ok((
-        HarnessSnapshot {
-            nodes,
-            invalidation,
-            paint_colors,
-        },
-        png,
-    ))
+    let mut encoder = png::Encoder::new(&mut png, width, height);
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+    let mut writer = encoder
+        .write_header()
+        .map_err(|error| napi::Error::new(Status::GenericFailure, error.to_string()))?;
+    writer
+        .write_image_data(pixels)
+        .map_err(|error| napi::Error::new(Status::GenericFailure, error.to_string()))?;
+    drop(writer);
+    Ok(png)
 }
 
 /// Resolves `file:` and `data:` subresources synchronously, on the calling thread.
@@ -2149,6 +2170,23 @@ fn execute_document_harness(
     width: u32,
     height: u32,
 ) -> napi::Result<HarnessSnapshot> {
+    // Mirrors a shipped window exactly, injection surface included, so the
+    // fixture guard against test-only globals leaking stays meaningful.
+    let (_, document) = load_document_harness(env, entrypoint, width, height, false)?;
+    ACTIVE_DOCUMENT_HARNESS.with(|active| {
+        *active.borrow_mut() = Some((Rc::clone(&document), width, height));
+    });
+    snapshot_and_render(document, width, height).map(|(snapshot, _)| snapshot)
+}
+
+/// Parses an entrypoint, installs the bridge and runs its document scripts.
+fn load_document_harness(
+    env: Env,
+    entrypoint: &Path,
+    width: u32,
+    height: u32,
+    test_harness: bool,
+) -> napi::Result<(NodeApiEngine, Rc<RefCell<BlitzDom>>)> {
     let source = std::fs::read_to_string(entrypoint).map_err(|error| {
         napi::Error::new(
             Status::GenericFailure,
@@ -2175,9 +2213,7 @@ fn execute_document_harness(
         &entrypoint.to_string_lossy(),
         width,
         height,
-        // Mirrors a shipped window exactly, injection surface included, so the
-        // fixture guard against test-only globals leaking stays meaningful.
-        false,
+        test_harness,
     )?;
     engine
         .evaluate_script(
@@ -2185,10 +2221,7 @@ fn execute_document_harness(
             "blitsen:load",
         )
         .map_err(napi_error)?;
-    ACTIVE_DOCUMENT_HARNESS.with(|active| {
-        *active.borrow_mut() = Some((Rc::clone(&document), width, height));
-    });
-    snapshot_and_render(document, width, height).map(|(snapshot, _)| snapshot)
+    Ok((engine, document))
 }
 
 fn execute_document_animation_harness(
@@ -2200,54 +2233,22 @@ fn execute_document_animation_harness(
     height: u32,
     record_into: Option<&Path>,
 ) -> napi::Result<Vec<HarnessSnapshot>> {
-    let source = std::fs::read_to_string(entrypoint).map_err(|error| {
-        napi::Error::new(
-            Status::GenericFailure,
-            format!("could not read {}: {error}", entrypoint.display()),
-        )
-    })?;
-    let root = entrypoint.parent().unwrap_or_else(|| Path::new("."));
-    let runtime = DomRuntime::new(BlitzDom::from_html(
-        &source,
-        DocumentConfig {
-            base_url: Some(format!("file://{}/", root.display())),
-            net_provider: Some(Arc::new(LocalNetProvider) as Arc<dyn NetProvider>),
-            viewport: Some(Viewport::new(width, height, 1.0, ColorScheme::Light)),
-            ..Default::default()
-        },
-    ));
-    let document = runtime.document();
-    let scripts = document.borrow().document_scripts().map_err(dom_error)?;
-    let mut engine = NodeApiEngine::new(env);
-    execute_window_scripts(
-        &mut engine,
-        runtime,
-        scripts,
-        &entrypoint.to_string_lossy(),
-        width,
-        height,
-        true,
-    )?;
+    let (mut engine, document) = load_document_harness(env, entrypoint, width, height, true)?;
     engine
-        .evaluate_script(
-            "globalThis.__blitsenDispatchLifecycleEvent('load')",
-            "blitsen:load",
-        )
-        .and_then(|_| engine.evaluate_script(setup_script, "document-animation-setup.js"))
+        .evaluate_script(setup_script, "document-animation-setup.js")
         .map_err(napi_error)?;
 
+    let mut frame_loop =
+        frame_loop::FrameLoop::new(engine, Rc::clone(&document), width, height, None);
     let mut snapshots = Vec::with_capacity(frames as usize);
     for frame in 1..=frames {
-        let timestamp = f64::from(frame) * (1_000.0 / 60.0);
-        engine
-            .evaluate_script(
-                &format!("globalThis.__blitsenAnimationFrameTick({timestamp})"),
-                "blitsen:document-animation-harness-tick",
-            )
-            .and_then(|_| engine.drain_microtasks().map(|_| ()))
-            .map_err(napi_error)?;
-        let (snapshot, png) = snapshot_and_render(Rc::clone(&document), width, height)?;
+        frame_loop.advance(frame, f64::from(frame) * (1_000.0 / 60.0))?;
+        let layout = frame_loop
+            .layout()
+            .ok_or_else(|| napi::Error::new(Status::GenericFailure, "frame resolved no layout"))?;
+        snapshots.push(snapshot_document(&document, layout, frame_loop.pixels())?);
         if let Some(directory) = record_into {
+            let png = encode_png(frame_loop.pixels(), width, height)?;
             std::fs::write(directory.join(format!("frame-{frame:05}.png")), &png).map_err(
                 |error| {
                     napi::Error::new(
@@ -2257,7 +2258,6 @@ fn execute_document_animation_harness(
                 },
             )?;
         }
-        snapshots.push(snapshot);
     }
     Ok(snapshots)
 }
@@ -2423,6 +2423,51 @@ pub fn record_document_animation_harness(
         Some(&directory),
     )?;
     Ok(frames)
+}
+
+/// Replays a recorded input trace at a fixed timestep.
+///
+/// Deterministic by construction: JavaScript only ever sees timestamps derived
+/// from the trace, never the wall clock, while the wall clock measures what each
+/// frame actually cost. The returned report carries a digest sequence to compare
+/// against a golden and a frame-time histogram to record.
+#[napi]
+pub fn replay_document_frames(
+    env: Env,
+    entrypoint: String,
+    trace: String,
+    record_into: Option<String>,
+    record_frames: Option<Vec<u32>>,
+) -> napi::Result<String> {
+    let trace = blitsen_core::replay::InputTrace::from_json(&trace)
+        .map_err(|error| napi::Error::new(Status::InvalidArg, error.to_string()))?;
+    let directory = record_into.map(PathBuf::from);
+    if let Some(directory) = &directory {
+        std::fs::create_dir_all(directory).map_err(|error| {
+            napi::Error::new(
+                Status::GenericFailure,
+                format!("could not create {}: {error}", directory.display()),
+            )
+        })?;
+    }
+    let report = replay::replay(
+        env,
+        Path::new(&entrypoint),
+        trace,
+        directory.as_deref(),
+        &record_frames.unwrap_or_default(),
+    )?;
+    serde_json::to_string(&report)
+        .map_err(|error| napi::Error::new(Status::GenericFailure, error.to_string()))
+}
+
+/// Digests a fixed text-and-shape fixture to identify this machine's rasterizer.
+///
+/// Pixel-level goldens only mean anything between runs that agree on this, since
+/// installed fonts and CPU feature detection both change the bytes that come out.
+#[napi]
+pub fn render_environment_fingerprint() -> String {
+    replay::fingerprint()
 }
 
 /// Renders the post-JavaScript frame as a base64-encoded PNG.

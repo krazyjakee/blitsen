@@ -2,6 +2,7 @@
 
 pub mod events;
 pub mod frame;
+pub mod replay;
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;

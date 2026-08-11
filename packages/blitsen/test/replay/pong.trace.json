@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "application": "examples/pong",
+  "width": 960,
+  "height": 640,
+  "frames": 120,
+  "frameDurationMs": 16.666666666666668,
+  "warmupFrames": 10,
+  "events": [
+    { "frame": 2, "kind": "key", "type": "keydown", "key": " ", "code": "Space" },
+    { "frame": 6, "kind": "key", "type": "keydown", "key": "w", "code": "KeyW" },
+    { "frame": 20, "kind": "key", "type": "keydown", "key": "ArrowDown", "code": "ArrowDown" },
+    { "frame": 30, "kind": "key", "type": "keyup", "key": "w", "code": "KeyW" },
+    { "frame": 32, "kind": "key", "type": "keydown", "key": "s", "code": "KeyS" },
+    { "frame": 60, "kind": "key", "type": "keyup", "key": "s", "code": "KeyS" },
+    { "frame": 70, "kind": "key", "type": "keyup", "key": "ArrowDown", "code": "ArrowDown" },
+    { "frame": 80, "kind": "pointer", "type": "click", "x": 480, "y": 400 },
+    { "frame": 95, "kind": "key", "type": "keydown", "key": " ", "code": "Space" },
+    { "frame": 110, "kind": "key", "type": "keydown", "key": " ", "code": "Space" }
+  ]
+}
