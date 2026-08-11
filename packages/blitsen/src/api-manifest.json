@@ -1130,6 +1130,13 @@
       "pattern": "\\bwindow\\.print\\s*\\("
     },
     {
+      "api": "stop",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_NAVIGATION",
+      "pattern": "\\bwindow\\.stop\\s*\\("
+    },
+    {
       "api": "open",
       "kind": "global",
       "status": "absent",

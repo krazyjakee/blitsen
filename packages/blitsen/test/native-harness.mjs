@@ -1214,6 +1214,50 @@ try {
     "AbortController rejects its own request and no other");
   assert.deepEqual(settled.get("refused"), ["refused", "TypeError"]);
   delete globalThis.__blitsenNetwork;
+
+  // `window.stop()`. Svelte's minified store reads the bare name for its truth
+  // value alone, but what it names is a real abort of the document's load.
+  const stopped = JSON.parse(native.runBridgeHarness(
+    `<div id="stop"></div>`,
+    `{ const results = globalThis.__blitsenStop = { settled: [], ticks: [] };
+       if (typeof stop !== "function" || stop !== window.stop)
+         throw new Error("stop must resolve on the bare name a bundle reads");
+       // Nothing is in flight yet: the machinery runs and finds nothing.
+       if (stop() !== undefined) throw new Error("stop returns nothing");
+
+       setTimeout(() => results.ticks.push("timeout"), 0);
+       requestAnimationFrame(() => results.ticks.push("frame"));
+       Promise.all([
+         (() => {
+           const pending = fetch("${probeOrigin}/echo");
+           stop();
+           return pending.then(() => "resolved",
+             error => ["stopped", error.name, error instanceof DOMException]);
+         })(),
+         // Started after the stop, so it is part of a new load rather than the
+         // stopped one; the stop it makes on arrival has nothing left to abort.
+         fetch("${probeOrigin}/echo").then(async response => {
+           stop();
+           return ["after", response.status, (await response.json()).method];
+         }),
+       ]).then(settled => { results.settled = settled; results.done = true; });
+       document.getElementById("stop").setAttribute("data-stop", "ok"); }`,
+    200,
+    100,
+  ));
+  assert.equal(stopped.nodes.find(node => node.attributes.id === "stop").attributes["data-stop"], "ok");
+  for (let turn = 0; turn < 200 && !globalThis.__blitsenStop.done; turn++) {
+    globalThis.__blitsenAnimationFrameTick(0);
+    await Bun.sleep(5);
+  }
+  const aborted = new Map(globalThis.__blitsenStop.settled.map(entry => [entry[0], entry]));
+  assert.deepEqual(aborted.get("stopped"), ["stopped", "AbortError", true],
+    "stop() rejects an in-flight request exactly as that request's own signal would");
+  assert.deepEqual(aborted.get("after"), ["after", 200, "GET"],
+    "a load started after a stop completes, and a stop with nothing in flight leaves it alone");
+  assert.deepEqual(globalThis.__blitsenStop.ticks.sort(), ["frame", "timeout"],
+    "stop() aborts loading; a browser does not cancel timers or animation frames and neither does this");
+  delete globalThis.__blitsenStop;
 } finally {
   probe.close();
 }

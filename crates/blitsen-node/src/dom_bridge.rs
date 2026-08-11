@@ -1552,6 +1552,26 @@ const BOOTSTRAP: &str = r##"
     });
   };
 
+  // `window.stop()`: abort the document's in-flight loading. Every outstanding
+  // `fetch` is rejected the way its own AbortSignal would reject it, and every
+  // subresource the renderer is still waiting on is cancelled and settled — a
+  // request left pending would block painting rather than end the load.
+  //
+  // Timers and animation frames are left running, because a browser leaves them
+  // running: they are the application's own work, not the document's load. Nor
+  // is there a parser to stop; a Blitsen document is parsed whole before any
+  // script of it runs. With nothing in flight both halves still run and find
+  // nothing, which is a no-op in effect rather than a no-op implementation.
+  const stop = () => {
+    for (const [id, pending] of inflightFetches) {
+      inflightFetches.delete(id);
+      pending.detach();
+      __blitsenFetchCancel(String(id));
+      pending.reject(new DOMException("The operation was aborted", "AbortError"));
+    }
+    call("stopLoading");
+  };
+
   // Location and history. In-memory only: no navigation, no network, no
   // back-forward cache. The address is synthetic because an exported
   // application has no server and therefore no origin; it is path-rooted
@@ -1743,7 +1763,7 @@ const BOOTSTRAP: &str = r##"
     BlitsenViewElement, BlitsenViewSurface,
     getComputedStyle, matchMedia, MediaQueryList, MediaQueryListEvent,
     Event, MouseEvent, KeyboardEvent, CustomEvent, PopStateEvent, HashChangeEvent,
-    Headers, Request, Response, Blob, AbortController, AbortSignal, fetch,
+    Headers, Request, Response, Blob, AbortController, AbortSignal, fetch, stop,
     Location, History,
     requestAnimationFrame, cancelAnimationFrame,
     setTimeout, clearTimeout, setInterval, clearInterval,
@@ -2956,6 +2976,10 @@ fn dispatch(runtime: &DomRuntime, operation: &str, arguments: &[String]) -> Resu
                 .map_err(dom_error)?;
             Ok(json!({ "media": query.media, "matches": query.matches }))
         }
+        // `window.stop()`: every subresource still loading settles here, so a
+        // stopped document paints what it has rather than waiting on requests
+        // nobody is going to answer.
+        "stopLoading" => Ok(json!(dom.stop_loading())),
         "documentUrl" => Ok(Value::String(web_url::DOCUMENT_URL.into())),
         "urlParts" => web_url::components(bridge_arg(arguments, 0, "URL")?).map_err(JsError::new),
         "resolveUrl" => web_url::resolve(

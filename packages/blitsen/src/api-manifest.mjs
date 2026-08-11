@@ -57,7 +57,11 @@ const CATALOGUE = {
     "HTMLMediaElement"],
   WEB_DIALOG: [["alert", "\\balert\\s*\\("], ["confirm", "\\bconfirm\\s*\\("],
     ["prompt", "\\bprompt\\s*\\("], ["print", "\\bwindow\\.print\\s*\\("]],
-  WEB_NAVIGATION: [["open", "\\bwindow\\.open\\s*\\("], ["close", null], ["navigation", null],
+  // `stop` belongs here rather than with the network APIs: the spec defines it
+  // on Window alongside navigation, and what it aborts is the document's load
+  // rather than a request the application made.
+  WEB_NAVIGATION: [["stop", "\\bwindow\\.stop\\s*\\("],
+    ["open", "\\bwindow\\.open\\s*\\("], ["close", null], ["navigation", null],
     "document.write", "document.writeln", "document.open", "document.close", "location.assign",
     "location.replace", "location.reload", "location.ancestorOrigins"],
   WEB_COOKIE: ["document.cookie", "cookieStore", "Headers.getSetCookie"],

@@ -99,6 +99,18 @@ needs a download progress bar or a long-lived response, not before.
 | `new Request(…)`, `new Headers(…)`, `new Response(…)` | Full subset above, including `AbortSignal`. |
 | `response.text/json/arrayBuffer/blob()` | Supported; a body is readable once. |
 | `response.body`, `response.clone()`, `FormData` bodies | Absent. |
+| `window.stop()` | Aborts the load in progress; see below. |
+
+**`window.stop()` aborts loading, and only loading.** Every outstanding `fetch` rejects with an
+`AbortError` — the rejection its own `AbortSignal` would have produced — and every subresource the
+renderer is still waiting on is cancelled *and settled*, never merely abandoned: a request left
+pending would block painting for the life of the document, which is the opposite of what a caller
+asking to stop loading wants. Timers and animation frames keep running, as they do in a browser;
+they are the application's own work, not the document's load. There is no parser half either — a
+Blitsen document is parsed whole before any of its scripts run. A request made afterwards loads
+normally, because `stop()` ends the load in progress rather than the document's ability to load.
+With nothing in flight it does nothing observable, which is not the same as being a function that
+does nothing: both halves run and find nothing to abort.
 
 ## Routing
 
@@ -371,7 +383,7 @@ determinism gate instead.
 | WEB_GPU | — | `WebGLRenderingContext`, `WebGL2RenderingContext`, `GPUCanvasContext` |
 | WEB_MEDIA | — | `Audio`, `AudioContext`, `webkitAudioContext`, `HTMLMediaElement` |
 | WEB_DIALOG | — | `alert`, `confirm`, `prompt`, `print` |
-| WEB_NAVIGATION | — | `open`, `close`, `navigation`, `document.write`, `document.writeln`, `document.open`, `document.close`, `location.assign`, `location.replace`, `location.reload`, `location.ancestorOrigins` |
+| WEB_NAVIGATION | `stop` | `open`, `close`, `navigation`, `document.write`, `document.writeln`, `document.open`, `document.close`, `location.assign`, `location.replace`, `location.reload`, `location.ancestorOrigins` |
 | WEB_COOKIE | — | `document.cookie`, `cookieStore`, `Headers.getSetCookie` |
 | WEB_DEVICE | `Navigator`, `navigator`, `navigator.userAgent`, `navigator.platform`, `navigator.language` | `screen`, `Notification`, `caches` |
 | WEB_OBSERVER | `ResizeObserver` | `IntersectionObserver`, `PerformanceObserver` |

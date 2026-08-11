@@ -123,6 +123,17 @@ impl BlitzDom {
         &self.resources
     }
 
+    /// Aborts every subresource still loading, and reports how many that was.
+    ///
+    /// This is the renderer half of `window.stop()`. See [`ResourceLog::stop`]
+    /// for why an aborted request is completed rather than abandoned. There is
+    /// no parser half: a Blitsen document is parsed whole before any script
+    /// runs, so by the time anything can call `stop()` there is nothing left to
+    /// stop parsing.
+    pub fn stop_loading(&self) -> usize {
+        self.resources.stop()
+    }
+
     /// Borrows the authoritative Blitz document for painting or inspection.
     pub fn document_ref(&self) -> &HtmlDocument {
         &self.document
@@ -2095,6 +2106,42 @@ mod tests {
         assert_eq!(
             inked_bounds(&render(&mut dom, 400, 200), 400),
             Some((0, 0, 80, 40))
+        );
+    }
+
+    /// `window.stop()` at the renderer: an image the document is still waiting
+    /// on has to reach a settled state, or it blocks the frame forever and the
+    /// script that asked to stop loading is worse off than before it asked.
+    #[test]
+    fn stopping_settles_a_subresource_that_is_still_in_flight() {
+        let network = DeferredResources::default();
+        let mut dom = fixture_document(
+            r#"<img id="swatch" src="swatch.png" style="display: block; width: 80px">"#,
+            Some(Arc::new(network.clone())),
+        );
+        let snapshot = dom.flush_layout().unwrap();
+        let swatch = dom.get_element_by_id("swatch").unwrap().unwrap();
+        assert_eq!(dom.image_state(swatch, snapshot), Ok(ImageState::LOADING));
+
+        assert_eq!(dom.stop_loading(), 1);
+        let snapshot = dom.flush_layout().unwrap();
+        assert_eq!(
+            dom.image_state(swatch, snapshot),
+            Ok(ImageState::FAILED),
+            "a stopped image is complete and errored, not loading forever"
+        );
+
+        network.deliver();
+        let snapshot = dom.flush_layout().unwrap();
+        assert_eq!(
+            dom.image_state(swatch, snapshot),
+            Ok(ImageState::FAILED),
+            "bytes that were already on the wire do not undo the stop"
+        );
+        assert_eq!(
+            dom.stop_loading(),
+            0,
+            "stopping a document with nothing in flight aborts nothing"
         );
     }
 
