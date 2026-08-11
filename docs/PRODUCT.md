@@ -410,11 +410,16 @@ P4 now rests on two wall-clock measurements rather than the game's own readout, 
 headless frame cost is p50 0.809 ms against a 16.7 ms budget with zero frames over, and the
 windowed standalone export sustains 60 fps on a real display.
 
-**M3b — Compatible adoption: complete on Linux x64.** An unmodified, existing Vite + React app inside Blitsen's
-published compatibility profile is exported with nothing but `npm i -D blitsen` and
-`blitsen build dist`, and runs. This proves P10 independently of the architecture claim;
-applications outside the profile receive actionable `doctor` diagnostics. See the
-[M3b acceptance evidence](M3B.md) and [published v0 profile](COMPATIBILITY.md).
+**M3b — Compatible adoption: not complete. P10 is not met.** The export pipeline works and is
+gated, but it was declared complete on an acceptance application written in this repository, which
+tests the pipeline rather than the adoption claim.
+
+Measured against six applications nobody here wrote — three real ones and three stock `create-vite`
+templates — six fail, and the export refuses all six before a frame is reached. The refusals
+include the official Vite React starter, over decorative `filter` and `transform` declarations that
+`doctor` grades as errors. Past that gate, the blockers are unguarded absent DOM APIs
+(`localStorage`, `createElementNS`, `createComment`, `navigator.userAgent`, `link.relList`) that
+throw before first layout. See the [M3b evidence](M3B.md) and [published v0 profile](COMPATIBILITY.md).
 
 **M4 — Ships.** `npm i -D blitsen` resolves the correct runtime on all six platform targets,
 `blitsen build` produces distributable artifacts, and a non-trivial third-party app (an editor or
