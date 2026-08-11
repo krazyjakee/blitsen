@@ -1,1 +1,1 @@
-import"./chunk-BASE.js";const t=()=>import("/app/assets/lazy-BASE.js"),n=new URL("./panel.svg",import.meta.url);document.getElementById("root").textContent=String(t&&n);
+const __vite__mapDeps=["assets/route-BASE.js"],h="/app/assets/hero-BASE.png";import"./chunk-BASE.js";const t=()=>import("/app/assets/lazy-BASE.js"),n=new URL("./panel.svg",import.meta.url);document.getElementById("root").textContent=String(t&&n);String(__vite__mapDeps&&h);

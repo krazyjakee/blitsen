@@ -23,6 +23,17 @@ const SCRIPT_REFERENCES = [
   /\bimport\s*\(?\s*["']([^"']*)["']/g,
   /\bnew\s+URL\s*\(\s*["']([^"']*)["']\s*,\s*import\.meta\.url\s*\)/g,
 ];
+// A bundler resolves `import hero from "./hero.png"` into a bare string literal,
+// so no import edge survives for the walk to follow. Every quoted string is
+// therefore offered as a candidate, and only kept when it resolves to a file the
+// bundler actually emitted — which is why this cannot invent a reference to
+// something that is not there. The asymmetry justifies the guess: a false
+// positive costs bytes in the export, a false negative costs a missing asset.
+const SCRIPT_LITERALS = [
+  /"([^"\n\\]*)"/g,
+  /'([^'\n\\]*)'/g,
+  /`([^`\n\\$]*)`/g,
+];
 
 async function collectFiles(root, directory = root) {
   const files = [];
@@ -44,7 +55,7 @@ function referencePatterns(file) {
   const extension = extname(file).toLowerCase();
   if (HTML_EXTENSIONS.includes(extension)) return HTML_REFERENCES;
   if (extension === ".css") return CSS_REFERENCES;
-  if (SCRIPT_EXTENSIONS.includes(extension)) return SCRIPT_REFERENCES;
+  if (SCRIPT_EXTENSIONS.includes(extension)) return [...SCRIPT_REFERENCES, ...SCRIPT_LITERALS];
   return null;
 }
 
@@ -132,7 +143,7 @@ export async function planIngest(root, { entrypoint = "index.html", include = []
     if (!patterns) continue;
     // Script scanning is heuristic, so a string that merely looks like a
     // specifier must not fail an otherwise valid build.
-    const authoritative = patterns !== SCRIPT_REFERENCES;
+    const authoritative = !SCRIPT_EXTENSIONS.includes(extname(current).toLowerCase());
     const source = await readFile(byPath.get(current).absolute, "utf8");
     const rewrites = new Map();
     resolutions.set(current, rewrites);
@@ -142,7 +153,11 @@ export async function planIngest(root, { entrypoint = "index.html", include = []
       while ((match = pattern.exec(source))) {
         const reference = localReference(match[1]);
         if (!reference) continue;
-        const target = resolveReference(reference.pathname, current, exists);
+        // A chunk-manifest path is written relative to the output root rather
+        // than to the chunk holding it, so a literal gets both readings.
+        const target = resolveReference(reference.pathname, current, exists)
+          ?? (authoritative || reference.pathname.startsWith("/") ? null
+            : exists(posix.normalize(reference.pathname)) ? posix.normalize(reference.pathname) : null);
         if (target === null) {
           if (authoritative) unresolved.push({ file: current, url: match[1] });
           continue;

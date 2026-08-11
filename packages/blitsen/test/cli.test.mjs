@@ -231,14 +231,30 @@ describe("directory CLI", () => {
     const plan = await planIngest(viteBase);
     expect(plan.files.map(file => file.relative)).toEqual([
       "assets/chunk-BASE.js",
+      "assets/hero-BASE.png",
       "assets/index-BASE.css",
       "assets/index-BASE.js",
       "assets/lazy-BASE.js",
       "assets/panel.svg",
+      "assets/route-BASE.js",
       "assets/theme.css",
       "index.html",
     ]);
     expect(plan.unreferenced).toEqual(["assets/index-BASE.js.map", "assets/orphan.txt"]);
+  });
+
+  // A bundler resolves `import hero from "./hero.png"` into a bare literal, and
+  // builds code-split chunk paths out of an array, so neither leaves an import
+  // edge. Both were silently dropped from the export before.
+  test("follows asset literals a bundler resolved, and only those that exist", async () => {
+    const plan = await planIngest(viteBase);
+    const kept = plan.files.map(file => file.relative);
+    expect(kept).toContain("assets/hero-BASE.png");
+    expect(kept).toContain("assets/route-BASE.js");
+    // The same file carries strings that look like paths and are not files.
+    // Being bounded by the emitted output is what makes the guess safe.
+    expect(kept).not.toContain("assets/index-BASE.js.map");
+    expect(plan.unreferenced).toContain("assets/orphan.txt");
   });
 
   test("keeps unreferenced output that an --include glob asks for", async () => {
@@ -247,7 +263,7 @@ describe("directory CLI", () => {
     expect(plan.files.some(file => file.relative === "assets/index-BASE.js.map")).toBeFalse();
     expect(plan.unreferenced).toEqual(["assets/index-BASE.js.map"]);
     const everything = await planIngest(viteBase, { include: ["**"] });
-    expect(everything.files).toHaveLength(9);
+    expect(everything.files).toHaveLength(11);
     expect(everything.unreferenced).toEqual([]);
   });
 
@@ -295,7 +311,7 @@ describe("directory CLI", () => {
       const second = await buildStandalone(options, nativePath);
 
       expect(first.layout).toBe("embedded");
-      expect(first.assets).toBe(7);
+      expect(first.assets).toBe(9);
       expect(first.unreferenced).toEqual(["assets/index-BASE.js.map", "assets/orphan.txt"]);
       expect(first.manifest.every(asset => /^[0-9a-f]{64}$/.test(asset.hash))).toBeTrue();
       // The hash covers the staged copy, so it reflects the rewritten references.
@@ -335,7 +351,7 @@ describe("directory CLI", () => {
       expect(result.outfile).toBe(outfile);
       // Steps ③–⑤ announce themselves as they finish, with what they produced.
       expect(events.map(event => event.step)).toEqual(["collect", "link", "package"]);
-      expect(events[0].detail).toBe("7 embedded assets");
+      expect(events[0].detail).toBe("9 embedded assets");
       expect(events[0].notes[0]).toBe("dropped 2 files unreachable from index.html "
         + "(--include <glob> keeps them): assets/index-BASE.js.map, assets/orphan.txt");
       expect(events[1].detail).toBe(outfile);
