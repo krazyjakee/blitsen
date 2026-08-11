@@ -488,7 +488,7 @@ that, and duplicating it would make Blitsen a competitor to Vite instead of a ta
 | ② **Scan** | Static analysis of the bundle for web API usage; anything the target runtime lacks is reported (`blitsen doctor`, and as a build error or warning). |
 | ③ **Collect** | Hash and collect the reachable assets. Embedded in the binary or laid out beside it, per config. |
 | ④ **Link** | Runtime + application bundle + assets → one executable. |
-| ⑤ **Package** | Icon, Windows manifest/version info, macOS `.app` bundle and `Info.plist`, code signing hooks. |
+| ⑤ **Package** | Platform artifacts around the linked executable: icon, Linux `.desktop` entry, Windows application manifest, macOS `.app` bundle, and the signing hook. |
 
 - **Phase 1** step ④ is `bun build --compile` with the Rust engine as an embedded `.node` addon.
   Bun already compiles JS/TS — and HTML entrypoints — into standalone executables, so this path
@@ -531,6 +531,34 @@ Export is reproducible: the same input directory, output path, working directory
 platform produce a byte-identical executable. Staging therefore lives at a stable path derived
 from the output path rather than in a randomly named temporary directory — `bun build --compile`
 records the compiled entrypoint's path inside the executable.
+
+### Package and signing hooks
+
+Step ⑤ runs over the linked artifact when a packaging option (`--icon`, `--bundle-id`,
+`--app-version`) is given; without one the export is the bare executable it has always been.
+Packaging targets the host platform — there is no `--target` cross-export yet.
+
+| Host | Produced beside or around the executable |
+| --- | --- |
+| Linux | `<name>.desktop` with absolute `Exec` and `Icon`, plus the PNG or SVG icon |
+| Windows | `<name>.exe.manifest` (`asInvoker`, per-monitor-v2 DPI, UTF-8 code page, `supportedOS` for 8.1 and 10/11) and `<name>.ico` |
+| macOS | `<name>.app/` containing `Contents/MacOS/<name>`, `Info.plist`, `PkgInfo` and `Resources/<name>.icns`; side-loaded assets move into `Contents/MacOS/` with the executable |
+
+One square PNG is converted into the container each platform wants: an `.ico` carrying a PNG
+directory entry (Vista and later, so ≤ 256 px) and an `.icns` using the PNG-bearing `ic07`–`ic10`
+types (128, 256, 512 or 1024 px). A prebuilt `.icns`, `.ico` or `.svg` is copied through, and any
+other combination fails the build naming the file and the sizes it would accept.
+
+**Windows executable resources are not embedded.** Writing an icon or a `VERSIONINFO` resource
+into the PE image needs a resource compiler Blitsen does not carry, so nothing is patched into the
+executable: the manifest ships as the sidecar Windows loads at startup, the `.ico` ships for
+shortcuts and installers, and the build prints that this is what happened rather than implying an
+embedded icon.
+
+Signing stays outside Blitsen. `--sign <command>` runs the command with the artifact as its single
+positional argument — the `.app` bundle on macOS, the executable elsewhere — after packaging and
+before the build reports success; a non-zero exit fails the build. `codesign`, `signtool` and
+notarization workflows are the user's, and Blitsen never touches certificates or keychains.
 
 ### Optional build wrapping
 

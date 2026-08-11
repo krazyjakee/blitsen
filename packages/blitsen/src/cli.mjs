@@ -18,6 +18,10 @@ Options:
   --outfile <path>   Build output path (default: application directory name)
   --include <glob>   Keep an unreferenced output file (repeatable)
   --assets <layout>  embedded (default) or side-loaded next to the executable
+  --icon <path>      Application icon: PNG, or a platform-native .ico/.icns/.svg
+  --bundle-id <id>   macOS CFBundleIdentifier (default: com.blitsen.<title>)
+  --app-version <v>  Application version recorded in the platform metadata
+  --sign <command>   Signing hook, run with the packaged artifact as its argument
   --force            Replace an existing build output
   --json             Emit the doctor report as JSON
   -h, --help         Show help
@@ -29,8 +33,9 @@ export async function packageVersion() {
   return JSON.parse(await readFile(manifest, "utf8")).version;
 }
 
-const VALUE_OPTIONS = ["--width", "--height", "--title", "--outfile", "--include", "--assets"];
-const BUILD_OPTIONS = ["--outfile", "--include", "--assets"];
+const PACKAGE_OPTIONS = { "--icon": "icon", "--bundle-id": "bundleId", "--app-version": "appVersion", "--sign": "sign" };
+const BUILD_OPTIONS = ["--outfile", "--include", "--assets", ...Object.keys(PACKAGE_OPTIONS)];
+const VALUE_OPTIONS = ["--width", "--height", "--title", ...BUILD_OPTIONS];
 
 export function parseArgs(args) {
   if (args.length === 0 || args.includes("--help") || args.includes("-h")) {
@@ -50,7 +55,8 @@ export function parseArgs(args) {
       if (BUILD_OPTIONS.includes(argument) && command !== "build") {
         throw new Error(`${argument} is only valid with build`);
       }
-      if (argument === "--title") options.title = value;
+      if (PACKAGE_OPTIONS[argument]) options[PACKAGE_OPTIONS[argument]] = value;
+      else if (argument === "--title") options.title = value;
       else if (argument === "--outfile") options.outfile = value;
       else if (argument === "--include") options.include = [...options.include ?? [], value];
       else if (argument === "--assets") {
@@ -194,6 +200,11 @@ export async function main(args, output = console, runtime = null) {
       }
       output.log(`Built ${result.outfile} (${result.assets} assets, ${result.bytes} bytes)`);
       if (result.assetDirectory) output.log(`Side-loaded assets: ${result.assetDirectory}`);
+      if (result.packaging) {
+        output.log(`Packaged for ${result.packaging.platform}: ${result.packaging.artifacts.join(", ")}`);
+        for (const note of result.packaging.notes) output.log(note);
+      }
+      if (result.signed) output.log(`Signed ${result.signed.artifact} with: ${result.signed.command}`);
       output.log("Phase 1 exports are architecture proofs and are not yet cleared for redistribution.");
       return 0;
     }

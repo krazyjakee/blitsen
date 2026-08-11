@@ -40,6 +40,22 @@ npx blitsen build dist --include 'locales/**' --assets side-loaded
 `--assets embedded` is the default and produces one executable containing the Bun host, native
 addon, and application assets. `--assets side-loaded` writes them to `<outfile>.assets/` beside
 the executable instead. A profile error from `doctor` fails the build.
+
+Give the export a platform identity, and hand the finished artifact to your own signing setup:
+
+```sh
+npx blitsen build dist --outfile MyApp --icon icon.png --app-version 1.2.3 \
+  --sign 'codesign --sign "Developer ID Application: …"'
+```
+
+One square PNG becomes the icon container the host wants — a `.desktop` entry and the PNG on
+Linux, a `.ico` on Windows, an `.icns` inside a real `MyApp.app` bundle with an `Info.plist` on
+macOS (`--bundle-id` sets `CFBundleIdentifier`). A prebuilt `.icns`, `.ico` or `.svg` is used as
+given. On Windows the icon and the application manifest ship *beside* the executable: Blitsen does
+not embed icon or version-info resources into the PE image, and the build says so rather than
+pretending otherwise. `--sign` runs your command with the artifact path as its only argument — the
+`.app` bundle on macOS, the executable elsewhere — and a non-zero exit fails the build. Blitsen
+never handles certificates.
 Phase 1 exports are not yet cleared for redistribution: the automated notice and JSC relinking
 gate is still outstanding. Follow development and read the feasibility results at
 [github.com/krazyjakee/blitsen](https://github.com/krazyjakee/blitsen).

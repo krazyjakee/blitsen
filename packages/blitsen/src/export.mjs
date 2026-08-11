@@ -1,5 +1,6 @@
 import { access, copyFile, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, join, posix, relative, resolve, sep } from "node:path";
+import { packageBuild, signArtifact } from "./packaging.mjs";
 
 const HTML_EXTENSIONS = [".html", ".htm"];
 const SCRIPT_EXTENSIONS = [".js", ".mjs", ".cjs"];
@@ -260,7 +261,11 @@ export function defaultOutfile(root) {
 }
 
 export async function buildStandalone(
-  { root, width, height, title, outfile, force = false, include = [], assets = "embedded" },
+  {
+    root, width, height, title, outfile, force = false, include = [], assets = "embedded",
+    icon = null, bundleId = null, appVersion = null, sign = null,
+    platform = process.platform,
+  },
   nativePath,
 ) {
   if (!nativePath) throw new Error("native addon is unavailable; reinstall blitsen for this platform");
@@ -326,14 +331,37 @@ export async function buildStandalone(
         await copyFile(join(staging, "app", ...entry.path.split("/")), target);
       }
     }
+    // bun build --compile appends .exe on Windows when the requested path has no
+    // extension, so the linked artifact is not always the requested path.
+    const linked = await stat(destination).catch(() => null) ? destination : `${destination}.exe`;
+    const packaged = icon || bundleId || appVersion
+      ? await packageBuild({
+        platform,
+        executable: linked,
+        title,
+        icon,
+        identifier: bundleId,
+        version: appVersion,
+        assetDirectory: assets === "side-loaded" ? sideLoaded : null,
+        force,
+      })
+      : null;
+    const executable = packaged?.executable ?? linked;
+    // The signing hook runs last, over the bundle on macOS and the executable
+    // elsewhere, so it sees exactly what ships.
+    const signed = sign
+      ? await signArtifact({ platform, command: sign, artifact: packaged?.bundle ?? executable })
+      : null;
     return {
-      outfile: destination,
+      outfile: executable,
       layout: assets,
       assets: manifest.length,
       manifest,
       unreferenced: plan.unreferenced,
-      assetDirectory: assets === "side-loaded" ? sideLoaded : null,
-      bytes: (await stat(destination)).size,
+      assetDirectory: assets === "side-loaded" ? packaged?.assetDirectory ?? sideLoaded : null,
+      bytes: (await stat(executable)).size,
+      packaging: packaged,
+      signed,
     };
   } finally {
     await rm(staging, { recursive: true, force: true });

@@ -1,12 +1,15 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createReloadCoordinator, main, packageVersion, parseArgs, resolveApplication } from "../src/cli.mjs";
 import { doctorApplication } from "../src/doctor.mjs";
 import { buildStandalone, planIngest, rewriteRootRelativeReferences } from "../src/export.mjs";
+import { packageBuild, signArgv, signArtifact } from "../src/packaging.mjs";
 
 const viteBase = join(import.meta.dir, "fixtures/vite-base");
+const icon = join(import.meta.dir, "fixtures/icons/app-256.png");
+const signHook = `sh ${join(import.meta.dir, "fixtures/sign/record-artifact.sh")}`;
 
 // Bun.build --compile refuses to start without the addon file, but never loads
 // it, so a placeholder is enough to exercise the whole export pipeline.
@@ -16,6 +19,19 @@ async function withStubbedExport(run) {
   await writeFile(nativePath, "// placeholder addon\n");
   try {
     return await run({ directory, nativePath, outfile: join(directory, "App") });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+}
+
+// Step ⑤ is file generation over an already-linked artifact, so the macOS and
+// Windows layouts are exercised on any host by handing it a stand-in executable.
+async function withArtifact(run, name = "Pong") {
+  const directory = await mkdtemp(join(tmpdir(), "blitsen-package-test-"));
+  const executable = join(directory, name);
+  await writeFile(executable, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  try {
+    return await run({ directory, executable });
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -57,6 +73,11 @@ describe("directory CLI", () => {
     expect(() => parseArgs(["doctor", "dist", "--outfile", "x"])).toThrow("not valid with doctor");
     expect(() => parseArgs(["build", "dist", "--assets", "inline"])).toThrow("embedded or side-loaded");
     expect(() => parseArgs(["app", "--include", "*.txt"])).toThrow("only valid with build");
+    expect(parseArgs(["build", "dist", "--icon", "app.png", "--bundle-id", "com.example.pong",
+      "--app-version", "1.2.3", "--sign", "codesign -s ID"]))
+      .toEqual({ command: "build", directory: "dist", width: 800, height: 600, title: "Blitsen",
+        icon: "app.png", bundleId: "com.example.pong", appVersion: "1.2.3", sign: "codesign -s ID" });
+    expect(() => parseArgs(["app", "--icon", "app.png"])).toThrow("only valid with build");
   });
 
   test("resolves an index", async () => {
@@ -195,6 +216,151 @@ describe("directory CLI", () => {
     });
   });
 
+  test("packages a Linux desktop entry, icon and signature into the build", async () => {
+    await withStubbedExport(async ({ directory, nativePath, outfile }) => {
+      const result = await buildStandalone({
+        root: viteBase, width: 800, height: 600, title: "Pong Deluxe", outfile,
+        icon, sign: signHook, platform: "linux",
+      }, nativePath);
+      expect(result.outfile).toBe(outfile);
+      expect(result.packaging.artifacts)
+        .toEqual([join(directory, "App.desktop"), join(directory, "App.png")]);
+      const entry = await readFile(join(directory, "App.desktop"), "utf8");
+      expect(entry).toContain("[Desktop Entry]\nType=Application\n");
+      expect(entry).toContain("Name=Pong Deluxe\n");
+      expect(entry).toContain(`Exec=${outfile}\n`);
+      expect(entry).toContain(`Icon=${join(directory, "App.png")}\n`);
+      // Linux takes the PNG as it is; only Windows and macOS need a container.
+      expect(Buffer.compare(await readFile(join(directory, "App.png")), await readFile(icon))).toBe(0);
+      expect(result.signed).toEqual({ command: signHook, artifact: outfile });
+      expect(await readFile(`${outfile}.signed`, "utf8")).toBe(`${outfile}\n`);
+    });
+  });
+
+  test("quotes a desktop Exec holding reserved characters and omits an absent icon", async () => {
+    await withArtifact(async ({ directory, executable }) => {
+      await packageBuild({ platform: "linux", executable, title: "Pong & Co" });
+      const entry = await readFile(join(directory, "Pong Deluxe.desktop"), "utf8");
+      expect(entry).toContain(`Exec="${executable}"\n`);
+      expect(entry).toContain("Name=Pong & Co\n");
+      expect(entry).not.toContain("Icon=");
+    }, "Pong Deluxe");
+  });
+
+  test("produces a macOS .app bundle with an Info.plist, PkgInfo and .icns", async () => {
+    await withArtifact(async ({ directory, executable }) => {
+      const sideLoaded = join(directory, "Pong.assets");
+      await mkdir(sideLoaded);
+      await writeFile(join(sideLoaded, "index.html"), "<!doctype html>");
+      const result = await packageBuild({
+        platform: "darwin", executable, title: "Pong Deluxe", icon,
+        version: "1.2.3", assetDirectory: sideLoaded,
+      });
+      const bundle = join(directory, "Pong.app");
+      expect(result).toMatchObject({
+        bundle,
+        executable: join(bundle, "Contents/MacOS/Pong"),
+        assetDirectory: join(bundle, "Contents/MacOS/Pong.assets"),
+        artifacts: [bundle],
+        notes: [],
+      });
+      expect((await readdir(join(bundle, "Contents"))).sort())
+        .toEqual(["Info.plist", "MacOS", "PkgInfo", "Resources"]);
+      // Side-loaded assets resolve from the executable's directory, so they move
+      // into the bundle with it.
+      expect(await readdir(result.assetDirectory)).toEqual(["index.html"]);
+      expect((await stat(result.executable)).mode & 0o111).toBeGreaterThan(0);
+      expect(await readFile(join(bundle, "Contents/PkgInfo"), "utf8")).toBe("APPL????");
+
+      const plist = await readFile(join(bundle, "Contents/Info.plist"), "utf8");
+      expect(plist.startsWith('<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC')).toBeTrue();
+      expect(plist).toContain("<key>CFBundleExecutable</key>\n  <string>Pong</string>");
+      expect(plist).toContain("<key>CFBundleIdentifier</key>\n  <string>com.blitsen.pong-deluxe</string>");
+      expect(plist).toContain("<key>CFBundleIconFile</key>\n  <string>Pong.icns</string>");
+      expect(plist).toContain("<key>CFBundlePackageType</key>\n  <string>APPL</string>");
+      expect(plist).toContain("<key>CFBundleShortVersionString</key>\n  <string>1.2.3</string>");
+      expect(plist).toContain("<key>NSHighResolutionCapable</key>\n  <true/>");
+      expect(plist.trimEnd().endsWith("</plist>")).toBeTrue();
+
+      const png = await readFile(icon);
+      const icns = await readFile(join(bundle, "Contents/Resources/Pong.icns"));
+      expect(icns.subarray(0, 4).toString("ascii")).toBe("icns");
+      expect(icns.readUInt32BE(4)).toBe(icns.length);
+      expect(icns.subarray(8, 12).toString("ascii")).toBe("ic08");
+      expect(icns.readUInt32BE(12)).toBe(png.length + 8);
+      expect(Buffer.compare(icns.subarray(16), png)).toBe(0);
+    });
+  });
+
+  test("writes a Windows application manifest and .ico beside the executable", async () => {
+    await withArtifact(async ({ directory, executable }) => {
+      const result = await packageBuild({
+        platform: "win32", executable, title: "Pong Deluxe", icon, version: "1.2.3",
+      });
+      expect(result.artifacts)
+        .toEqual([`${executable}.manifest`, join(directory, "Pong.ico")]);
+      expect(result.executable).toBe(executable);
+      expect(result.notes[0]).toContain("not embedded in the executable");
+
+      const manifest = await readFile(`${executable}.manifest`, "utf8");
+      expect(manifest).toContain('<assemblyIdentity type="win32" name="pong-deluxe" version="1.2.3.0"/>');
+      expect(manifest).toContain("<description>Pong Deluxe</description>");
+      expect(manifest).toContain('<requestedExecutionLevel level="asInvoker" uiAccess="false"/>');
+      expect(manifest).toContain(">permonitorv2,permonitor</dpiAwareness>");
+      expect(manifest).toContain(">UTF-8</activeCodePage>");
+      expect(manifest.trimEnd().endsWith("</assembly>")).toBeTrue();
+
+      const png = await readFile(icon);
+      const ico = await readFile(join(directory, "Pong.ico"));
+      expect([ico.readUInt16LE(0), ico.readUInt16LE(2), ico.readUInt16LE(4)]).toEqual([0, 1, 1]);
+      // 256 pixels is stored as 0 in the single-byte width and height fields.
+      expect([ico[6], ico[7], ico.readUInt16LE(12)]).toEqual([0, 0, 32]);
+      expect(ico.readUInt32LE(14)).toBe(png.length);
+      expect(ico.readUInt32LE(18)).toBe(22);
+      expect(Buffer.compare(ico.subarray(22), png)).toBe(0);
+    });
+  });
+
+  test("refuses icons and hosts it cannot package, and existing artifacts", async () => {
+    await withArtifact(async ({ directory, executable }) => {
+      await expect(packageBuild({ platform: "sunos", executable, title: "Pong" }))
+        .rejects.toThrow("packaging is not supported on sunos");
+      await expect(packageBuild({ platform: "linux", executable, title: "Pong", icon: "app.icns" }))
+        .rejects.toThrow("linux icons must be .png or .svg");
+      await expect(packageBuild({
+        platform: "darwin", executable, title: "Pong",
+        icon: join(import.meta.dir, "fixtures/icons/app-16.png"),
+      })).rejects.toThrow("macOS icons need a PNG of 128, 256, 512, 1024 pixels");
+      await expect(packageBuild({ platform: "linux", executable, title: "Pong", icon: "missing.png" }))
+        .rejects.toThrow("icon file does not exist: missing.png");
+      // A refused icon is refused before anything is written.
+      expect(await readdir(directory)).toEqual(["Pong"]);
+
+      await packageBuild({ platform: "linux", executable, title: "Pong", icon });
+      await expect(packageBuild({ platform: "linux", executable, title: "Pong", icon }))
+        .rejects.toThrow(`output already exists: ${join(directory, "Pong.desktop")}`);
+      await packageBuild({ platform: "linux", executable, title: "Pong", icon, force: true });
+    });
+  });
+
+  test("hands the signing hook the artifact and fails the build when it rejects it", async () => {
+    expect(signArgv("darwin", "codesign -s ID", "/out/My App.app"))
+      .toEqual(["sh", "-c", 'codesign -s ID "$@"', "sh", "/out/My App.app"]);
+    expect(signArgv("win32", "signtool sign", "C:\\out\\App.exe"))
+      .toEqual(["cmd", "/c", 'signtool sign "C:\\out\\App.exe"']);
+    await withArtifact(async ({ executable }) => {
+      // The hook is a command, not a shell fragment we interpolate into: the
+      // artifact arrives as one positional argument however it is spelled.
+      const bundle = `${executable} Deluxe.app`;
+      await writeFile(bundle, "");
+      expect(await signArtifact({ platform: "linux", command: signHook, artifact: bundle }))
+        .toEqual({ command: signHook, artifact: bundle });
+      expect(await readFile(`${bundle}.signed`, "utf8")).toBe(`${bundle}\n`);
+      await expect(signArtifact({ platform: "linux", command: "false", artifact: executable }))
+        .rejects.toThrow("signing command failed with exit code 1: false");
+    });
+  });
+
   test("opens a resolved directory through the native runtime", async () => {
     const fixture = join(import.meta.dir, "../../../spikes/s7/fixture");
     let opened;
@@ -216,15 +382,24 @@ describe("directory CLI", () => {
     const runtime = {
       build: async options => {
         built = options;
-        return { outfile: "/tmp/pong", assets: 3, bytes: 123 };
+        return {
+          outfile: "/tmp/pong", assets: 3, bytes: 123,
+          packaging: { platform: "linux", artifacts: ["/tmp/pong.desktop"], notes: ["note"] },
+          signed: { command: "codesign", artifact: "/tmp/pong" },
+        };
       },
     };
     const { lines, output } = capture();
-    expect(await main(["build", fixture, "--outfile", "/tmp/pong"], output, runtime)).toBe(0);
+    expect(await main(["build", fixture, "--outfile", "/tmp/pong", "--icon", "app.png",
+      "--sign", "codesign"], output, runtime)).toBe(0);
     expect(built.command).toBe("build");
     expect(built.entrypoint.endsWith("examples/pong/index.html")).toBeTrue();
+    expect(built.icon).toBe("app.png");
     expect(lines[0][1]).toContain("Built /tmp/pong (3 assets, 123 bytes)");
-    expect(lines[1][1]).toContain("not yet cleared for redistribution");
+    expect(lines[1][1]).toBe("Packaged for linux: /tmp/pong.desktop");
+    expect(lines[2][1]).toBe("note");
+    expect(lines[3][1]).toBe("Signed /tmp/pong with: codesign");
+    expect(lines.at(-1)[1]).toContain("not yet cleared for redistribution");
   });
 
   test("yields timer macrotasks and microtasks before the next native pump", async () => {
