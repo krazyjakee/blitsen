@@ -170,6 +170,13 @@ const BOOTSTRAP: &str = r##"
     }
   }
 
+  class SubmitEvent extends Event {
+    constructor(type, options = {}) {
+      super(type, options);
+      Object.defineProperty(this, "submitter", { value: options.submitter ?? null, enumerable: true });
+    }
+  }
+
   const eventInternals = Object.freeze({
     state: stateFor,
     begin(event, target, currentTarget, eventPhase, passive = false) {
@@ -307,7 +314,7 @@ const BOOTSTRAP: &str = r##"
     const target = wrap(String(rawHandle));
     const event = new MouseEvent(String(type), init);
     const allowed = target.dispatchEvent(event);
-    if (type === "click" && allowed) focusNearest(target);
+    if (type === "click" && allowed) { focusNearest(target); activateControl(target); }
     if (type === "wheel" && allowed)
       __blitsenScrollDefault(String(target[handle]), String(-event.deltaX), String(-event.deltaY));
     return allowed;
@@ -1167,13 +1174,229 @@ const BOOTSTRAP: &str = r##"
     disconnect() { this._targets.clear(); resizeObservers.delete(this); }
   }
 
+  // Form controls. The attribute is the control's *default* and the property is
+  // its current state: HTML calls the divergence the dirty value flag, and
+  // getting it backwards would look like it worked. `value` and `checked` read
+  // and write the state the renderer paints from — there is no second store
+  // here that could disagree with the pixels — while `defaultValue` and
+  // `defaultChecked` are the attribute reflections.
+  const INPUT_TYPES = ["button", "checkbox", "color", "date", "datetime-local", "email", "file",
+    "hidden", "image", "month", "number", "password", "radio", "range", "reset", "search",
+    "submit", "tel", "text", "time", "url", "week"];
+  // The types whose value is control state rather than the attribute. The rest
+  // are HTML's default mode: `value` is the attribute and nothing else.
+  const VALUE_TYPES = ["color", "date", "datetime-local", "email", "month", "number", "password",
+    "range", "search", "tel", "text", "time", "url", "week"];
+  const CHECKABLE_TYPES = ["checkbox", "radio"];
+  const SUBMIT_TYPES = ["submit", "image"];
+  // What `form.elements` lists, minus the form-associated custom elements this
+  // runtime has no custom elements to have.
+  const FORM_CONTROLS = "button, fieldset, input, object, output, select, textarea";
+  const reflected = (element, name) => element.getAttribute(name) ?? "";
+  const controlValue = element => call("formValue", element[handle]);
+  const setControlValue = (element, value) => call("setFormValue", element[handle], value);
+  const controlChecked = element => call("formChecked", element[handle]);
+  const setControlChecked = (element, checked) => call("setFormChecked", element[handle], checked);
+  // The form owner: an explicit `form` attribute naming one, else the ancestor.
+  const formOwner = element => {
+    const named = element.getAttribute("form");
+    if (named === null) return element.closest("form");
+    const owner = document.getElementById(named);
+    return owner !== null && elementTag(owner) === "form" ? owner : null;
+  };
+  const listedControls = form =>
+    [...document.querySelectorAll(FORM_CONTROLS)].filter(control => formOwner(control) === form);
+  const options = select => [...select.querySelectorAll("option")];
+  const isSubmitButton = element => {
+    const type = (element.getAttribute("type") ?? "").toLowerCase();
+    if (elementTag(element) === "button") return type === "" || type === "submit";
+    return elementTag(element) === "input" && SUBMIT_TYPES.includes(type);
+  };
+  // A radio group has one member checked at a time, which is what makes it a
+  // group: the siblings are written here rather than left disagreeing with what
+  // is painted.
+  const setChecked = (input, checked) => {
+    setControlChecked(input, checked);
+    if (!checked || input.type !== "radio") return;
+    const name = input.getAttribute("name");
+    if (!name) return;
+    const owner = formOwner(input);
+    for (const other of document.querySelectorAll('input[type="radio"]'))
+      if (other !== input && other.getAttribute("name") === name && formOwner(other) === owner)
+        setControlChecked(other, false);
+  };
+  const setSelected = (option, selected) => {
+    setControlChecked(option, selected);
+    const select = option.closest("select");
+    if (!selected || select === null || select.multiple) return;
+    for (const other of options(select)) if (other !== option) setControlChecked(other, false);
+  };
+  // There is nowhere to navigate to, so submission is the event and nothing
+  // else — which is the half a single-page application actually uses, and the
+  // half it can cancel. See COMPATIBILITY.md for why `submit()` is absent.
+  const submitForm = (form, submitter) =>
+    form.dispatchEvent(new SubmitEvent("submit", { bubbles: true, cancelable: true, submitter }));
+  // The activation behaviour a control has of its own, run after the click and
+  // only when the click was not cancelled — which is what makes preventDefault
+  // on a checkbox or a submit button mean anything.
+  const activateControl = target => {
+    for (let element = target; element instanceof Element; element = element.parentNode) {
+      if (element.hasAttribute("disabled")) return;
+      if (elementTag(element) === "input" && CHECKABLE_TYPES.includes(element.type)) {
+        if (element.type === "radio" && element.checked) return;
+        setChecked(element, element.type === "radio" || !element.checked);
+        element.dispatchEvent(new Event("input", { bubbles: true }));
+        element.dispatchEvent(new Event("change", { bubbles: true }));
+        return;
+      }
+      if (isSubmitButton(element)) {
+        const form = formOwner(element);
+        if (form !== null) submitForm(form, element);
+        return;
+      }
+    }
+  };
+
+  class HTMLFormControlElement extends Element {
+    get name() { return reflected(this, "name"); }
+    set name(value) { this.setAttribute("name", value); }
+    get disabled() { return this.hasAttribute("disabled"); }
+    set disabled(value) { this.toggleAttribute("disabled", Boolean(value)); }
+    get form() { return formOwner(this); }
+  }
+
+  class HTMLInputElement extends HTMLFormControlElement {
+    get type() {
+      const type = (this.getAttribute("type") ?? "").toLowerCase();
+      return INPUT_TYPES.includes(type) ? type : "text";
+    }
+    set type(value) { this.setAttribute("type", value); }
+    get value() {
+      if (VALUE_TYPES.includes(this.type)) return controlValue(this);
+      // A checkbox submits "on" when it carries no value of its own.
+      return this.getAttribute("value") ?? (CHECKABLE_TYPES.includes(this.type) ? "on" : "");
+    }
+    set value(value) {
+      value = value === null ? "" : String(value);
+      if (VALUE_TYPES.includes(this.type)) setControlValue(this, value);
+      else this.setAttribute("value", value);
+    }
+    get defaultValue() { return reflected(this, "value"); }
+    set defaultValue(value) { this.setAttribute("value", value); }
+    get checked() { return controlChecked(this); }
+    set checked(value) { setChecked(this, Boolean(value)); }
+    get defaultChecked() { return this.hasAttribute("checked"); }
+    set defaultChecked(value) { this.toggleAttribute("checked", Boolean(value)); }
+  }
+
+  class HTMLTextAreaElement extends HTMLFormControlElement {
+    get type() { return "textarea"; }
+    get value() { return controlValue(this); }
+    set value(value) { setControlValue(this, value === null ? "" : String(value)); }
+    // A textarea's child text is its default value, where an input has an
+    // attribute; the renderer is given it too, so an untouched textarea paints
+    // what it reads.
+    get defaultValue() { return this.textContent; }
+    set defaultValue(value) { this.textContent = value; }
+  }
+
+  class HTMLButtonElement extends HTMLFormControlElement {
+    get type() {
+      const type = (this.getAttribute("type") ?? "").toLowerCase();
+      return type === "reset" || type === "button" ? type : "submit";
+    }
+    set type(value) { this.setAttribute("type", value); }
+    get value() { return reflected(this, "value"); }
+    set value(value) { this.setAttribute("value", value); }
+  }
+
+  class HTMLOptionElement extends Element {
+    // Falling back to the text is the whole of what an option without a value
+    // attribute submits.
+    get value() { return this.getAttribute("value") ?? this.text; }
+    set value(value) { this.setAttribute("value", value); }
+    get text() { return this.textContent.replace(/\s+/g, " ").trim(); }
+    set text(value) { this.textContent = value; }
+    get label() { return this.getAttribute("label") ?? this.text; }
+    set label(value) { this.setAttribute("label", value); }
+    get selected() { return controlChecked(this); }
+    set selected(value) { setSelected(this, Boolean(value)); }
+    get defaultSelected() { return this.hasAttribute("selected"); }
+    set defaultSelected(value) { this.toggleAttribute("selected", Boolean(value)); }
+    get disabled() { return this.hasAttribute("disabled"); }
+    set disabled(value) { this.toggleAttribute("disabled", Boolean(value)); }
+    get index() {
+      const select = this.closest("select");
+      return select === null ? 0 : options(select).indexOf(this);
+    }
+    get form() {
+      const select = this.closest("select");
+      return select === null ? null : formOwner(select);
+    }
+  }
+
+  class HTMLSelectElement extends HTMLFormControlElement {
+    get type() { return this.multiple ? "select-multiple" : "select-one"; }
+    get multiple() { return this.hasAttribute("multiple"); }
+    set multiple(value) { this.toggleAttribute("multiple", Boolean(value)); }
+    get size() { return Number(this.getAttribute("size")) || 0; }
+    // Static, as every collection this runtime hands out is: a re-read sees the
+    // options added since, the collection handed out before it does not.
+    get options() { return new NodeList(options(this)); }
+    get length() { return options(this).length; }
+    get selectedOptions() { return new NodeList(options(this).filter(option => option.selected)); }
+    // A drop-down always shows something, so one with nothing selected reports
+    // its first enabled option rather than -1. That is the selectedness HTML
+    // resets a drop-down to; what it does not do is stay at -1 after an
+    // assignment that matched nothing. See COMPATIBILITY.md.
+    get selectedIndex() {
+      const list = options(this);
+      const selected = list.findIndex(option => option.selected);
+      if (selected >= 0 || this.multiple || this.size > 1) return selected;
+      return list.findIndex(option => !option.disabled);
+    }
+    set selectedIndex(index) {
+      index = Number(index);
+      options(this).forEach((option, position) => setControlChecked(option, position === index));
+    }
+    get value() {
+      const index = this.selectedIndex;
+      return index < 0 ? "" : options(this)[index].value;
+    }
+    set value(value) {
+      value = String(value);
+      const list = options(this);
+      const index = list.findIndex(option => option.value === value);
+      list.forEach((option, position) => setControlChecked(option, position === index));
+    }
+  }
+
+  class HTMLFormElement extends Element {
+    get name() { return reflected(this, "name"); }
+    set name(value) { this.setAttribute("name", value); }
+    // Static, like every other collection here.
+    get elements() { return new NodeList(listedControls(this)); }
+    get length() { return listedControls(this).length; }
+    requestSubmit(submitter = null) {
+      if (submitter !== null) {
+        if (!(submitter instanceof Element) || !isSubmitButton(submitter))
+          throw new TypeError("the submitter must be a submit button");
+        if (formOwner(submitter) !== this)
+          throw new DOMException("the submitter does not belong to this form", "NotFoundError");
+      }
+      submitForm(this, submitter);
+    }
+  }
+
   const requireNode = value => {
     if (!(value instanceof Node) || !(handle in value)) throw new TypeError("argument is not a Node");
     return value[handle];
   };
   const wrapperCache = new Map();
-  const TAG_INTERFACES = { "blitsen-view": BlitsenViewElement, img: HTMLImageElement,
-    link: HTMLLinkElement, template: HTMLTemplateElement };
+  const TAG_INTERFACES = { "blitsen-view": BlitsenViewElement, button: HTMLButtonElement,
+    form: HTMLFormElement, img: HTMLImageElement, input: HTMLInputElement, link: HTMLLinkElement,
+    option: HTMLOptionElement, select: HTMLSelectElement, template: HTMLTemplateElement,
+    textarea: HTMLTextAreaElement };
   const wrap = rawHandle => {
     if (rawHandle == null) return null;
     rawHandle = String(rawHandle);
@@ -1760,9 +1983,11 @@ const BOOTSTRAP: &str = r##"
     CSSStyleDeclaration, MutationObserver, ResizeObserver, HTMLElement, HTMLIFrameElement,
     SVGElement, Text, Comment, Image,
     HTMLImageElement, HTMLLinkElement, HTMLTemplateElement, Storage, Navigator, document,
+    HTMLInputElement, HTMLTextAreaElement, HTMLSelectElement, HTMLOptionElement,
+    HTMLButtonElement, HTMLFormElement,
     BlitsenViewElement, BlitsenViewSurface,
     getComputedStyle, matchMedia, MediaQueryList, MediaQueryListEvent,
-    Event, MouseEvent, KeyboardEvent, CustomEvent, PopStateEvent, HashChangeEvent,
+    Event, MouseEvent, KeyboardEvent, CustomEvent, SubmitEvent, PopStateEvent, HashChangeEvent,
     Headers, Request, Response, Blob, AbortController, AbortSignal, fetch, stop,
     Location, History,
     requestAnimationFrame, cancelAnimationFrame,
@@ -2898,6 +3123,29 @@ fn dispatch(runtime: &DomRuntime, operation: &str, arguments: &[String]) -> Resu
             .map_err(dom_error)?
             .is_some(),
         )),
+        // Form-control state, which is not the matching content attribute: see
+        // `DomBackend::form_value`. Read and written through the renderer's own
+        // control state so what JavaScript sees is what is painted.
+        "formValue" => Ok(Value::String(
+            dom.form_value(handle(runtime, arguments, 0)?)
+                .map_err(dom_error)?,
+        )),
+        "setFormValue" => {
+            let node = handle(runtime, arguments, 0)?;
+            dom.set_form_value(node, bridge_arg(arguments, 1, "control value")?)
+                .map_err(dom_error)?;
+            Ok(Value::Null)
+        }
+        "formChecked" => Ok(Value::Bool(
+            dom.form_checked(handle(runtime, arguments, 0)?)
+                .map_err(dom_error)?,
+        )),
+        "setFormChecked" => {
+            let node = handle(runtime, arguments, 0)?;
+            let checked = bridge_arg(arguments, 1, "control checkedness")? == "true";
+            dom.set_form_checked(node, checked).map_err(dom_error)?;
+            Ok(Value::Null)
+        }
         "styleGet" => Ok(Value::String(
             dom.inline_style(
                 handle(runtime, arguments, 0)?,

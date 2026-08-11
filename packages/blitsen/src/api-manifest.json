@@ -629,6 +629,408 @@
       "pattern": null
     },
     {
+      "api": "HTMLInputElement",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_FORM_CONTROLS",
+      "pattern": "(?<![.\\w$])HTMLInputElement\\b"
+    },
+    {
+      "api": "HTMLTextAreaElement",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_FORM_CONTROLS",
+      "pattern": "(?<![.\\w$])HTMLTextAreaElement\\b"
+    },
+    {
+      "api": "HTMLSelectElement",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_FORM_CONTROLS",
+      "pattern": "(?<![.\\w$])HTMLSelectElement\\b"
+    },
+    {
+      "api": "HTMLOptionElement",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_FORM_CONTROLS",
+      "pattern": "(?<![.\\w$])HTMLOptionElement\\b"
+    },
+    {
+      "api": "HTMLButtonElement",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_FORM_CONTROLS",
+      "pattern": "(?<![.\\w$])HTMLButtonElement\\b"
+    },
+    {
+      "api": "HTMLFormElement",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_FORM_CONTROLS",
+      "pattern": "(?<![.\\w$])HTMLFormElement\\b"
+    },
+    {
+      "api": "HTMLInputElement.value",
+      "kind": "member",
+      "owner": "HTMLInputElement.prototype",
+      "member": "value",
+      "status": "implemented",
+      "code": "WEB_FORM_CONTROLS",
+      "pattern": null
+    },
+    {
+      "api": "HTMLInputElement.defaultValue",
+      "kind": "member",
+      "owner": "HTMLInputElement.prototype",
+      "member": "defaultValue",
+      "status": "implemented",
+      "code": "WEB_FORM_CONTROLS",
+      "pattern": null
+    },
+    {
+      "api": "HTMLInputElement.checked",
+      "kind": "member",
+      "owner": "HTMLInputElement.prototype",
+      "member": "checked",
+      "status": "implemented",
+      "code": "WEB_FORM_CONTROLS",
+      "pattern": null
+    },
+    {
+      "api": "HTMLInputElement.defaultChecked",
+      "kind": "member",
+      "owner": "HTMLInputElement.prototype",
+      "member": "defaultChecked",
+      "status": "implemented",
+      "code": "WEB_FORM_CONTROLS",
+      "pattern": null
+    },
+    {
+      "api": "HTMLInputElement.type",
+      "kind": "member",
+      "owner": "HTMLInputElement.prototype",
+      "member": "type",
+      "status": "implemented",
+      "code": "WEB_FORM_CONTROLS",
+      "pattern": null
+    },
+    {
+      "api": "HTMLInputElement.name",
+      "kind": "member",
+      "owner": "HTMLInputElement.prototype",
+      "member": "name",
+      "status": "implemented",
+      "code": "WEB_FORM_CONTROLS",
+      "pattern": null
+    },
+    {
+      "api": "HTMLInputElement.disabled",
+      "kind": "member",
+      "owner": "HTMLInputElement.prototype",
+      "member": "disabled",
+      "status": "implemented",
+      "code": "WEB_FORM_CONTROLS",
+      "pattern": null
+    },
+    {
+      "api": "HTMLInputElement.form",
+      "kind": "member",
+      "owner": "HTMLInputElement.prototype",
+      "member": "form",
+      "status": "implemented",
+      "code": "WEB_FORM_CONTROLS",
+      "pattern": null
+    },
+    {
+      "api": "HTMLInputElement.files",
+      "kind": "member",
+      "owner": "HTMLInputElement.prototype",
+      "member": "files",
+      "status": "absent",
+      "code": "WEB_FORM_CONTROLS",
+      "pattern": null
+    },
+    {
+      "api": "HTMLInputElement.labels",
+      "kind": "member",
+      "owner": "HTMLInputElement.prototype",
+      "member": "labels",
+      "status": "absent",
+      "code": "WEB_FORM_CONTROLS",
+      "pattern": null
+    },
+    {
+      "api": "HTMLInputElement.validity",
+      "kind": "member",
+      "owner": "HTMLInputElement.prototype",
+      "member": "validity",
+      "status": "absent",
+      "code": "WEB_FORM_CONTROLS",
+      "pattern": null
+    },
+    {
+      "api": "HTMLInputElement.checkValidity",
+      "kind": "member",
+      "owner": "HTMLInputElement.prototype",
+      "member": "checkValidity",
+      "status": "absent",
+      "code": "WEB_FORM_CONTROLS",
+      "pattern": null
+    },
+    {
+      "api": "HTMLInputElement.select",
+      "kind": "member",
+      "owner": "HTMLInputElement.prototype",
+      "member": "select",
+      "status": "absent",
+      "code": "WEB_FORM_CONTROLS",
+      "pattern": null
+    },
+    {
+      "api": "HTMLInputElement.setSelectionRange",
+      "kind": "member",
+      "owner": "HTMLInputElement.prototype",
+      "member": "setSelectionRange",
+      "status": "absent",
+      "code": "WEB_FORM_CONTROLS",
+      "pattern": null
+    },
+    {
+      "api": "HTMLInputElement.selectionStart",
+      "kind": "member",
+      "owner": "HTMLInputElement.prototype",
+      "member": "selectionStart",
+      "status": "absent",
+      "code": "WEB_FORM_CONTROLS",
+      "pattern": null
+    },
+    {
+      "api": "HTMLInputElement.selectionEnd",
+      "kind": "member",
+      "owner": "HTMLInputElement.prototype",
+      "member": "selectionEnd",
+      "status": "absent",
+      "code": "WEB_FORM_CONTROLS",
+      "pattern": null
+    },
+    {
+      "api": "HTMLTextAreaElement.value",
+      "kind": "member",
+      "owner": "HTMLTextAreaElement.prototype",
+      "member": "value",
+      "status": "implemented",
+      "code": "WEB_FORM_CONTROLS",
+      "pattern": null
+    },
+    {
+      "api": "HTMLTextAreaElement.defaultValue",
+      "kind": "member",
+      "owner": "HTMLTextAreaElement.prototype",
+      "member": "defaultValue",
+      "status": "implemented",
+      "code": "WEB_FORM_CONTROLS",
+      "pattern": null
+    },
+    {
+      "api": "HTMLSelectElement.options",
+      "kind": "member",
+      "owner": "HTMLSelectElement.prototype",
+      "member": "options",
+      "status": "implemented",
+      "code": "WEB_FORM_CONTROLS",
+      "pattern": null
+    },
+    {
+      "api": "HTMLSelectElement.selectedIndex",
+      "kind": "member",
+      "owner": "HTMLSelectElement.prototype",
+      "member": "selectedIndex",
+      "status": "implemented",
+      "code": "WEB_FORM_CONTROLS",
+      "pattern": null
+    },
+    {
+      "api": "HTMLSelectElement.value",
+      "kind": "member",
+      "owner": "HTMLSelectElement.prototype",
+      "member": "value",
+      "status": "implemented",
+      "code": "WEB_FORM_CONTROLS",
+      "pattern": null
+    },
+    {
+      "api": "HTMLSelectElement.length",
+      "kind": "member",
+      "owner": "HTMLSelectElement.prototype",
+      "member": "length",
+      "status": "implemented",
+      "code": "WEB_FORM_CONTROLS",
+      "pattern": null
+    },
+    {
+      "api": "HTMLSelectElement.selectedOptions",
+      "kind": "member",
+      "owner": "HTMLSelectElement.prototype",
+      "member": "selectedOptions",
+      "status": "implemented",
+      "code": "WEB_FORM_CONTROLS",
+      "pattern": null
+    },
+    {
+      "api": "HTMLSelectElement.multiple",
+      "kind": "member",
+      "owner": "HTMLSelectElement.prototype",
+      "member": "multiple",
+      "status": "implemented",
+      "code": "WEB_FORM_CONTROLS",
+      "pattern": null
+    },
+    {
+      "api": "HTMLSelectElement.add",
+      "kind": "member",
+      "owner": "HTMLSelectElement.prototype",
+      "member": "add",
+      "status": "absent",
+      "code": "WEB_FORM_CONTROLS",
+      "pattern": null
+    },
+    {
+      "api": "HTMLOptionElement.value",
+      "kind": "member",
+      "owner": "HTMLOptionElement.prototype",
+      "member": "value",
+      "status": "implemented",
+      "code": "WEB_FORM_CONTROLS",
+      "pattern": null
+    },
+    {
+      "api": "HTMLOptionElement.text",
+      "kind": "member",
+      "owner": "HTMLOptionElement.prototype",
+      "member": "text",
+      "status": "implemented",
+      "code": "WEB_FORM_CONTROLS",
+      "pattern": null
+    },
+    {
+      "api": "HTMLOptionElement.selected",
+      "kind": "member",
+      "owner": "HTMLOptionElement.prototype",
+      "member": "selected",
+      "status": "implemented",
+      "code": "WEB_FORM_CONTROLS",
+      "pattern": null
+    },
+    {
+      "api": "HTMLOptionElement.index",
+      "kind": "member",
+      "owner": "HTMLOptionElement.prototype",
+      "member": "index",
+      "status": "implemented",
+      "code": "WEB_FORM_CONTROLS",
+      "pattern": null
+    },
+    {
+      "api": "HTMLOptionElement.label",
+      "kind": "member",
+      "owner": "HTMLOptionElement.prototype",
+      "member": "label",
+      "status": "implemented",
+      "code": "WEB_FORM_CONTROLS",
+      "pattern": null
+    },
+    {
+      "api": "HTMLOptionElement.defaultSelected",
+      "kind": "member",
+      "owner": "HTMLOptionElement.prototype",
+      "member": "defaultSelected",
+      "status": "implemented",
+      "code": "WEB_FORM_CONTROLS",
+      "pattern": null
+    },
+    {
+      "api": "HTMLButtonElement.value",
+      "kind": "member",
+      "owner": "HTMLButtonElement.prototype",
+      "member": "value",
+      "status": "implemented",
+      "code": "WEB_FORM_CONTROLS",
+      "pattern": null
+    },
+    {
+      "api": "HTMLButtonElement.type",
+      "kind": "member",
+      "owner": "HTMLButtonElement.prototype",
+      "member": "type",
+      "status": "implemented",
+      "code": "WEB_FORM_CONTROLS",
+      "pattern": null
+    },
+    {
+      "api": "HTMLFormElement.elements",
+      "kind": "member",
+      "owner": "HTMLFormElement.prototype",
+      "member": "elements",
+      "status": "implemented",
+      "code": "WEB_FORM_CONTROLS",
+      "pattern": null
+    },
+    {
+      "api": "HTMLFormElement.requestSubmit",
+      "kind": "member",
+      "owner": "HTMLFormElement.prototype",
+      "member": "requestSubmit",
+      "status": "implemented",
+      "code": "WEB_FORM_CONTROLS",
+      "pattern": null
+    },
+    {
+      "api": "HTMLFormElement.submit",
+      "kind": "member",
+      "owner": "HTMLFormElement.prototype",
+      "member": "submit",
+      "status": "absent",
+      "code": "WEB_FORM_CONTROLS",
+      "pattern": null
+    },
+    {
+      "api": "HTMLFormElement.reset",
+      "kind": "member",
+      "owner": "HTMLFormElement.prototype",
+      "member": "reset",
+      "status": "absent",
+      "code": "WEB_FORM_CONTROLS",
+      "pattern": null
+    },
+    {
+      "api": "HTMLFormElement.action",
+      "kind": "member",
+      "owner": "HTMLFormElement.prototype",
+      "member": "action",
+      "status": "absent",
+      "code": "WEB_FORM_CONTROLS",
+      "pattern": null
+    },
+    {
+      "api": "HTMLFormElement.method",
+      "kind": "member",
+      "owner": "HTMLFormElement.prototype",
+      "member": "method",
+      "status": "absent",
+      "code": "WEB_FORM_CONTROLS",
+      "pattern": null
+    },
+    {
+      "api": "HTMLFormElement.checkValidity",
+      "kind": "member",
+      "owner": "HTMLFormElement.prototype",
+      "member": "checkValidity",
+      "status": "absent",
+      "code": "WEB_FORM_CONTROLS",
+      "pattern": null
+    },
+    {
       "api": "EventTarget",
       "kind": "global",
       "status": "implemented",
@@ -648,6 +1050,13 @@
       "status": "implemented",
       "code": "WEB_EVENTS",
       "pattern": "(?<![.\\w$])CustomEvent\\b"
+    },
+    {
+      "api": "SubmitEvent",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_EVENTS",
+      "pattern": "(?<![.\\w$])SubmitEvent\\b"
     },
     {
       "api": "MouseEvent",
@@ -1406,6 +1815,12 @@
       "severity": "warning",
       "message": "This DOM method is not implemented.",
       "guidance": "Use the document-level lookups and node methods listed in COMPATIBILITY.md.",
+      "extra": null
+    },
+    "WEB_FORM_CONTROLS": {
+      "severity": "warning",
+      "message": "This form-control API is not implemented.",
+      "guidance": "Validate and select in application code; handle the cancelable submit event rather than submitting the form.",
       "extra": null
     },
     "WEB_SCHEDULING": {

@@ -18,7 +18,7 @@ use blitsen_dom::{
     InvalidationMode, InvalidationTracker, LayoutMetrics, LayoutSnapshot, MediaQueryMatch,
     NATIVE_VIEWPORT_TAG, Namespace, NodeKind, Rect, ViewportSurface,
 };
-use blitz::dom::node::ImageData;
+use blitz::dom::node::{ImageData, SpecialElementData};
 use blitz::dom::{DocumentConfig, LocalName, NodeData, NodeId, QualName, ns};
 use blitz::html::{HtmlDocument, HtmlProvider};
 use kurbo::Point;
@@ -45,6 +45,30 @@ const RESOURCE_RESOLVE_PASSES: usize = 4;
 
 type HitCandidate = (Vec<i32>, usize, f32, f32);
 type RankedHit = (Vec<i32>, usize, usize, NodeId, f32, f32);
+
+/// The `<option>` and `<textarea>` state Blitz will not settle by itself.
+///
+/// Walked at the end of a flush that had layout work to do, which is when a
+/// control can have appeared or its defaults changed.
+const UNSETTLED_CONTROLS: &str = "option, textarea";
+
+/// Form-control state HTML keeps beside the content attributes.
+///
+/// An entry exists only for a node something has written, so a document nobody
+/// scripts carries none. The flags are HTML's: once `value` or `checked` has
+/// been assigned the matching attribute is only the default, and Blitz — which
+/// writes the `value` attribute straight through to its editor — must not be
+/// allowed to overwrite the state with it.
+#[derive(Clone, Debug, Default)]
+struct FormState {
+    /// Assigned value; `Some` is HTML's dirty value flag.
+    value: Option<String>,
+    /// Assigned checkedness or selectedness; `Some` is the dirty checkedness flag.
+    checked: Option<bool>,
+    /// Whether the writes above still have to reach Blitz's own control state,
+    /// which does not exist until the control has been laid out once.
+    pending: bool,
+}
 
 /// Serializes a CSS-pixel length the way a resolved value is written.
 ///
@@ -79,6 +103,7 @@ pub struct BlitzDom {
     js_references: HashMap<NodeId, u32>,
     native_viewports: HashMap<NodeId, Rc<RefCell<ViewportState>>>,
     resources: ResourceLog,
+    form_state: HashMap<NodeId, FormState>,
 }
 
 impl BlitzDom {
@@ -115,6 +140,7 @@ impl BlitzDom {
             js_references: HashMap::new(),
             native_viewports: HashMap::new(),
             resources: ResourceLog::default(),
+            form_state: HashMap::new(),
         }
     }
 
@@ -313,6 +339,186 @@ impl BlitzDom {
             Ok(())
         } else {
             Err(DomError::InvalidNodeType)
+        }
+    }
+
+    /// Reports whether a node is an HTML element with the given local name.
+    fn is_tag(&self, node: NodeId, tag: &str) -> bool {
+        self.document
+            .get_node(node)
+            .and_then(|node| node.element_data())
+            .is_some_and(|element| {
+                element.name.local.as_ref() == tag && element.name.ns == ns!(html)
+            })
+    }
+
+    /// Returns the text Blitz's editor holds for a control, if it has one.
+    ///
+    /// The editor is built while layout resolves, so a control the renderer has
+    /// never laid out has no state here yet and the caller falls back to the
+    /// defaults the editor would have been built from.
+    fn editor_text(&self, node: NodeId) -> Option<String> {
+        Some(
+            self.document
+                .get_node(node)?
+                .element_data()?
+                .text_input_data()?
+                .editor
+                .text()
+                .to_string(),
+        )
+    }
+
+    /// Puts a value into Blitz's editor, and reports whether there was one.
+    ///
+    /// Writing here rather than into a store beside it is the point: the editor
+    /// is what the renderer paints, so a value JavaScript sets is a value the
+    /// user can see.
+    fn write_editor_text(&mut self, node: NodeId, value: &str) -> bool {
+        let Some(input) = self
+            .document
+            .get_node_mut(node)
+            .and_then(|node| node.element_data_mut())
+            .and_then(|element| element.text_input_data_mut())
+        else {
+            return false;
+        };
+        if input.editor.text() == value {
+            return true;
+        }
+        input.editor.set_text(value);
+        self.document
+            .with_text_input(node, |mut driver| driver.refresh_layout());
+        true
+    }
+
+    /// Returns the checkedness Blitz holds, if the control has any.
+    fn checked_state(&self, node: NodeId) -> Option<bool> {
+        self.document
+            .get_node(node)?
+            .element_data()?
+            .checkbox_input_checked()
+    }
+
+    /// Writes checkedness into Blitz, and reports whether it took.
+    ///
+    /// An `<option>` is given the flag it does not otherwise have, because that
+    /// is the flag `:checked` matches against — an option selected from script
+    /// is then found by `select :checked` the way a browser finds it. Blitz
+    /// paints this flag only on an `<input>`, so an option gains no appearance
+    /// from carrying it.
+    fn write_checked_state(&mut self, node: NodeId, checked: bool) -> bool {
+        let selectable = self.is_tag(node, "option");
+        let Some(element) = self
+            .document
+            .get_node_mut(node)
+            .and_then(|node| node.element_data_mut())
+        else {
+            return false;
+        };
+        if let Some(state) = element.checkbox_input_checked_mut() {
+            *state = checked;
+            return true;
+        }
+        if selectable {
+            element.special_data = SpecialElementData::CheckboxInput(checked);
+            return true;
+        }
+        false
+    }
+
+    /// Settles the control state a resolved layout has just made writable.
+    ///
+    /// Two things land here. State assigned before the control existed is
+    /// pushed into the editor or flag Blitz has now built, and every option and
+    /// textarea is given the default Blitz does not derive for itself: an
+    /// option's selectedness so `:checked` can match it, and a textarea's child
+    /// text, which is its default value where an input has a `value` attribute.
+    /// Returns whether anything changed enough to need laying out again.
+    fn settle_form_controls(&mut self) -> bool {
+        let mut relayout = false;
+        for node in self
+            .form_state
+            .iter()
+            .filter(|(_, state)| state.pending)
+            .map(|(node, _)| *node)
+            .collect::<Vec<_>>()
+        {
+            let state = self.form_state[&node].clone();
+            let mut settled = false;
+            if let Some(value) = &state.value {
+                settled |= self.write_editor_text(node, value);
+                relayout |= settled;
+            }
+            if let Some(checked) = state.checked {
+                settled |= self.write_checked_state(node, checked);
+            }
+            if settled && let Some(state) = self.form_state.get_mut(&node) {
+                state.pending = false;
+            }
+        }
+        for node in self
+            .query_selector_all(self.document(), UNSETTLED_CONTROLS)
+            .unwrap_or_default()
+        {
+            // A control JavaScript has written keeps what it was given: that is
+            // the dirty flag, and the default no longer reaches it.
+            let state = self.form_state.get(&node);
+            if self.is_tag(node, "option") {
+                if state.and_then(|state| state.checked).is_some() {
+                    continue;
+                }
+                let selected = self
+                    .attribute(node, &DomName::attribute("selected"))
+                    .is_ok_and(|value| value.is_some());
+                if self.checked_state(node) != Some(selected) {
+                    self.write_checked_state(node, selected);
+                }
+            } else if state.and_then(|state| state.value.as_ref()).is_none()
+                && let Ok(text) = self.text_content(node)
+                && self.editor_text(node).is_some_and(|value| value != text)
+            {
+                relayout |= self.write_editor_text(node, &text);
+            }
+        }
+        relayout
+    }
+
+    /// Puts back the control state a content attribute must not have written.
+    ///
+    /// Blitz writes the `value` attribute straight through to its editor, which
+    /// is right until the value has been assigned: HTML's dirty value flag
+    /// makes the attribute the default from then on, and only the default. A
+    /// control nothing has written still follows its attribute, here as in a
+    /// browser, which is also how the `checked` attribute reaches a checkbox
+    /// Blitz only reads it for while parsing.
+    fn restore_form_state(&mut self, node: NodeId, name: &DomName) {
+        // Named before looked up: every attribute write in a framework render
+        // reaches this, and only these three have anything to put back.
+        if !matches!(name.local.as_str(), "value" | "checked" | "selected")
+            || !matches!(name.namespace, Namespace::None | Namespace::Html)
+        {
+            return;
+        }
+        let state = self.form_state.get(&node);
+        match name.local.as_str() {
+            "value" => {
+                if let Some(value) = state.and_then(|state| state.value.clone()) {
+                    self.write_editor_text(node, &value);
+                }
+            }
+            "checked" | "selected" => match state.and_then(|state| state.checked) {
+                Some(checked) => {
+                    self.write_checked_state(node, checked);
+                }
+                None => {
+                    let present = self
+                        .attribute(node, name)
+                        .is_ok_and(|value| value.is_some());
+                    self.write_checked_state(node, present);
+                }
+            },
+            _ => {}
         }
     }
 
@@ -676,6 +882,7 @@ impl DomBackend for BlitzDom {
         self.document
             .mutate()
             .set_attribute(node, Self::qual_name(name), value);
+        self.restore_form_state(node, name);
         self.mutate(Some(node), Some(node));
         Ok(())
     }
@@ -686,9 +893,71 @@ impl DomBackend for BlitzDom {
             self.document
                 .mutate()
                 .clear_attribute(node, Self::qual_name(name));
+            self.restore_form_state(node, name);
             self.mutate(Some(node), Some(node));
         }
         Ok(existed)
+    }
+
+    fn form_value(&self, node: NodeId) -> Result<String, DomError> {
+        self.ensure_element(node)?;
+        if let Some(text) = self.editor_text(node) {
+            return Ok(text);
+        }
+        if let Some(value) = self
+            .form_state
+            .get(&node)
+            .and_then(|state| state.value.clone())
+        {
+            return Ok(value);
+        }
+        // Nothing has been laid out yet, so answer with what the control will
+        // start from: a textarea's child text, an input's `value` attribute.
+        if self.is_tag(node, "textarea") {
+            self.text_content(node)
+        } else {
+            Ok(self
+                .attribute(node, &DomName::attribute("value"))?
+                .unwrap_or_default())
+        }
+    }
+
+    fn set_form_value(&mut self, node: NodeId, value: &str) -> Result<(), DomError> {
+        self.ensure_element(node)?;
+        let settled = self.write_editor_text(node, value);
+        let state = self.form_state.entry(node).or_default();
+        state.value = Some(value.to_owned());
+        state.pending = !settled;
+        self.mutate(Some(node), Some(node));
+        Ok(())
+    }
+
+    fn form_checked(&self, node: NodeId) -> Result<bool, DomError> {
+        self.ensure_element(node)?;
+        if let Some(checked) = self.checked_state(node) {
+            return Ok(checked);
+        }
+        if let Some(checked) = self.form_state.get(&node).and_then(|state| state.checked) {
+            return Ok(checked);
+        }
+        let attribute = if self.is_tag(node, "option") {
+            "selected"
+        } else {
+            "checked"
+        };
+        Ok(self
+            .attribute(node, &DomName::attribute(attribute))?
+            .is_some())
+    }
+
+    fn set_form_checked(&mut self, node: NodeId, checked: bool) -> Result<(), DomError> {
+        self.ensure_element(node)?;
+        let settled = self.write_checked_state(node, checked);
+        let state = self.form_state.entry(node).or_default();
+        state.checked = Some(checked);
+        state.pending = !settled;
+        self.mutate(Some(node), Some(node));
+        Ok(())
     }
 
     fn inline_style(&self, node: NodeId, property: &str) -> Result<Option<String>, DomError> {
@@ -846,6 +1115,7 @@ impl DomBackend for BlitzDom {
     }
 
     fn flush_layout(&mut self) -> Result<LayoutSnapshot, DomError> {
+        let settle_controls = self.layout_is_dirty();
         self.take_frame_invalidation();
         self.attach_native_viewports()?;
         for _ in 0..RESOURCE_RESOLVE_PASSES {
@@ -854,6 +1124,11 @@ impl DomBackend for BlitzDom {
             if self.resources.settlements() == settled {
                 break;
             }
+        }
+        // Only after the resolve above: a control's editor is built while layout
+        // resolves, so this is the first moment there is anything to write into.
+        if settle_controls && self.settle_form_controls() {
+            self.document.resolve(0.0);
         }
         self.resize_native_viewports();
         self.flushed_revision = self.revision;
@@ -1844,6 +2119,95 @@ mod tests {
     /// Without it Parley has no font sources, every glyph paints nothing, and the
     /// failure is invisible to any assertion that reads the DOM instead of the
     /// frame. That is exactly how it went unnoticed until a demo was recorded.
+    /// The attribute is the default; the property is the state. Everything in
+    /// the form surface rests on the two moving independently.
+    #[test]
+    fn control_state_and_content_attribute_move_independently() {
+        let mut dom = viewport_document(
+            r#"<input id="text" value="start"><input id="box" type="checkbox" checked>
+               <textarea id="notes">typed in</textarea>
+               <select><option id="first" value="a">A</option>
+               <option id="second" value="b" selected>B</option></select>"#,
+            1.0,
+        );
+        dom.flush_layout().unwrap();
+        let value = DomName::attribute("value");
+        let text = dom.get_element_by_id("text").unwrap().unwrap();
+        let notes = dom.get_element_by_id("notes").unwrap().unwrap();
+        let checkbox = dom.get_element_by_id("box").unwrap().unwrap();
+        let second = dom.get_element_by_id("second").unwrap().unwrap();
+
+        assert_eq!(dom.form_value(text).unwrap(), "start");
+        assert_eq!(dom.form_value(notes).unwrap(), "typed in");
+        assert!(dom.form_checked(checkbox).unwrap());
+        assert!(dom.form_checked(second).unwrap());
+
+        dom.set_form_value(text, "edited").unwrap();
+        dom.set_form_checked(checkbox, false).unwrap();
+        dom.set_form_checked(second, false).unwrap();
+        assert_eq!(
+            dom.attribute(text, &value).unwrap().as_deref(),
+            Some("start"),
+            "assigning a value must not write the attribute it defaulted from"
+        );
+        assert!(
+            dom.attribute(checkbox, &DomName::attribute("checked"))
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            dom.attribute(second, &DomName::attribute("selected"))
+                .unwrap()
+                .is_some()
+        );
+
+        // The other direction: a default that changes after the fact is still
+        // only the default.
+        dom.set_attribute(text, &value, "new default").unwrap();
+        dom.remove_attribute(checkbox, &DomName::attribute("checked"))
+            .unwrap();
+        dom.flush_layout().unwrap();
+        assert_eq!(dom.form_value(text).unwrap(), "edited");
+        assert!(!dom.form_checked(checkbox).unwrap());
+        assert!(!dom.form_checked(second).unwrap());
+
+        // A control nothing has assigned to still follows its attribute.
+        let untouched = dom.get_element_by_id("first").unwrap().unwrap();
+        dom.set_attribute(untouched, &DomName::attribute("selected"), "")
+            .unwrap();
+        assert!(dom.form_checked(untouched).unwrap());
+    }
+
+    /// The value JavaScript reads is the value the user sees, because there is
+    /// only one of them: assigning it repaints the control.
+    #[test]
+    fn an_assigned_value_is_the_one_the_renderer_paints() {
+        let mut dom = viewport_document(
+            r#"<input id="field" style="font: 32px sans-serif; color: #000; width: 380px">"#,
+            1.0,
+        );
+        let field = dom.get_element_by_id("field").unwrap().unwrap();
+        dom.flush_layout().unwrap();
+        // Glyph ink rather than every opaque pixel: the control's own box paints
+        // whether or not there is anything in it.
+        let inked = |pixels: Vec<u8>| {
+            pixels
+                .chunks_exact(4)
+                .filter(|pixel| pixel[3] > 0 && pixel[..3].iter().all(|channel| *channel < 100))
+                .count()
+        };
+        let blank = inked(render(&mut dom, 400, 60));
+
+        dom.set_form_value(field, "WRITTEN").unwrap();
+        dom.flush_layout().unwrap();
+        let written = inked(render(&mut dom, 400, 60));
+        assert!(
+            written > blank + 200,
+            "an assigned value painted {written} pixels against {blank} blank; \
+             the control state JavaScript writes is not the one being rendered"
+        );
+    }
+
     #[test]
     fn text_paints_glyphs_rather_than_nothing() {
         let mut dom = viewport_document(

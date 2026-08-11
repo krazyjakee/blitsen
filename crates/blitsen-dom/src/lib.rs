@@ -673,6 +673,27 @@ pub trait DomBackend {
     /// Removes an attribute and returns whether it was present.
     fn remove_attribute(&mut self, node: Self::NodeId, name: &DomName) -> Result<bool, DomError>;
 
+    /// Returns a form control's current value.
+    ///
+    /// This is the control's state, not its `value` content attribute. HTML
+    /// makes the attribute the control's *default*: typing into a field, or
+    /// assigning to this, moves one without the other. A backend renders from
+    /// the state, so this is the answer that agrees with what is painted.
+    fn form_value(&self, node: Self::NodeId) -> Result<String, DomError>;
+    /// Replaces a form control's value and raises HTML's dirty value flag.
+    ///
+    /// The content attribute is left alone, and from here on it no longer
+    /// tracks the control: a later attribute write is the default changing,
+    /// not the value.
+    fn set_form_value(&mut self, node: Self::NodeId, value: &str) -> Result<(), DomError>;
+    /// Returns an `<input>`'s checkedness or an `<option>`'s selectedness.
+    ///
+    /// One method because they are one concept: a boolean control state whose
+    /// content attribute — `checked`, `selected` — is only its default.
+    fn form_checked(&self, node: Self::NodeId) -> Result<bool, DomError>;
+    /// Replaces checkedness or selectedness, leaving the attribute alone.
+    fn set_form_checked(&mut self, node: Self::NodeId, checked: bool) -> Result<(), DomError>;
+
     /// Returns one inline CSS declaration by kebab-case property name.
     fn inline_style(&self, node: Self::NodeId, property: &str) -> Result<Option<String>, DomError>;
     /// Sets one inline CSS declaration, returning whether the value was valid.

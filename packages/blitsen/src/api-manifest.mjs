@@ -33,8 +33,32 @@ const CATALOGUE = {
     "Document.createElementNS", "Document.createComment", "Document.createDocumentFragment",
     "Document.getElementsByTagName", "Document.getElementsByClassName", "Document.importNode",
     "Document.currentScript"],
-  WEB_EVENTS: ["EventTarget", "Event", "CustomEvent", "MouseEvent", "KeyboardEvent",
-    "addEventListener", "removeEventListener", "dispatchEvent"],
+  // The form controls. `value`/`checked` are the control's state and
+  // `defaultValue`/`defaultChecked` the attribute reflections; the collections
+  // are snapshots, like every other collection here. What stays absent is
+  // constraint validation, the label and file lists, text selection, and the
+  // navigating half of submission — see COMPATIBILITY.md.
+  WEB_FORM_CONTROLS: ["HTMLInputElement", "HTMLTextAreaElement", "HTMLSelectElement",
+    "HTMLOptionElement", "HTMLButtonElement", "HTMLFormElement",
+    "HTMLInputElement.value", "HTMLInputElement.defaultValue", "HTMLInputElement.checked",
+    "HTMLInputElement.defaultChecked", "HTMLInputElement.type", "HTMLInputElement.name",
+    "HTMLInputElement.disabled", "HTMLInputElement.form",
+    "HTMLInputElement.files", "HTMLInputElement.labels", "HTMLInputElement.validity",
+    "HTMLInputElement.checkValidity", "HTMLInputElement.select",
+    "HTMLInputElement.setSelectionRange", "HTMLInputElement.selectionStart",
+    "HTMLInputElement.selectionEnd",
+    "HTMLTextAreaElement.value", "HTMLTextAreaElement.defaultValue",
+    "HTMLSelectElement.options", "HTMLSelectElement.selectedIndex", "HTMLSelectElement.value",
+    "HTMLSelectElement.length", "HTMLSelectElement.selectedOptions",
+    "HTMLSelectElement.multiple", "HTMLSelectElement.add",
+    "HTMLOptionElement.value", "HTMLOptionElement.text", "HTMLOptionElement.selected",
+    "HTMLOptionElement.index", "HTMLOptionElement.label", "HTMLOptionElement.defaultSelected",
+    "HTMLButtonElement.value", "HTMLButtonElement.type",
+    "HTMLFormElement.elements", "HTMLFormElement.requestSubmit", "HTMLFormElement.submit",
+    "HTMLFormElement.reset", "HTMLFormElement.action", "HTMLFormElement.method",
+    "HTMLFormElement.checkValidity"],
+  WEB_EVENTS: ["EventTarget", "Event", "CustomEvent", "SubmitEvent", "MouseEvent",
+    "KeyboardEvent", "addEventListener", "removeEventListener", "dispatchEvent"],
   WEB_SCHEDULING: ["requestAnimationFrame", "cancelAnimationFrame", "setTimeout", "clearTimeout",
     "setInterval", "clearInterval", "requestIdleCallback", "cancelIdleCallback"],
   WEB_NETWORK: ["fetch", "Headers", "Request", "Response", "Blob", "AbortController",
@@ -97,6 +121,9 @@ const CATALOGUE = {
 const DIAGNOSTICS = {
   WEB_DOM: ["warning", "This DOM method is not implemented.",
     "Use the document-level lookups and node methods listed in COMPATIBILITY.md."],
+  WEB_FORM_CONTROLS: ["warning", "This form-control API is not implemented.",
+    "Validate and select in application code; handle the cancelable submit event rather than "
+    + "submitting the form."],
   WEB_SCHEDULING: ["warning", "Idle-callback scheduling is not implemented.",
     "Schedule the work with requestAnimationFrame or a timer."],
   WEB_STORAGE: ["warning", "IndexedDB is not implemented.",

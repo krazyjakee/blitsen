@@ -251,6 +251,69 @@ for every writing mode this renderer lays out.
 
 `IntersectionObserver`, `PerformanceObserver`, `CSSStyleSheet` and `StyleSheetList` remain absent.
 
+## Form controls
+
+The whole of this surface rests on one distinction: **the content attribute is the control's
+default, and the property is its current state.** `value` is not `getAttribute("value")`. Typing
+into a field, or assigning to `value`, moves the state and leaves the attribute where it was —
+HTML calls that the dirty value flag — and from then on the attribute is only the default. So
+`defaultValue` and `defaultChecked` are the attribute reflections, `value` and `checked` are the
+state, and each pair moves without the other. Getting this backwards would look like it worked,
+which is why it is the thing the tests assert first.
+
+There is one copy of that state and it is the renderer's. Blitz already keeps a text editor for
+`<input>` and `<textarea>` and a checkedness flag for a checkbox, and those are what it paints
+from; `value` and `checked` read and write exactly those, rather than a second store beside them
+that could disagree with the pixels. Two consequences follow. A value assigned before the control
+has ever been laid out is held until Blitz builds its editor and then pushed into it, so nothing is
+lost by writing early. And a `<textarea>`'s child text — its default value, where an input has an
+attribute — is given to the editor too, so an untouched textarea paints what it reads and tracks
+its children the way HTML says a textarea with no dirty flag does.
+
+`<select>` and `<option>` are the exception, because Blitz renders a `<select>` as its options
+rather than as a control and has no notion of selectedness. An option's selectedness is stored as
+the same flag a checkbox uses, which is the flag `:checked` matches against, so `select
+:checked` finds the selected option the way a browser does — Svelte 3 reads a bound select exactly
+that way. `select.value`, `selectedIndex`, `selectedOptions` and `option.index` are all derived
+from the options, so there is nothing to keep in step.
+
+`options` and `form.elements` are **snapshots**, like every other collection this runtime hands
+out: a re-read sees an option added since, the collection handed out before it does not.
+
+Two divergences worth knowing:
+
+- **A drop-down with nothing selected reports its first enabled option** rather than `-1`. That is
+  the selectedness HTML resets a drop-down to, and it keeps `select.value` meaningful; what it does
+  not do is stay at `-1` after `selectedIndex = -1` or after assigning a value no option carries.
+- **`:checked` does not restyle.** A selector query evaluates it against current state and finds
+  the right element, but changing checkedness does not invalidate the cascade, so a `:checked` CSS
+  rule will not repaint. This is Blitz's behaviour for its own checkboxes too.
+
+### Submission
+
+**`form.submit()` is absent, and `requestSubmit()` is not.** Submitting a form is defined as
+navigating, and navigation is deliberately absent — there is no page to leave. `submit()` is
+defined to skip the `submit` event and navigate, so an implementation could only be a silent
+no-op or a throw; absent lets feature detection see it.
+
+`requestSubmit([submitter])` is the half that means something without navigation: it fires a
+bubbling, cancelable `SubmitEvent` at the form, carrying `submitter`, and does nothing further.
+Clicking a submit button does the same, after the click and only if the click was not cancelled.
+That is what a single-page application uses — `onsubmit` plus `preventDefault` — and it behaves
+exactly as it would in a browser. An application that relied on the navigation gets nothing
+instead of the wrong page.
+
+A checkbox or radio clicked without the click being cancelled toggles and fires `input` and
+`change`, and a checked radio clears the rest of its group. `form.reset()`, `action` and `method`
+stay absent for the same reason `submit()` does: they describe a document navigation.
+
+### What is absent
+
+Constraint validation (`validity`, `checkValidity`, `setCustomValidity`), `labels`, `files`, and
+text selection (`select()`, `setSelectionRange`, `selectionStart`/`selectionEnd`) are all absent
+rather than stubbed. Each is a surface of its own and each would be a wrong answer if guessed at:
+there is no selection model behind an input in this runtime, and no file picker behind one either.
+
 ## Storage
 
 `localStorage` and `sessionStorage` exist, hold what is put in them, and **lose it when the
@@ -367,7 +430,8 @@ determinism gate instead.
 | Group | Implemented | Absent |
 | --- | --- | --- |
 | WEB_DOM | `document`, `Document`, `Node`, `Element`, `NodeList`, `DOMTokenList`, `Attr`, `NamedNodeMap`, `CSSStyleDeclaration`, `MutationObserver`, `HTMLElement`, `HTMLIFrameElement`, `SVGElement`, `Text`, `Comment`, `DocumentFragment`, `HTMLLinkElement`, `HTMLTemplateElement`, `HTMLImageElement`, `Image`, `HTMLImageElement.src`, `HTMLImageElement.naturalWidth`, `HTMLImageElement.naturalHeight`, `HTMLImageElement.complete`, `HTMLImageElement.onload`, `HTMLImageElement.onerror`, `Element.querySelector`, `Element.querySelectorAll`, `Element.closest`, `Element.matches`, `Element.cloneNode`, `Element.contains`, `Element.children`, `Element.previousSibling`, `Element.lastChild`, `Element.parentElement`, `Element.dataset`, `Element.nodeValue`, `Element.before`, `Element.after`, `Element.getElementsByTagName`, `Element.outerHTML`, `Element.insertAdjacentHTML`, `Element.getElementsByClassName`, `Element.firstElementChild`, `Element.lastElementChild`, `Element.nextElementSibling`, `Element.previousElementSibling`, `Element.childElementCount`, `Element.append`, `Element.prepend`, `Element.replaceChildren`, `Element.getAttributeNS`, `Element.setAttributeNS`, `Element.removeAttributeNS`, `Element.hasAttributes`, `Element.getAttributeNames`, `Element.toggleAttribute`, `Element.getClientRects`, `Element.getRootNode`, `Element.normalize`, `Element.attributes`, `HTMLLinkElement.relList`, `HTMLTemplateElement.content`, `DOMTokenList.supports`, `Document.createElementNS`, `Document.createComment`, `Document.createDocumentFragment`, `Document.getElementsByTagName`, `Document.getElementsByClassName`, `Document.importNode` | `Element.attachShadow`, `Element.scrollIntoView`, `Document.currentScript` |
-| WEB_EVENTS | `EventTarget`, `Event`, `CustomEvent`, `MouseEvent`, `KeyboardEvent`, `addEventListener`, `removeEventListener`, `dispatchEvent` | — |
+| WEB_FORM_CONTROLS | `HTMLInputElement`, `HTMLTextAreaElement`, `HTMLSelectElement`, `HTMLOptionElement`, `HTMLButtonElement`, `HTMLFormElement`, `HTMLInputElement.value`, `HTMLInputElement.defaultValue`, `HTMLInputElement.checked`, `HTMLInputElement.defaultChecked`, `HTMLInputElement.type`, `HTMLInputElement.name`, `HTMLInputElement.disabled`, `HTMLInputElement.form`, `HTMLTextAreaElement.value`, `HTMLTextAreaElement.defaultValue`, `HTMLSelectElement.options`, `HTMLSelectElement.selectedIndex`, `HTMLSelectElement.value`, `HTMLSelectElement.length`, `HTMLSelectElement.selectedOptions`, `HTMLSelectElement.multiple`, `HTMLOptionElement.value`, `HTMLOptionElement.text`, `HTMLOptionElement.selected`, `HTMLOptionElement.index`, `HTMLOptionElement.label`, `HTMLOptionElement.defaultSelected`, `HTMLButtonElement.value`, `HTMLButtonElement.type`, `HTMLFormElement.elements`, `HTMLFormElement.requestSubmit` | `HTMLInputElement.files`, `HTMLInputElement.labels`, `HTMLInputElement.validity`, `HTMLInputElement.checkValidity`, `HTMLInputElement.select`, `HTMLInputElement.setSelectionRange`, `HTMLInputElement.selectionStart`, `HTMLInputElement.selectionEnd`, `HTMLSelectElement.add`, `HTMLFormElement.submit`, `HTMLFormElement.reset`, `HTMLFormElement.action`, `HTMLFormElement.method`, `HTMLFormElement.checkValidity` |
+| WEB_EVENTS | `EventTarget`, `Event`, `CustomEvent`, `SubmitEvent`, `MouseEvent`, `KeyboardEvent`, `addEventListener`, `removeEventListener`, `dispatchEvent` | — |
 | WEB_SCHEDULING | `requestAnimationFrame`, `cancelAnimationFrame`, `setTimeout`, `clearTimeout`, `setInterval`, `clearInterval` | `requestIdleCallback`, `cancelIdleCallback` |
 | WEB_NETWORK | `fetch`, `Headers`, `Request`, `Response`, `Blob`, `AbortController`, `AbortSignal` | — |
 | WEB_ROUTING | `window`, `location`, `history`, `Location`, `History`, `PopStateEvent`, `HashChangeEvent` | — |
@@ -395,6 +459,7 @@ determinism gate instead.
 | `WEB_FETCH` | error | fetch resolves this URL against an address with no server behind it. |
 | `WEB_STORAGE_MEMORY` | warning | localStorage is in memory only: what it stores is gone when the application exits. |
 | `WEB_DOM` | warning | This DOM method is not implemented. |
+| `WEB_FORM_CONTROLS` | warning | This form-control API is not implemented. |
 | `WEB_SCHEDULING` | warning | Idle-callback scheduling is not implemented. |
 | `WEB_STORAGE` | warning | IndexedDB is not implemented. |
 | `WEB_WORKER` | warning | Web workers are not implemented. |
