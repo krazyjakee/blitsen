@@ -306,6 +306,7 @@ version = "0.0.0"
 dependencies = [
  "anyrender",
  "anyrender_vello_cpu",
+ "blitsen-core",
  "blitsen-dom",
  "blitz",
  "blitz-dom",
@@ -315,6 +316,8 @@ dependencies = [
  "image",
  "kurbo",
  "peniko",
+ "png",
+ "serde_json",
  "stylo",
 ]
 

@@ -2,12 +2,15 @@ import { describe, expect, test } from "bun:test";
 import { cp, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { buildManifest, generateApiManifest, loadApiManifest, renderCompatibilityDoc }
+  from "../src/api-manifest.mjs";
 import { createReloadCoordinator, main, packageVersion, parseArgs, resolveApplication } from "../src/cli.mjs";
 import { CONFIG_SCHEMA, defineConfig, loadConfig, runBuildCommand, validateConfig } from "../src/config.mjs";
 import { doctorApplication } from "../src/doctor.mjs";
 import { buildStandalone, planIngest, rewriteRootRelativeReferences } from "../src/export.mjs";
 import { packageBuild, signArgv, signArtifact } from "../src/packaging.mjs";
 
+const runtimeSource = join(import.meta.dir, "../../../crates/blitsen-node/src/dom_bridge.rs");
 const viteBase = join(import.meta.dir, "fixtures/vite-base");
 const configFixtures = join(import.meta.dir, "fixtures/config");
 const icon = join(import.meta.dir, "fixtures/icons/app-256.png");
@@ -156,6 +159,52 @@ describe("directory CLI", () => {
       const codes = (await doctorApplication(directory)).diagnostics
         .map(diagnostic => `${diagnostic.severity}:${diagnostic.code}`);
       expect(codes).toEqual(["error:WEB_FETCH", "error:WEB_NAVIGATION", "warning:WEB_STREAM"]);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("keeps the API manifest and the documented tiers generated from the runtime source", async () => {
+    const generated = await generateApiManifest();
+    expect(generated).toEqual(await loadApiManifest());
+    expect(await renderCompatibilityDoc(generated))
+      .toBe(await readFile(join(import.meta.dir, "../../../docs/COMPATIBILITY.md"), "utf8"));
+  });
+
+  // The manifest is worth nothing unless it fails when it stops matching the
+  // bootstrap, so each way the two can diverge is made to happen here.
+  test("refuses a manifest the runtime source disagrees with", async () => {
+    const source = await readFile(runtimeSource, "utf8");
+    expect(buildManifest(source).apis.find(entry => entry.api === "Worker").status).toBe("absent");
+    const implemented = source
+      .replace('"Worker", "SharedWorker"', '"SharedWorker"')
+      .replace("const globals = {", "const globals = {\n    Worker,");
+    expect(buildManifest(implemented).apis.find(entry => entry.api === "Worker").status)
+      .toBe("implemented");
+
+    expect(() => buildManifest(source.replace("const globals = {", "const globals = {\n    speechSynthesis,")))
+      .toThrow("installs speechSynthesis");
+    expect(() => buildManifest(source.replace('"requestIdleCallback",', '"speechSynthesis", "requestIdleCallback",')))
+      .toThrow("deletes speechSynthesis");
+    expect(() => buildManifest(source.replace(", AbortSignal, fetch,", ", AbortSignal,")))
+      .toThrow("fetch are absent from the runtime but not deleted");
+    expect(() => buildManifest(source.replace("const globals = {", "const stubbed = {")))
+      .toThrow("no longer declares const globals = {");
+  });
+
+  test("diagnoses what the manifest calls absent, and nothing it calls implemented", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "blitsen-manifest-test-"));
+    try {
+      await writeFile(join(directory, "app.js"),
+        "new Worker(url); customElements.define(); localStorage.getItem('x'); window.open('/x');");
+      const codes = (await doctorApplication(directory)).diagnostics.map(entry => entry.code);
+      expect(codes.sort()).toEqual(["WEB_COMPONENTS", "WEB_NAVIGATION", "WEB_STORAGE", "WEB_WORKER"]);
+
+      const manifest = await loadApiManifest();
+      await writeFile(join(directory, "app.js"), manifest.apis
+        .filter(entry => entry.status === "implemented" && entry.kind === "global")
+        .map(entry => `void ${entry.api};`).join("\n"));
+      expect(await doctorApplication(directory)).toMatchObject({ errors: 0, warnings: 0 });
     } finally {
       await rm(directory, { recursive: true, force: true });
     }

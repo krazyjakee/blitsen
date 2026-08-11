@@ -11,11 +11,12 @@ npx blitsen doctor dist
 npx blitsen doctor dist --json
 ```
 
-`doctor` exits non-zero for profile errors. Warnings identify APIs supplied by the Phase 1 Bun
-host or renderer features that are not yet portable to the production-shaped Phase 2 host. A
-build repeats every diagnostic and **fails on any error** — an export that cannot run is not worth
-producing — while warnings let feature-detected fallback paths through. The scan is static and
-conservative: it finds references, not only executed paths.
+`doctor` exits non-zero for profile errors. Warnings identify absent APIs a library normally
+feature-detects, and renderer features that are not yet portable to the production-shaped Phase 2
+host. A build repeats every diagnostic and **fails on any error** — an export that cannot run is
+not worth producing — while warnings let feature-detected fallback paths through. The scan is
+static and conservative: it finds references, not only executed paths. Every rule it applies to
+JavaScript comes from the [generated manifest](#capability-tiers) below.
 
 ## Strict v0 surface
 
@@ -30,6 +31,7 @@ conservative: it finds references, not only executed paths.
 | Networking | `fetch`, `Headers`, `Request`, `Response`, `Blob`, `AbortController` over `http`/`https`, with buffered bodies |
 | Routing | In-memory `history` and `location`, `popstate` and `hashchange` |
 | CSS | Static block, flex and grid layout; bounded absolute positioning; spacing, borders, backgrounds, colors and system typography |
+| Subresources | `<img>` and CSS `background-image` (PNG, JPEG, GIF, WebP), and `@font-face` web fonts (WOFF2, WOFF, TTF, OTF), loaded from local files; SVG images, `<audio>` and `<video>` are not |
 
 The M3b acceptance app intentionally uses the normal Vite default output, including
 root-relative `/assets/...` references and Vite's module-preload bootstrap. It contains no
@@ -150,16 +152,85 @@ the binary is wasteful. Each asset is content-hashed with SHA-256 either way, an
 build from the same input directory, output path and working directory produces a byte-identical
 executable.
 
-## Diagnosed outside the profile
+## Capability tiers
 
-- Canvas, WebGL and WebGPU.
-- Browser storage, workers, service workers and document navigation.
-- Composited CSS layers (`opacity`, `visibility`), transforms, fixed/sticky positioning, filters,
-  masks and clipping effects.
-- Remote subresources in what must be a self-contained export.
-- Streaming bodies, `WebSocket` and `EventSource`.
-- Images, media, SVG and web fonts produce portability warnings at their current implementation
-  tier.
+**An unimplemented API is absent — the property does not exist — so feature detection works.**
+Never a stub that resolves to nothing, and never a silent no-op. That includes the ones the
+Phase 1 Bun host supplies itself: they are deleted while the runtime installs, because an API
+that works today and vanishes at the Phase 2 engine swap is worse than one that was never there.
+
+The tables below are **generated from the runtime source**. The surface is installed by
+`crates/blitsen-node/src/dom_bridge.rs`, and `packages/blitsen/src/api-manifest.mjs` reads that
+file: which globals it defines, what each class declares, and which globals it deletes. `blitsen
+doctor` reports from the same manifest, and the native harness asserts every absent entry is
+genuinely `undefined` in a real runtime — so the diagnostics, this document and the runtime
+cannot drift apart. Regenerate with `bun run --cwd packages/blitsen api:sync`.
+
+Blitsen makes no claim either way about the JavaScript host's own utilities — `URL`,
+`URLSearchParams`, `TextEncoder`, `crypto`, `structuredClone`, `performance`, `queueMicrotask`,
+`DOMException`, `console` — so they are not listed; the Phase 2 engine has to supply them. Renderer capability (`CSS_*`, `HTML_*`) is not generated
+either: no JavaScript declaration describes it, and it is evidenced by the S6 spike and the
+determinism gate instead.
+
+<!-- generated: api-manifest -->
+
+| Group | Implemented | Absent |
+| --- | --- | --- |
+| WEB_DOM | `document`, `Document`, `Node`, `Element`, `NodeList`, `DOMTokenList`, `CSSStyleDeclaration`, `MutationObserver`, `HTMLElement`, `HTMLIFrameElement`, `SVGElement` | `Element.querySelector`, `Element.querySelectorAll`, `Element.closest`, `Element.matches`, `Element.cloneNode`, `Element.contains`, `Element.children`, `Element.previousSibling`, `Element.lastChild`, `Element.parentElement`, `Element.dataset`, `Element.outerHTML`, `Element.insertAdjacentHTML`, `Element.attachShadow`, `Element.scrollIntoView`, `Document.createElementNS`, `Document.createDocumentFragment` |
+| WEB_EVENTS | `EventTarget`, `Event`, `CustomEvent`, `MouseEvent`, `KeyboardEvent`, `addEventListener`, `removeEventListener`, `dispatchEvent` | — |
+| WEB_SCHEDULING | `requestAnimationFrame`, `cancelAnimationFrame`, `setTimeout`, `clearTimeout`, `setInterval`, `clearInterval` | `requestIdleCallback`, `cancelIdleCallback` |
+| WEB_NETWORK | `fetch`, `Headers`, `Request`, `Response`, `Blob`, `AbortController`, `AbortSignal` | — |
+| WEB_ROUTING | `window`, `location`, `history`, `Location`, `History`, `PopStateEvent`, `HashChangeEvent` | — |
+| WEB_VIEWPORT | `BlitsenViewElement`, `BlitsenViewSurface` | — |
+| WEB_STORAGE | — | `localStorage`, `sessionStorage`, `indexedDB` |
+| WEB_WORKER | — | `Worker`, `SharedWorker`, `ServiceWorker`, `ServiceWorkerContainer` |
+| WEB_MESSAGING | — | `MessageChannel`, `MessagePort`, `BroadcastChannel`, `postMessage` |
+| WEB_SOCKET | — | `WebSocket`, `EventSource` |
+| WEB_XHR | — | `XMLHttpRequest` |
+| WEB_STREAM | — | `ReadableStream`, `WritableStream`, `TransformStream`, `Response.body`, `Response.clone` |
+| WEB_FORM | — | `FormData`, `File`, `FileReader` |
+| WEB_CANVAS | — | `HTMLCanvasElement`, `CanvasRenderingContext2D`, `OffscreenCanvas`, `ImageData`, `Path2D` |
+| WEB_GPU | — | `WebGLRenderingContext`, `WebGL2RenderingContext`, `GPUCanvasContext` |
+| WEB_MEDIA | — | `Image`, `Audio`, `AudioContext`, `webkitAudioContext`, `HTMLMediaElement`, `MediaQueryList`, `matchMedia` |
+| WEB_DIALOG | — | `alert`, `confirm`, `prompt`, `print` |
+| WEB_NAVIGATION | — | `open`, `close`, `navigation`, `document.write`, `document.writeln`, `document.open`, `document.close`, `location.assign`, `location.replace`, `location.reload`, `location.ancestorOrigins` |
+| WEB_COOKIE | — | `document.cookie`, `cookieStore`, `Headers.getSetCookie` |
+| WEB_DEVICE | — | `navigator`, `screen`, `Notification`, `caches` |
+| WEB_OBSERVER | — | `ResizeObserver`, `IntersectionObserver`, `PerformanceObserver` |
+| WEB_STYLE | — | `getComputedStyle`, `CSSStyleSheet`, `StyleSheetList` |
+| WEB_COMPONENTS | — | `customElements`, `ShadowRoot`, `HTMLTemplateElement`, `DOMParser` |
+
+| Diagnostic | Severity | Reported as |
+| --- | --- | --- |
+| `WEB_FETCH` | error | fetch resolves this URL against an address with no server behind it. |
+| `WEB_DOM` | warning | This DOM method is not implemented. |
+| `WEB_SCHEDULING` | warning | Idle-callback scheduling is not implemented. |
+| `WEB_STORAGE` | error | Browser storage is not implemented. |
+| `WEB_WORKER` | error | Web workers are not implemented. |
+| `WEB_MESSAGING` | warning | Message channels are not implemented. |
+| `WEB_SOCKET` | warning | Browser network streams are not implemented. |
+| `WEB_XHR` | error | XMLHttpRequest is not implemented. |
+| `WEB_STREAM` | warning | Streaming bodies are not implemented; a response is buffered whole. |
+| `WEB_FORM` | warning | Multipart form bodies and file objects are not implemented. |
+| `WEB_CANVAS` | error | Canvas is not in the v0 compatibility profile. |
+| `WEB_GPU` | error | WebGL and WebGPU are not implemented. |
+| `WEB_MEDIA` | warning | Audio and the media element constructors are not implemented. |
+| `WEB_DIALOG` | error | Modal browser dialogs are not implemented. |
+| `WEB_NAVIGATION` | error | Document navigation is deliberately absent; there is no page to leave. |
+| `WEB_COOKIE` | error | There is no origin and no cookie jar behind an exported application. |
+| `WEB_DEVICE` | warning | This device API is not implemented. |
+| `WEB_OBSERVER` | warning | Layout and performance observers are not implemented. |
+| `WEB_STYLE` | error | Computed style and the stylesheet objects are not implemented. |
+| `WEB_COMPONENTS` | error | Custom elements, shadow DOM and DOM parsing are not implemented. |
+| `CSS_LAYERS` | error | visibility/opacity composition is outside the current renderer profile. |
+| `CSS_TRANSFORM` | error | CSS transforms are outside the current renderer profile. |
+| `CSS_FIXED` | error | Fixed and sticky positioning are outside the current renderer profile. |
+| `CSS_EFFECT` | error | This paint effect is outside the current renderer profile. |
+| `HTML_CANVAS` | error | <canvas> is not implemented. |
+| `HTML_MEDIA` | warning | Audio and video elements are not implemented. |
+| `HTML_SVG` | warning | SVG rendering is currently limited and not in the strict profile. |
+
+<!-- /generated -->
 
 The scanner cannot prove visual equivalence or determine that an unsupported reference is dead
 code. Treat a zero-error report as the build-time gate and retain visual/interaction acceptance tests

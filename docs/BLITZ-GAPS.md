@@ -75,5 +75,8 @@ Filed as [blitz#687](https://github.com/DioxusLabs/blitz/issues/687), with a sug
   someone else can reproduce. "Looked wrong once" is not a row.
 - A row moves to **filed** only with an issue number, and to **withdrawn** with the reason.
 - Re-running the s6 corpus needs Chromium, ImageMagick, npm, Corepack, Python 3 and network
-  access, so it is not a CI gate. The golden-image corpus that *is* meant to be gated is
-  [#61](https://github.com/krazyjakee/blitsen/issues/61).
+  access, so it is not a CI gate, and it stays manual. The gated corpus is the golden-image one
+  in [CONFORMANCE.md](CONFORMANCE.md), which asks the other question: not whether Blitsen matches
+  a browser, but whether it matches itself on every platform. A gap belongs here when a browser
+  disagrees with Blitz; a conformance case belongs there when Blitsen has to keep agreeing with
+  itself.

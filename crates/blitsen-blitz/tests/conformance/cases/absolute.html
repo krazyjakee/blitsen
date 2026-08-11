@@ -1,0 +1,37 @@
+<!-- conformance
+Bounded absolute positioning: insets resolved against the nearest positioned
+ancestor, including the case where both edges are given and the box is the one
+that stretches.
+
+#rel is the containing block at 20,20 sized 300x120. #br is placed from the
+far edges: 20 + 300 - 10 - 40 = 270 and 20 + 120 - 10 - 20 = 110. #stretch
+gives `left` and `right` but no width, so it takes 300 - 40 = 260.
+
+@oracle
+@box #rel 20 20 300 120
+@box #tl 30 30 50 30
+@box #br 270 110 40 20
+@box #stretch 40 80 260 25
+@pixel 40 40 #ef4444ff
+@pixel 280 115 #22c55eff
+@pixel 200 90 #3b82f6ff
+@pixel 30 100 #eef2ffff
+@pixel 330 60 #ffffffff
+-->
+<!doctype html>
+<html>
+  <head>
+    <style>
+      html, body { margin: 0; background: #ffffff }
+      #rel { position: relative; margin: 20px; width: 300px; height: 120px; background: #eef2ff }
+      #tl { position: absolute; left: 10px; top: 10px; width: 50px; height: 30px; background: #ef4444 }
+      #br { position: absolute; right: 10px; bottom: 10px; width: 40px; height: 20px; background: #22c55e }
+      #stretch { position: absolute; left: 20px; right: 20px; top: 60px; height: 25px; background: #3b82f6 }
+    </style>
+  </head>
+  <body>
+    <div id="rel">
+      <div id="tl"></div><div id="br"></div><div id="stretch"></div>
+    </div>
+  </body>
+</html>

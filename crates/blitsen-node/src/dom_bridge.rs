@@ -1153,7 +1153,28 @@ const BOOTSTRAP: &str = r##"
   };
   Object.assign(globalThis, globals);
   globalThis.window = globalThis;
-  for (const key of ["navigator", "localStorage"]) {
+  // Absent, not stubbed: an unimplemented API must not exist, so feature
+  // detection selects a fallback. The Phase 1 host supplies several of these
+  // itself, and leaving those in place would make them disappear at the Phase 2
+  // engine swap. `packages/blitsen/src/api-manifest.mjs` reads this list, and
+  // refuses to generate a manifest that describes any other API as absent.
+  for (const key of ["requestIdleCallback", "cancelIdleCallback",
+    "localStorage", "sessionStorage", "indexedDB",
+    "Worker", "SharedWorker", "ServiceWorker", "ServiceWorkerContainer",
+    "MessageChannel", "MessagePort", "BroadcastChannel", "postMessage",
+    "WebSocket", "EventSource", "XMLHttpRequest",
+    "ReadableStream", "WritableStream", "TransformStream",
+    "FormData", "File", "FileReader",
+    "HTMLCanvasElement", "CanvasRenderingContext2D", "OffscreenCanvas", "ImageData", "Path2D",
+    "WebGLRenderingContext", "WebGL2RenderingContext", "GPUCanvasContext",
+    "Image", "Audio", "AudioContext", "webkitAudioContext", "HTMLMediaElement",
+    "MediaQueryList", "matchMedia",
+    "alert", "confirm", "prompt", "print",
+    "open", "close", "navigation",
+    "cookieStore", "navigator", "screen", "Notification", "caches",
+    "ResizeObserver", "IntersectionObserver", "PerformanceObserver",
+    "getComputedStyle", "CSSStyleSheet", "StyleSheetList",
+    "customElements", "ShadowRoot", "HTMLTemplateElement", "DOMParser"]) {
     try { delete globalThis[key]; } catch {}
   }
 })();

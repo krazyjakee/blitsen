@@ -1,0 +1,33 @@
+<!-- conformance
+Column flex: cross-axis stretch and `space-between` free-space distribution.
+
+180 tall holding three 20px items leaves 120 of free space, which
+`space-between` splits into the two gaps between them, 60 each: 10, 10 + 20 +
+60 = 90, 90 + 20 + 60 = 170. Items stretch to the container's 200px width
+because `align-items` defaults to `stretch`.
+
+@oracle
+@box #col 10 10 200 180
+@box #p 10 10 200 20
+@box #q 10 90 200 20
+@box #r 10 170 200 20
+@pixel 100 15 #0ea5e9ff
+@pixel 100 50 #f1f5f9ff
+@pixel 100 95 #0ea5e9ff
+@pixel 100 175 #0ea5e9ff
+@pixel 250 100 #ffffffff
+-->
+<!doctype html>
+<html>
+  <head>
+    <style>
+      html, body { margin: 0; background: #ffffff }
+      #col { display: flex; flex-direction: column; justify-content: space-between;
+             margin: 10px; width: 200px; height: 180px; background: #f1f5f9 }
+      #col > div { height: 20px; background: #0ea5e9 }
+    </style>
+  </head>
+  <body>
+    <div id="col"><div id="p"></div><div id="q"></div><div id="r"></div></div>
+  </body>
+</html>

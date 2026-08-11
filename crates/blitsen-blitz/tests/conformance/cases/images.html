@@ -1,0 +1,45 @@
+<!-- conformance
+Images: intrinsic sizing, `background-image` painting in the frame that asks
+for it, and `background-size`/`position`/`repeat` geometry.
+
+The fixture is 8x4, opaque red on its left half and opaque blue on its right,
+so every probe below says both that the bytes decoded and that they landed the
+right way round. #photo declares only a width, so the intrinsic 2:1 ratio
+resolves the height to 40. #tiled repeats an 80x40 tile twice across its 160.
+#offset draws one 40x20 tile at 20,10 inside its own box and leaves the rest of
+the element showing its background colour.
+
+@oracle
+@box #photo 0 0 80 40
+@box #tiled 0 40 160 40
+@box #offset 0 80 160 40
+@pixel 20 20 #dc1414ff
+@pixel 60 20 #1428dcff
+@pixel 20 60 #dc1414ff
+@pixel 60 60 #1428dcff
+@pixel 100 60 #dc1414ff
+@pixel 140 60 #1428dcff
+@pixel 25 95 #dc1414ff
+@pixel 55 95 #1428dcff
+@pixel 5 85 #e5e7ebff
+@pixel 100 95 #e5e7ebff
+-->
+<!doctype html>
+<html>
+  <head>
+    <style>
+      html, body { margin: 0; background: #ffffff }
+      #photo { display: block; width: 80px }
+      #tiled { width: 160px; height: 40px; background-image: url("swatch.png");
+               background-size: 80px 40px; background-repeat: repeat-x }
+      #offset { width: 160px; height: 40px; background-color: #e5e7eb;
+                background-image: url("swatch.png"); background-size: 40px 20px;
+                background-position: 20px 10px; background-repeat: no-repeat }
+    </style>
+  </head>
+  <body>
+    <img id="photo" src="swatch.png" alt="">
+    <div id="tiled"></div>
+    <div id="offset"></div>
+  </body>
+</html>

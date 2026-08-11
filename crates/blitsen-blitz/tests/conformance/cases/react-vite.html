@@ -1,0 +1,39 @@
+<!-- conformance
+Real framework output: the React tree that the committed `vite build` bundle
+in examples/vite-react builds at runtime, captured after its own JavaScript ran
+and then frozen. Layout here is Tailwind-free but otherwise ordinary: a centred
+fixed-width shell, a flex card row, borders and radii.
+
+This case is a change detector, not a correctness oracle. Nobody derived what
+this markup ought to look like; the golden image records what it does look like,
+so that a renderer change that moves it says so. The few boxes below are the
+exception — they follow from the stylesheet without knowing anything about text:
+the shell is 720 wide and `margin: 48px auto` centres it in 800, so it starts at
+40; inside its 1px border and 32px padding, 720 - 2 - 64 = 654 is left from
+x = 73, and three `flex: 1` cards with two 12px gaps take (654 - 24) / 3 = 210
+each, starting at 73, 295 and 517. Heights are written `-` because they follow
+from the pinned font rather than from the stylesheet, and recording them here
+would be circular.
+
+@size 800 600
+@box .shell 40 48 720 -
+@box .cards 73 - 654 -
+@box .cards > article:nth-child(1) 73 - 210 -
+@box .cards > article:nth-child(2) 295 - 210 -
+@box .cards > article:nth-child(3) 517 - 210 -
+-->
+<!doctype html>
+<html>
+  <head>
+    <style>:root{color:#172033;background:#edf2f8;font-family:sans-serif}*{box-sizing:border-box}body{margin:0}.shell{background:#fff;border:1px solid #cbd5e1;border-radius:16px;width:720px;margin:48px auto;padding:32px}header{margin-bottom:24px}.eyebrow{color:#4657ce;margin:0 0 8px;font-weight:700}h1{margin:0 0 8px;font-size:36px}header p{margin:0}.cards{gap:12px;margin-bottom:24px;display:flex}article{background:#f6f8fc;border:1px solid #dbe3ef;border-radius:10px;flex-direction:column;flex:1;gap:6px;padding:16px;display:flex}button{color:#fff;font:inherit;background:#4657ce;border:0;border-radius:8px;padding:10px 16px;font-weight:700}</style>
+    <style>
+      @font-face { font-family: "Block ASCII"; src: url("block-ascii.ttf") format("truetype") }
+      * { font-family: "Block ASCII" !important }
+    </style>
+  </head>
+  <body>
+    <div id="root"><main class="shell" data-react-ready="true"><header><p class="eyebrow">Vite + React</p><h1>Compatible adoption</h1><p>An ordinary production bundle, rendered without a browser engine.</p></header><section class="cards" aria-label="Milestone status"><article><strong>Framework</strong><span>React</span></article><article><strong>Bundler</strong><span>Vite</span></article><article><strong>Clicks</strong><span id="count">0</span></article></section><button id="increment" type="button">Increment</button></main></div>
+  
+
+</body>
+</html>

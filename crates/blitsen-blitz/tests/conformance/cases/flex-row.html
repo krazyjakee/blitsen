@@ -1,0 +1,36 @@
+<!-- conformance
+Row flex: gap, padding, cross-axis centring and free-space distribution.
+
+The row is 400 wide with 16px padding, so 368 of content, and 100 tall with
+`box-sizing: border-box`, so 68 of content. `flex: 1` gives #b a zero basis, so
+the base sizes are 80 + 0 + 60 plus two 12px gaps = 164, leaving 204 for #b.
+Main-axis offsets follow: 16, 16 + 80 + 12 = 108, 108 + 204 + 12 = 324.
+`align-items: center` puts each item at 16 + (68 - height) / 2.
+
+@oracle
+@box #row 0 0 400 100
+@box #a 16 30 80 40
+@box #b 108 20 204 60
+@box #c 324 40 60 20
+@pixel 20 35 #ef4444ff
+@pixel 200 50 #22c55eff
+@pixel 330 45 #3b82f6ff
+@pixel 20 20 #f1f5f9ff
+@pixel 100 50 #f1f5f9ff
+-->
+<!doctype html>
+<html>
+  <head>
+    <style>
+      html, body { margin: 0; background: #ffffff }
+      #row { display: flex; gap: 12px; padding: 16px; align-items: center;
+             height: 100px; box-sizing: border-box; background: #f1f5f9 }
+      #a { width: 80px; height: 40px; background: #ef4444 }
+      #b { flex: 1; height: 60px; background: #22c55e }
+      #c { width: 60px; height: 20px; background: #3b82f6 }
+    </style>
+  </head>
+  <body>
+    <div id="row"><div id="a"></div><div id="b"></div><div id="c"></div></div>
+  </body>
+</html>

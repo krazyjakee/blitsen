@@ -1,0 +1,52 @@
+<!-- conformance
+Text metrics under a pinned font, and `@font-face` descriptor selection.
+
+Every glyph in the corpus font is a solid em block one em wide, and the three
+faces differ only in block height — full em, half em, quarter em — while their
+internal metadata is identical and says "Regular" for all three. So the painted
+rectangle answers two questions at once: whether the run was shaped at all, and
+which face the descriptors selected.
+
+Ascent is one em and descent is zero, so with `line-height: 1` the baseline
+sits at the bottom of the line box and each run's ink ends exactly at the box's
+lower edge. #two overrides that with a 20px font at `line-height: 2`: a 40px
+line box, half-leading (40 - 20) / 2 = 10, baseline at 40 + 10 + 20 = 70, ink
+from 50 to 70. Four blocks at 40px are 160 wide; six at 20px are 120.
+
+@oracle
+@box #one 0 0 400 40
+@box #two 0 40 400 40
+@box #bold 0 80 400 40
+@box #italic 0 120 400 40
+@ink 0 0 160 40 #000000ff >= 0.999
+@ink 160 0 240 40 #ffffffff >= 0.999
+@ink 0 50 120 20 #000000ff >= 0.999
+@ink 0 40 400 10 #ffffffff >= 0.999
+@ink 0 100 160 20 #000000ff >= 0.999
+@ink 0 80 400 20 #ffffffff >= 0.999
+@ink 0 150 160 10 #000000ff >= 0.999
+@ink 0 120 400 30 #ffffffff >= 0.999
+-->
+<!doctype html>
+<html>
+  <head>
+    <style>
+      html, body { margin: 0; background: #ffffff }
+      @font-face { font-family: "Block"; src: url("block-regular.ttf") format("truetype") }
+      @font-face { font-family: "Block"; font-weight: 700;
+                   src: url("block-bold.ttf") format("truetype") }
+      @font-face { font-family: "Block"; font-style: italic;
+                   src: url("block-italic.ttf") format("truetype") }
+      div { font: 40px/1 "Block"; color: #000000 }
+      #two { font-size: 20px; line-height: 2 }
+      #bold { font-weight: 700 }
+      #italic { font-style: italic }
+    </style>
+  </head>
+  <body>
+    <div id="one">ABCD</div>
+    <div id="two">ABCDEF</div>
+    <div id="bold">ABCD</div>
+    <div id="italic">ABCD</div>
+  </body>
+</html>

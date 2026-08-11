@@ -7,12 +7,18 @@ A block glyph makes a rendered run unmistakable in a pixel assertion — no
 system fallback paints a filled rectangle — so a test can prove the *web*
 font was used rather than merely that some font was.
 
-The three faces are distinguished only by block height. Their internal
+The first three faces are distinguished only by block height. Their internal
 metadata is deliberately identical and deliberately wrong: same family, same
 "Regular" style, same weight 400, none of which is the family or the weight
 the CSS declares. Only the `@font-face` descriptors can tell them apart, so a
 test that selects one by `font-weight` or `font-style` is testing the
 descriptor rather than the font's own `name` table.
+
+The fourth, `block-ascii`, covers printable ASCII rather than capitals alone,
+and adds a blank space that still advances so runs can wrap. It exists for the
+conformance corpus, whose cases are built from real framework markup and are
+therefore not written in capitals: pinning that font makes every text metric
+in the case come out of a committed file rather than off the host.
 """
 
 import sys
@@ -21,11 +27,19 @@ from fontTools.fontBuilder import FontBuilder
 from fontTools.pens.ttGlyphPen import TTGlyphPen
 
 UPM = 1000
-# Fraction of the em box each face fills, and the file stem it is written to.
-FACES = {"regular": UPM, "bold": UPM // 2, "italic": UPM // 4}
+CAPITALS = range(0x41, 0x5B)
+PRINTABLE = range(0x21, 0x7F)
+# Fraction of the em box each face fills and the codepoints it covers, keyed by
+# the file stem it is written to.
+FACES = {
+    "regular": (UPM, CAPITALS),
+    "bold": (UPM // 2, CAPITALS),
+    "italic": (UPM // 4, CAPITALS),
+    "ascii": (UPM, PRINTABLE),
+}
 
 
-def build(top):
+def build(top, codepoints):
     pen = TTGlyphPen(None)
     pen.moveTo((0, 0))
     pen.lineTo((UPM, 0))
@@ -33,11 +47,17 @@ def build(top):
     pen.lineTo((0, top))
     pen.closePath()
 
+    spaced = codepoints is PRINTABLE
+    glyphs = [".notdef", "block"] + (["space"] if spaced else [])
+    cmap = {codepoint: "block" for codepoint in codepoints}
+    if spaced:
+        cmap[0x20] = "space"
+
     fb = FontBuilder(UPM, isTTF=True)
-    fb.setupGlyphOrder([".notdef", "block"])
-    fb.setupCharacterMap({codepoint: "block" for codepoint in range(0x41, 0x5B)})
-    fb.setupGlyf({".notdef": TTGlyphPen(None).glyph(), "block": pen.glyph()})
-    fb.setupHorizontalMetrics({".notdef": (UPM, 0), "block": (UPM, 0)})
+    fb.setupGlyphOrder(glyphs)
+    fb.setupCharacterMap(cmap)
+    fb.setupGlyf({name: (pen if name == "block" else TTGlyphPen(None)).glyph() for name in glyphs})
+    fb.setupHorizontalMetrics({name: (UPM, 0) for name in glyphs})
     fb.setupHorizontalHeader(ascent=UPM, descent=0)
     fb.setupNameTable(
         {
@@ -62,8 +82,8 @@ def build(top):
 
 
 out = sys.argv[1]
-for stem, top in FACES.items():
-    fb = build(top)
+for stem, (top, codepoints) in FACES.items():
+    fb = build(top, codepoints)
     fb.save(f"{out}/block-{stem}.ttf")
     if stem == "regular":
         fb.font.flavor = "woff2"

@@ -1,4 +1,5 @@
 import { strict as assert } from "node:assert";
+import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
 import { join } from "node:path";
@@ -572,6 +573,30 @@ const metricsNode = layoutReads.nodes.find(node => node.attributes.id === "metri
 assert.equal(metricsNode.attributes["data-layout-reads"], "ok");
 assert.equal(metricsNode.scroll_x, 25);
 assert.equal(metricsNode.scroll_y, 35);
+// Absent, not stubbed. The manifest is generated from the bootstrap source;
+// this asks the runtime that source produces, so neither `doctor` nor
+// COMPATIBILITY.md can claim an API the application would find otherwise —
+// including one the Phase 1 host supplies and the Phase 2 engine would not.
+const manifest = JSON.parse(await readFile(
+  new URL("../src/api-manifest.json", import.meta.url), "utf8"));
+const declared = JSON.parse(native.runBridgeHarness(
+  `<div id="surface"></div>`,
+  `{ globalThis.__blitsenSurface = ${JSON.stringify(manifest.apis)}.map(entry => {
+       const owner = entry.kind === "global" ? globalThis
+         : entry.owner.split(".").reduce((value, key) => value?.[key], globalThis);
+       return [entry.api, Boolean(owner) && (entry.member ?? entry.api) in owner];
+     });
+     document.getElementById("surface").setAttribute("data-surface", "ok"); }`,
+  200,
+  100,
+));
+assert.equal(declared.nodes.find(node => node.attributes.id === "surface").attributes["data-surface"], "ok");
+const runtimeSurface = new Map(globalThis.__blitsenSurface);
+delete globalThis.__blitsenSurface;
+for (const entry of manifest.apis)
+  assert.equal(runtimeSurface.get(entry.api), entry.status === "implemented",
+    `${entry.api} is ${entry.status} in the API manifest but the opposite in the runtime`);
+
 const routing = JSON.parse(native.runBridgeHarness(
   `<div id="routing"></div>`,
   `{ const trail = globalThis.__blitsenRouting = { entries: [], pops: [], hashes: [] };

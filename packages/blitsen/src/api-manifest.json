@@ -1,0 +1,1150 @@
+{
+  "generatedBy": "packages/blitsen/src/api-manifest.mjs from crates/blitsen-node/src/dom_bridge.rs",
+  "profile": "v0-strict",
+  "apis": [
+    {
+      "api": "document",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_DOM",
+      "pattern": "(?<![.\\w$])document\\b"
+    },
+    {
+      "api": "Document",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_DOM",
+      "pattern": "(?<![.\\w$])Document\\b"
+    },
+    {
+      "api": "Node",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_DOM",
+      "pattern": "(?<![.\\w$])Node\\b"
+    },
+    {
+      "api": "Element",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_DOM",
+      "pattern": "(?<![.\\w$])Element\\b"
+    },
+    {
+      "api": "NodeList",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_DOM",
+      "pattern": "(?<![.\\w$])NodeList\\b"
+    },
+    {
+      "api": "DOMTokenList",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_DOM",
+      "pattern": "(?<![.\\w$])DOMTokenList\\b"
+    },
+    {
+      "api": "CSSStyleDeclaration",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_DOM",
+      "pattern": "(?<![.\\w$])CSSStyleDeclaration\\b"
+    },
+    {
+      "api": "MutationObserver",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_DOM",
+      "pattern": "(?<![.\\w$])MutationObserver\\b"
+    },
+    {
+      "api": "HTMLElement",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_DOM",
+      "pattern": "(?<![.\\w$])HTMLElement\\b"
+    },
+    {
+      "api": "HTMLIFrameElement",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_DOM",
+      "pattern": "(?<![.\\w$])HTMLIFrameElement\\b"
+    },
+    {
+      "api": "SVGElement",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_DOM",
+      "pattern": "(?<![.\\w$])SVGElement\\b"
+    },
+    {
+      "api": "Element.querySelector",
+      "kind": "member",
+      "owner": "Element.prototype",
+      "member": "querySelector",
+      "status": "absent",
+      "code": "WEB_DOM",
+      "pattern": null
+    },
+    {
+      "api": "Element.querySelectorAll",
+      "kind": "member",
+      "owner": "Element.prototype",
+      "member": "querySelectorAll",
+      "status": "absent",
+      "code": "WEB_DOM",
+      "pattern": null
+    },
+    {
+      "api": "Element.closest",
+      "kind": "member",
+      "owner": "Element.prototype",
+      "member": "closest",
+      "status": "absent",
+      "code": "WEB_DOM",
+      "pattern": null
+    },
+    {
+      "api": "Element.matches",
+      "kind": "member",
+      "owner": "Element.prototype",
+      "member": "matches",
+      "status": "absent",
+      "code": "WEB_DOM",
+      "pattern": null
+    },
+    {
+      "api": "Element.cloneNode",
+      "kind": "member",
+      "owner": "Element.prototype",
+      "member": "cloneNode",
+      "status": "absent",
+      "code": "WEB_DOM",
+      "pattern": null
+    },
+    {
+      "api": "Element.contains",
+      "kind": "member",
+      "owner": "Element.prototype",
+      "member": "contains",
+      "status": "absent",
+      "code": "WEB_DOM",
+      "pattern": null
+    },
+    {
+      "api": "Element.children",
+      "kind": "member",
+      "owner": "Element.prototype",
+      "member": "children",
+      "status": "absent",
+      "code": "WEB_DOM",
+      "pattern": null
+    },
+    {
+      "api": "Element.previousSibling",
+      "kind": "member",
+      "owner": "Element.prototype",
+      "member": "previousSibling",
+      "status": "absent",
+      "code": "WEB_DOM",
+      "pattern": null
+    },
+    {
+      "api": "Element.lastChild",
+      "kind": "member",
+      "owner": "Element.prototype",
+      "member": "lastChild",
+      "status": "absent",
+      "code": "WEB_DOM",
+      "pattern": null
+    },
+    {
+      "api": "Element.parentElement",
+      "kind": "member",
+      "owner": "Element.prototype",
+      "member": "parentElement",
+      "status": "absent",
+      "code": "WEB_DOM",
+      "pattern": null
+    },
+    {
+      "api": "Element.dataset",
+      "kind": "member",
+      "owner": "Element.prototype",
+      "member": "dataset",
+      "status": "absent",
+      "code": "WEB_DOM",
+      "pattern": null
+    },
+    {
+      "api": "Element.outerHTML",
+      "kind": "member",
+      "owner": "Element.prototype",
+      "member": "outerHTML",
+      "status": "absent",
+      "code": "WEB_DOM",
+      "pattern": null
+    },
+    {
+      "api": "Element.insertAdjacentHTML",
+      "kind": "member",
+      "owner": "Element.prototype",
+      "member": "insertAdjacentHTML",
+      "status": "absent",
+      "code": "WEB_DOM",
+      "pattern": null
+    },
+    {
+      "api": "Element.attachShadow",
+      "kind": "member",
+      "owner": "Element.prototype",
+      "member": "attachShadow",
+      "status": "absent",
+      "code": "WEB_DOM",
+      "pattern": null
+    },
+    {
+      "api": "Element.scrollIntoView",
+      "kind": "member",
+      "owner": "Element.prototype",
+      "member": "scrollIntoView",
+      "status": "absent",
+      "code": "WEB_DOM",
+      "pattern": null
+    },
+    {
+      "api": "Document.createElementNS",
+      "kind": "member",
+      "owner": "Document.prototype",
+      "member": "createElementNS",
+      "status": "absent",
+      "code": "WEB_DOM",
+      "pattern": null
+    },
+    {
+      "api": "Document.createDocumentFragment",
+      "kind": "member",
+      "owner": "Document.prototype",
+      "member": "createDocumentFragment",
+      "status": "absent",
+      "code": "WEB_DOM",
+      "pattern": null
+    },
+    {
+      "api": "EventTarget",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_EVENTS",
+      "pattern": "(?<![.\\w$])EventTarget\\b"
+    },
+    {
+      "api": "Event",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_EVENTS",
+      "pattern": "(?<![.\\w$])Event\\b"
+    },
+    {
+      "api": "CustomEvent",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_EVENTS",
+      "pattern": "(?<![.\\w$])CustomEvent\\b"
+    },
+    {
+      "api": "MouseEvent",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_EVENTS",
+      "pattern": "(?<![.\\w$])MouseEvent\\b"
+    },
+    {
+      "api": "KeyboardEvent",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_EVENTS",
+      "pattern": "(?<![.\\w$])KeyboardEvent\\b"
+    },
+    {
+      "api": "addEventListener",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_EVENTS",
+      "pattern": "(?<![.\\w$])addEventListener\\b"
+    },
+    {
+      "api": "removeEventListener",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_EVENTS",
+      "pattern": "(?<![.\\w$])removeEventListener\\b"
+    },
+    {
+      "api": "dispatchEvent",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_EVENTS",
+      "pattern": "(?<![.\\w$])dispatchEvent\\b"
+    },
+    {
+      "api": "requestAnimationFrame",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_SCHEDULING",
+      "pattern": "(?<![.\\w$])requestAnimationFrame\\b"
+    },
+    {
+      "api": "cancelAnimationFrame",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_SCHEDULING",
+      "pattern": "(?<![.\\w$])cancelAnimationFrame\\b"
+    },
+    {
+      "api": "setTimeout",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_SCHEDULING",
+      "pattern": "(?<![.\\w$])setTimeout\\b"
+    },
+    {
+      "api": "clearTimeout",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_SCHEDULING",
+      "pattern": "(?<![.\\w$])clearTimeout\\b"
+    },
+    {
+      "api": "setInterval",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_SCHEDULING",
+      "pattern": "(?<![.\\w$])setInterval\\b"
+    },
+    {
+      "api": "clearInterval",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_SCHEDULING",
+      "pattern": "(?<![.\\w$])clearInterval\\b"
+    },
+    {
+      "api": "requestIdleCallback",
+      "kind": "global",
+      "status": "absent",
+      "code": "WEB_SCHEDULING",
+      "pattern": "(?<![.\\w$])requestIdleCallback\\b"
+    },
+    {
+      "api": "cancelIdleCallback",
+      "kind": "global",
+      "status": "absent",
+      "code": "WEB_SCHEDULING",
+      "pattern": "(?<![.\\w$])cancelIdleCallback\\b"
+    },
+    {
+      "api": "fetch",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_NETWORK",
+      "pattern": "(?<![.\\w$])fetch\\b"
+    },
+    {
+      "api": "Headers",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_NETWORK",
+      "pattern": "(?<![.\\w$])Headers\\b"
+    },
+    {
+      "api": "Request",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_NETWORK",
+      "pattern": "(?<![.\\w$])Request\\b"
+    },
+    {
+      "api": "Response",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_NETWORK",
+      "pattern": "(?<![.\\w$])Response\\b"
+    },
+    {
+      "api": "Blob",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_NETWORK",
+      "pattern": "(?<![.\\w$])Blob\\b"
+    },
+    {
+      "api": "AbortController",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_NETWORK",
+      "pattern": "(?<![.\\w$])AbortController\\b"
+    },
+    {
+      "api": "AbortSignal",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_NETWORK",
+      "pattern": "(?<![.\\w$])AbortSignal\\b"
+    },
+    {
+      "api": "window",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_ROUTING",
+      "pattern": "(?<![.\\w$])window\\b"
+    },
+    {
+      "api": "location",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_ROUTING",
+      "pattern": "(?<![.\\w$])location\\b"
+    },
+    {
+      "api": "history",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_ROUTING",
+      "pattern": "(?<![.\\w$])history\\b"
+    },
+    {
+      "api": "Location",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_ROUTING",
+      "pattern": "(?<![.\\w$])Location\\b"
+    },
+    {
+      "api": "History",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_ROUTING",
+      "pattern": "(?<![.\\w$])History\\b"
+    },
+    {
+      "api": "PopStateEvent",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_ROUTING",
+      "pattern": "(?<![.\\w$])PopStateEvent\\b"
+    },
+    {
+      "api": "HashChangeEvent",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_ROUTING",
+      "pattern": "(?<![.\\w$])HashChangeEvent\\b"
+    },
+    {
+      "api": "BlitsenViewElement",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_VIEWPORT",
+      "pattern": "(?<![.\\w$])BlitsenViewElement\\b"
+    },
+    {
+      "api": "BlitsenViewSurface",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_VIEWPORT",
+      "pattern": "(?<![.\\w$])BlitsenViewSurface\\b"
+    },
+    {
+      "api": "localStorage",
+      "kind": "global",
+      "status": "absent",
+      "code": "WEB_STORAGE",
+      "pattern": "(?<![.\\w$])localStorage\\b"
+    },
+    {
+      "api": "sessionStorage",
+      "kind": "global",
+      "status": "absent",
+      "code": "WEB_STORAGE",
+      "pattern": "(?<![.\\w$])sessionStorage\\b"
+    },
+    {
+      "api": "indexedDB",
+      "kind": "global",
+      "status": "absent",
+      "code": "WEB_STORAGE",
+      "pattern": "(?<![.\\w$])indexedDB\\b"
+    },
+    {
+      "api": "Worker",
+      "kind": "global",
+      "status": "absent",
+      "code": "WEB_WORKER",
+      "pattern": "(?<![.\\w$])Worker\\b"
+    },
+    {
+      "api": "SharedWorker",
+      "kind": "global",
+      "status": "absent",
+      "code": "WEB_WORKER",
+      "pattern": "(?<![.\\w$])SharedWorker\\b"
+    },
+    {
+      "api": "ServiceWorker",
+      "kind": "global",
+      "status": "absent",
+      "code": "WEB_WORKER",
+      "pattern": "(?<![.\\w$])ServiceWorker\\b"
+    },
+    {
+      "api": "ServiceWorkerContainer",
+      "kind": "global",
+      "status": "absent",
+      "code": "WEB_WORKER",
+      "pattern": "(?<![.\\w$])ServiceWorkerContainer\\b"
+    },
+    {
+      "api": "MessageChannel",
+      "kind": "global",
+      "status": "absent",
+      "code": "WEB_MESSAGING",
+      "pattern": "(?<![.\\w$])MessageChannel\\b"
+    },
+    {
+      "api": "MessagePort",
+      "kind": "global",
+      "status": "absent",
+      "code": "WEB_MESSAGING",
+      "pattern": "(?<![.\\w$])MessagePort\\b"
+    },
+    {
+      "api": "BroadcastChannel",
+      "kind": "global",
+      "status": "absent",
+      "code": "WEB_MESSAGING",
+      "pattern": "(?<![.\\w$])BroadcastChannel\\b"
+    },
+    {
+      "api": "postMessage",
+      "kind": "global",
+      "status": "absent",
+      "code": "WEB_MESSAGING",
+      "pattern": "(?<![.\\w$])postMessage\\b"
+    },
+    {
+      "api": "WebSocket",
+      "kind": "global",
+      "status": "absent",
+      "code": "WEB_SOCKET",
+      "pattern": "(?<![.\\w$])WebSocket\\b"
+    },
+    {
+      "api": "EventSource",
+      "kind": "global",
+      "status": "absent",
+      "code": "WEB_SOCKET",
+      "pattern": "(?<![.\\w$])EventSource\\b"
+    },
+    {
+      "api": "XMLHttpRequest",
+      "kind": "global",
+      "status": "absent",
+      "code": "WEB_XHR",
+      "pattern": "(?<![.\\w$])XMLHttpRequest\\b"
+    },
+    {
+      "api": "ReadableStream",
+      "kind": "global",
+      "status": "absent",
+      "code": "WEB_STREAM",
+      "pattern": "(?<![.\\w$])ReadableStream\\b"
+    },
+    {
+      "api": "WritableStream",
+      "kind": "global",
+      "status": "absent",
+      "code": "WEB_STREAM",
+      "pattern": "(?<![.\\w$])WritableStream\\b"
+    },
+    {
+      "api": "TransformStream",
+      "kind": "global",
+      "status": "absent",
+      "code": "WEB_STREAM",
+      "pattern": "(?<![.\\w$])TransformStream\\b"
+    },
+    {
+      "api": "Response.body",
+      "kind": "member",
+      "owner": "Response.prototype",
+      "member": "body",
+      "status": "absent",
+      "code": "WEB_STREAM",
+      "pattern": null
+    },
+    {
+      "api": "Response.clone",
+      "kind": "member",
+      "owner": "Response.prototype",
+      "member": "clone",
+      "status": "absent",
+      "code": "WEB_STREAM",
+      "pattern": null
+    },
+    {
+      "api": "FormData",
+      "kind": "global",
+      "status": "absent",
+      "code": "WEB_FORM",
+      "pattern": "(?<![.\\w$])FormData\\b"
+    },
+    {
+      "api": "File",
+      "kind": "global",
+      "status": "absent",
+      "code": "WEB_FORM",
+      "pattern": "\\bnew File\\s*\\("
+    },
+    {
+      "api": "FileReader",
+      "kind": "global",
+      "status": "absent",
+      "code": "WEB_FORM",
+      "pattern": "(?<![.\\w$])FileReader\\b"
+    },
+    {
+      "api": "HTMLCanvasElement",
+      "kind": "global",
+      "status": "absent",
+      "code": "WEB_CANVAS",
+      "pattern": "(?<![.\\w$])HTMLCanvasElement\\b"
+    },
+    {
+      "api": "CanvasRenderingContext2D",
+      "kind": "global",
+      "status": "absent",
+      "code": "WEB_CANVAS",
+      "pattern": "(?<![.\\w$])CanvasRenderingContext2D\\b"
+    },
+    {
+      "api": "OffscreenCanvas",
+      "kind": "global",
+      "status": "absent",
+      "code": "WEB_CANVAS",
+      "pattern": "(?<![.\\w$])OffscreenCanvas\\b"
+    },
+    {
+      "api": "ImageData",
+      "kind": "global",
+      "status": "absent",
+      "code": "WEB_CANVAS",
+      "pattern": "(?<![.\\w$])ImageData\\b"
+    },
+    {
+      "api": "Path2D",
+      "kind": "global",
+      "status": "absent",
+      "code": "WEB_CANVAS",
+      "pattern": "(?<![.\\w$])Path2D\\b"
+    },
+    {
+      "api": "WebGLRenderingContext",
+      "kind": "global",
+      "status": "absent",
+      "code": "WEB_GPU",
+      "pattern": "(?<![.\\w$])WebGLRenderingContext\\b"
+    },
+    {
+      "api": "WebGL2RenderingContext",
+      "kind": "global",
+      "status": "absent",
+      "code": "WEB_GPU",
+      "pattern": "(?<![.\\w$])WebGL2RenderingContext\\b"
+    },
+    {
+      "api": "GPUCanvasContext",
+      "kind": "global",
+      "status": "absent",
+      "code": "WEB_GPU",
+      "pattern": "(?<![.\\w$])GPUCanvasContext\\b"
+    },
+    {
+      "api": "Image",
+      "kind": "global",
+      "status": "absent",
+      "code": "WEB_MEDIA",
+      "pattern": "\\bnew Image\\s*\\("
+    },
+    {
+      "api": "Audio",
+      "kind": "global",
+      "status": "absent",
+      "code": "WEB_MEDIA",
+      "pattern": "\\bnew Audio\\s*\\("
+    },
+    {
+      "api": "AudioContext",
+      "kind": "global",
+      "status": "absent",
+      "code": "WEB_MEDIA",
+      "pattern": "(?<![.\\w$])AudioContext\\b"
+    },
+    {
+      "api": "webkitAudioContext",
+      "kind": "global",
+      "status": "absent",
+      "code": "WEB_MEDIA",
+      "pattern": "(?<![.\\w$])webkitAudioContext\\b"
+    },
+    {
+      "api": "HTMLMediaElement",
+      "kind": "global",
+      "status": "absent",
+      "code": "WEB_MEDIA",
+      "pattern": "(?<![.\\w$])HTMLMediaElement\\b"
+    },
+    {
+      "api": "MediaQueryList",
+      "kind": "global",
+      "status": "absent",
+      "code": "WEB_MEDIA",
+      "pattern": "(?<![.\\w$])MediaQueryList\\b"
+    },
+    {
+      "api": "matchMedia",
+      "kind": "global",
+      "status": "absent",
+      "code": "WEB_MEDIA",
+      "pattern": "(?<![.\\w$])matchMedia\\b"
+    },
+    {
+      "api": "alert",
+      "kind": "global",
+      "status": "absent",
+      "code": "WEB_DIALOG",
+      "pattern": "\\balert\\s*\\("
+    },
+    {
+      "api": "confirm",
+      "kind": "global",
+      "status": "absent",
+      "code": "WEB_DIALOG",
+      "pattern": "\\bconfirm\\s*\\("
+    },
+    {
+      "api": "prompt",
+      "kind": "global",
+      "status": "absent",
+      "code": "WEB_DIALOG",
+      "pattern": "\\bprompt\\s*\\("
+    },
+    {
+      "api": "print",
+      "kind": "global",
+      "status": "absent",
+      "code": "WEB_DIALOG",
+      "pattern": "\\bwindow\\.print\\s*\\("
+    },
+    {
+      "api": "open",
+      "kind": "global",
+      "status": "absent",
+      "code": "WEB_NAVIGATION",
+      "pattern": "\\bwindow\\.open\\s*\\("
+    },
+    {
+      "api": "close",
+      "kind": "global",
+      "status": "absent",
+      "code": "WEB_NAVIGATION",
+      "pattern": null
+    },
+    {
+      "api": "navigation",
+      "kind": "global",
+      "status": "absent",
+      "code": "WEB_NAVIGATION",
+      "pattern": null
+    },
+    {
+      "api": "document.write",
+      "kind": "member",
+      "owner": "document",
+      "member": "write",
+      "status": "absent",
+      "code": "WEB_NAVIGATION",
+      "pattern": "\\bdocument\\.write\\b"
+    },
+    {
+      "api": "document.writeln",
+      "kind": "member",
+      "owner": "document",
+      "member": "writeln",
+      "status": "absent",
+      "code": "WEB_NAVIGATION",
+      "pattern": "\\bdocument\\.writeln\\b"
+    },
+    {
+      "api": "document.open",
+      "kind": "member",
+      "owner": "document",
+      "member": "open",
+      "status": "absent",
+      "code": "WEB_NAVIGATION",
+      "pattern": "\\bdocument\\.open\\b"
+    },
+    {
+      "api": "document.close",
+      "kind": "member",
+      "owner": "document",
+      "member": "close",
+      "status": "absent",
+      "code": "WEB_NAVIGATION",
+      "pattern": "\\bdocument\\.close\\b"
+    },
+    {
+      "api": "location.assign",
+      "kind": "member",
+      "owner": "location",
+      "member": "assign",
+      "status": "absent",
+      "code": "WEB_NAVIGATION",
+      "pattern": "\\blocation\\.assign\\b"
+    },
+    {
+      "api": "location.replace",
+      "kind": "member",
+      "owner": "location",
+      "member": "replace",
+      "status": "absent",
+      "code": "WEB_NAVIGATION",
+      "pattern": "\\blocation\\.replace\\b"
+    },
+    {
+      "api": "location.reload",
+      "kind": "member",
+      "owner": "location",
+      "member": "reload",
+      "status": "absent",
+      "code": "WEB_NAVIGATION",
+      "pattern": "\\blocation\\.reload\\b"
+    },
+    {
+      "api": "location.ancestorOrigins",
+      "kind": "member",
+      "owner": "location",
+      "member": "ancestorOrigins",
+      "status": "absent",
+      "code": "WEB_NAVIGATION",
+      "pattern": "\\blocation\\.ancestorOrigins\\b"
+    },
+    {
+      "api": "document.cookie",
+      "kind": "member",
+      "owner": "document",
+      "member": "cookie",
+      "status": "absent",
+      "code": "WEB_COOKIE",
+      "pattern": "\\bdocument\\.cookie\\b"
+    },
+    {
+      "api": "cookieStore",
+      "kind": "global",
+      "status": "absent",
+      "code": "WEB_COOKIE",
+      "pattern": "(?<![.\\w$])cookieStore\\b"
+    },
+    {
+      "api": "Headers.getSetCookie",
+      "kind": "member",
+      "owner": "Headers.prototype",
+      "member": "getSetCookie",
+      "status": "absent",
+      "code": "WEB_COOKIE",
+      "pattern": null
+    },
+    {
+      "api": "navigator",
+      "kind": "global",
+      "status": "absent",
+      "code": "WEB_DEVICE",
+      "pattern": "(?<![.\\w$])navigator\\b"
+    },
+    {
+      "api": "screen",
+      "kind": "global",
+      "status": "absent",
+      "code": "WEB_DEVICE",
+      "pattern": null
+    },
+    {
+      "api": "Notification",
+      "kind": "global",
+      "status": "absent",
+      "code": "WEB_DEVICE",
+      "pattern": "(?<![.\\w$])Notification\\b"
+    },
+    {
+      "api": "caches",
+      "kind": "global",
+      "status": "absent",
+      "code": "WEB_DEVICE",
+      "pattern": null
+    },
+    {
+      "api": "ResizeObserver",
+      "kind": "global",
+      "status": "absent",
+      "code": "WEB_OBSERVER",
+      "pattern": "(?<![.\\w$])ResizeObserver\\b"
+    },
+    {
+      "api": "IntersectionObserver",
+      "kind": "global",
+      "status": "absent",
+      "code": "WEB_OBSERVER",
+      "pattern": "(?<![.\\w$])IntersectionObserver\\b"
+    },
+    {
+      "api": "PerformanceObserver",
+      "kind": "global",
+      "status": "absent",
+      "code": "WEB_OBSERVER",
+      "pattern": "(?<![.\\w$])PerformanceObserver\\b"
+    },
+    {
+      "api": "getComputedStyle",
+      "kind": "global",
+      "status": "absent",
+      "code": "WEB_STYLE",
+      "pattern": "(?<![.\\w$])getComputedStyle\\b"
+    },
+    {
+      "api": "CSSStyleSheet",
+      "kind": "global",
+      "status": "absent",
+      "code": "WEB_STYLE",
+      "pattern": "(?<![.\\w$])CSSStyleSheet\\b"
+    },
+    {
+      "api": "StyleSheetList",
+      "kind": "global",
+      "status": "absent",
+      "code": "WEB_STYLE",
+      "pattern": "(?<![.\\w$])StyleSheetList\\b"
+    },
+    {
+      "api": "customElements",
+      "kind": "global",
+      "status": "absent",
+      "code": "WEB_COMPONENTS",
+      "pattern": "(?<![.\\w$])customElements\\b"
+    },
+    {
+      "api": "ShadowRoot",
+      "kind": "global",
+      "status": "absent",
+      "code": "WEB_COMPONENTS",
+      "pattern": "(?<![.\\w$])ShadowRoot\\b"
+    },
+    {
+      "api": "HTMLTemplateElement",
+      "kind": "global",
+      "status": "absent",
+      "code": "WEB_COMPONENTS",
+      "pattern": "(?<![.\\w$])HTMLTemplateElement\\b"
+    },
+    {
+      "api": "DOMParser",
+      "kind": "global",
+      "status": "absent",
+      "code": "WEB_COMPONENTS",
+      "pattern": "(?<![.\\w$])DOMParser\\b"
+    }
+  ],
+  "diagnostics": {
+    "WEB_DOM": {
+      "severity": "warning",
+      "message": "This DOM method is not implemented.",
+      "guidance": "Use the document-level lookups and node methods listed in COMPATIBILITY.md.",
+      "extra": null
+    },
+    "WEB_SCHEDULING": {
+      "severity": "warning",
+      "message": "Idle-callback scheduling is not implemented.",
+      "guidance": "Schedule the work with requestAnimationFrame or a timer.",
+      "extra": null
+    },
+    "WEB_STORAGE": {
+      "severity": "error",
+      "message": "Browser storage is not implemented.",
+      "guidance": "Use a Node filesystem/database package or feature-detect storage.",
+      "extra": null
+    },
+    "WEB_WORKER": {
+      "severity": "error",
+      "message": "Web workers are not implemented.",
+      "guidance": "Run the work in the main context or use a native/Node worker path.",
+      "extra": null
+    },
+    "WEB_MESSAGING": {
+      "severity": "warning",
+      "message": "Message channels are not implemented.",
+      "guidance": "Feature-detect the channel; a scheduler that falls back to a timer keeps working.",
+      "extra": null
+    },
+    "WEB_SOCKET": {
+      "severity": "warning",
+      "message": "Browser network streams are not implemented.",
+      "guidance": "Feature-detect this API or use a Node-compatible networking package.",
+      "extra": null
+    },
+    "WEB_XHR": {
+      "severity": "error",
+      "message": "XMLHttpRequest is not implemented.",
+      "guidance": "Use fetch with an absolute URL.",
+      "extra": null
+    },
+    "WEB_STREAM": {
+      "severity": "warning",
+      "message": "Streaming bodies are not implemented; a response is buffered whole.",
+      "guidance": "Read the response with text(), json(), or arrayBuffer().",
+      "extra": "\\.body\\s*\\.\\s*getReader\\b"
+    },
+    "WEB_FORM": {
+      "severity": "warning",
+      "message": "Multipart form bodies and file objects are not implemented.",
+      "guidance": "Send a string, Blob, ArrayBuffer, or typed array body.",
+      "extra": null
+    },
+    "WEB_CANVAS": {
+      "severity": "error",
+      "message": "Canvas is not in the v0 compatibility profile.",
+      "guidance": "Use DOM/CSS rendering or a native viewport until canvas support lands.",
+      "extra": "\\.getContext\\s*\\("
+    },
+    "WEB_GPU": {
+      "severity": "error",
+      "message": "WebGL and WebGPU are not implemented.",
+      "guidance": "Remove the GPU-web API path or replace it with a native addon/viewport.",
+      "extra": null
+    },
+    "WEB_MEDIA": {
+      "severity": "warning",
+      "message": "Audio and the media element constructors are not implemented.",
+      "guidance": "Use <img> and CSS assets, or feature-detect the media path.",
+      "extra": null
+    },
+    "WEB_DIALOG": {
+      "severity": "error",
+      "message": "Modal browser dialogs are not implemented.",
+      "guidance": "Use the native dialog module, or render the prompt as DOM.",
+      "extra": null
+    },
+    "WEB_NAVIGATION": {
+      "severity": "error",
+      "message": "Document navigation is deliberately absent; there is no page to leave.",
+      "guidance": "Route with history.pushState and conditional DOM rendering.",
+      "extra": null
+    },
+    "WEB_COOKIE": {
+      "severity": "error",
+      "message": "There is no origin and no cookie jar behind an exported application.",
+      "guidance": "Keep session state in memory or in a file the application owns.",
+      "extra": null
+    },
+    "WEB_DEVICE": {
+      "severity": "warning",
+      "message": "This device API is not implemented.",
+      "guidance": "Feature-detect it, or use the native modules for capability the web does not have.",
+      "extra": null
+    },
+    "WEB_OBSERVER": {
+      "severity": "warning",
+      "message": "Layout and performance observers are not implemented.",
+      "guidance": "Read geometry in a requestAnimationFrame callback, or observe resize on window.",
+      "extra": null
+    },
+    "WEB_STYLE": {
+      "severity": "error",
+      "message": "Computed style and the stylesheet objects are not implemented.",
+      "guidance": "Read the inline style property, or drive the value from a class.",
+      "extra": null
+    },
+    "WEB_COMPONENTS": {
+      "severity": "error",
+      "message": "Custom elements, shadow DOM and DOM parsing are not implemented.",
+      "guidance": "Render with ordinary elements the bundler already emits.",
+      "extra": null
+    }
+  },
+  "usage": [
+    {
+      "code": "WEB_FETCH",
+      "severity": "error",
+      "pattern": "\\bfetch\\s*\\(\\s*[\"'`](?!https?:\\/\\/)",
+      "message": "fetch resolves this URL against an address with no server behind it.",
+      "guidance": "Bundle the data into the export, or request an absolute http(s) URL."
+    }
+  ],
+  "renderer": [
+    {
+      "kind": "css",
+      "code": "CSS_LAYERS",
+      "severity": "error",
+      "pattern": "(?:^|[;{])\\s*(?:visibility|opacity)\\s*:",
+      "message": "visibility/opacity composition is outside the current renderer profile.",
+      "guidance": "Use conditional DOM rendering instead of hidden composited layers."
+    },
+    {
+      "kind": "css",
+      "code": "CSS_TRANSFORM",
+      "severity": "error",
+      "pattern": "(?:^|[;{])\\s*(?:transform|perspective)\\s*:",
+      "message": "CSS transforms are outside the current renderer profile.",
+      "guidance": "Express the layout with block, flex, or grid geometry."
+    },
+    {
+      "kind": "css",
+      "code": "CSS_FIXED",
+      "severity": "error",
+      "pattern": "(?:^|[;{])\\s*position\\s*:\\s*(?:fixed|sticky)\\b",
+      "message": "Fixed and sticky positioning are outside the current renderer profile.",
+      "guidance": "Use normal, flex, grid, or bounded absolute layout."
+    },
+    {
+      "kind": "css",
+      "code": "CSS_EFFECT",
+      "severity": "error",
+      "pattern": "(?:^|[;{])\\s*(?:filter|backdrop-filter|clip-path|mask(?:-image)?)\\s*:",
+      "message": "This paint effect is outside the current renderer profile.",
+      "guidance": "Use borders, backgrounds, and static geometry."
+    },
+    {
+      "kind": "html",
+      "code": "HTML_CANVAS",
+      "severity": "error",
+      "pattern": "<canvas\\b",
+      "message": "<canvas> is not implemented.",
+      "guidance": "Use ordinary DOM/CSS elements or a native viewport."
+    },
+    {
+      "kind": "html",
+      "code": "HTML_MEDIA",
+      "severity": "warning",
+      "pattern": "<(?:audio|video|track)\\b",
+      "message": "Audio and video elements are not implemented.",
+      "guidance": "Ship the experience as DOM, images and CSS, or feature-detect the media path."
+    },
+    {
+      "kind": "html",
+      "code": "HTML_SVG",
+      "severity": "warning",
+      "pattern": "<svg\\b",
+      "message": "SVG rendering is currently limited and not in the strict profile.",
+      "guidance": "Verify this asset visually or replace it with profiled HTML/CSS."
+    }
+  ]
+}

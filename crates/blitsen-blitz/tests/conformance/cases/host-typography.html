@@ -1,0 +1,29 @@
+<!-- conformance
+The one case that leaves the pinned font behind, because the bug it guards
+against can only happen there: with `blitz-dom`'s `system-fonts` feature off,
+Parley has no font sources and every generic-family run paints nothing at all.
+Blitsen shipped that way for months and no DOM-level assertion noticed.
+
+Nothing here is portable — glyph shapes, advances and the resulting line box
+are all the host's — so the case carries no golden image and asserts only what
+is true of any correct rendering: black is painted where the run is, and the
+single line does not reach the bottom of the viewport.
+
+@size 400 120
+@oracle
+@host-fonts
+@ink 0 0 400 48 #000000ff >= 0.01
+@ink 0 60 400 60 #ffffffff >= 0.999
+-->
+<!doctype html>
+<html>
+  <head>
+    <style>
+      html, body { margin: 0; background: #ffffff }
+      div { font: 32px sans-serif; color: #000000 }
+    </style>
+  </head>
+  <body>
+    <div>Blitsen 12345</div>
+  </body>
+</html>

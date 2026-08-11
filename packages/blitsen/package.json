@@ -50,6 +50,7 @@
     "src"
   ],
   "scripts": {
+    "api:sync": "bun src/api-manifest.mjs",
     "example:hello": "bun test/run-hello-dom.mjs",
     "example:interactive": "bun test/run-interactive.mjs",
     "example:native-view": "bun test/run-native-view.mjs",
@@ -65,6 +66,9 @@
     "test": "bun test",
     "test:determinism": "bun test/run-determinism.mjs",
     "golden:record": "bun test/run-determinism.mjs --update",
+    "test:conformance": "cargo test -p blitsen-blitz --test conformance",
+    "conformance:record": "BLITSEN_RECORD_CONFORMANCE=1 cargo test -p blitsen-blitz --test conformance",
+    "conformance:capture": "bun ../../crates/blitsen-blitz/tests/conformance/capture.mjs",
     "test:native": "bun test/run-native-harness.mjs",
     "test:m2": "bun test/run-m2.mjs",
     "test:bundlers": "bun test/run-bundlers.mjs",

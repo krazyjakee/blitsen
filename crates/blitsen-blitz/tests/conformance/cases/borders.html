@@ -1,0 +1,41 @@
+<!-- conformance
+Borders and backgrounds: per-side widths and colours, `box-sizing: border-box`,
+and a radius that has to actually cut the corner.
+
+#panel keeps its declared 200x100 under `border-box`, so the border eats into
+it: the content box runs from 20 + 40 = 60 to 20 + 200 - 20 = 200 across and
+from 20 + 10 = 30 to 20 + 100 - 30 = 90 down. Each side is probed well inside
+its own band, away from the mitred corners.
+
+#pill follows at y = 120 + 20, its top margin having collapsed against
+#panel's equal bottom margin. Its radius is half its height, so 22,142 — which
+is 25.5 from the corner circle's centre, and that circle has radius 20 — falls
+outside the box and stays white.
+
+@oracle
+@box #panel 20 20 200 100
+@box #pill 20 140 120 40
+@pixel 120 25 #dc2626ff
+@pixel 210 60 #16a34aff
+@pixel 120 100 #2563ebff
+@pixel 30 60 #ca8a04ff
+@pixel 120 60 #f8fafcff
+@pixel 80 160 #7c3aedff
+@pixel 22 142 #ffffffff
+-->
+<!doctype html>
+<html>
+  <head>
+    <style>
+      html, body { margin: 0; background: #ffffff }
+      #panel { box-sizing: border-box; margin: 20px; width: 200px; height: 100px;
+               border-style: solid; border-width: 10px 20px 30px 40px;
+               border-color: #dc2626 #16a34a #2563eb #ca8a04; background-color: #f8fafc }
+      #pill { margin: 20px; width: 120px; height: 40px; border-radius: 20px; background: #7c3aed }
+    </style>
+  </head>
+  <body>
+    <div id="panel"></div>
+    <div id="pill"></div>
+  </body>
+</html>

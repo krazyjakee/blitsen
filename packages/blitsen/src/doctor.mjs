@@ -1,50 +1,30 @@
 import { readFile, readdir } from "node:fs/promises";
 import { extname, join, relative, sep } from "node:path";
+import { loadApiManifest } from "./api-manifest.mjs";
 
-const JS_RULES = [
-  ["WEB_CANVAS", "error", /\b(?:HTMLCanvasElement|CanvasRenderingContext2D|OffscreenCanvas)\b|\.getContext\s*\(/g,
-    "Canvas is not in the v0 compatibility profile.", "Use DOM/CSS rendering or a native viewport until canvas support lands."],
-  ["WEB_GPU", "error", /\b(?:WebGLRenderingContext|WebGL2RenderingContext|GPUCanvasContext|navigator\.gpu)\b/g,
-    "WebGL and WebGPU are not implemented.", "Remove the GPU-web API path or replace it with a native addon/viewport."],
-  ["WEB_STORAGE", "error", /\b(?:localStorage|sessionStorage|indexedDB)\b/g,
-    "Browser storage is not implemented.", "Use a Node filesystem/database package or feature-detect storage."],
-  ["WEB_WORKER", "error", /\b(?:Worker|SharedWorker|ServiceWorkerContainer)\b/g,
-    "Web workers are not implemented.", "Run the work in the main context or use a native/Node worker path."],
-  ["WEB_NAVIGATION", "error", /\b(?:document\.write|window\.open|location\.(?:assign|replace|reload))\b/g,
-    "Document navigation is deliberately absent; there is no page to leave.", "Route with history.pushState and conditional DOM rendering."],
-  // `history` and `location` are in profile, but they address a synthetic
-  // document with no server behind it, so a literal relative fetch cannot work.
-  ["WEB_FETCH", "error", /\bfetch\s*\(\s*["'`](?!https?:\/\/)/g,
-    "fetch resolves this URL against an address with no server behind it.", "Bundle the data into the export, or request an absolute http(s) URL."],
-  ["WEB_STREAM", "warning", /\b(?:ReadableStream|WritableStream|TransformStream)\b|\.body\s*\.\s*getReader\b/g,
-    "Streaming bodies are not implemented; a response is buffered whole.", "Read the response with text(), json(), or arrayBuffer()."],
-  ["WEB_SOCKET", "warning", /\b(?:WebSocket|EventSource)\b/g,
-    "Browser network streams are v1 APIs.", "Feature-detect this API or use a Node-compatible networking package."],
-  ["WEB_MEDIA", "warning", /\b(?:new\s+(?:Image|Audio)\s*\(|AudioContext|webkitAudioContext)\b/g,
-    "Image/audio browser APIs are outside the v0 profile.", "Use text and CSS-only assets for v0, or feature-detect the media path."],
-];
+// Every rule below comes from the generated manifest, so `doctor` and the
+// runtime cannot describe the same API differently. See COMPATIBILITY.md.
+async function compatibilityRules() {
+  const manifest = await loadApiManifest();
+  const absent = new Map();
+  for (const entry of manifest.apis) {
+    if (entry.status !== "absent" || !entry.pattern) continue;
+    absent.set(entry.code, [...(absent.get(entry.code) ?? []), entry.pattern]);
+  }
+  const javascript = manifest.usage.map(rule =>
+    [rule.code, rule.severity, new RegExp(rule.pattern, "g"), rule.message, rule.guidance]);
+  for (const [code, patterns] of absent) {
+    const rule = manifest.diagnostics[code];
+    javascript.push([code, rule.severity, new RegExp([...patterns, rule.extra].filter(Boolean)
+      .join("|"), "g"), rule.message, rule.guidance]);
+  }
+  const renderer = kind => manifest.renderer.filter(rule => rule.kind === kind).map(rule =>
+    [rule.code, rule.severity, new RegExp(rule.pattern, "gi"), rule.message, rule.guidance]);
+  return { javascript, css: renderer("css"), html: renderer("html") };
+}
 
-const CSS_RULES = [
-  ["CSS_LAYERS", "error", /(?:^|[;{])\s*(?:visibility|opacity)\s*:/g,
-    "visibility/opacity composition is outside the current renderer profile.", "Use conditional DOM rendering instead of hidden composited layers."],
-  ["CSS_TRANSFORM", "error", /(?:^|[;{])\s*(?:transform|perspective)\s*:/g,
-    "CSS transforms are outside the current renderer profile.", "Express the layout with block, flex, or grid geometry."],
-  ["CSS_FIXED", "error", /(?:^|[;{])\s*position\s*:\s*(?:fixed|sticky)\b/g,
-    "Fixed and sticky positioning are outside the current renderer profile.", "Use normal, flex, grid, or bounded absolute layout."],
-  ["CSS_EFFECT", "error", /(?:^|[;{])\s*(?:filter|backdrop-filter|clip-path|mask(?:-image)?)\s*:/g,
-    "This paint effect is outside the current renderer profile.", "Use borders, backgrounds, and static geometry."],
-  ["CSS_FONT_FACE", "warning", /@font-face\b/g,
-    "Web fonts are a v1 capability.", "Use system fonts for portable v0 output."],
-];
-
-const HTML_RULES = [
-  ["HTML_CANVAS", "error", /<canvas\b/gi,
-    "<canvas> is not implemented.", "Use ordinary DOM/CSS elements or a native viewport."],
-  ["HTML_MEDIA", "warning", /<(?:img|picture|audio|video|source)\b/gi,
-    "Decoded image and media elements are outside the v0 profile.", "Use CSS colors/text for v0 or feature-detect the media-dependent UI."],
-  ["HTML_SVG", "warning", /<svg\b/gi,
-    "SVG rendering is currently limited and not in the strict profile.", "Verify this asset visually or replace it with profiled HTML/CSS."],
-];
+let loaded;
+const compatibility = () => (loaded ??= compatibilityRules());
 
 function position(source, index) {
   const before = source.slice(0, index);
@@ -94,18 +74,19 @@ async function collectScannableFiles(root, directory = root) {
 
 export async function doctorApplication(root) {
   const files = await collectScannableFiles(root);
+  const { javascript, css, html } = await compatibility();
   const diagnostics = [];
   for (const file of files) {
     const source = await readFile(file.absolute, "utf8");
     const extension = extname(file.relative).toLowerCase();
     if ([".html", ".htm"].includes(extension)) {
-      diagnostics.push(...scanRules(source, file.relative, HTML_RULES));
+      diagnostics.push(...scanRules(source, file.relative, html));
       diagnostics.push(...scanExternalAssets(source, file.relative, extension));
     } else if (extension === ".css") {
-      diagnostics.push(...scanRules(source, file.relative, CSS_RULES));
+      diagnostics.push(...scanRules(source, file.relative, css));
       diagnostics.push(...scanExternalAssets(source, file.relative, extension));
     } else {
-      diagnostics.push(...scanRules(source, file.relative, JS_RULES));
+      diagnostics.push(...scanRules(source, file.relative, javascript));
     }
   }
   diagnostics.sort((left, right) => left.file.localeCompare(right.file)

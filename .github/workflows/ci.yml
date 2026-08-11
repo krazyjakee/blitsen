@@ -108,6 +108,46 @@ jobs:
           name: frame-metrics-${{ github.sha }}
           path: ${{ github.workspace }}/frame-metrics.json
 
+  # Layout conformance (issue #61). P6 claims the same layout on every platform,
+  # so the corpus is rendered on every platform and held to one set of committed
+  # goldens. The declared box and colour checks are portable — the corpus pins
+  # its own font file — and are gated on all three runners; the golden images are
+  # gated wherever the raster fingerprint matches the machine that recorded them.
+  # Divergences upload as before/after/diff PNGs. See docs/CONFORMANCE.md.
+  #
+  # This is the first job in this workflow to build on macOS or Windows at all,
+  # and it deliberately builds only `blitsen-blitz`, which needs no JavaScript
+  # engine. Expect its first runs there to surface toolchain work rather than
+  # conformance failures; `fail-fast: false` keeps the Linux result readable
+  # while that settles.
+  conformance:
+    name: Layout conformance (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # The corpus renders through the CPU rasterizer and needs no display; only
+      # Blitz's font enumeration wants a system library, and only on Linux.
+      - name: Install Blitz system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libfontconfig1-dev
+      # Uncaptured, because the run reports which tier it gated and a silent
+      # pass on a runner whose rasterizer differs would read like a full one.
+      - run: cargo test -p blitsen-blitz --test conformance -- --nocapture
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: conformance-divergence-${{ matrix.os }}-${{ github.sha }}
+          path: ${{ github.workspace }}/target/conformance-divergence
+          if-no-files-found: ignore
+
   # Product requirements P1 (size), P2 (cold start) and P3 (idle RAM). One export
   # build feeds both consumers: the size gate fails on regression, the benchmarks
   # only record and report, because a hosted runner's timings are too noisy to

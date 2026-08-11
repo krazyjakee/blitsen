@@ -1,0 +1,34 @@
+<!-- conformance
+Block flow: margins, padding, borders, and the margin collapsing between two
+siblings that a hand-written layout engine gets wrong first.
+
+#outer is 400 wide less its 20px margins, so 360, at y=20 because its own top
+margin collapses through body and html. Its height is content 90 plus 20 of
+padding and 10 of border: #inner is 40 tall, #sibling is 20, and the 30px
+between them is #sibling's top margin collapsed against #inner's zero bottom
+margin — 40 + 30 + 20 = 90. Children sit inside 15px of border and padding, so
+they start at 35,35 and are 360 - 30 = 330 wide.
+
+@oracle
+@box #outer 20 20 360 120
+@box #inner 35 35 330 40
+@box #sibling 35 105 330 20
+@pixel 200 55 #2563ebff
+@pixel 200 95 #dbeafeff
+@pixel 200 115 #16a34aff
+@pixel 22 22 #1f2937ff
+-->
+<!doctype html>
+<html>
+  <head>
+    <style>
+      html, body { margin: 0; background: #ffffff }
+      #outer { margin: 20px; padding: 10px; border: 5px solid #1f2937; background: #dbeafe }
+      #inner { height: 40px; background: #2563eb }
+      #sibling { margin-top: 30px; height: 20px; background: #16a34a }
+    </style>
+  </head>
+  <body>
+    <div id="outer"><div id="inner"></div><div id="sibling"></div></div>
+  </body>
+</html>

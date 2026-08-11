@@ -2345,6 +2345,27 @@ pub fn snapshot_document_harness() -> napi::Result<String> {
         .map_err(|error| napi::Error::new(Status::GenericFailure, error.to_string()))
 }
 
+/// Serializes the tree of the most recently loaded document harness.
+///
+/// Backs the layout conformance corpus, whose framework cases are the markup a
+/// real bundle actually built rather than a hand-written imitation of it. The
+/// serialization happens after the document's scripts have run, so what comes
+/// back is the rendered tree, not the near-empty root element the bundle ships.
+#[napi]
+pub fn capture_document_harness_html() -> napi::Result<String> {
+    ACTIVE_DOCUMENT_HARNESS.with(|active| {
+        let active = active.borrow();
+        let (document, _, _) = active.as_ref().ok_or_else(|| {
+            napi::Error::new(Status::GenericFailure, "no document harness is active")
+        })?;
+        let document = document.borrow();
+        let root = document
+            .document_element()
+            .ok_or_else(|| napi::Error::new(Status::GenericFailure, "document has no root"))?;
+        document.inner_html(root).map_err(dom_error)
+    })
+}
+
 /// Loads a real HTML entrypoint and advances its animation loop at 60 Hz.
 #[napi]
 pub fn run_document_animation_harness(

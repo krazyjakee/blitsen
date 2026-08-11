@@ -35,7 +35,10 @@ style = { package = "stylo", version = "0.20" }
 
 [dev-dependencies]
 anyrender_vello_cpu = "0.15"
+blitsen-core = { path = "../blitsen-core" }
 blitz-paint = { git = "https://github.com/DioxusLabs/blitz", rev = "1efe22d2524d71ede5b94592204c21f0de644219", default-features = false, features = ["custom-widget"] }
+png = "0.18"
+serde_json = "1"
 
 [lints]
 workspace = true
