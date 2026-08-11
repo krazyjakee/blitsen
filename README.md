@@ -15,8 +15,11 @@ Input, animation and restyle are proven together on Linux x64 by
 coordinate hit test the native window uses. See the [M2 acceptance evidence](docs/M2.md).
 
 The Linux x64 architecture proof is now complete: [`examples/pong`](examples/pong) is a
-three-file, two-player Pong app that runs at 60 Hz from a single Phase 1 executable. See the
-[M3 acceptance evidence](docs/M3.md). Phase 1 exports are not yet cleared for redistribution.
+three-file, two-player Pong app that runs from a single Phase 1 executable. See the
+[M3 acceptance evidence](docs/M3.md). Frame cost is comfortable headlessly — 0.809 ms median
+against a 16.7 ms budget — but the windowed loop does not yet sustain 60 fps
+([#108](https://github.com/krazyjakee/blitsen/issues/108)). Phase 1 exports are not yet cleared
+for redistribution.
 
 ![Pong running in Blitsen](docs/pong.gif)
 

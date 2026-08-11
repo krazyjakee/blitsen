@@ -401,10 +401,16 @@ with correct propagation; `requestAnimationFrame` drives a smooth animation; sty
 mutation from JS relayouts correctly. Input enters through the same hit test the native window
 uses. See [the M2 acceptance evidence](M2.md).
 
-**M3 — Pong: complete on Linux x64.** A complete playable Pong exists as nothing but `index.html`, `style.css` and
-`game.js`, holds 60 fps, and runs from a single exported executable on a machine with no
-toolchain installed. **This is the architecture proof** — the point at which the project is
-demonstrably real. See [the M3 acceptance evidence](M3.md).
+**M3 — Pong: architecture proven on Linux x64; the frame-rate requirement is not met.** A complete
+playable Pong exists as nothing but `index.html`, `style.css` and `game.js`, and runs from a single
+exported executable on a machine with no toolchain installed. **That is the architecture proof** —
+the point at which the project is demonstrably real.
+
+P4 is a separate question and the honest answer today is no. Headless frame cost is comfortable —
+p50 0.809 ms against a 16.7 ms budget, zero frames over — but the windowed loop sustains about
+1 fps because `pumpWindow()` blocks roughly a second per call (issue #108). The earlier "holds
+60 fps" claim rested on the game's own readout, which the harness made circular by feeding it a
+fixed timestep; that measurement is gone. See [the M3 acceptance evidence](M3.md).
 
 **M3b — Compatible adoption: complete on Linux x64.** An unmodified, existing Vite + React app inside Blitsen's
 published compatibility profile is exported with nothing but `npm i -D blitsen` and
