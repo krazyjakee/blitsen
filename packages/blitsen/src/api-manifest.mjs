@@ -102,22 +102,30 @@ const USAGE_RULES = [
     "Bundle the data into the export, or request an absolute http(s) URL."],
 ];
 
-// Renderer capability, which no JavaScript declaration describes. Tiers here
-// are evidence from the S6 renderer spike and the determinism gate.
+// Renderer capability, which no JavaScript declaration describes.
+//
+// Severity here answers one question: does the page survive? An ignored paint
+// property degrades — the page is usable, slightly plainer. A mispositioned box
+// can hide content. Only script that throws stops a page rendering at all, and
+// none of that is in this list. So nothing here is an error: refusing the build
+// leaves the user with nothing, which is strictly worse than the degradation.
+//
+// These were errors, graded from the S6 capture. The conformance corpus since
+// showed that capture was caused by the stale-transition defect (gap G2) rather
+// than by the properties blamed for it: `visibility`, `opacity` and `transform`
+// all behave correctly, and `paint-suppression.html` gates that. Diagnosing
+// working CSS as a build-blocking error refused the stock create-vite template.
 const RENDERER_RULES = [
-  ["css", "CSS_LAYERS", "error", "(?:^|[;{])\\s*(?:visibility|opacity)\\s*:",
-    "visibility/opacity composition is outside the current renderer profile.",
-    "Use conditional DOM rendering instead of hidden composited layers."],
-  ["css", "CSS_TRANSFORM", "error", "(?:^|[;{])\\s*(?:transform|perspective)\\s*:",
-    "CSS transforms are outside the current renderer profile.",
-    "Express the layout with block, flex, or grid geometry."],
-  ["css", "CSS_FIXED", "error", "(?:^|[;{])\\s*position\\s*:\\s*(?:fixed|sticky)\\b",
-    "Fixed and sticky positioning are outside the current renderer profile.",
-    "Use normal, flex, grid, or bounded absolute layout."],
-  ["css", "CSS_EFFECT", "error",
+  ["css", "CSS_TRANSITION", "warning", "(?:^|[;{])\\s*transition(?:-property)?\\s*:",
+    "A property named by `transition` keeps its pre-stylesheet value (Blitz bug 689).",
+    "Inline the rule in a <style> element, or drop the transition, until it is fixed."],
+  ["css", "CSS_FIXED", "warning", "(?:^|[;{])\\s*position\\s*:\\s*(?:fixed|sticky)\\b",
+    "Fixed and sticky boxes resolve against the root box, not the viewport (Blitz bug 690).",
+    "Use normal, flex, grid, or bounded absolute layout for anything that must be placed exactly."],
+  ["css", "CSS_EFFECT", "warning",
     "(?:^|[;{])\\s*(?:filter|backdrop-filter|clip-path|mask(?:-image)?)\\s*:",
-    "This paint effect is outside the current renderer profile.",
-    "Use borders, backgrounds, and static geometry."],
+    "This paint effect is ignored rather than applied.",
+    "Check the element is still legible without it; use borders and backgrounds where it is not."],
   ["html", "HTML_CANVAS", "error", "<canvas\\b",
     "<canvas> is not implemented.", "Use ordinary DOM/CSS elements or a native viewport."],
   ["html", "HTML_MEDIA", "warning", "<(?:audio|video|track)\\b",

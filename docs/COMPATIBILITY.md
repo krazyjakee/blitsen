@@ -222,10 +222,9 @@ determinism gate instead.
 | `WEB_OBSERVER` | warning | Layout and performance observers are not implemented. |
 | `WEB_STYLE` | error | Computed style and the stylesheet objects are not implemented. |
 | `WEB_COMPONENTS` | error | Custom elements, shadow DOM and DOM parsing are not implemented. |
-| `CSS_LAYERS` | error | visibility/opacity composition is outside the current renderer profile. |
-| `CSS_TRANSFORM` | error | CSS transforms are outside the current renderer profile. |
-| `CSS_FIXED` | error | Fixed and sticky positioning are outside the current renderer profile. |
-| `CSS_EFFECT` | error | This paint effect is outside the current renderer profile. |
+| `CSS_TRANSITION` | warning | A property named by `transition` keeps its pre-stylesheet value (Blitz bug 689). |
+| `CSS_FIXED` | warning | Fixed and sticky boxes resolve against the root box, not the viewport (Blitz bug 690). |
+| `CSS_EFFECT` | warning | This paint effect is ignored rather than applied. |
 | `HTML_CANVAS` | error | <canvas> is not implemented. |
 | `HTML_MEDIA` | warning | Audio and video elements are not implemented. |
 | `HTML_SVG` | warning | SVG rendering is currently limited and not in the strict profile. |

@@ -1,0 +1,44 @@
+<!-- conformance
+`visibility: hidden` and `opacity: 0` suppress paint while keeping the box in
+flow, and `transform` moves the painted box without moving its layout.
+
+This case exists to hold a `doctor` severity honest. Three of its diagnostics
+graded these properties as build-blocking errors on the strength of the S6
+capture, which turned out to be caused by something else entirely (gap G2, the
+stale-transition defect). They render correctly, and the severities were
+lowered against this evidence rather than against an opinion.
+
+All four bars stay 400x40 in flow, stacked from y=0, so #shifted's box is still
+at x=0 even though it paints 300px to the right. Sampling inside #hidden and
+#transparent must find the white page, not their own red.
+
+@oracle
+@box #visible 0 0 400 40
+@box #hidden 0 40 400 40
+@box #transparent 0 80 400 40
+@box #shifted 0 120 60 40
+@pixel 200 20 #22c55eff
+@pixel 200 60 #ffffffff
+@pixel 200 100 #ffffffff
+@pixel 330 140 #3b82f6ff
+@pixel 30 140 #ffffffff
+-->
+<!doctype html>
+<html>
+  <head>
+    <style>
+      html, body { margin: 0; background: #ffffff }
+      div { width: 400px; height: 40px }
+      #visible { background: #22c55e }
+      #hidden { background: #ef4444; visibility: hidden }
+      #transparent { background: #ef4444; opacity: 0 }
+      #shifted { width: 60px; background: #3b82f6; transform: translateX(300px) }
+    </style>
+  </head>
+  <body>
+    <div id="visible"></div>
+    <div id="hidden"></div>
+    <div id="transparent"></div>
+    <div id="shifted"></div>
+  </body>
+</html>

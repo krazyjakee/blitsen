@@ -1,0 +1,37 @@
+<!-- conformance
+Known Blitz defect. `filter` is parsed and then ignored: the element paints as
+though the property were absent.
+
+#inverted asks for `invert(1)` over black, so a browser paints it white. Blitz
+paints it black. #control is the same black with no filter, and the two are
+indistinguishable — which is the point: the failure is silent, and the only
+thing separating a correct render from a wrong one is whether the author needed
+the filter to be legible.
+
+Recorded as a defect rather than a gap in the profile because the degradation
+is graceful. That is why `CSS_EFFECT` is a `doctor` warning and not an error:
+an ignored paint effect leaves a usable page, while refusing the build leaves
+none. The stock `create-vite` React template is refused today over exactly one
+of these on a decorative icon.
+
+@oracle
+@defect filter is parsed and ignored rather than applied
+@box #inverted 0 0 200 60
+@box #control 0 60 200 60
+@!pixel 100 30 #ffffffff
+@pixel 100 90 #000000ff
+-->
+<!doctype html>
+<html>
+  <head>
+    <style>
+      html, body { margin: 0; background: #ffffff }
+      div { width: 200px; height: 60px; background: #000000 }
+      #inverted { filter: invert(1) }
+    </style>
+  </head>
+  <body>
+    <div id="inverted"></div>
+    <div id="control"></div>
+  </body>
+</html>

@@ -1092,35 +1092,27 @@
   "renderer": [
     {
       "kind": "css",
-      "code": "CSS_LAYERS",
-      "severity": "error",
-      "pattern": "(?:^|[;{])\\s*(?:visibility|opacity)\\s*:",
-      "message": "visibility/opacity composition is outside the current renderer profile.",
-      "guidance": "Use conditional DOM rendering instead of hidden composited layers."
-    },
-    {
-      "kind": "css",
-      "code": "CSS_TRANSFORM",
-      "severity": "error",
-      "pattern": "(?:^|[;{])\\s*(?:transform|perspective)\\s*:",
-      "message": "CSS transforms are outside the current renderer profile.",
-      "guidance": "Express the layout with block, flex, or grid geometry."
+      "code": "CSS_TRANSITION",
+      "severity": "warning",
+      "pattern": "(?:^|[;{])\\s*transition(?:-property)?\\s*:",
+      "message": "A property named by `transition` keeps its pre-stylesheet value (Blitz bug 689).",
+      "guidance": "Inline the rule in a <style> element, or drop the transition, until it is fixed."
     },
     {
       "kind": "css",
       "code": "CSS_FIXED",
-      "severity": "error",
+      "severity": "warning",
       "pattern": "(?:^|[;{])\\s*position\\s*:\\s*(?:fixed|sticky)\\b",
-      "message": "Fixed and sticky positioning are outside the current renderer profile.",
-      "guidance": "Use normal, flex, grid, or bounded absolute layout."
+      "message": "Fixed and sticky boxes resolve against the root box, not the viewport (Blitz bug 690).",
+      "guidance": "Use normal, flex, grid, or bounded absolute layout for anything that must be placed exactly."
     },
     {
       "kind": "css",
       "code": "CSS_EFFECT",
-      "severity": "error",
+      "severity": "warning",
       "pattern": "(?:^|[;{])\\s*(?:filter|backdrop-filter|clip-path|mask(?:-image)?)\\s*:",
-      "message": "This paint effect is outside the current renderer profile.",
-      "guidance": "Use borders, backgrounds, and static geometry."
+      "message": "This paint effect is ignored rather than applied.",
+      "guidance": "Check the element is still legible without it; use borders and backgrounds where it is not."
     },
     {
       "kind": "html",
