@@ -1,14 +1,49 @@
 # M3b — compatible adoption proof
 
-**M3b is not complete.** The export pipeline works and is gated. The adoption claim it was
-declared on — take a real, existing Vite application that we did not write and run it unchanged —
-does not survive contact with third-party applications. Six were measured on 2026-08-11; six
-failed. Issue [#69](https://github.com/krazyjakee/blitsen/issues/69) stays open, and P10 is not met.
+**M3b is close, and not yet complete.** The export pipeline works and is gated. The adoption claim
+it was declared on — take a real, existing Vite application that we did not write and run it
+unchanged — was measured against six applications on 2026-08-11 and **all six failed**. After the
+work that measurement prompted, five of the six build and render unmodified. Issue
+[#69](https://github.com/krazyjakee/blitsen/issues/69) stays open until all six do.
 
 | Gate | What it proves | Result |
 | --- | --- | --- |
 | `test:m3b` | the export pipeline, on an application written here | passes |
-| `test:third-party` | adoption, on applications written by other people | 6/6 fail |
+| `test:third-party` | adoption, on applications written by other people | 5/6 build and render |
+
+| Application | Builds | Renders |
+| --- | --- | --- |
+| Shadcn Admin (React, Tailwind 4, Radix, TanStack, Recharts) | yes | 364 elements, 16 colours |
+| vue3-realworld (Vue 3, vue-router, Pinia) | yes | 29 elements, 16 colours |
+| `create-vite react-ts` / `vue-ts` / `svelte-ts` | yes | 50 elements, 16 colours each |
+| Wordle+ (Svelte) | **no** | no — a remote `<script src>` stops the document loading |
+
+Wordle+ is refused for precisely the reason it does not render, so the diagnostic and the evidence
+agree. A remote script is the one asset class that is genuinely fatal: `resolve_local_script`
+rejects any `src` with a scheme, and that error aborts the whole script run, so no script on the
+page runs. Whether Blitsen should fetch remote scripts at export time is a product question, not a
+runtime gap.
+
+## What the six failures were
+
+Worth recording, because none of them was the export pipeline and one of them was a single line.
+
+- **A subresource we refused blocked painting for the life of the document.** Blitz holds a
+  stylesheet as a pending critical resource until its handler completes, and the trait's only
+  failure signal is dropping that handler — which never completes it. Shadcn Admin mounted 364
+  elements with correct layout and correct computed styles, and painted 1,024,000 pixels of pure
+  white, because its `<head>` links a Google Fonts stylesheet. `LocalResources` now answers every
+  request, with empty bytes for anything it will not serve.
+- **`doctor` refused builds over things that render.** Decorative `filter` and `transform` were
+  graded errors on the strength of a capture whose real cause was elsewhere; so were references to
+  absent APIs that real bundles feature-detect. Both are warnings now, and the stock `create-vite`
+  template went from refused to exported.
+- **Missing DOM surface**, found by probing the live bridge rather than one crash at a time:
+  `createElementNS`, `createComment`, `link.relList`, element traversal, `getElementsByClassName`,
+  the `*AttributeNS` trio, `getComputedStyle`, `matchMedia`, `ResizeObserver`, the `Image`
+  constructor, `navigator`, and in-memory `localStorage`.
+- **Assets a bundler resolved into string literals** were dropped from the export as unreachable,
+  so the stock template shipped without any of its images.
 
 ## What `test:m3b` proves, and what it does not
 

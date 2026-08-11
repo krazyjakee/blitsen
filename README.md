@@ -27,9 +27,10 @@ the ball and the scoreboard are ordinary DOM nodes. The recording is produced by
 document-animation harness the acceptance gate asserts on, so it cannot drift from what the
 tests verify.
 
-The compatible-adoption claim does **not** hold yet. An untouched Vite + React bundle written here
-exports and runs, but six applications written by other people — including the stock `create-vite`
-templates — are all refused or render blank. See the [M3b evidence](docs/M3B.md).
+The compatible-adoption claim is close but not yet met. Of six applications written by other
+people — a React admin dashboard, a Vue app, a Svelte game, and the three stock `create-vite`
+templates — five now build and render unmodified; all six failed when first measured. The sixth
+loads a remote analytics script, which Blitsen refuses. See the [M3b evidence](docs/M3B.md).
 
 Phase 2 is underway. The [JavaScriptCore acquisition decision](docs/JSC.md) pins Bun's WebKit
 lineage while keeping the production engine dynamically replaceable behind Blitsen's own ABI.

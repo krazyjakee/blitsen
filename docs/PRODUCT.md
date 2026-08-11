@@ -410,16 +410,18 @@ P4 now rests on two wall-clock measurements rather than the game's own readout, 
 headless frame cost is p50 0.809 ms against a 16.7 ms budget with zero frames over, and the
 windowed standalone export sustains 60 fps on a real display.
 
-**M3b — Compatible adoption: not complete. P10 is not met.** The export pipeline works and is
-gated, but it was declared complete on an acceptance application written in this repository, which
-tests the pipeline rather than the adoption claim.
+**M3b — Compatible adoption: five of six, and not yet complete.** It was declared complete on an
+acceptance application written in this repository, which tests the export pipeline rather than the
+adoption claim. Measured against six applications nobody here wrote — three real ones and three
+stock `create-vite` templates — **all six failed**.
 
-Measured against six applications nobody here wrote — three real ones and three stock `create-vite`
-templates — six fail, and the export refuses all six before a frame is reached. The refusals
-include the official Vite React starter, over decorative `filter` and `transform` declarations that
-`doctor` grades as errors. Past that gate, the blockers are unguarded absent DOM APIs
-(`localStorage`, `createElementNS`, `createComment`, `navigator.userAgent`, `link.relList`) that
-throw before first layout. See the [M3b evidence](M3B.md) and [published v0 profile](COMPATIBILITY.md).
+After the work that measurement prompted, five build and render unmodified, including a full
+React admin dashboard with Tailwind 4, Radix, TanStack and Recharts. The sixth is refused because
+it loads a remote analytics `<script>`, which aborts the whole script run; whether Blitsen should
+fetch remote scripts at export time is a product question rather than a runtime gap.
+
+P10 is not met until all six pass. See the [M3b evidence](M3B.md) and
+[published v0 profile](COMPATIBILITY.md).
 
 **M4 — Ships.** `npm i -D blitsen` resolves the correct runtime on all six platform targets,
 `blitsen build` produces distributable artifacts, and a non-trivial third-party app (an editor or
