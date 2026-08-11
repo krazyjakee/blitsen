@@ -18,6 +18,13 @@ The Linux x64 architecture proof is now complete: [`examples/pong`](examples/pon
 three-file, two-player Pong app that runs at 60 Hz from a single Phase 1 executable. See the
 [M3 acceptance evidence](docs/M3.md). Phase 1 exports are not yet cleared for redistribution.
 
+![Pong running in Blitsen](docs/pong.gif)
+
+Every frame above is HTML and CSS laid out by Blitz and mutated from JavaScript — the paddles,
+the ball and the scoreboard are ordinary DOM nodes. The recording is produced by the same
+document-animation harness the acceptance gate asserts on, so it cannot drift from what the
+tests verify.
+
 The compatible-adoption proof is also complete on Linux x64: an untouched Vite + React production
 bundle passes [`blitsen doctor`](docs/COMPATIBILITY.md), exports as one executable, mounts React,
 and handles delegated input with no toolchain on `PATH`. See the [M3b evidence](docs/M3B.md).
