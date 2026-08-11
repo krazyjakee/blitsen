@@ -15,8 +15,8 @@ Status values: **open** (reproduced, unfiled), **filed** (upstream issue exists)
 | # | Gap | Status | Evidence | Notes |
 | --- | --- | --- | --- | --- |
 | G1 | Digits absent from some text runs while letters and punctuation render | filed | `spikes/s6/results/blitz-snapshot/react.png` | [blitz#688](https://github.com/DioxusLabs/blitz/issues/688); see below |
-| G2 | A property named by `transition` keeps its pre-stylesheet value for good | open, blocker | `crates/blitsen-blitz/tests/reductions/transition-stale-style.html` | Reduced; the hidden overlays were a symptom, see below |
-| G3 | `absolute`/`fixed` insets and auto margins resolve against the wrong box | open, blocker | `crates/blitsen-blitz/tests/conformance/cases/defect-*.html` | Two reductions, gated as known-failing cases; see below |
+| G2 | A property named by `transition` keeps its pre-stylesheet value for good | filed | `crates/blitsen-blitz/tests/reductions/transition-stale-style.html` | [blitz#689](https://github.com/DioxusLabs/blitz/issues/689); the hidden overlays were a symptom |
+| G3 | `absolute`/`fixed` insets and auto margins resolve against the wrong box | filed | `crates/blitsen-blitz/tests/conformance/cases/defect-*.html` | [blitz#690](https://github.com/DioxusLabs/blitz/issues/690), [blitz#691](https://github.com/DioxusLabs/blitz/issues/691); gated as known-failing cases |
 | G4 | Form controls and anchors fall back to native/default styling | open | `spikes/s6/results/blitz-snapshot/{react,vue}.png` | `appearance`, inherited anchor colour, Tailwind 4 reset, control UA CSS |
 | G5 | SVG icons missing or geometrically wrong; chart fills incorrect | filed upstream | `spikes/s6/results/blitz-snapshot/react.png` | [blitz#448](https://github.com/DioxusLabs/blitz/issues/448) |
 | G6 | Accumulating line-height, antialiasing and vertical spacing differences | open, low priority | `spikes/s6/results/metrics.tsv` | Needs a tolerance corpus before it can be actioned |
