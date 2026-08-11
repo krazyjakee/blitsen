@@ -14,13 +14,13 @@ Status values: **open** (reproduced, unfiled), **filed** (upstream issue exists)
 
 | # | Gap | Status | Evidence | Notes |
 | --- | --- | --- | --- | --- |
-| G1 | Digits absent from some text runs while letters and punctuation render | open, needs reduction | `spikes/s6/results/blitz-snapshot/react.png` | See below — the obvious explanations are ruled out |
+| G1 | Digits absent from some text runs while letters and punctuation render | filed | `spikes/s6/results/blitz-snapshot/react.png` | [blitz#688](https://github.com/DioxusLabs/blitz/issues/688); see below |
 | G2 | `visibility: hidden` / `opacity: 0` overlays still paint | open, blocker | `spikes/s6/results/blitz-snapshot/svelte.png` | Closed settings, stats and toast layers render over the app |
 | G3 | Positioned, fixed and transformed overlays escape their stacking context | open, blocker | `spikes/s6/results/blitz-snapshot/svelte.png` | Needs transform/positioning/clipping reductions |
 | G4 | Form controls and anchors fall back to native/default styling | open | `spikes/s6/results/blitz-snapshot/{react,vue}.png` | `appearance`, inherited anchor colour, Tailwind 4 reset, control UA CSS |
 | G5 | SVG icons missing or geometrically wrong; chart fills incorrect | filed upstream | `spikes/s6/results/blitz-snapshot/react.png` | [blitz#448](https://github.com/DioxusLabs/blitz/issues/448) |
 | G6 | Accumulating line-height, antialiasing and vertical spacing differences | open, low priority | `spikes/s6/results/metrics.tsv` | Needs a tolerance corpus before it can be actioned |
-| G7 | `blitz-dom`'s `svg` feature does not compile at the pinned revision | open, unfiled | Build failure, reproducible | See below |
+| G7 | `blitz-dom`'s `svg` feature does not compile at the pinned revision | filed | Build failure, reproducible | [blitz#687](https://github.com/DioxusLabs/blitz/issues/687); see below |
 
 Broad Tailwind/renderer work has an upstream collection in
 [blitz#389](https://github.com/DioxusLabs/blitz/issues/389).
@@ -45,9 +45,12 @@ page lose theirs. So digit rendering is not globally broken — something about 
 resolution on those elements is. The fixture's font stack is the obvious next suspect, which makes
 this adjacent to font fallback ([#104](https://github.com/krazyjakee/blitsen/issues/104)).
 
-**Next step:** a minimal reproduction isolating the card elements' resolved font stack. Until that
-exists this should not be filed upstream, because the current description would send a maintainer
-looking for a numerals bug that does not exist.
+Filed as [blitz#688](https://github.com/DioxusLabs/blitz/issues/688) with the evidence and the
+ruled-out explanations, explicitly as an unreduced report. The affected elements are the ones
+Tailwind 4 / Shadcn styles with the app's own font stack, while the working axis labels come from
+Recharts — a fallback-chain difference between those two paths is the most likely candidate.
+
+**Next step:** a minimal reproduction isolating the card elements' resolved font stack.
 
 ## G7 — `blitz-dom`'s `svg` feature does not compile
 
@@ -63,7 +66,8 @@ The feature has drifted behind its `usvg` dependency. Blitz's own meta-crate nev
 Blitsen therefore selects `blitz-dom`'s features explicitly, with `svg` omitted, and keeps
 `blitz-paint`'s defaults off because its default `svg` feature turns `blitz-dom/svg` back on.
 
-This is a clean, self-contained upstream report and should be filed.
+Filed as [blitz#687](https://github.com/DioxusLabs/blitz/issues/687), with a suggestion that a
+`--all-features` build of `blitz-dom` in CI would catch this class of drift.
 
 ## Keeping this list honest
 
