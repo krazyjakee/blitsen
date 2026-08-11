@@ -390,33 +390,45 @@ Each API is implemented as a JS-visible shim over a Rust crate. The renderer sta
 Blitz's authors argue that things like WebSockets and `localStorage` should come from ordinary
 Rust crates rather than bloating the engine, which suits this structure exactly.
 
-| API | Tier | Backed by |
-| --- | --- | --- |
-| `requestAnimationFrame`, timers | v0 | frame loop |
-| DOM, CSSOM, events | v0 | bridge + Blitz |
-| `fetch`, `Headers`, `Request`, `Response` | v1 | reqwest / hyper (or Bun's, in Phase 1) |
-| `WebSocket` | v1 | tokio-tungstenite |
-| `<img>` decode and paint, `background-image` | v1 | image, through Blitz |
-| Web fonts, `@font-face` | v1 | Blitz font stack |
-| `Image` constructor, `load`/`error` events | v1 | bridge over the above |
-| `Audio`, basic Web Audio | v1 | rodio / cpal |
-| `localStorage`, `sessionStorage` | v2 | SQLite or a keyed file store |
-| `Worker` | v2 | second JS context + channel |
-| Clipboard, drag & drop | v2 | arboard, winit |
-| `navigator.getGamepads` | v2 | gilrs |
-| Pointer lock, fullscreen | v2 | winit |
-| `<canvas>` 2D | later | vello / tiny-skia into the viewport |
-| WebGL / WebGPU | later | wgpu through the viewport |
-| WebRTC | later | webrtc-rs |
+**The tier table is generated, and is not restated here.** `COMPATIBILITY.md` carries it, built
+from `packages/blitsen/src/api-manifest.json`, which is in turn read out of `dom_bridge.rs`. This
+section used to keep its own copy and it drifted — it listed `fetch` as v1 "or Bun's, in Phase 1"
+long after Blitsen supplied its own, called `@font-face` and `<img>` unbuilt after they shipped,
+and promised an `Image` constructor that did not exist. One source of truth, or none.
 
-Deliberately absent, with no plan: same-origin policy, CSP, cookies, history/navigation,
-service workers, `document.write`, quirks mode.
+What remains here is what a table cannot express: why a thing sits where it does.
+
+| Not implemented | Backed by, when it is |
+| --- | --- |
+| `WebSocket` | tokio-tungstenite |
+| `Audio`, basic Web Audio | rodio / cpal |
+| `Worker` | second JS context + channel |
+| Clipboard, drag & drop | arboard, winit |
+| `navigator.getGamepads` | gilrs |
+| Pointer lock, fullscreen | winit |
+| `<canvas>` 2D | vello / tiny-skia into the viewport |
+| WebGL / WebGPU | wgpu through the viewport |
+| WebRTC | webrtc-rs |
+
+Deliberately absent, with no plan: same-origin policy, CSP, cookies, **document navigation**,
+service workers, `document.write`, quirks mode. `history` and `location` do exist, but as an
+in-memory session history at a synthetic address — enough for a client-side router, and nothing
+that navigates. `navigator` answers identity (`userAgent`, `platform`, `language`) and no
+capability. `localStorage` and `sessionStorage` hold data for the life of the process and say so
+through a `doctor` warning on every build; durable storage is a separate question.
 
 ### Compatibility policy
 
 An unimplemented API is **absent** — the property does not exist — so feature detection works.
-Never a stub that resolves to nothing, and never a silent no-op. `blitsen doctor` reports which
-web APIs a bundle references but the target runtime does not provide, at build time.
+Never a stub that resolves to nothing, and never a silent no-op.
+
+This is enforced rather than reviewed. `api-manifest.mjs` parses the bootstrap as the JavaScript
+it is and refuses to emit a manifest that disagrees with it; the native harness asserts every API
+the manifest calls absent is genuinely `undefined` against a real bridge context; and `doctor`
+reads the same manifest, so a diagnostic cannot describe a capability the runtime does not have.
+Enforcement was worth building: it found the Phase 1 host leaking `Worker`, `WebSocket`,
+`FormData`, `ReadableStream`, `MessageChannel`, `alert` and more into every application, all of
+which would have vanished at the Phase 2 engine swap.
 
 ### Subresources: images and web fonts
 
@@ -453,10 +465,12 @@ One layout flush resolves repeatedly while subresources are still landing, becau
 `background-image` is only discovered once style resolves — after the pass that would have
 applied it. Without that, every backdrop flashes empty for one frame.
 
-**`naturalWidth`, `naturalHeight`, `complete`.** Read from the backend through
-`DomBackend::image_state`, gated on a layout snapshot like the geometry reads, because decoded
-data is applied while layout resolves. `complete` is true for an image with no source and for one
-whose request is over — including one that failed, so a script polling it is never stuck.
+**`naturalWidth`, `naturalHeight`, `complete` — in the backend, not yet in JavaScript.**
+`DomBackend::image_state` reads them, gated on a layout snapshot like the geometry reads, because
+decoded data is applied while layout resolves. `complete` is true for an image with no source and
+for one whose request is over — including one that failed, so a poller is never stuck. No
+bootstrap class exposes any of this yet, and the manifest records them as absent, so the two
+agree: the seam is built and the JS surface is not.
 
 ---
 
