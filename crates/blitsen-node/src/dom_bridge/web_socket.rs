@@ -336,6 +336,11 @@ mod tests {
     ///
     /// The server is tungstenite's own accept side on a thread of its own, so
     /// what the host is measured against is a real handshake and real framing.
+    ///
+    /// The handshake callback's error type is tungstenite's `ErrorResponse`, an
+    /// `http::Response` the `Callback` signature fixes, so the large-`Err` lint
+    /// has nothing here to act on.
+    #[allow(clippy::result_large_err)]
     fn server(
         exchange: impl FnOnce(&mut tokio_tungstenite::tungstenite::WebSocket<std::net::TcpStream>)
         + Send
