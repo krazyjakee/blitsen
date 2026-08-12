@@ -715,6 +715,33 @@ pub trait DomBackend {
     /// declarations are ignored according to CSS parsing rules.
     fn set_inline_style_text(&mut self, node: Self::NodeId, css: &str) -> Result<(), DomError>;
 
+    /// Returns the owner node of every stylesheet the document cascades from,
+    /// in the order the cascade applies them.
+    ///
+    /// The owner is the `<style>` or `<link>` element the sheet came from, which
+    /// is the only handle CSSOM has on a sheet here: this backend has no
+    /// stylesheet that belongs to no element.
+    fn style_sheets(&self) -> Result<Vec<Self::NodeId>, DomError>;
+    /// Returns the source text of each top-level rule of a `<style>` element's
+    /// sheet, in order.
+    ///
+    /// The sheet's source *is* the element's text, so this is derived from the
+    /// live tree on every call rather than from a parallel rule list.
+    fn sheet_rules(&self, node: Self::NodeId) -> Result<Vec<String>, DomError>;
+    /// Parses one rule and inserts it into a `<style>` element's sheet at
+    /// `index`, rewriting the element's text so the cascade picks it up.
+    ///
+    /// Text that does not parse as exactly one rule is refused rather than
+    /// dropped, and an out-of-range index is [`DomError::NotFound`].
+    fn insert_sheet_rule(
+        &mut self,
+        node: Self::NodeId,
+        rule: &str,
+        index: usize,
+    ) -> Result<(), DomError>;
+    /// Deletes the rule at `index` from a `<style>` element's sheet.
+    fn delete_sheet_rule(&mut self, node: Self::NodeId, index: usize) -> Result<(), DomError>;
+
     /// Returns concatenated descendant text using DOM `textContent` semantics.
     fn text_content(&self, node: Self::NodeId) -> Result<String, DomError>;
     /// Replaces a node's children with text and invalidates layout.
@@ -751,6 +778,20 @@ pub trait DomBackend {
     /// Returns the first element with the exact `id` attribute value.
     fn get_element_by_id(&self, id: &str) -> Result<Option<Self::NodeId>, DomError>;
 
+    /// Sets the clock CSS animations and transitions are sampled at, in seconds.
+    ///
+    /// Nothing here reads a clock of its own: the host hands the frame's
+    /// timestamp in, which is what keeps a recorded or replayed frame sequence
+    /// identical to the one that was captured. The value is read by the next
+    /// [`DomBackend::flush_layout`], so a `@keyframes` animation advances once
+    /// per laid-out frame and not at all without one.
+    fn set_animation_time(&mut self, seconds: f64);
+    /// Reports whether the document has animation left to run.
+    ///
+    /// A host that stops calling [`DomBackend::set_animation_time`] freezes
+    /// every running animation mid-flight, so this is what a frame loop asks to
+    /// know that it still owes the document a frame.
+    fn is_animating(&self) -> bool;
     /// Resolves pending style and layout work and returns a current snapshot.
     fn flush_layout(&mut self) -> Result<LayoutSnapshot, DomError>;
     /// Reports whether a layout-dependent read would force synchronous work.

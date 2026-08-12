@@ -73,6 +73,11 @@ const BOOTSTRAP: &str = r##"
     runningAnimationFrames?.delete(Number(id));
   };
   const animationFrameTick = timestamp => {
+    // The frame's timestamp is also the clock the cascade samples animations and
+    // transitions at, and it is set before anything else runs: a callback that
+    // forces layout must see the frame it is in, not the one before it. Nothing
+    // below reads a clock of its own, so a replayed trace animates identically.
+    call("setAnimationTime", Number(timestamp));
     notifySurfaceResizes();
     notifyResizeObservers();
     notifyMediaQueries();
@@ -92,9 +97,11 @@ const BOOTSTRAP: &str = r##"
     forcedLayoutsThisFrame = 0;
     // In-flight requests, undecoded images and undelivered resize observations
     // keep the host turning: their landing point is this function, so a loop
-    // that stopped would never deliver them.
+    // that stopped would never deliver them. A running CSS animation is owed a
+    // frame for the same reason — the clock only moves when this is called, so a
+    // loop that idled would freeze it part-way through.
     return animationFrames.size + inflightFetches.size + pendingResizeObservations()
-      + waitingImages();
+      + waitingImages() + (call("isAnimating") ? 1 : 0);
   };
 
   const eventStates = new WeakMap();
@@ -773,6 +780,21 @@ const BOOTSTRAP: &str = r##"
       return value === null ? "" : resolveAgainstDocument(value).href;
     }
     set href(value) { this.setAttribute("href", value); }
+    // A linked sheet is in the cascade, so it is one of the document's sheets
+    // and says so; what it cannot answer is `cssRules`, which is a file this
+    // process fetched rather than text in the tree.
+    get sheet() {
+      return this.isConnected && this.relList.contains("stylesheet") ? sheetFor(this) : null;
+    }
+  }
+
+  // A `<style>` element's text is its sheet's source, which is what makes the
+  // sheet writable: see the CSSOM objects below. A disconnected element has no
+  // sheet because nothing it says has reached the cascade yet.
+  class HTMLStyleElement extends Element {
+    get sheet() { return this.isConnected ? sheetFor(this) : null; }
+    get type() { return this.getAttribute("type") ?? ""; }
+    set type(value) { this.setAttribute("type", value); }
   }
 
   // Images. Blitz decodes subresources beside the DOM and announces nothing when
@@ -991,6 +1013,116 @@ const BOOTSTRAP: &str = r##"
     _getJsProperty(property) { return call("styleGetJs", this._element[handle], property); }
     _setJsProperty(property, value) { call("styleSetJs", this._element[handle], property, value); }
   }
+
+  // The CSSOM stylesheet objects, at the size the frameworks that need them use:
+  // Svelte writes a `@keyframes` block into a sheet it owns for every transition
+  // it runs, and takes the sheet off `styleElement.sheet`.
+  //
+  // A sheet here is its owning element. The rules are the element's text, which
+  // is what Blitz parses and hands to Stylo, so an inserted rule is in the same
+  // stylesheet set the cascade reads and there is no shadow copy to fall out of
+  // step. Because of that, `cssRules` is derived from the sheet's current source
+  // on every read: the list object handed out is a frozen snapshot like every
+  // other collection here, but the next read sees the mutation, so an index
+  // computed from `cssRules.length` and passed straight to `insertRule` means
+  // what it does in a browser.
+  //
+  // What stays absent is the rest of CSSOM: rule subclasses, `rule.style`,
+  // `selectorText`, `disabled`, constructible sheets, and the rules of a sheet
+  // loaded from a URL, whose source is a file rather than text in the tree.
+  const sheetOwners = new WeakMap();
+  const sheetToken = Symbol("Blitsen stylesheet");
+  const ownerOf = sheet => {
+    const owner = sheetOwners.get(sheet);
+    if (!owner) throw new TypeError("Illegal invocation");
+    return owner;
+  };
+  const ruleText = new WeakMap();
+
+  class CSSRule {
+    constructor(token, cssText, parentStyleSheet) {
+      if (token !== sheetToken) throw new TypeError("Illegal constructor");
+      ruleText.set(this, { cssText: String(cssText), parentStyleSheet });
+      Object.freeze(this);
+    }
+    get cssText() { return ruleText.get(this).cssText; }
+    get parentStyleSheet() { return ruleText.get(this).parentStyleSheet; }
+    toString() { return this.cssText; }
+  }
+
+  class CSSRuleList {
+    constructor(rules) {
+      Object.defineProperty(this, "length", { value: rules.length, enumerable: false });
+      rules.forEach((rule, index) => Object.defineProperty(this, index, { value: rule, enumerable: true }));
+      Object.freeze(this);
+    }
+    item(index) { return this[index] ?? null; }
+    *[Symbol.iterator]() { for (let index = 0; index < this.length; index++) yield this[index]; }
+  }
+
+  class CSSStyleSheet {
+    // Constructible stylesheets need `adoptedStyleSheets` to reach the cascade,
+    // and that is absent, so a sheet only ever comes from an element. Throwing
+    // is what lets `new CSSStyleSheet()` feature-detection pick its fallback.
+    constructor(token, owner) {
+      if (token !== sheetToken)
+        throw new TypeError("constructible stylesheets are not implemented; "
+          + "append a <style> element and use its sheet");
+      sheetOwners.set(this, owner);
+    }
+    get ownerNode() { return ownerOf(this); }
+    get href() {
+      const owner = ownerOf(this);
+      return elementTag(owner) === "link" ? owner.href : null;
+    }
+    get parentStyleSheet() { return null; }
+    get type() { return "text/css"; }
+    get title() { return ownerOf(this).getAttribute("title"); }
+    get cssRules() {
+      return new CSSRuleList(call("sheetRules", ownerOf(this)[handle])
+        .map(text => new CSSRule(sheetToken, text, this)));
+    }
+    get rules() { return this.cssRules; }
+    insertRule(rule, index = 0) {
+      const owner = ownerOf(this);
+      const position = Number(index);
+      if (!Number.isInteger(position) || position < 0 || position > this.cssRules.length)
+        throw new DOMException(`cannot insert a rule at ${index}`, "IndexSizeError");
+      try { call("insertSheetRule", owner[handle], String(rule), position); }
+      catch (error) { throw new DOMException(String(error.message ?? error), "SyntaxError"); }
+      return position;
+    }
+    deleteRule(index) {
+      const owner = ownerOf(this);
+      const position = Number(index);
+      if (!Number.isInteger(position) || position < 0 || position >= this.cssRules.length)
+        throw new DOMException(`no rule at ${index}`, "IndexSizeError");
+      call("deleteSheetRule", owner[handle], position);
+    }
+  }
+
+  class StyleSheetList {
+    constructor(sheets) {
+      Object.defineProperty(this, "length", { value: sheets.length, enumerable: false });
+      sheets.forEach((sheet, index) => Object.defineProperty(this, index, { value: sheet, enumerable: true }));
+      Object.freeze(this);
+    }
+    item(index) { return this[index] ?? null; }
+    *[Symbol.iterator]() { for (let index = 0; index < this.length; index++) yield this[index]; }
+  }
+
+  // One sheet object per element, for the whole of the element's life: Svelte
+  // keeps the sheet it made and later detaches `sheet.ownerNode`, which only
+  // works if the sheet it kept still knows which element it came from.
+  const sheetCache = new WeakMap();
+  const sheetFor = element => {
+    let sheet = sheetCache.get(element);
+    if (!sheet) {
+      sheet = new CSSStyleSheet(sheetToken, element);
+      sheetCache.set(element, sheet);
+    }
+    return sheet;
+  };
 
   // Computed style. Blitz has already resolved the cascade, so this reads that
   // answer back rather than keeping a second idea of what an element's style is.
@@ -1395,8 +1527,8 @@ const BOOTSTRAP: &str = r##"
   const wrapperCache = new Map();
   const TAG_INTERFACES = { "blitsen-view": BlitsenViewElement, button: HTMLButtonElement,
     form: HTMLFormElement, img: HTMLImageElement, input: HTMLInputElement, link: HTMLLinkElement,
-    option: HTMLOptionElement, select: HTMLSelectElement, template: HTMLTemplateElement,
-    textarea: HTMLTextAreaElement };
+    option: HTMLOptionElement, select: HTMLSelectElement, style: HTMLStyleElement,
+    template: HTMLTemplateElement, textarea: HTMLTextAreaElement };
   const wrap = rawHandle => {
     if (rawHandle == null) return null;
     rawHandle = String(rawHandle);
@@ -1441,6 +1573,10 @@ const BOOTSTRAP: &str = r##"
     get location() { return location; }
     get activeElement() { return activeElement?.isConnected ? activeElement : this.body; }
     get readyState() { return readyState; }
+    // The sheets the cascade is actually reading, in the order it applies them.
+    // A snapshot, like every collection here; the sheet objects in it are the
+    // same ones `element.sheet` hands out.
+    get styleSheets() { return new StyleSheetList(call("styleSheets").map(wrap).map(sheetFor)); }
   }
 
   const document = new Document();
@@ -1982,6 +2118,7 @@ const BOOTSTRAP: &str = r##"
     Attr, NamedNodeMap,
     CSSStyleDeclaration, MutationObserver, ResizeObserver, HTMLElement, HTMLIFrameElement,
     SVGElement, Text, Comment, Image,
+    CSSStyleSheet, StyleSheetList, CSSRule, CSSRuleList, HTMLStyleElement,
     HTMLImageElement, HTMLLinkElement, HTMLTemplateElement, Storage, Navigator, document,
     HTMLInputElement, HTMLTextAreaElement, HTMLSelectElement, HTMLOptionElement,
     HTMLButtonElement, HTMLFormElement,
@@ -1995,7 +2132,7 @@ const BOOTSTRAP: &str = r##"
     __blitsenAnimationFrameTick: animationFrameTick,
     __blitsenAnimationFramesPending: () =>
       animationFrames.size > 0 || inflightFetches.size > 0 || pendingResizeObservations() > 0
-      || waitingImages() > 0,
+      || waitingImages() > 0 || call("isAnimating"),
     __blitsenForcedLayoutsThisFrame: () => forcedLayoutsThisFrame,
     __blitsenEventInternals: eventInternals,
     __blitsenDispatchMouseEvent: dispatchMouseEvent,
@@ -2073,7 +2210,7 @@ const BOOTSTRAP: &str = r##"
     "open", "close", "navigation",
     "cookieStore", "screen", "Notification", "caches",
     "IntersectionObserver", "PerformanceObserver",
-    "CSSStyleSheet", "StyleSheetList",
+    "CSSStyleRule", "CSSKeyframesRule", "CSSKeyframeRule", "CSSMediaRule",
     "customElements", "ShadowRoot", "DOMParser"]) {
     try { delete globalThis[key]; } catch {}
   }
@@ -2395,6 +2532,13 @@ fn bridge_arg<'a>(arguments: &'a [String], index: usize, name: &str) -> Result<&
         .get(index)
         .map(String::as_str)
         .ok_or_else(|| JsError::new(format!("missing {name}")))
+}
+
+/// Reads a rule index, which JavaScript has already range-checked.
+fn bridge_index(arguments: &[String], index: usize) -> Result<usize, JsError> {
+    bridge_arg(arguments, index, "rule index")?
+        .parse::<usize>()
+        .map_err(|_| JsError::new("invalid CSS rule index"))
 }
 
 fn handle(_runtime: &DomRuntime, arguments: &[String], index: usize) -> Result<NodeId, JsError> {
@@ -3200,6 +3344,46 @@ fn dispatch(runtime: &DomRuntime, operation: &str, arguments: &[String]) -> Resu
             .map_err(dom_error)?;
             Ok(Value::Null)
         }
+        // The CSSOM stylesheet surface. A sheet has no identity of its own here:
+        // it is the `<style>` element that owns it, whose text the cascade is
+        // already parsing, so a rule inserted through these operations is in the
+        // same stylesheet set Stylo cascades from and cannot be a shadow copy.
+        "styleSheets" => Ok(json!(
+            dom.style_sheets()
+                .map_err(dom_error)?
+                .into_iter()
+                .map(DomRuntime::serialize_handle)
+                .collect::<Vec<_>>()
+        )),
+        "sheetRules" => Ok(json!(
+            dom.sheet_rules(handle(runtime, arguments, 0)?)
+                .map_err(dom_error)?
+        )),
+        "insertSheetRule" => {
+            let node = handle(runtime, arguments, 0)?;
+            let rule = bridge_arg(arguments, 1, "CSS rule")?.to_owned();
+            let index = bridge_index(arguments, 2)?;
+            dom.insert_sheet_rule(node, &rule, index)
+                .map_err(dom_error)?;
+            Ok(Value::Null)
+        }
+        "deleteSheetRule" => {
+            let node = handle(runtime, arguments, 0)?;
+            let index = bridge_index(arguments, 1)?;
+            dom.delete_sheet_rule(node, index).map_err(dom_error)?;
+            Ok(Value::Null)
+        }
+        // The frame's own timestamp, in the seconds the cascade counts animation
+        // time in. Nothing below this call reads a clock, so a replayed frame
+        // sequence animates exactly as the recorded one did.
+        "setAnimationTime" => {
+            let milliseconds = bridge_arg(arguments, 0, "timestamp")?
+                .parse::<f64>()
+                .map_err(|_| JsError::new("invalid animation timestamp"))?;
+            dom.set_animation_time(milliseconds / 1_000.0);
+            Ok(Value::Null)
+        }
+        "isAnimating" => Ok(Value::Bool(dom.is_animating())),
         // Layout-dependent like the geometry reads, and gated the same way: the
         // resolved value of a box property is the used value, which is only
         // knowable after style and layout have settled.

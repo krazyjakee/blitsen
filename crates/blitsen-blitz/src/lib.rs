@@ -104,6 +104,7 @@ pub struct BlitzDom {
     native_viewports: HashMap<NodeId, Rc<RefCell<ViewportState>>>,
     resources: ResourceLog,
     form_state: HashMap<NodeId, FormState>,
+    animation_time: f64,
 }
 
 impl BlitzDom {
@@ -141,6 +142,7 @@ impl BlitzDom {
             native_viewports: HashMap::new(),
             resources: ResourceLog::default(),
             form_state: HashMap::new(),
+            animation_time: 0.0,
         }
     }
 
@@ -636,6 +638,126 @@ impl BlitzDom {
         Ok(css)
     }
 
+    /// Returns the `<style>` element a CSSOM sheet operation may act on.
+    ///
+    /// A `<link>` sheet's source is a file this process fetched, not text in the
+    /// tree, so there is nothing here to insert a rule into; saying so is the
+    /// point of the error.
+    fn sheet_owner(&self, node: NodeId) -> Result<(), DomError> {
+        if self.is_tag(node, "style") {
+            Ok(())
+        } else if self.is_tag(node, "link") {
+            Err(DomError::Backend(
+                "the rules of a stylesheet loaded from a URL are not implemented".into(),
+            ))
+        } else {
+            Err(DomError::InvalidNodeType)
+        }
+    }
+
+    /// Writes a sheet's rules back as the owning element's text.
+    ///
+    /// Blitz reparses a `<style>` element whose text changed and re-registers
+    /// the sheet with the stylist, so this — and not a rule list kept alongside
+    /// — is what puts a scripted rule into the cascade.
+    fn write_sheet_rules(&mut self, node: NodeId, rules: &[String]) -> Result<(), DomError> {
+        self.set_text_content(node, &rules.join("\n"))
+    }
+
+    /// Counts the rules Stylo makes of some CSS, using the cascade's own parser.
+    ///
+    /// The parser drops what it cannot understand, so text that yields no rule
+    /// is text the cascade would have ignored — which is the difference between
+    /// refusing a rule and accepting one that does nothing.
+    fn parsed_rule_count(&self, css: &str) -> usize {
+        let guard = self.document.guard().clone();
+        let sheet = StylesheetContents::from_str(
+            css,
+            UrlExtraData::from(self.document.url().clone()),
+            Origin::Author,
+            &guard,
+            None,
+            None,
+            QuirksMode::NoQuirks,
+            AllowImportRules::No,
+            None,
+        );
+        let read = guard.read();
+        sheet.rules.read_with(&read).0.len()
+    }
+
+    /// Splits stylesheet source into the source text of each top-level rule.
+    ///
+    /// Slices of the original text rather than anything reserialized: a sheet
+    /// that is rewritten to insert one rule must not quietly lose whatever the
+    /// serializer would have dropped from the rules around it.
+    fn split_css_rules(css: &str) -> Vec<String> {
+        let bytes = css.as_bytes();
+        let comment_end = |from: usize| match css[from..].find("*/") {
+            Some(offset) => from + offset + 2,
+            None => bytes.len(),
+        };
+        let mut rules = Vec::new();
+        let mut index = 0;
+        while index < bytes.len() {
+            // Between rules: whitespace and comments belong to no rule, exactly
+            // as a browser's rule list reports.
+            if bytes[index].is_ascii_whitespace() {
+                index += 1;
+                continue;
+            }
+            if bytes[index] == b'/' && bytes.get(index + 1) == Some(&b'*') {
+                index = comment_end(index + 2);
+                continue;
+            }
+            let start = index;
+            let mut depth = 0usize;
+            let mut end = bytes.len();
+            while index < bytes.len() {
+                match bytes[index] {
+                    b'/' if bytes.get(index + 1) == Some(&b'*') => {
+                        index = comment_end(index + 2);
+                        continue;
+                    }
+                    quote @ (b'"' | b'\'') => {
+                        index += 1;
+                        while index < bytes.len() {
+                            match bytes[index] {
+                                b'\\' => index += 2,
+                                byte if byte == quote => {
+                                    index += 1;
+                                    break;
+                                }
+                                _ => index += 1,
+                            }
+                        }
+                        continue;
+                    }
+                    b'{' => depth += 1,
+                    // A block rule ends at the brace that closes it; a statement
+                    // at-rule (`@import`, `@charset`) ends at its semicolon.
+                    b'}' => {
+                        depth = depth.saturating_sub(1);
+                        if depth == 0 {
+                            index += 1;
+                            end = index;
+                            break;
+                        }
+                    }
+                    b';' if depth == 0 => {
+                        index += 1;
+                        end = index;
+                        break;
+                    }
+                    _ => {}
+                }
+                index += 1;
+            }
+            rules.push(css[start..end].trim().to_owned());
+        }
+        rules
+    }
+
     fn declarations(css: &str) -> Vec<(String, String)> {
         css.split(';')
             .filter_map(|declaration| declaration.split_once(':'))
@@ -1034,6 +1156,50 @@ impl DomBackend for BlitzDom {
         self.set_attribute(node, &DomName::attribute("style"), css)
     }
 
+    fn style_sheets(&self) -> Result<Vec<NodeId>, DomError> {
+        self.query_selector_all(self.document(), r#"style, link[rel~="stylesheet"]"#)
+    }
+
+    fn sheet_rules(&self, node: NodeId) -> Result<Vec<String>, DomError> {
+        self.sheet_owner(node)?;
+        Ok(Self::split_css_rules(&self.text_content(node)?))
+    }
+
+    fn insert_sheet_rule(
+        &mut self,
+        node: NodeId,
+        rule: &str,
+        index: usize,
+    ) -> Result<(), DomError> {
+        self.sheet_owner(node)?;
+        let mut rules = Self::split_css_rules(&self.text_content(node)?);
+        if index > rules.len() {
+            return Err(DomError::NotFound);
+        }
+        // Refused on two counts, because the two catch different mistakes: one
+        // rule structurally, and one rule the cascade's own parser recognizes.
+        // Anything else would be written into the sheet and silently ignored.
+        let split = Self::split_css_rules(rule);
+        if split.len() != 1 || self.parsed_rule_count(rule) != 1 {
+            return Err(DomError::Syntax(format!(
+                "not a single CSS rule: {}",
+                rule.trim()
+            )));
+        }
+        rules.insert(index, split.into_iter().next().unwrap_or_default());
+        self.write_sheet_rules(node, &rules)
+    }
+
+    fn delete_sheet_rule(&mut self, node: NodeId, index: usize) -> Result<(), DomError> {
+        self.sheet_owner(node)?;
+        let mut rules = Self::split_css_rules(&self.text_content(node)?);
+        if index >= rules.len() {
+            return Err(DomError::NotFound);
+        }
+        rules.remove(index);
+        self.write_sheet_rules(node, &rules)
+    }
+
     fn text_content(&self, node: NodeId) -> Result<String, DomError> {
         Ok(self.node(node)?.text_content())
     }
@@ -1114,13 +1280,26 @@ impl DomBackend for BlitzDom {
             .find(|node| self.attribute(*node, &attribute).ok().flatten().as_deref() == Some(id)))
     }
 
+    fn set_animation_time(&mut self, seconds: f64) {
+        // A clock that ran backwards would restart every animation that had
+        // already started, so it only ever moves forward.
+        if seconds.is_finite() && seconds > self.animation_time {
+            self.animation_time = seconds;
+        }
+    }
+
+    fn is_animating(&self) -> bool {
+        self.document.is_animating()
+    }
+
     fn flush_layout(&mut self) -> Result<LayoutSnapshot, DomError> {
         let settle_controls = self.layout_is_dirty();
+        let now = self.animation_time;
         self.take_frame_invalidation();
         self.attach_native_viewports()?;
         for _ in 0..RESOURCE_RESOLVE_PASSES {
             let settled = self.resources.settlements();
-            self.document.resolve(0.0);
+            self.document.resolve(now);
             if self.resources.settlements() == settled {
                 break;
             }
@@ -1128,7 +1307,7 @@ impl DomBackend for BlitzDom {
         // Only after the resolve above: a control's editor is built while layout
         // resolves, so this is the first moment there is anything to write into.
         if settle_controls && self.settle_form_controls() {
-            self.document.resolve(0.0);
+            self.document.resolve(now);
         }
         self.resize_native_viewports();
         self.flushed_revision = self.revision;
@@ -2205,6 +2384,186 @@ mod tests {
             written > blank + 200,
             "an assigned value painted {written} pixels against {blank} blank; \
              the control state JavaScript writes is not the one being rendered"
+        );
+    }
+
+    /// A sheet is its element's text, so the split has to be over source rather
+    /// than over anything reserialized, and it has to survive the punctuation
+    /// that appears inside a rule.
+    #[test]
+    fn a_sheet_splits_into_the_rules_a_browser_would_report() {
+        let rules = BlitzDom::split_css_rules(
+            r#"@charset "utf-8";
+               /* a comment between rules belongs to no rule */
+               a { content: "}" }
+               @media (min-width: 10px) { b { color: red } c { color: blue } }
+               @keyframes slide { from { left: 0 } to { left: 1px } }
+               d[title='{'] { color: green }"#,
+        );
+        assert_eq!(
+            rules,
+            vec![
+                r#"@charset "utf-8";"#.to_owned(),
+                r#"a { content: "}" }"#.to_owned(),
+                "@media (min-width: 10px) { b { color: red } c { color: blue } }".to_owned(),
+                "@keyframes slide { from { left: 0 } to { left: 1px } }".to_owned(),
+                "d[title='{'] { color: green }".to_owned(),
+            ]
+        );
+        assert!(BlitzDom::split_css_rules("  /* nothing */  ").is_empty());
+    }
+
+    /// The whole point of the CSSOM sheet surface: a rule inserted from script
+    /// has to reach the stylesheet set Stylo cascades from, which is only
+    /// answerable in painted pixels.
+    #[test]
+    fn an_inserted_rule_changes_what_is_painted() {
+        let mut dom = viewport_document(
+            r#"<div id="box" style="width: 40px; height: 40px"></div>"#,
+            1.0,
+        );
+        dom.flush_layout().unwrap();
+        let colour = |dom: &mut BlitzDom| {
+            dom.flush_layout().unwrap();
+            pixel(&render(dom, 400, 300), 400, 20, 20)
+        };
+        assert_eq!(colour(&mut dom), [0, 0, 0, 0], "nothing paints the box yet");
+
+        let sheet = dom.create_element(&DomName::html("style")).unwrap();
+        let head = dom.query_selector(dom.document(), "head").unwrap().unwrap();
+        dom.append_child(head, sheet).unwrap();
+        assert!(dom.style_sheets().unwrap().contains(&sheet));
+        assert!(dom.sheet_rules(sheet).unwrap().is_empty());
+
+        dom.insert_sheet_rule(sheet, "#box { background: rgb(10, 20, 200) }", 0)
+            .unwrap();
+        assert_eq!(colour(&mut dom), [10, 20, 200, 255]);
+
+        // Later rule, equal specificity: the cascade order the sheet's own text
+        // gives it is the order the rules were inserted in.
+        dom.insert_sheet_rule(sheet, "#box { background: rgb(200, 20, 10) }", 1)
+            .unwrap();
+        assert_eq!(dom.sheet_rules(sheet).unwrap().len(), 2);
+        assert_eq!(colour(&mut dom), [200, 20, 10, 255]);
+
+        dom.delete_sheet_rule(sheet, 1).unwrap();
+        assert_eq!(colour(&mut dom), [10, 20, 200, 255], "the rule is gone");
+
+        // Refused rather than written and silently ignored, and refusing must
+        // not disturb the sheet.
+        for refused in ["not a rule", "a { color: red } b { color: red }", ""] {
+            assert!(matches!(
+                dom.insert_sheet_rule(sheet, refused, 0),
+                Err(DomError::Syntax(_))
+            ));
+        }
+        assert!(matches!(
+            dom.insert_sheet_rule(sheet, "a { color: red }", 2),
+            Err(DomError::NotFound)
+        ));
+        assert!(matches!(
+            dom.delete_sheet_rule(sheet, 1),
+            Err(DomError::NotFound)
+        ));
+        assert_eq!(dom.sheet_rules(sheet).unwrap().len(), 1);
+        assert_eq!(colour(&mut dom), [10, 20, 200, 255]);
+    }
+
+    /// A sheet whose source is a file rather than text in the tree says so.
+    ///
+    /// Reporting no rules would be the silent answer; there is no rule list here
+    /// to report, so the read fails.
+    #[test]
+    fn a_stylesheet_loaded_from_a_url_refuses_its_rules() {
+        let dom = fixture_document(
+            r#"<link id="external" rel="stylesheet" href="missing.css">"#,
+            None,
+        );
+        let link = dom.get_element_by_id("external").unwrap().unwrap();
+        assert!(dom.style_sheets().unwrap().contains(&link));
+        assert!(matches!(dom.sheet_rules(link), Err(DomError::Backend(_))));
+        assert!(matches!(
+            dom.sheet_rules(dom.body().unwrap()),
+            Err(DomError::InvalidNodeType)
+        ));
+    }
+
+    /// The case the CSSOM surface exists for: Svelte writes a `@keyframes` block
+    /// into a sheet it owns and puts `animation` on the element. Blitz animates
+    /// keyframes, but only against the clock it is resolved with, so the two
+    /// halves are only worth anything together.
+    #[test]
+    fn an_inserted_keyframes_rule_animates_with_the_frame_clock() {
+        let mut dom = viewport_document(
+            r#"<div id="box" style="width: 40px; height: 40px; background: #000"></div>"#,
+            1.0,
+        );
+        let box_node = dom.get_element_by_id("box").unwrap().unwrap();
+        let sheet = dom.create_element(&DomName::html("style")).unwrap();
+        let head = dom.query_selector(dom.document(), "head").unwrap().unwrap();
+        dom.append_child(head, sheet).unwrap();
+        dom.insert_sheet_rule(
+            sheet,
+            "@keyframes __blitsen_slide { from { margin-left: 0px } to { margin-left: 200px } }",
+            0,
+        )
+        .unwrap();
+        dom.set_inline_style(box_node, "animation", "__blitsen_slide 2s linear both")
+            .unwrap();
+
+        let frame = |dom: &mut BlitzDom, seconds: f64| {
+            dom.set_animation_time(seconds);
+            dom.flush_layout().unwrap();
+            inked_bounds(&render(dom, 400, 300), 400).expect("the box painted nothing")
+        };
+        assert_eq!(frame(&mut dom, 0.0), (0, 0, 40, 40));
+        assert!(
+            dom.is_animating(),
+            "a running animation is what keeps a frame loop turning"
+        );
+        assert_eq!(frame(&mut dom, 1.0), (100, 0, 40, 40), "half way across");
+        assert_eq!(frame(&mut dom, 2.0), (200, 0, 40, 40), "at the last frame");
+
+        // And the rule is what is animating it: deleting it stops the animation
+        // rather than leaving the box where the last frame left it.
+        dom.delete_sheet_rule(sheet, 0).unwrap();
+        assert_eq!(frame(&mut dom, 2.5), (0, 0, 40, 40));
+    }
+
+    /// Without a clock from the host every animation in the document is pinned
+    /// to its first frame, which is what made this API worth implementing at all.
+    #[test]
+    fn animations_stand_still_until_the_host_supplies_a_clock() {
+        let mut dom = viewport_document(
+            r#"<style>
+                 @keyframes slide { from { margin-left: 0px } to { margin-left: 200px } }
+                 #box { width: 40px; height: 40px; background: #000;
+                        animation: slide 2s linear both }
+               </style>
+               <div id="box"></div>"#,
+            1.0,
+        );
+        for _ in 0..4 {
+            dom.flush_layout().unwrap();
+            assert_eq!(
+                inked_bounds(&render(&mut dom, 400, 300), 400),
+                Some((0, 0, 40, 40)),
+                "flushing layout must not advance the animation clock by itself"
+            );
+        }
+        dom.set_animation_time(1.0);
+        dom.flush_layout().unwrap();
+        assert_eq!(
+            inked_bounds(&render(&mut dom, 400, 300), 400),
+            Some((100, 0, 40, 40))
+        );
+        // The clock only ever moves forward: a frame delivered out of order
+        // would otherwise restart every animation that had already begun.
+        dom.set_animation_time(0.5);
+        dom.flush_layout().unwrap();
+        assert_eq!(
+            inked_bounds(&render(&mut dom, 400, 300), 400),
+            Some((100, 0, 40, 40))
         );
     }
 

@@ -92,8 +92,21 @@ const CATALOGUE = {
   WEB_DEVICE: ["Navigator", "navigator", "navigator.userAgent", "navigator.platform",
     "navigator.language", ["screen", null], "Notification", ["caches", null]],
   WEB_OBSERVER: ["ResizeObserver", "IntersectionObserver", "PerformanceObserver"],
+  // The CSSOM stylesheet objects, at the size a framework transition needs: a
+  // sheet is the `<style>` element that owns it, and a rule inserted into one
+  // reaches the same cascade the document's own stylesheets do. What stays
+  // absent is the rest of CSSOM — the rule subclasses, a rule's declarations and
+  // selector, constructible and adopted sheets, and `disabled`.
   WEB_STYLE: ["getComputedStyle", "matchMedia", "MediaQueryList", "MediaQueryListEvent",
-    "CSSStyleSheet", "StyleSheetList"],
+    "CSSStyleSheet", "StyleSheetList", "CSSRule", "CSSRuleList", "HTMLStyleElement",
+    "CSSStyleRule", "CSSKeyframesRule", "CSSKeyframeRule", "CSSMediaRule",
+    "document.styleSheets", "document.adoptedStyleSheets",
+    "HTMLStyleElement.sheet", "HTMLLinkElement.sheet",
+    "CSSStyleSheet.cssRules", "CSSStyleSheet.insertRule", "CSSStyleSheet.deleteRule",
+    "CSSStyleSheet.ownerNode", "CSSStyleSheet.href", "CSSStyleSheet.title",
+    "CSSStyleSheet.disabled", "CSSStyleSheet.replaceSync", "CSSStyleSheet.replace",
+    "CSSRule.cssText", "CSSRule.parentStyleSheet", "CSSRule.style", "CSSRule.selectorText",
+    "CSSRule.type"],
   WEB_COMPONENTS: ["customElements", "ShadowRoot", "DOMParser"],
 };
 
@@ -156,8 +169,10 @@ const DIAGNOSTICS = {
     "Feature-detect it, or use the native modules for capability the web does not have."],
   WEB_OBSERVER: ["warning", "This observer is not implemented; only ResizeObserver is.",
     "Read geometry in a requestAnimationFrame callback, or observe the element's size instead."],
-  WEB_STYLE: ["warning", "The CSSOM stylesheet objects are not implemented.",
-    "Read a value with getComputedStyle, or drive it from a class."],
+  WEB_STYLE: ["warning",
+    "This part of CSSOM is not implemented; a sheet's rules are its source text.",
+    "Insert or delete a whole rule through the sheet of a <style> element, and read values "
+    + "back with getComputedStyle."],
   WEB_COMPONENTS: ["warning", "Custom elements, shadow DOM and DOM parsing are not implemented.",
     "Render with ordinary elements the bundler already emits."],
 };

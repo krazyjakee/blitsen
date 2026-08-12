@@ -1777,16 +1777,227 @@
     {
       "api": "CSSStyleSheet",
       "kind": "global",
-      "status": "absent",
+      "status": "implemented",
       "code": "WEB_STYLE",
       "pattern": "(?<![.\\w$])CSSStyleSheet\\b"
     },
     {
       "api": "StyleSheetList",
       "kind": "global",
-      "status": "absent",
+      "status": "implemented",
       "code": "WEB_STYLE",
       "pattern": "(?<![.\\w$])StyleSheetList\\b"
+    },
+    {
+      "api": "CSSRule",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_STYLE",
+      "pattern": "(?<![.\\w$])CSSRule\\b"
+    },
+    {
+      "api": "CSSRuleList",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_STYLE",
+      "pattern": "(?<![.\\w$])CSSRuleList\\b"
+    },
+    {
+      "api": "HTMLStyleElement",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_STYLE",
+      "pattern": "(?<![.\\w$])HTMLStyleElement\\b"
+    },
+    {
+      "api": "CSSStyleRule",
+      "kind": "global",
+      "status": "absent",
+      "code": "WEB_STYLE",
+      "pattern": "(?<![.\\w$])CSSStyleRule\\b"
+    },
+    {
+      "api": "CSSKeyframesRule",
+      "kind": "global",
+      "status": "absent",
+      "code": "WEB_STYLE",
+      "pattern": "(?<![.\\w$])CSSKeyframesRule\\b"
+    },
+    {
+      "api": "CSSKeyframeRule",
+      "kind": "global",
+      "status": "absent",
+      "code": "WEB_STYLE",
+      "pattern": "(?<![.\\w$])CSSKeyframeRule\\b"
+    },
+    {
+      "api": "CSSMediaRule",
+      "kind": "global",
+      "status": "absent",
+      "code": "WEB_STYLE",
+      "pattern": "(?<![.\\w$])CSSMediaRule\\b"
+    },
+    {
+      "api": "document.styleSheets",
+      "kind": "member",
+      "owner": "document",
+      "member": "styleSheets",
+      "status": "implemented",
+      "code": "WEB_STYLE",
+      "pattern": "\\bdocument\\.styleSheets\\b"
+    },
+    {
+      "api": "document.adoptedStyleSheets",
+      "kind": "member",
+      "owner": "document",
+      "member": "adoptedStyleSheets",
+      "status": "absent",
+      "code": "WEB_STYLE",
+      "pattern": "\\bdocument\\.adoptedStyleSheets\\b"
+    },
+    {
+      "api": "HTMLStyleElement.sheet",
+      "kind": "member",
+      "owner": "HTMLStyleElement.prototype",
+      "member": "sheet",
+      "status": "implemented",
+      "code": "WEB_STYLE",
+      "pattern": null
+    },
+    {
+      "api": "HTMLLinkElement.sheet",
+      "kind": "member",
+      "owner": "HTMLLinkElement.prototype",
+      "member": "sheet",
+      "status": "implemented",
+      "code": "WEB_STYLE",
+      "pattern": null
+    },
+    {
+      "api": "CSSStyleSheet.cssRules",
+      "kind": "member",
+      "owner": "CSSStyleSheet.prototype",
+      "member": "cssRules",
+      "status": "implemented",
+      "code": "WEB_STYLE",
+      "pattern": null
+    },
+    {
+      "api": "CSSStyleSheet.insertRule",
+      "kind": "member",
+      "owner": "CSSStyleSheet.prototype",
+      "member": "insertRule",
+      "status": "implemented",
+      "code": "WEB_STYLE",
+      "pattern": null
+    },
+    {
+      "api": "CSSStyleSheet.deleteRule",
+      "kind": "member",
+      "owner": "CSSStyleSheet.prototype",
+      "member": "deleteRule",
+      "status": "implemented",
+      "code": "WEB_STYLE",
+      "pattern": null
+    },
+    {
+      "api": "CSSStyleSheet.ownerNode",
+      "kind": "member",
+      "owner": "CSSStyleSheet.prototype",
+      "member": "ownerNode",
+      "status": "implemented",
+      "code": "WEB_STYLE",
+      "pattern": null
+    },
+    {
+      "api": "CSSStyleSheet.href",
+      "kind": "member",
+      "owner": "CSSStyleSheet.prototype",
+      "member": "href",
+      "status": "implemented",
+      "code": "WEB_STYLE",
+      "pattern": null
+    },
+    {
+      "api": "CSSStyleSheet.title",
+      "kind": "member",
+      "owner": "CSSStyleSheet.prototype",
+      "member": "title",
+      "status": "implemented",
+      "code": "WEB_STYLE",
+      "pattern": null
+    },
+    {
+      "api": "CSSStyleSheet.disabled",
+      "kind": "member",
+      "owner": "CSSStyleSheet.prototype",
+      "member": "disabled",
+      "status": "absent",
+      "code": "WEB_STYLE",
+      "pattern": null
+    },
+    {
+      "api": "CSSStyleSheet.replaceSync",
+      "kind": "member",
+      "owner": "CSSStyleSheet.prototype",
+      "member": "replaceSync",
+      "status": "absent",
+      "code": "WEB_STYLE",
+      "pattern": null
+    },
+    {
+      "api": "CSSStyleSheet.replace",
+      "kind": "member",
+      "owner": "CSSStyleSheet.prototype",
+      "member": "replace",
+      "status": "absent",
+      "code": "WEB_STYLE",
+      "pattern": null
+    },
+    {
+      "api": "CSSRule.cssText",
+      "kind": "member",
+      "owner": "CSSRule.prototype",
+      "member": "cssText",
+      "status": "implemented",
+      "code": "WEB_STYLE",
+      "pattern": null
+    },
+    {
+      "api": "CSSRule.parentStyleSheet",
+      "kind": "member",
+      "owner": "CSSRule.prototype",
+      "member": "parentStyleSheet",
+      "status": "implemented",
+      "code": "WEB_STYLE",
+      "pattern": null
+    },
+    {
+      "api": "CSSRule.style",
+      "kind": "member",
+      "owner": "CSSRule.prototype",
+      "member": "style",
+      "status": "absent",
+      "code": "WEB_STYLE",
+      "pattern": null
+    },
+    {
+      "api": "CSSRule.selectorText",
+      "kind": "member",
+      "owner": "CSSRule.prototype",
+      "member": "selectorText",
+      "status": "absent",
+      "code": "WEB_STYLE",
+      "pattern": null
+    },
+    {
+      "api": "CSSRule.type",
+      "kind": "member",
+      "owner": "CSSRule.prototype",
+      "member": "type",
+      "status": "absent",
+      "code": "WEB_STYLE",
+      "pattern": null
     },
     {
       "api": "customElements",
@@ -1921,8 +2132,8 @@
     },
     "WEB_STYLE": {
       "severity": "warning",
-      "message": "The CSSOM stylesheet objects are not implemented.",
-      "guidance": "Read a value with getComputedStyle, or drive it from a class.",
+      "message": "This part of CSSOM is not implemented; a sheet's rules are its source text.",
+      "guidance": "Insert or delete a whole rule through the sheet of a <style> element, and read values back with getComputedStyle.",
       "extra": null
     },
     "WEB_COMPONENTS": {

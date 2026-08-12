@@ -987,6 +987,95 @@ const readBack = JSON.parse(native.runBridgeHarness(
 ));
 assert.equal(readBack.nodes.find(node => node.attributes.id === "resolved").attributes["data-read-back"], "ok");
 
+// The CSSOM stylesheet surface, driven the way Svelte drives it: an empty
+// <style> appended to the head, a @keyframes block inserted into its sheet, and
+// `animation` set on the element. What is asserted is the cascade's answer and
+// the painted frame — a rule that parsed into a shadow list and never reached
+// Stylo would pass every structural check here and fail both of those.
+const stylesheets = JSON.parse(native.runBridgeHarness(
+  `<style id="authored">#box { display:block; width:120px; height:60px; background:rgb(9,9,9) }</style>
+   <div id="box"></div>`,
+  `{ const expect = (condition, message) => { if (!condition) throw new Error(message); };
+     const box = document.getElementById("box");
+     const authored = document.getElementById("authored");
+     const resolved = property => getComputedStyle(box).getPropertyValue(property);
+     expect(authored instanceof HTMLStyleElement && authored.sheet instanceof CSSStyleSheet &&
+       authored.sheet === authored.sheet && authored.sheet.ownerNode === authored,
+       "a <style> element has one stable sheet that knows the element it came from");
+     expect(authored.sheet.cssRules instanceof CSSRuleList &&
+       authored.sheet.cssRules.length === 1 &&
+       authored.sheet.cssRules[0] instanceof CSSRule &&
+       authored.sheet.cssRules[0].cssText.includes("#box") &&
+       authored.sheet.cssRules[0].parentStyleSheet === authored.sheet,
+       "the sheet reports the rule the document parsed: " + authored.sheet.cssRules.length);
+     expect(document.styleSheets instanceof StyleSheetList &&
+       document.styleSheets.length === 1 && document.styleSheets[0] === authored.sheet,
+       "the document lists the sheets the cascade is reading");
+     let constructed;
+     try { new CSSStyleSheet(); } catch (error) { constructed = error.constructor.name; }
+     expect(constructed === "TypeError",
+       "a constructible sheet cannot reach the cascade, so it is refused rather than ignored");
+
+     const style = document.createElement("style");
+     expect(style.sheet === null, "a disconnected <style> element has no sheet");
+     document.head.appendChild(style);
+     const sheet = style.sheet;
+     expect(document.styleSheets.length === 2 && document.styleSheets[1] === sheet,
+       "an appended <style> element joins the document's sheets");
+
+     const index = sheet.insertRule("#box { background: rgb(4, 200, 8) }", sheet.cssRules.length);
+     expect(index === 0 && sheet.cssRules.length === 1,
+       "insertRule answers with the index it inserted at, and the next read sees the rule");
+     expect(resolved("background-color") === "rgb(4, 200, 8)",
+       "an inserted rule is in the cascade: " + resolved("background-color"));
+     sheet.deleteRule(0);
+     expect(sheet.cssRules.length === 0 && resolved("background-color") === "rgb(9, 9, 9)",
+       "a deleted rule leaves the cascade: " + resolved("background-color"));
+
+     let refused, ranged, external;
+     try { sheet.insertRule("this is not a rule", 0); } catch (error) { refused = error.name; }
+     try { sheet.insertRule("#box { color: red }", 4); } catch (error) { ranged = error.name; }
+     try { document.styleSheets[0].deleteRule(9); } catch (error) { external = error.name; }
+     expect(refused === "SyntaxError" && ranged === "IndexSizeError" &&
+       external === "IndexSizeError",
+       "refusals: " + [refused, ranged, external].join(","));
+     expect(sheet.cssRules.length === 0, "nothing refused reached the sheet");
+
+     // Svelte's own teardown: the sheet is dropped by detaching its ownerNode.
+     const scratch = document.createElement("style");
+     document.head.appendChild(scratch);
+     scratch.sheet.insertRule("#box { outline: 1px solid red }", 0);
+     scratch.sheet.ownerNode.parentNode.removeChild(scratch);
+     expect(document.styleSheets.length === 2 && resolved("outline-color") !== "rgb(255, 0, 0)",
+       "detaching a sheet's owner takes its rules out of the cascade");
+
+     sheet.insertRule("@keyframes __blitsen_fade { 0% { background: rgb(200, 0, 0) }" +
+       " 100% { background: rgb(0, 0, 200) } }", 0);
+     box.style.animation = "__blitsen_fade 1000ms linear 0ms 1 both";
+     // The clock the cascade samples animations at is the frame's timestamp, and
+     // it only moves when a frame is delivered. The first laid-out frame is when
+     // the animation starts, so it has to happen at the timestamp it starts from.
+     __blitsenAnimationFrameTick(0);
+     expect(resolved("background-color") === "rgb(200, 0, 0)",
+       "the first frame is the animation's first keyframe: " + resolved("background-color"));
+     expect(__blitsenAnimationFramesPending(),
+       "a running animation keeps the host turning: the clock only moves on a frame");
+     __blitsenAnimationFrameTick(500);
+     expect(resolved("background-color") === "rgb(100, 0, 100)",
+       "half way through, the cascade interpolates: " + resolved("background-color"));
+     box.setAttribute("data-stylesheets", "ok"); }`,
+  320,
+  180,
+));
+assert.equal(stylesheets.nodes.find(node => node.attributes.id === "box").attributes["data-stylesheets"],
+  "ok");
+// The painted frame, not the resolved value: the harness renders after the
+// script, with the clock left half way through the inserted animation.
+const halfway = stylesheets.paint_colors.find(color => color.rgba === "#640064ff");
+assert(halfway?.pixels > 5_000,
+  `a rule inserted from JavaScript animates in the painted frame: ${
+    JSON.stringify(stylesheets.paint_colors)}`);
+
 const acceptanceHtml =
   `<style>#x { width: 180px; height: 80px; background: #ef4444 }</style><div id="x">old</div>`;
 const acceptanceScript = `{ const painted = document.querySelector("#x");

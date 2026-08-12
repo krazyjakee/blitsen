@@ -249,7 +249,57 @@ on. `box: "device-pixel-content-box"` is refused with a `TypeError`, because the
 snapping it reports is not exposed; `inlineSize` is width and `blockSize` is height, which holds
 for every writing mode this renderer lays out.
 
-`IntersectionObserver`, `PerformanceObserver`, `CSSStyleSheet` and `StyleSheetList` remain absent.
+`IntersectionObserver` and `PerformanceObserver` remain absent.
+
+## Stylesheets
+
+**A stylesheet is the element that owns it.** `document.styleSheets` lists the `<style>` and
+`<link rel="stylesheet">` elements the cascade is reading, in the order it applies them;
+`styleElement.sheet` is the same object, one per element for the element's whole life, and
+`sheet.ownerNode` is the element it came from. A disconnected element has no sheet, because
+nothing it says has reached the cascade.
+
+That identity is the whole design. A `<style>` element's text *is* its sheet's source: Blitz parses
+it and hands it to Stylo, and reparses it whenever the text changes. So `insertRule` and
+`deleteRule` rewrite that text, and the rule they insert is in the same stylesheet set the
+document's own rules are in. There is no second rule list that could parse successfully and then
+cascade nothing, which is the failure this API is easiest to build.
+
+Two consequences worth knowing:
+
+- **`cssRules` is derived from the source on every read.** The list object handed out is a frozen
+  snapshot, like every collection here, but the next read sees what the last mutation did — so an
+  index taken from `cssRules.length` and passed straight to `insertRule`, which is how a framework
+  appends a rule, means what it means in a browser. A rule's `cssText` is its source text, not a
+  reserialization, so rewriting a sheet to insert one rule cannot quietly rewrite the others.
+- **A rule is inserted whole or refused.** Text that is not exactly one rule — to the cascade's own
+  parser, not just structurally — throws a `SyntaxError`, and an out-of-range index throws an
+  `IndexSizeError`. Nothing is written that the cascade would then ignore.
+- **The element's text follows its rules.** A browser keeps `styleElement.textContent` at whatever
+  was authored and holds the rule list separately; here they are the same thing, so a sheet mutated
+  through `insertRule` reads back its rules as the element's text. Comments between rules are not
+  rules and do not survive a mutation, which is also what a browser's rule list reports.
+
+What is absent: the `CSSRule` subclasses and everything read off a rule other than its text
+(`style`, `selectorText`, `type`), `disabled`, `replace`/`replaceSync`, constructible sheets
+(`new CSSStyleSheet()` throws, so a feature test selects its fallback) and `adoptedStyleSheets`.
+The rules of a sheet loaded from a URL are refused rather than reported as empty: that sheet's
+source is a file this process fetched, not text in the tree. It is still listed in
+`document.styleSheets` and still answers `ownerNode` and `href`.
+
+### The animation clock
+
+CSS animations and transitions are sampled at **the frame's own timestamp**, set from the same
+value `requestAnimationFrame` callbacks receive, once per frame turn. Nothing below that reads a
+clock of its own, which is what keeps a replayed or recorded frame sequence identical to the one
+that was captured, and a running animation keeps the host turning the way an in-flight request
+does.
+
+The consequence is that **animation only advances on delivered frames**. A harness that loads a
+document and never turns the loop sees every animation pinned to its first keyframe — which is
+correct, not stalled: no frame has been asked for. This is also why a `@keyframes` rule inserted
+from JavaScript is worth having at all; until the clock was wired to the frame it would have
+parsed, cascaded, and never moved.
 
 ## Form controls
 
@@ -451,7 +501,7 @@ determinism gate instead.
 | WEB_COOKIE | — | `document.cookie`, `cookieStore`, `Headers.getSetCookie` |
 | WEB_DEVICE | `Navigator`, `navigator`, `navigator.userAgent`, `navigator.platform`, `navigator.language` | `screen`, `Notification`, `caches` |
 | WEB_OBSERVER | `ResizeObserver` | `IntersectionObserver`, `PerformanceObserver` |
-| WEB_STYLE | `getComputedStyle`, `matchMedia`, `MediaQueryList`, `MediaQueryListEvent` | `CSSStyleSheet`, `StyleSheetList` |
+| WEB_STYLE | `getComputedStyle`, `matchMedia`, `MediaQueryList`, `MediaQueryListEvent`, `CSSStyleSheet`, `StyleSheetList`, `CSSRule`, `CSSRuleList`, `HTMLStyleElement`, `document.styleSheets`, `HTMLStyleElement.sheet`, `HTMLLinkElement.sheet`, `CSSStyleSheet.cssRules`, `CSSStyleSheet.insertRule`, `CSSStyleSheet.deleteRule`, `CSSStyleSheet.ownerNode`, `CSSStyleSheet.href`, `CSSStyleSheet.title`, `CSSRule.cssText`, `CSSRule.parentStyleSheet` | `CSSStyleRule`, `CSSKeyframesRule`, `CSSKeyframeRule`, `CSSMediaRule`, `document.adoptedStyleSheets`, `CSSStyleSheet.disabled`, `CSSStyleSheet.replaceSync`, `CSSStyleSheet.replace`, `CSSRule.style`, `CSSRule.selectorText`, `CSSRule.type` |
 | WEB_COMPONENTS | — | `customElements`, `ShadowRoot`, `DOMParser` |
 
 | Diagnostic | Severity | Reported as |
@@ -476,7 +526,7 @@ determinism gate instead.
 | `WEB_COOKIE` | warning | There is no origin and no cookie jar behind an exported application. |
 | `WEB_DEVICE` | warning | This device API is not implemented. |
 | `WEB_OBSERVER` | warning | This observer is not implemented; only ResizeObserver is. |
-| `WEB_STYLE` | warning | The CSSOM stylesheet objects are not implemented. |
+| `WEB_STYLE` | warning | This part of CSSOM is not implemented; a sheet's rules are its source text. |
 | `WEB_COMPONENTS` | warning | Custom elements, shadow DOM and DOM parsing are not implemented. |
 | `CSS_TRANSITION` | warning | A property named by `transition` keeps its pre-stylesheet value (Blitz bug 689). |
 | `CSS_FIXED` | warning | Fixed and sticky boxes resolve against the root box, not the viewport (Blitz bug 690). |

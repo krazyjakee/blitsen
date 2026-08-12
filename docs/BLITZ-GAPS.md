@@ -21,6 +21,7 @@ Status values: **open** (reproduced, unfiled), **filed** (upstream issue exists)
 | G5 | SVG icons missing or geometrically wrong; chart fills incorrect | filed upstream | `spikes/s6/results/blitz-snapshot/react.png` | [blitz#448](https://github.com/DioxusLabs/blitz/issues/448) |
 | G6 | Accumulating line-height, antialiasing and vertical spacing differences | open, low priority | `spikes/s6/results/metrics.tsv` | Needs a tolerance corpus before it can be actioned |
 | G7 | `blitz-dom`'s `svg` feature does not compile at the pinned revision | filed | Build failure, reproducible | [blitz#687](https://github.com/DioxusLabs/blitz/issues/687); see below |
+| G8 | `@keyframes` animations never move | withdrawn | `crates/blitsen-blitz/src/lib.rs::tests::animations_stand_still_until_the_host_supplies_a_clock` | Not a Blitz gap: Blitz animates keyframes correctly. Blitsen was resolving every frame at time zero; see below |
 
 Broad Tailwind/renderer work has an upstream collection in
 [blitz#389](https://github.com/DioxusLabs/blitz/issues/389).
@@ -113,6 +114,35 @@ Blitsen therefore selects `blitz-dom`'s features explicitly, with `svg` omitted,
 
 Filed as [blitz#687](https://github.com/DioxusLabs/blitz/issues/687), with a suggestion that a
 `--all-features` build of `blitz-dom` in CI would catch this class of drift.
+
+## G8 — keyframes animate; the clock was ours
+
+Asked before implementing the CSSOM stylesheet API ([#117](https://github.com/krazyjakee/blitsen/issues/117)):
+a `@keyframes` rule a framework inserts from JavaScript is worse than a missing API if it parses,
+cascades, and never runs, because the application believes its transition is playing. So the
+question came first, and it was measured in pixels rather than read out of the source.
+
+**Blitz animates `@keyframes`.** A 40×40 box with
+`animation: slide 2s linear both` over `@keyframes slide { from { margin-left: 0px } to
+{ margin-left: 200px } }`, resolved at 0.0, 0.5, 1.0, 1.5 and 2.0 seconds and painted each time,
+has its inked bounds at x = 0, 50, 100, 150 and 200. `opacity` and `transform` interpolate the same
+way — at 0% of a fade the box paints nothing at all. Stylo's animation machinery is wired up in
+`blitz-dom`'s `stylo.rs`, and `BaseDocument::resolve` takes the sample time as its only argument.
+
+**What did not move was Blitsen.** Every `flush_layout` called `resolve(0.0)`, so the same document
+painted through Blitsen's own boundary stood at x = 0 for as many frames as it was given. Nothing
+in Blitsen ever advanced the animation clock, and no test noticed, because every animation started
+at zero and stayed at its first keyframe — which looks exactly like a document that has settled.
+
+Fixed in Blitsen rather than upstream: `DomBackend::set_animation_time` takes the frame's
+timestamp, the bridge sets it from the same value it hands `requestAnimationFrame`, and a document
+with animation left to run reports itself as owing a frame so the loop keeps turning. The clock
+only moves forward, and it comes from the host rather than a wall clock, so replay and the recorded
+frame goldens stay deterministic. See "The animation clock" in [COMPATIBILITY.md](COMPATIBILITY.md).
+
+Reproduction, both halves, in `crates/blitsen-blitz/src/lib.rs`:
+`animations_stand_still_until_the_host_supplies_a_clock` and
+`an_inserted_keyframes_rule_animates_with_the_frame_clock`.
 
 ## Keeping this list honest
 
