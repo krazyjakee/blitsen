@@ -1,0 +1,309 @@
+//! Native file and message dialogs, backed by `rfd`.
+//!
+//! A dialog is opened on a thread of its own and its outcome is queued here for
+//! the runtime to collect, rather than blocking the caller. The reason is the
+//! frame loop: the thread a `native:dialog` call arrives on is the thread that
+//! pumps winit, so blocking it would stop the application painting for as long
+//! as the dialog is on screen — and a client that stops reading its display
+//! socket is one X11 and Wayland compositors are entitled to grey out.
+//!
+//! Not painting is the only thing given up, and only because the dialog is not
+//! ours to draw: the portal runs it in another process, and the parent window
+//! handle is what makes it modal. The user cannot reach the application under it
+//! whatever its frame loop is doing.
+//!
+//! Absent off the XDG portal platforms. macOS requires a file dialog on the main
+//! thread, which is the thread this design deliberately leaves running; that is
+//! a different design rather than this one with the backend swapped out.
+
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Mutex, PoisonError};
+
+use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
+
+use crate::PlatformError;
+
+/// Which file dialog to show.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FileKind {
+    /// One existing file.
+    OpenFile,
+    /// Any number of existing files.
+    OpenFiles,
+    /// A path to write to, which need not exist yet.
+    SaveFile,
+    /// One existing directory.
+    OpenFolder,
+    /// Any number of existing directories.
+    OpenFolders,
+}
+
+/// One named group of extensions the file dialog offers.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Filter {
+    /// What the group is called in the dialog's filter list.
+    pub name: String,
+    /// Extensions without their dot.
+    pub extensions: Vec<String>,
+}
+
+/// A file dialog to show.
+#[derive(Clone, Debug, Default)]
+pub struct FileRequest {
+    /// Dialog title, or the platform's own wording.
+    pub title: Option<String>,
+    /// Directory to open in.
+    pub directory: Option<PathBuf>,
+    /// File name to suggest, for a save dialog.
+    pub file_name: Option<String>,
+    /// Extension groups to offer, in order.
+    pub filters: Vec<Filter>,
+}
+
+/// How urgent a message dialog is, which the platform draws as an icon.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum Level {
+    /// Ordinary information.
+    #[default]
+    Info,
+    /// Something the user should look at.
+    Warning,
+    /// Something that went wrong.
+    Error,
+}
+
+/// The buttons a message dialog offers.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum Buttons {
+    /// Acknowledgement only.
+    #[default]
+    Ok,
+    /// Accept or dismiss.
+    OkCancel,
+    /// A yes/no question.
+    YesNo,
+    /// A yes/no question that can also be dismissed.
+    YesNoCancel,
+}
+
+/// A message dialog to show.
+#[derive(Clone, Debug, Default)]
+pub struct MessageRequest {
+    /// Dialog title.
+    pub title: String,
+    /// Body text.
+    pub message: String,
+    /// How urgent it is.
+    pub level: Level,
+    /// Which buttons to offer.
+    pub buttons: Buttons,
+}
+
+/// The button a message dialog was dismissed with.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Button {
+    /// The affirmative button of an acknowledgement.
+    Ok,
+    /// Dismissed, including by closing the dialog.
+    Cancel,
+    /// The affirmative button of a question.
+    Yes,
+    /// The negative button of a question.
+    No,
+}
+
+/// What a dialog was answered with.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Outcome {
+    /// The paths chosen, empty when the dialog was dismissed.
+    Paths(Vec<PathBuf>),
+    /// The button pressed.
+    Button(Button),
+}
+
+/// A dialog that has closed, addressed by the id [`open_file`] returned.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Completion {
+    /// The id of the request this answers.
+    pub id: u64,
+    /// What the user did.
+    pub outcome: Outcome,
+}
+
+static NEXT_ID: AtomicU64 = AtomicU64::new(1);
+/// Dialogs opened whose outcome has not been queued yet.
+static OPEN: AtomicUsize = AtomicUsize::new(0);
+static COMPLETED: Mutex<Vec<Completion>> = Mutex::new(Vec::new());
+
+fn locked<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// Shows a file dialog of `kind`, returning the id its completion carries.
+pub fn open_file<W>(
+    kind: FileKind,
+    request: &FileRequest,
+    parent: Option<&W>,
+) -> Result<u64, PlatformError>
+where
+    W: HasWindowHandle + HasDisplayHandle + ?Sized,
+{
+    session()?;
+    let dialog = file_dialog(request, parent);
+    show(move || Outcome::Paths(pick(kind, dialog)))
+}
+
+/// Shows a message dialog, returning the id its completion carries.
+pub fn open_message<W>(request: &MessageRequest, parent: Option<&W>) -> Result<u64, PlatformError>
+where
+    W: HasWindowHandle + HasDisplayHandle + ?Sized,
+{
+    session()?;
+    let dialog = message_dialog(request, parent);
+    show(move || Outcome::Button(button(dialog.show())))
+}
+
+/// Drains the dialogs that have closed since the last call.
+pub fn take() -> Vec<Completion> {
+    std::mem::take(&mut *locked(&COMPLETED))
+}
+
+/// Whether any dialog is open or any outcome is waiting to be read.
+///
+/// True for an open dialog as well as a finished one because nothing else wakes
+/// the frame loop: the outcome arrives on a thread, and the turn that collects
+/// it only happens while the loop believes it has work.
+pub fn pending() -> bool {
+    OPEN.load(Ordering::Acquire) > 0 || !locked(&COMPLETED).is_empty()
+}
+
+/// Runs one dialog on a thread of its own and queues what it answered.
+fn show(dialog: impl FnOnce() -> Outcome + Send + 'static) -> Result<u64, PlatformError> {
+    let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+    OPEN.fetch_add(1, Ordering::Release);
+    std::thread::Builder::new()
+        .name("blitsen-dialog".to_owned())
+        .spawn(move || {
+            let outcome = dialog();
+            // Queued before the count drops, so a caller polling between the two
+            // never sees an idle runtime with an unread answer in it.
+            locked(&COMPLETED).push(Completion { id, outcome });
+            OPEN.fetch_sub(1, Ordering::Release);
+        })
+        .map_err(|error| {
+            OPEN.fetch_sub(1, Ordering::Release);
+            PlatformError::new(format!("could not show the dialog: {error}"))
+        })?;
+    Ok(id)
+}
+
+/// Refuses before opening anything when there is no session to open it in.
+///
+/// Without this the portal fails, `rfd` reports the same `None` a user pressing
+/// Cancel produces, and the application is told its dialog was dismissed by
+/// someone who never saw it.
+fn session() -> Result<(), PlatformError> {
+    let displayed = ["DISPLAY", "WAYLAND_DISPLAY"]
+        .iter()
+        .any(|variable| std::env::var_os(variable).is_some_and(|value| !value.is_empty()));
+    if displayed {
+        return Ok(());
+    }
+    Err(PlatformError::new(
+        "there is no desktop session to show a dialog in: neither DISPLAY nor WAYLAND_DISPLAY \
+         is set",
+    ))
+}
+
+fn file_dialog<W>(request: &FileRequest, parent: Option<&W>) -> rfd::FileDialog
+where
+    W: HasWindowHandle + HasDisplayHandle + ?Sized,
+{
+    let mut dialog = rfd::FileDialog::new();
+    if let Some(title) = &request.title {
+        dialog = dialog.set_title(title);
+    }
+    if let Some(directory) = &request.directory {
+        dialog = dialog.set_directory(directory);
+    }
+    if let Some(file_name) = &request.file_name {
+        dialog = dialog.set_file_name(file_name);
+    }
+    for filter in &request.filters {
+        dialog = dialog.add_filter(&filter.name, &filter.extensions);
+    }
+    if let Some(parent) = parent {
+        dialog = dialog.set_parent(parent);
+    }
+    dialog
+}
+
+fn pick(kind: FileKind, dialog: rfd::FileDialog) -> Vec<PathBuf> {
+    match kind {
+        FileKind::OpenFile => dialog.pick_file().into_iter().collect(),
+        FileKind::OpenFiles => dialog.pick_files().unwrap_or_default(),
+        FileKind::SaveFile => dialog.save_file().into_iter().collect(),
+        FileKind::OpenFolder => dialog.pick_folder().into_iter().collect(),
+        FileKind::OpenFolders => dialog.pick_folders().unwrap_or_default(),
+    }
+}
+
+fn message_dialog<W>(request: &MessageRequest, parent: Option<&W>) -> rfd::MessageDialog
+where
+    W: HasWindowHandle + HasDisplayHandle + ?Sized,
+{
+    let mut dialog = rfd::MessageDialog::new()
+        .set_title(&request.title)
+        .set_description(&request.message)
+        .set_level(match request.level {
+            Level::Info => rfd::MessageLevel::Info,
+            Level::Warning => rfd::MessageLevel::Warning,
+            Level::Error => rfd::MessageLevel::Error,
+        })
+        .set_buttons(match request.buttons {
+            Buttons::Ok => rfd::MessageButtons::Ok,
+            Buttons::OkCancel => rfd::MessageButtons::OkCancel,
+            Buttons::YesNo => rfd::MessageButtons::YesNo,
+            Buttons::YesNoCancel => rfd::MessageButtons::YesNoCancel,
+        });
+    if let Some(parent) = parent {
+        dialog = dialog.set_parent(parent);
+    }
+    dialog
+}
+
+/// Custom answers cannot arrive: no request here offers a custom button.
+fn button(result: rfd::MessageDialogResult) -> Button {
+    match result {
+        rfd::MessageDialogResult::Ok => Button::Ok,
+        rfd::MessageDialogResult::Yes => Button::Yes,
+        rfd::MessageDialogResult::No => Button::No,
+        rfd::MessageDialogResult::Cancel | rfd::MessageDialogResult::Custom(_) => Button::Cancel,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The queue has to answer honestly with nothing in it, because every frame
+    /// turn asks it that before a dialog is ever opened.
+    #[test]
+    fn an_unused_queue_is_idle_and_empty() {
+        assert!(!pending());
+        assert!(take().is_empty());
+    }
+
+    /// A dialog nobody could have seen must not report that it was dismissed.
+    #[test]
+    fn a_dialog_needs_a_session_to_appear_in() {
+        match session() {
+            Ok(()) => assert!(
+                std::env::var_os("DISPLAY").is_some()
+                    || std::env::var_os("WAYLAND_DISPLAY").is_some()
+            ),
+            Err(error) => assert!(error.message().contains("no desktop session")),
+        }
+    }
+}

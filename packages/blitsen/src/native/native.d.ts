@@ -45,6 +45,123 @@ export interface NativeApp {
   relaunch?(): void;
 }
 
+/** One monitor, as the window's own display server describes it. */
+export interface Monitor {
+  /** The name the desktop gives it, where it has one. */
+  readonly name: string | null;
+  /** Left edge in desktop coordinates, in physical pixels. */
+  readonly x: number | null;
+  /** Top edge in desktop coordinates, in physical pixels. */
+  readonly y: number | null;
+  /** Width of the current video mode, in physical pixels. */
+  readonly width: number | null;
+  /** Height of the current video mode, in physical pixels. */
+  readonly height: number | null;
+  /** Physical pixels per CSS pixel on this monitor, which may differ per monitor. */
+  readonly scaleFactor: number;
+  /** Refresh rate in Hz, where the display server reports one. */
+  readonly refreshRate: number | null;
+  /** Whether the application window is on this monitor. */
+  readonly current: boolean;
+  /** Whether the desktop calls this the primary monitor. */
+  readonly primary: boolean;
+}
+
+/** How far the cursor is held to the window. */
+export type CursorGrab = "none" | "confined" | "locked";
+
+/** A named group of extensions a file dialog offers. */
+export interface DialogFilter {
+  /** What the group is called in the dialog's filter list. */
+  name: string;
+  /** Extensions without their leading dot. */
+  extensions: readonly string[];
+}
+
+/** What a file dialog is asked for. */
+export interface FileDialogOptions {
+  /** Dialog title, or the platform's own wording. */
+  title?: string;
+  /** Directory to open in. */
+  directory?: string;
+  /** File name to suggest, for `saveFile`. */
+  fileName?: string;
+  /** Extension groups to offer, in order. */
+  filters?: readonly DialogFilter[];
+}
+
+/** What a message dialog is asked for. */
+export interface MessageDialogOptions {
+  /** Dialog title. */
+  title?: string;
+  /** Body text. */
+  message?: string;
+  /** How urgent it is, which the platform draws as an icon. */
+  level?: "info" | "warning" | "error";
+  /** Which buttons to offer. */
+  buttons?: "ok" | "okCancel" | "yesNo" | "yesNoCancel";
+}
+
+/**
+ * `blitsen/window`: the window this run opened.
+ *
+ * Its size and pixel density are not here — `innerWidth`, `innerHeight`,
+ * `devicePixelRatio` and the `resize` event already answer those, and a second
+ * answer that could disagree would be worse than none. What is new is the
+ * commands, and the monitors including the ones the window is not on.
+ *
+ * Every member needs the window, which exists from the `load` event onwards; a
+ * call from a document script running before then throws saying so.
+ */
+export interface NativeWindow {
+  /** Asks the window manager for a new size, in CSS pixels. */
+  setSize?(width: number, height: number): void;
+  /** Enters or leaves borderless fullscreen on the window's current monitor. */
+  setFullscreen?(fullscreen: boolean): void;
+  /** Whether the window is fullscreen. */
+  isFullscreen?(): boolean;
+  /** Shows or hides the title bar and border. */
+  setDecorations?(decorations: boolean): void;
+  /** Whether the window has a title bar and border. */
+  isDecorated?(): boolean;
+  /** Keeps the window above others. Wayland has no protocol for this and ignores it. */
+  setAlwaysOnTop?(alwaysOnTop: boolean): void;
+  /** Sets the cursor to a CSS cursor keyword, such as `"pointer"` or `"grabbing"`. */
+  setCursor?(cursor: string): void;
+  /** Shows or hides the cursor over the window. */
+  setCursorVisible?(visible: boolean): void;
+  /** Confines or locks the cursor; throws where the platform cannot do it. */
+  setCursorGrab?(mode: CursorGrab): void;
+  /** Every monitor the desktop offers, each with its own scale factor. */
+  monitors?(): Monitor[];
+}
+
+/**
+ * `blitsen/dialog`: the desktop's own file and message dialogs.
+ *
+ * Each returns a promise and the frame loop keeps turning while the dialog is
+ * open, so `requestAnimationFrame` keeps firing and the window keeps painting
+ * behind it. The dialog is modal to the application window regardless, because
+ * the desktop draws it: it needs that window, so these are usable from the
+ * `load` event onwards.
+ *
+ * A file dialog answers real filesystem paths, and `null` when it was dismissed.
+ */
+export interface NativeDialog {
+  /** Chooses one existing file. */
+  openFile?(options?: FileDialogOptions): Promise<string | null>;
+  /** Chooses any number of existing files. */
+  openFiles?(options?: FileDialogOptions): Promise<string[] | null>;
+  /** Chooses a path to write to, which need not exist yet. */
+  saveFile?(options?: FileDialogOptions): Promise<string | null>;
+  /** Chooses one existing directory. */
+  openFolder?(options?: FileDialogOptions): Promise<string | null>;
+  /** Chooses any number of existing directories. */
+  openFolders?(options?: FileDialogOptions): Promise<string[] | null>;
+  /** Shows a message and resolves to the button it was dismissed with. */
+  message?(options?: MessageDialogOptions): Promise<"ok" | "cancel" | "yes" | "no">;
+}
+
 /** `blitsen/clipboard`: the system clipboard, in the flavours it carries. */
 export interface NativeClipboard {
   /** The clipboard as plain text, or `null` when it holds no text. */
@@ -87,5 +204,6 @@ export interface NativeClipboard {
  * signature is what the rest are: a module gains its own members with its own
  * implementation, rather than declaring an API that does not exist yet.
  */
-declare const nativeModule: NativeApp & NativeClipboard & Record<string, unknown>;
+declare const nativeModule: NativeApp & NativeWindow & NativeDialog & NativeClipboard
+  & Record<string, unknown>;
 export default nativeModule;

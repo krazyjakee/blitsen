@@ -2088,6 +2088,123 @@
       "reason": "The same `.desktop` entry, with `MimeType` instead of a scheme."
     },
     {
+      "api": "window.setSize",
+      "module": "window",
+      "member": "setSize",
+      "status": "implemented"
+    },
+    {
+      "api": "window.setFullscreen",
+      "module": "window",
+      "member": "setFullscreen",
+      "status": "implemented"
+    },
+    {
+      "api": "window.isFullscreen",
+      "module": "window",
+      "member": "isFullscreen",
+      "status": "implemented"
+    },
+    {
+      "api": "window.setDecorations",
+      "module": "window",
+      "member": "setDecorations",
+      "status": "implemented"
+    },
+    {
+      "api": "window.isDecorated",
+      "module": "window",
+      "member": "isDecorated",
+      "status": "implemented"
+    },
+    {
+      "api": "window.setAlwaysOnTop",
+      "module": "window",
+      "member": "setAlwaysOnTop",
+      "status": "implemented"
+    },
+    {
+      "api": "window.setCursor",
+      "module": "window",
+      "member": "setCursor",
+      "status": "implemented"
+    },
+    {
+      "api": "window.setCursorVisible",
+      "module": "window",
+      "member": "setCursorVisible",
+      "status": "implemented"
+    },
+    {
+      "api": "window.setCursorGrab",
+      "module": "window",
+      "member": "setCursorGrab",
+      "status": "implemented"
+    },
+    {
+      "api": "window.monitors",
+      "module": "window",
+      "member": "monitors",
+      "status": "implemented"
+    },
+    {
+      "api": "window.create",
+      "module": "window",
+      "member": "create",
+      "status": "absent",
+      "reason": "A second window needs the shared-versus-isolated JavaScript context question answered first: whether two windows see one `document` and one module graph or two decides what `create` even returns, and it cannot be settled by implementing it. The window this run already opened is what the rest of this module operates on."
+    },
+    {
+      "api": "window.setTransparent",
+      "module": "window",
+      "member": "setTransparent",
+      "status": "absent",
+      "reason": "Transparency is chosen when a window is created — winit's own setter does nothing on X11 after that — so honouring it would mean replacing the window, which is `create`. Run `blitsen` against a directory whose window should be transparent and the attribute belongs on that window, not on a call."
+    },
+    {
+      "api": "window.isAlwaysOnTop",
+      "module": "window",
+      "member": "isAlwaysOnTop",
+      "status": "absent",
+      "reason": "winit sets the window level and cannot read it back, and the window manager may change it without telling the application. Remembering what was last set would be a second source of truth that quietly goes stale."
+    },
+    {
+      "api": "dialog.openFile",
+      "module": "dialog",
+      "member": "openFile",
+      "status": "implemented"
+    },
+    {
+      "api": "dialog.openFiles",
+      "module": "dialog",
+      "member": "openFiles",
+      "status": "implemented"
+    },
+    {
+      "api": "dialog.saveFile",
+      "module": "dialog",
+      "member": "saveFile",
+      "status": "implemented"
+    },
+    {
+      "api": "dialog.openFolder",
+      "module": "dialog",
+      "member": "openFolder",
+      "status": "implemented"
+    },
+    {
+      "api": "dialog.openFolders",
+      "module": "dialog",
+      "member": "openFolders",
+      "status": "implemented"
+    },
+    {
+      "api": "dialog.message",
+      "module": "dialog",
+      "member": "message",
+      "status": "implemented"
+    },
+    {
       "api": "clipboard.readText",
       "module": "clipboard",
       "member": "readText",

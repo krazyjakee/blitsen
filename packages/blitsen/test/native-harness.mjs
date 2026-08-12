@@ -11,6 +11,8 @@ import { loadApiManifest } from "../src/api-manifest.mjs";
 // the addon installs into this realm rather than against a stand-in.
 import app from "../src/native/app.mjs";
 import clipboard from "../src/native/clipboard.mjs";
+import dialog from "../src/native/dialog.mjs";
+import windowModule from "../src/native/window.mjs";
 
 const addonPath = process.argv[2];
 if (!addonPath) throw new Error("usage: bun native-harness.mjs <addon.node>");
@@ -1477,14 +1479,18 @@ try {
 // does — through the `blitsen/app` and `blitsen/clipboard` proxies — so what is
 // asserted is the installed namespace, not a description of it.
 const nativeManifest = await loadApiManifest();
-const namespaces = { app, clipboard };
-// The one member whose presence is a platform fact rather than a version fact.
-const unixOnly = new Set(["app.requestSingleInstanceLock"]);
+const namespaces = { app, clipboard, dialog, window: windowModule };
+// The members whose presence is a platform fact rather than a version fact: the
+// single-instance lock is a Unix socket, and a dialog is the XDG portal.
+const absentOn = new Map([["app.requestSingleInstanceLock", ["win32"]]]);
+for (const entry of nativeManifest.native.filter(entry => entry.module === "dialog")) {
+  absentOn.set(entry.api, ["win32", "darwin"]);
+}
 for (const entry of nativeManifest.native) {
   const namespace = namespaces[entry.module];
   assert(namespace, `the manifest names native:${entry.module}, which the harness does not import`);
   const installed = entry.status === "implemented"
-    && !(unixOnly.has(entry.api) && process.platform === "win32");
+    && !(absentOn.get(entry.api) ?? []).includes(process.platform);
   if (installed) {
     assert.equal(typeof namespace[entry.member], "function",
       `native:${entry.api} is implemented and must be installed`);
@@ -1498,10 +1504,14 @@ for (const entry of nativeManifest.native) {
       `native:${entry.api} must not answer an "in" check`);
   }
 }
-assert.deepEqual(Object.keys(clipboard).sort(),
-  nativeManifest.native.filter(entry => entry.module === "clipboard" && entry.status === "implemented")
-    .map(entry => entry.member).sort(),
-  "the namespace enumerates exactly what the runtime installed");
+for (const [name, namespace] of Object.entries(namespaces)) {
+  assert.deepEqual(Object.keys(namespace).sort(),
+    nativeManifest.native
+      .filter(entry => entry.module === name && entry.status === "implemented"
+        && !(absentOn.get(entry.api) ?? []).includes(process.platform))
+      .map(entry => entry.member).sort(),
+    `the native:${name} namespace enumerates exactly what the runtime installed`);
+}
 assert.throws(() => { app.dataDir = () => "/tmp"; }, /read-only/);
 
 // Application directories. The application names itself, because the runtime
@@ -1555,6 +1565,60 @@ if (displayed) {
   assert.equal(clipboard.readImage(), null);
 } else {
   console.log("clipboard round-trips skipped: no DISPLAY or WAYLAND_DISPLAY on this host");
+}
+
+// The window, and the dialogs that are modal to it.
+//
+// This harness loads the addon into Bun rather than into a `blitsen <directory>`
+// run, so there is no window here and never will be. That is the honest half to
+// assert: everything each call decides before it needs one — the vocabulary it
+// accepts and the shape of its options — plus the fact that a call without a
+// window says which it is instead of quietly doing nothing. Driving a real
+// window, or dismissing a real dialog, needs a person; the M4 notes say what to
+// run and what to look for.
+for (const [call, refusal] of [
+  [() => windowModule.setCursor("wiggly"), /not a CSS cursor keyword/],
+  [() => windowModule.setCursorGrab("everything"), /not a cursor grab mode/],
+  [() => windowModule.setSize(0, 100), /at least 1x1 CSS pixels/],
+  [() => windowModule.setSize(800, Infinity), /at least 1x1 CSS pixels/],
+  [() => windowModule.setSize("wide", 600), /invalid window width/],
+]) assert.throws(call, refusal, "a mistyped argument is refused before the window is looked for");
+
+for (const call of [
+  () => windowModule.setSize(800, 600),
+  () => windowModule.setFullscreen(true),
+  () => windowModule.isFullscreen(),
+  () => windowModule.setDecorations(false),
+  () => windowModule.isDecorated(),
+  () => windowModule.setAlwaysOnTop(true),
+  () => windowModule.setCursor("pointer"),
+  () => windowModule.setCursorVisible(false),
+  () => windowModule.setCursorGrab("none"),
+  () => windowModule.monitors(),
+]) assert.throws(call, /no application window yet/,
+  "a window operation with no window reports that, rather than being a no-op");
+
+if (dialog.openFile) {
+  for (const [call, refusal] of [
+    [() => dialog.openFile(null), /options must be an object/],
+    [() => dialog.openFile({ filters: "text" }), /filters must be an array/],
+    [() => dialog.openFile({ filters: [{ name: "text" }] }), /name, extensions/],
+    [() => dialog.message({ level: "shouting" }), /not a message level/],
+    [() => dialog.message({ buttons: "maybe" }), /not a button set/],
+  ]) assert.throws(call, refusal, "dialog options are checked where the call was made");
+  // A dialog here is always modal to the application window, so without one
+  // nothing opens — and nothing is left outstanding for a frame turn to deliver.
+  const outstanding = globalThis.__blitsenAnimationFramesPending();
+  for (const call of [
+    () => dialog.openFile({ title: "Open", filters: [{ name: "Text", extensions: ["txt"] }] }),
+    () => dialog.openFiles(),
+    () => dialog.saveFile({ fileName: "untitled.txt" }),
+    () => dialog.openFolder({ directory: tmpdir() }),
+    () => dialog.openFolders(),
+    () => dialog.message({ title: "Quit", message: "Really?", buttons: "yesNo" }),
+  ]) assert.throws(call, /no application window yet/);
+  assert.equal(globalThis.__blitsenAnimationFramesPending(), outstanding,
+    "a dialog that never opened leaves nothing for a frame turn to settle");
 }
 
 // The single-instance lock, over the real socket: the second request finds the

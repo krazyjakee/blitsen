@@ -15,5 +15,15 @@ arboard = { version = "3.6", features = ["wayland-data-control"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
+# Dialogs exist only where the XDG desktop portal does; see `src/dialog.rs` for
+# why macOS and Windows are absent rather than approximated. `rfd` speaks the
+# portal's D-Bus interface itself, so this needs no GTK headers to build against
+# and no async runtime to host, and it falls back to `zenity` where no portal is
+# running. Default features carry the Wayland half of the parent-window
+# identifier, which is what makes a dialog modal to our window there.
+[target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
+raw-window-handle = "0.6"
+rfd = "0.17"
+
 [lints]
 workspace = true

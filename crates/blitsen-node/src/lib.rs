@@ -1295,6 +1295,37 @@ impl<Rend: anyrender::WindowRenderer> WindowApplication<Rend> {
         engine.to_boolean(&result)
     }
 
+    /// Hands `native:window` the window it acts on, or takes it away.
+    ///
+    /// There is deliberately only one: multiple windows wait on the shared
+    /// versus isolated JavaScript context decision, and `create` is declared
+    /// absent until it is settled.
+    fn publish_window(&self) {
+        crate::dom_bridge::window::publish(
+            self.inner
+                .windows
+                .values()
+                .next()
+                .map(|view| Arc::clone(&view.window)),
+        );
+    }
+
+    /// Reports a resize winit applied outright, which raises no event of its own.
+    ///
+    /// Wayland resizes the surface there and then; X11 asks the server and the
+    /// answer arrives as `SurfaceResized`. Feeding the Wayland answer through
+    /// the same event keeps one path to the viewport, `innerWidth` and the
+    /// `resize` event rather than a second one that could disagree.
+    fn settle_native_resize(&mut self, event_loop: &dyn ActiveEventLoop) {
+        let Some(size) = crate::dom_bridge::window::take_applied_resize() else {
+            return;
+        };
+        let Some(&window_id) = self.inner.windows.keys().next() else {
+            return;
+        };
+        self.window_event(event_loop, window_id, WindowEvent::SurfaceResized(size));
+    }
+
     fn maybe_dispatch_load(&mut self) {
         if self.load_dispatched || self.error.borrow().is_some() {
             return;
@@ -1355,6 +1386,9 @@ impl<Rend: anyrender::WindowRenderer> ApplicationHandler for WindowApplication<R
 
     fn can_create_surfaces(&mut self, event_loop: &dyn ActiveEventLoop) {
         self.inner.can_create_surfaces(event_loop);
+        // Published before `load` is dispatched, so the first listener an
+        // application registers already has a window to act on.
+        self.publish_window();
         let windows: Vec<_> = self.inner.windows.keys().copied().collect();
         for id in windows {
             self.sync_native_window(id);
@@ -1416,6 +1450,7 @@ impl<Rend: anyrender::WindowRenderer> ApplicationHandler for WindowApplication<R
 
     fn about_to_wait(&mut self, event_loop: &dyn ActiveEventLoop) {
         self.inner.about_to_wait(event_loop);
+        self.settle_native_resize(event_loop);
         self.maybe_dispatch_load();
         if self.animation_frames_pending() {
             for view in self.inner.windows.values() {
@@ -1796,6 +1831,7 @@ impl Engine {
                 || !session.application.inner.pending_windows.is_empty()
         };
         if !alive {
+            dom_bridge::window::publish(None);
             self.session.borrow_mut().take();
         }
         Ok(alive)

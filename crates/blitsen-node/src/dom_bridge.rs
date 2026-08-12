@@ -16,6 +16,7 @@ use super::{DomRuntime, NodeApiEngine, NodeWeakRef, callback_string, check, unkn
 mod fetch;
 mod native;
 mod web_url;
+pub(crate) mod window;
 
 const BOOTSTRAP: &str = r##"
 (() => {
@@ -85,6 +86,7 @@ const BOOTSTRAP: &str = r##"
     settleFetches();
     settleImages();
     deliverSecondInstances();
+    settleDialogs();
     const callbacks = animationFrames;
     animationFrames = new Map();
     runningAnimationFrames = callbacks;
@@ -101,9 +103,11 @@ const BOOTSTRAP: &str = r##"
     // keep the host turning: their landing point is this function, so a loop
     // that stopped would never deliver them. A running CSS animation is owed a
     // frame for the same reason — the clock only moves when this is called, so a
-    // loop that idled would freeze it part-way through.
+    // loop that idled would freeze it part-way through. An open dialog is the
+    // same argument twice over: its answer lands here, and the window has to go
+    // on painting behind it rather than freeze until it is dismissed.
     return animationFrames.size + inflightFetches.size + pendingResizeObservations()
-      + waitingImages() + (call("isAnimating") ? 1 : 0);
+      + waitingImages() + (call("isAnimating") ? 1 : 0) + (nativeDialogPending() ? 1 : 0);
   };
 
   const eventStates = new WeakMap();
@@ -2200,9 +2204,97 @@ const BOOTSTRAP: &str = r##"
     },
     clear: () => { __blitsenNativeClipboardClear(); },
   };
+  // The window this run already opened. Its size and scale factor are not here:
+  // `innerWidth`, `innerHeight`, `devicePixelRatio` and the `resize` event
+  // already answer those, and a second answer that could disagree is worse than
+  // none. What is new is the monitors — including the ones the window is not on.
+  const nativeWindow = {
+    setSize: (width, height) => {
+      __blitsenNativeWindowResize(String(width), String(height));
+    },
+    setFullscreen: on => { __blitsenNativeWindowSet("fullscreen", String(Boolean(on))); },
+    isFullscreen: () => __blitsenNativeWindowGet("fullscreen"),
+    setDecorations: on => { __blitsenNativeWindowSet("decorations", String(Boolean(on))); },
+    isDecorated: () => __blitsenNativeWindowGet("decorations"),
+    setAlwaysOnTop: on => { __blitsenNativeWindowSet("alwaysOnTop", String(Boolean(on))); },
+    setCursor: cursor => { __blitsenNativeWindowSet("cursor", String(cursor)); },
+    setCursorVisible: on => { __blitsenNativeWindowSet("cursorVisible", String(Boolean(on))); },
+    setCursorGrab: mode => { __blitsenNativeWindowSet("cursorGrab", String(mode)); },
+    monitors: () => JSON.parse(__blitsenNativeWindowMonitors()),
+  };
+
+  // Dialogs. Promise-returning rather than blocking: the call arrives on the
+  // thread that pumps the window, so waiting here would stop the application
+  // painting for as long as the dialog is up. Nothing is lost by that — the
+  // dialog is drawn by the desktop, in its own process, modal to our window —
+  // and the frame loop keeps turning, which is also how the answer gets back.
+  const nativeDialogPending = typeof __blitsenNativeDialogPending === "function"
+    ? __blitsenNativeDialogPending : () => false;
+  const dialogs = new Map();
+  // The one handoff point for dialog answers, for the same reason `fetch` has
+  // one: a promise must not settle part-way through a frame.
+  const settleDialogs = () => {
+    if (dialogs.size === 0) return;
+    for (const closed of JSON.parse(__blitsenNativeDialogTake())) {
+      const settle = dialogs.get(closed.id);
+      if (!settle) continue;
+      dialogs.delete(closed.id);
+      settle(closed.value);
+    }
+  };
+  const dialogInstalled = typeof __blitsenNativeDialogFile === "function";
+  const opened = (id, answer) =>
+    new Promise(resolve => { dialogs.set(id, value => resolve(answer(value))); });
+  // Everything the options say is checked before the dialog opens, so a mistake
+  // in the call is an exception where it was made rather than a promise that
+  // rejects a frame later.
+  const dialogOptions = options => {
+    if (options === null || typeof options !== "object")
+      throw new TypeError("dialog options must be an object");
+    return options;
+  };
+  const fileDialog = (kind, options, answer) => {
+    const { title, directory, fileName, filters = [] } = dialogOptions(options);
+    if (!Array.isArray(filters)) throw new TypeError("dialog filters must be an array");
+    return opened(__blitsenNativeDialogFile(kind, JSON.stringify({
+      title: title === undefined ? null : String(title),
+      directory: directory === undefined ? null : String(directory),
+      fileName: fileName === undefined ? null : String(fileName),
+      filters: filters.map(filter => {
+        if (filter === null || typeof filter !== "object" || !Array.isArray(filter.extensions))
+          throw new TypeError("a dialog filter is { name, extensions: [...] }");
+        return { name: String(filter.name), extensions: filter.extensions.map(String) };
+      }),
+    })), answer);
+  };
+  // A cancelled dialog answers null rather than an empty selection: the portal
+  // cannot tell us which one happened, and null is the one a caller must handle.
+  const one = paths => paths[0] ?? null;
+  const many = paths => (paths.length > 0 ? paths : null);
+  // Every member is absent together: one platform decision installs the host
+  // functions all of these need, or none of them.
+  const filePicker = (kind, answer) => dialogInstalled
+    ? (options = {}) => fileDialog(kind, options, answer)
+    : undefined;
+  const nativeDialog = {
+    openFile: filePicker("openFile", one),
+    openFiles: filePicker("openFiles", many),
+    saveFile: filePicker("saveFile", one),
+    openFolder: filePicker("openFolder", one),
+    openFolders: filePicker("openFolders", many),
+    message: !dialogInstalled ? undefined : (options = {}) => {
+      const { title = "", message = "", level = "info", buttons = "ok" } = dialogOptions(options);
+      return opened(__blitsenNativeDialogMessage(JSON.stringify({
+        title: String(title), message: String(message),
+        level: String(level), buttons: String(buttons),
+      })), button => button);
+    },
+  };
   globalThis[Symbol.for("blitsen.native")] = Object.freeze({
     app: nativeMembers(nativeApp),
     clipboard: nativeMembers(nativeClipboard),
+    window: nativeMembers(nativeWindow),
+    dialog: nativeMembers(nativeDialog),
   });
 
   for (const method of ["addEventListener", "removeEventListener", "dispatchEvent"])
@@ -2226,7 +2318,7 @@ const BOOTSTRAP: &str = r##"
     __blitsenAnimationFrameTick: animationFrameTick,
     __blitsenAnimationFramesPending: () =>
       animationFrames.size > 0 || inflightFetches.size > 0 || pendingResizeObservations() > 0
-      || waitingImages() > 0 || nativePending() || call("isAnimating"),
+      || waitingImages() > 0 || nativePending() || nativeDialogPending() || call("isAnimating"),
     __blitsenForcedLayoutsThisFrame: () => forcedLayoutsThisFrame,
     __blitsenEventInternals: eventInternals,
     __blitsenDispatchMouseEvent: dispatchMouseEvent,
@@ -2245,6 +2337,7 @@ const BOOTSTRAP: &str = r##"
       wrapperCache.clear();
       pendingImages.clear();
       inflightFetches.clear();
+      dialogs.clear();
       secondInstanceHandler = null;
       __blitsenFetchDispose();
       historyEntries = [{ url: documentUrl, state: null }];

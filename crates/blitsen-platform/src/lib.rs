@@ -7,6 +7,10 @@
 
 pub mod app;
 pub mod clipboard;
+// Absent off the XDG portal platforms rather than approximated there; the
+// module's own documentation says why.
+#[cfg(all(unix, not(target_os = "macos")))]
+pub mod dialog;
 
 use std::fmt;
 

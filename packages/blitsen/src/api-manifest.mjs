@@ -117,9 +117,18 @@ const CATALOGUE = {
 // `native:` member (TECH.md §9), which is why `argv`, `execPath` and `quit` are
 // not listed as absent: they are `process.argv`, `process.execPath` and
 // `process.exit`, and they are not this layer's to name.
+// Note what `window` does not name: size, position and scale factor. Those are
+// `innerWidth`, `innerHeight` and `devicePixelRatio`, and the `resize` event
+// says when they changed — the additive rule applies to the web surface as well
+// as to Node's, and a second answer that could disagree with those is worse than
+// no answer. Per-monitor DPI is not the same fact and is in `monitors`.
 const NATIVE = {
   app: ["dataDir", "cacheDir", "configDir", "requestSingleInstanceLock", "relaunch",
     "onQuitRequest", "onSuspend", "onResume", "registerProtocol", "registerFileAssociation"],
+  window: ["setSize", "setFullscreen", "isFullscreen", "setDecorations", "isDecorated",
+    "setAlwaysOnTop", "setCursor", "setCursorVisible", "setCursorGrab", "monitors",
+    "create", "setTransparent", "isAlwaysOnTop"],
+  dialog: ["openFile", "openFiles", "saveFile", "openFolder", "openFolders", "message"],
   clipboard: ["readText", "readHtml", "readImage", "writeText", "writeHtml", "writeImage",
     "clear", "readMime", "writeMime"],
 };
@@ -139,6 +148,17 @@ const NATIVE_ABSENT = {
     + "desktop launches the handler with the URL in `argv`, and the single-instance lock hands "
     + "that to the instance already running.",
   "app.registerFileAssociation": "The same `.desktop` entry, with `MimeType` instead of a scheme.",
+  "window.create": "A second window needs the shared-versus-isolated JavaScript context question "
+    + "answered first: whether two windows see one `document` and one module graph or two decides "
+    + "what `create` even returns, and it cannot be settled by implementing it. The window this "
+    + "run already opened is what the rest of this module operates on.",
+  "window.setTransparent": "Transparency is chosen when a window is created — winit's own setter "
+    + "does nothing on X11 after that — so honouring it would mean replacing the window, which is "
+    + "`create`. Run `blitsen` against a directory whose window should be transparent and the "
+    + "attribute belongs on that window, not on a call.",
+  "window.isAlwaysOnTop": "winit sets the window level and cannot read it back, and the window "
+    + "manager may change it without telling the application. Remembering what was last set would "
+    + "be a second source of truth that quietly goes stale.",
   "clipboard.readMime": "`arboard` reads the flavours above and no others. Arbitrary MIME needs a "
     + "different mechanism on each platform — X11 selection targets, `wl_data_offer`, "
     + "`NSPasteboardType`, a registered Windows format — and no part of that is shared.",
