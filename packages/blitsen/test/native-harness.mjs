@@ -482,6 +482,18 @@ const formControls = JSON.parse(native.runBridgeHarness(
        "requestSubmit and a submit button both raise a cancelable submit event");
      expect([byId("send").value, byId("send").type], ["go", "submit"], "a button's value and type");
 
+     // The legacy event factory, in the shape Svelte's custom_event helper uses.
+     const legacy = document.createEvent("CustomEvent");
+     legacy.initCustomEvent("ping", true, true, { n: 7 });
+     let detail = null;
+     form.addEventListener("ping", event => { detail = event.detail.n; });
+     form.dispatchEvent(legacy);
+     expect([legacy.type, legacy.bubbles, detail], ["ping", true, 7],
+       "createEvent + initCustomEvent produce a dispatchable event carrying its detail");
+     let refused;
+     try { document.createEvent("MouseEvents"); } catch (error) { refused = error.name; }
+     expect(refused, "NotSupportedError", "an interface the factory does not answer is refused");
+
      // A control's own activation runs only when the click was not cancelled.
      const cancel = event => event.preventDefault();
      box.addEventListener("click", cancel);

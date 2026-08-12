@@ -129,6 +129,18 @@ const BOOTSTRAP: &str = r##"
     get cancelable() { return stateFor(this).cancelable; }
     get defaultPrevented() { return stateFor(this).defaultPrevented; }
     get timeStamp() { return stateFor(this).timeStamp; }
+    // The legacy factory's other half. Ignored mid-dispatch, as the spec says,
+    // so an event cannot be retyped while listeners are walking it.
+    initEvent(type, bubbles = false, cancelable = false) {
+      const state = stateFor(this);
+      if (state.dispatching) return;
+      state.type = String(type);
+      state.bubbles = Boolean(bubbles);
+      state.cancelable = Boolean(cancelable);
+      state.defaultPrevented = false;
+      state.propagationStopped = false;
+      state.immediatePropagationStopped = false;
+    }
     preventDefault() {
       const state = stateFor(this);
       if (state.cancelable && !state.passive) state.defaultPrevented = true;
@@ -173,9 +185,24 @@ const BOOTSTRAP: &str = r##"
   class CustomEvent extends Event {
     constructor(type, options = {}) {
       super(type, options);
-      Object.defineProperty(this, "detail", { value: options.detail ?? null, enumerable: true });
+      // Configurable so initCustomEvent can replace it; a browser's detail is
+      // likewise settable only through the initializer, never by assignment.
+      Object.defineProperty(this, "detail",
+        { value: options.detail ?? null, enumerable: true, configurable: true });
+    }
+    initCustomEvent(type, bubbles = false, cancelable = false, detail = null) {
+      if (stateFor(this).dispatching) return;
+      this.initEvent(type, bubbles, cancelable);
+      Object.defineProperty(this, "detail", { value: detail, enumerable: true, configurable: true });
     }
   }
+
+  // The legacy event factory, kept because framework helpers still reach for it —
+  // Svelte's custom_event is createEvent + initCustomEvent. Only the interfaces
+  // the DOM spec still requires are answered; anything else is refused rather
+  // than handed back a differently-shaped event.
+  const LEGACY_EVENT_INTERFACES = { event: Event, events: Event, htmlevents: Event,
+    customevent: CustomEvent };
 
   class SubmitEvent extends Event {
     constructor(type, options = {}) {
@@ -1573,6 +1600,13 @@ const BOOTSTRAP: &str = r##"
     get location() { return location; }
     get activeElement() { return activeElement?.isConnected ? activeElement : this.body; }
     get readyState() { return readyState; }
+    createEvent(name) {
+      const Interface = LEGACY_EVENT_INTERFACES[String(name).toLowerCase()];
+      if (!Interface) {
+        throw new DOMException(`document.createEvent does not support "${name}"`, "NotSupportedError");
+      }
+      return new Interface("");
+    }
     // The sheets the cascade is actually reading, in the order it applies them.
     // A snapshot, like every collection here; the sheet objects in it are the
     // same ones `element.sheet` hands out.
