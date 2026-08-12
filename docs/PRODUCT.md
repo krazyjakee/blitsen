@@ -266,10 +266,12 @@ The two never overlap. `native:` covers only what has no Node spelling at all â€
 dialogs, clipboard. Files, processes, sockets and process metadata keep their Node names, so
 existing packages work unmodified.
 
-Plus the unlimited escape hatch:
+Plus the unlimited escape hatch â€” a Node-API addon, loaded from a module script. `import` is not
+the spelling: Bun refuses it for Node-API modules, and it took building the thing to find that out.
 
 ```js
-import physics from "./box2d.node";
+import { createRequire } from "node:module";
+const physics = createRequire(import.meta.url)("./box2d.node");
 ```
 
 ### The capability story, stated plainly

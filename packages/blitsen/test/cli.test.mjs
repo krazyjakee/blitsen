@@ -1,20 +1,60 @@
 import { describe, expect, test } from "bun:test";
-import { cp, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { copyFile, cp, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, writeFile }
+  from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { buildManifest, generateApiManifest, loadApiManifest, renderCompatibilityDoc }
   from "../src/api-manifest.mjs";
 import { createReloadCoordinator, main, packageVersion, parseArgs, resolveApplication } from "../src/cli.mjs";
 import { CONFIG_SCHEMA, defineConfig, loadConfig, runBuildCommand, validateConfig } from "../src/config.mjs";
 import { doctorApplication } from "../src/doctor.mjs";
-import { buildStandalone, planIngest, rewriteRootRelativeReferences } from "../src/export.mjs";
+import { buildStandalone, describeNativeBinary, planIngest, rewriteRootRelativeReferences }
+  from "../src/export.mjs";
 import { packageBuild, signArgv, signArtifact } from "../src/packaging.mjs";
 
 const runtimeSource = join(import.meta.dir, "../../../crates/blitsen-node/src/dom_bridge.rs");
 const viteBase = join(import.meta.dir, "fixtures/vite-base");
 const configFixtures = join(import.meta.dir, "fixtures/config");
+const addonFixtures = join(import.meta.dir, "fixtures/addons");
 const icon = join(import.meta.dir, "fixtures/icons/app-256.png");
 const signHook = `sh ${join(import.meta.dir, "fixtures/sign/record-artifact.sh")}`;
+
+// Nothing about the addon path can be proven with a stand-in file: dlopen is what
+// decides. The fixtures are C, so a host compiler is what gates these tests, and
+// the Windows toolchain needs an import library the fixture deliberately lacks.
+const compiler = process.platform === "win32" ? null : (Bun.which("cc") ?? Bun.which("gcc"));
+const engineAddon = join(import.meta.dir, "../../../target/release", {
+  linux: "libblitsen_node.so", darwin: "libblitsen_node.dylib", win32: "blitsen_node.dll",
+}[process.platform] ?? "missing");
+// Proving a real load needs a real engine to launch. `bun run test:standalone`
+// builds it; without it the exported-executable test declares itself skipped
+// rather than pretending the export path was exercised.
+const engineBuilt = await Bun.file(engineAddon).exists();
+
+function compileAddon(directory, source = "greet.c", name = "greet.node") {
+  const output = join(directory, name);
+  const result = Bun.spawnSync({
+    cmd: [compiler, "-shared", "-fPIC", "-o", output, join(addonFixtures, source),
+      ...process.platform === "darwin" ? ["-Wl,-undefined,dynamic_lookup"] : []],
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  if (result.exitCode !== 0) throw new Error(`compiling ${source} failed: ${result.stderr}`);
+  return output;
+}
+
+// A 64-byte ELF64 header is all describeNativeBinary reads, so a host-independent
+// one stands in for an addon built somewhere else.
+function elfHeader({ machine = 0xb7, type = 3 } = {}) {
+  const header = Buffer.alloc(64);
+  header.write("\x7fELF", 0, "binary");
+  header[4] = 2;
+  header[5] = 1;
+  header[6] = 1;
+  header.writeUInt16LE(type, 16);
+  header.writeUInt16LE(machine, 18);
+  return header;
+}
 
 // Bun.build --compile refuses to start without the addon file, but never loads
 // it, so a placeholder is enough to exercise the whole export pipeline.
@@ -78,6 +118,9 @@ describe("directory CLI", () => {
     expect(() => parseArgs(["doctor", "dist", "--outfile", "x"])).toThrow("not valid with doctor");
     expect(() => parseArgs(["build", "dist", "--assets", "inline"])).toThrow("embedded or side-loaded");
     expect(() => parseArgs(["app", "--include", "*.txt"])).toThrow("only valid with build");
+    expect(parseArgs(["build", "dist", "--addon", "native/physics.node"]).addons)
+      .toEqual([join(process.cwd(), "native/physics.node")]);
+    expect(() => parseArgs(["app", "--addon", "physics.node"])).toThrow("only valid with build");
     expect(parseArgs(["build", "dist", "--icon", "app.png", "--bundle-id", "com.example.pong",
       "--app-version", "1.2.3", "--sign", "codesign -s ID"]))
       .toEqual({ command: "build", directory: "dist", width: 800, height: 600, title: "Blitsen",
@@ -405,6 +448,131 @@ describe("directory CLI", () => {
     });
   });
 
+  test("reads the container header a .node must have to load on this host", () => {
+    expect(describeNativeBinary(elfHeader({ machine: 0x3e })))
+      .toEqual({ format: "ELF", platform: "linux", architectures: ["x64"] });
+    expect(describeNativeBinary(elfHeader({ machine: 0x1234 })).architectures).toEqual(["0x1234"]);
+    // An executable, an archive or a text file renamed .node is not a library.
+    expect(describeNativeBinary(elfHeader({ type: 2 }))).toBeNull();
+    expect(describeNativeBinary(Buffer.alloc(64, 0x41))).toBeNull();
+    expect(describeNativeBinary(Buffer.from("// placeholder addon\n"))).toBeNull();
+  });
+
+  test("refuses a .node it cannot load instead of exporting a launch crash", async () => {
+    await withStubbedExport(async ({ directory, nativePath, outfile }) => {
+      const build = addons => buildStandalone({
+        root: viteBase, width: 800, height: 600, title: "Base", outfile, force: true, addons,
+      }, nativePath);
+      const foreign = join(directory, "foreign.node");
+      await writeFile(foreign, elfHeader({ machine: 0xb7 }));
+      await expect(build([foreign])).rejects.toThrow("native addon foreign.node is built for "
+        + `linux-arm64 (ELF), but this export runs on ${process.platform}-${process.arch}`);
+      const text = join(directory, "notes.node");
+      await writeFile(text, "not a library\n");
+      await expect(build([text]))
+        .rejects.toThrow("notes.node is not a native addon: a .node file must be an ELF");
+      await expect(build([icon])).rejects.toThrow(`a native addon must be a .node file: ${icon}`);
+      await expect(build([join(directory, "absent.node")]))
+        .rejects.toThrow("native addon does not exist:");
+      // Two addons cannot both claim one name in the application tree.
+      const other = join(directory, "nested", "foreign.node");
+      await mkdir(dirname(other), { recursive: true });
+      await copyFile(foreign, other);
+      await expect(build([foreign, other]))
+        .rejects.toThrow("two native addons would both be exported as foreign.node");
+    });
+  });
+
+  test.skipIf(!compiler)("refuses a host shared library that is not a Node-API addon", async () => {
+    await withStubbedExport(async ({ directory, nativePath, outfile }) => {
+      const plain = compileAddon(directory, "plain.c", "plain.node");
+      await expect(buildStandalone({
+        root: viteBase, width: 800, height: 600, title: "Base", outfile, addons: [plain],
+      }, nativePath)).rejects.toThrow("native addon plain.node does not export "
+        + "napi_register_module_v1: Blitsen loads Node-API addons, not V8/NAN addons");
+    });
+  });
+
+  test.skipIf(!compiler)("carries a declared addon into both asset layouts", async () => {
+    await withStubbedExport(async ({ directory, nativePath, outfile }) => {
+      // Declared from outside the ingested directory, which is where an addon
+      // lives: node_modules/<package>/build/Release, target/release.
+      const addon = compileAddon(directory);
+      const events = [];
+      const embedded = await buildStandalone({
+        root: viteBase, width: 800, height: 600, title: "Base", outfile,
+        addons: [addon], progress: event => events.push(event),
+      }, nativePath);
+      expect(embedded.addons).toEqual(["greet.node"]);
+      expect(embedded.assets).toBe(10);
+      expect(embedded.manifest.find(asset => asset.path === "greet.node").native).toBeTrue();
+      expect(events[0].notes[1]).toBe("carried 1 native addon: greet.node "
+        + "(load one from a module script with createRequire(import.meta.url))");
+
+      const side = await buildStandalone({
+        root: viteBase, width: 800, height: 600, title: "Base", assets: "side-loaded",
+        outfile: join(directory, "Side"), addons: [addon],
+      }, nativePath);
+      // The staged bytes are the compiled library, unmodified: dlopen reads them.
+      expect(Buffer.compare(await readFile(join(side.assetDirectory, "greet.node")),
+        await readFile(addon))).toBe(0);
+    });
+  });
+
+  test.skipIf(!compiler)("keeps a declared addon in its place inside the output", async () => {
+    await withStubbedExport(async ({ directory, nativePath, outfile }) => {
+      const root = join(directory, "dist");
+      await cp(viteBase, root, { recursive: true });
+      const addon = compileAddon(join(root, "assets"));
+      const result = await buildStandalone({
+        root, width: 800, height: 600, title: "Base", outfile, addons: [addon],
+      }, nativePath);
+      // The specifier the application was written against still resolves, and a
+      // declared file is carried rather than reported as unreachable and dropped.
+      expect(result.addons).toEqual(["assets/greet.node"]);
+      expect(result.unreferenced).toEqual(["assets/index-BASE.js.map", "assets/orphan.txt"]);
+    });
+  });
+
+  test.skipIf(!compiler || !engineBuilt)(
+    "loads a carried addon from the exported executable", async () => {
+      const workspace = await mkdtemp(join(tmpdir(), "blitsen-addon-export-"));
+      try {
+        const root = join(workspace, "app");
+        await cp(join(addonFixtures, "app"), root, { recursive: true });
+        const addon = compileAddon(workspace);
+        const assertLoaded = `(() => {
+          const text = document.getElementById("greeting").textContent;
+          if (text !== "blitsen-addon-ok") throw new Error("addon did not load: " + text);
+        })()`;
+        for (const assets of ["embedded", "side-loaded"]) {
+          const outfile = join(workspace, `AddonApp-${assets}`);
+          const result = await buildStandalone({
+            root, width: 400, height: 300, title: "Addon", outfile, assets, addons: [addon],
+          }, engineAddon);
+          expect(result.addons).toEqual(["greet.node"]);
+          // Run from an unrelated directory: the addon is found through the export,
+          // not through the working directory it happened to be built in.
+          const run = Bun.spawnSync({
+            cmd: [result.outfile],
+            cwd: tmpdir(),
+            env: {
+              PATH: "",
+              BLITSEN_STANDALONE_CHECK: "1",
+              BLITSEN_STANDALONE_CHECK_DELAY: "250",
+              BLITSEN_STANDALONE_CHECK_ASSERT: assertLoaded,
+            },
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          expect(run.stderr.toString()).toBe("");
+          expect(run.exitCode).toBe(0);
+        }
+      } finally {
+        await rm(workspace, { recursive: true, force: true });
+      }
+    }, 120_000);
+
   test("packages a Linux desktop entry, icon and signature into the build", async () => {
     await withStubbedExport(async ({ directory, nativePath, outfile }) => {
       const events = [];
@@ -713,16 +881,23 @@ describe("directory CLI", () => {
       .toThrow('invalid blitsen config in /app/package.json: missing required key "output"');
     expect(() => validateConfig(["dist"], "/app/package.json"))
       .toThrow("invalid blitsen config in /app/package.json: expected an object, found an array");
+    expect(() => defineConfig({ output: "dist", addons: "physics.node" }))
+      .toThrow('invalid blitsen config in defineConfig(): "addons" must be an array, found a string');
+    expect(() => defineConfig({ output: "dist", addons: ["a.node", 7] }))
+      .toThrow('invalid blitsen config in defineConfig(): "addons[1]" must be a string, found a number');
+    expect(defineConfig({ output: "dist", addons: ["native/physics.node"] }).addons)
+      .toEqual(["native/physics.node"]);
     const misspelled = join(configFixtures, "misspelled");
     await expect(loadConfig(misspelled)).rejects.toThrow(
       `invalid blitsen config in ${join(misspelled, "package.json")}: `
-      + 'unknown key "outputs" (known keys: build, output, name)');
+      + 'unknown key "outputs" (known keys: build, output, name, addons)');
   });
 
   test("discovers the config in the nearest package.json declaring it", async () => {
     const found = await loadConfig(join(configFixtures, "wrapped"));
     expect(found.root).toBe(join(configFixtures, "wrapped"));
-    expect(found.config).toEqual({ build: "node emit-dist.mjs", output: "dist", name: "Wrapped App" });
+    expect(found.config).toEqual({ build: "node emit-dist.mjs", output: "dist",
+      name: "Wrapped App", addons: ["native/greet.node"] });
     // A package.json without the key is not a config, and neither is no package.json.
     const bare = await mkdtemp(join(tmpdir(), "blitsen-config-"));
     try {
@@ -771,6 +946,8 @@ describe("directory CLI", () => {
       expect(built.root).toBe(await realpath(join(project, "dist")));
       expect(built.title).toBe("Wrapped App");
       expect(built.outfile).toBe(join(here, "Wrapped App"));
+      // Configured addon paths are the user's, relative to their package.json.
+      expect(built.addons).toEqual([join(project, "native/greet.node")]);
     } finally {
       process.chdir(cwd);
       await rm(workspace, { recursive: true, force: true });

@@ -538,16 +538,58 @@ The rule also has a Phase 2 cost argument behind it. When the embedded-JSC host 
 (§3), every Node module the design leans on becomes ours to supply — deferred work, not avoided
 work. A `native:` module that duplicates one is that work done twice.
 
-**The escape hatch is a first-class feature.** `.node` addons load at runtime, so users write
-Rust/C/C++ extensions and import them directly. Node-API's ABI stability is what makes this a
-durable promise rather than a version-locked one.
+**The escape hatch is a first-class feature.** `.node` addons load at runtime — in development
+and from an exported executable — so users write Rust/C/C++ extensions and reach them from
+application code. Node-API's ABI stability is what makes this a durable promise rather than a
+version-locked one.
+
+A document script loads an addon through `require`, not through the ESM graph. Bun rejects
+`import physics from "./box2d.node"` with *"To load Node-API modules, use require() or
+process.dlopen instead of import"*, and a Phase 2 host that resolved `.node` as a module would
+have to invent a semantics Node does not have. The spelling is therefore:
 
 ```js
-import physics from "./box2d.node";
+// index.html: <script type="module" src="./main.js">
+import { createRequire } from "node:module";
+const physics = createRequire(import.meta.url)("./box2d.node");
 ```
+
+`import.meta.url` is what makes this layout-independent: a module script is executed from the
+directory the export materialized, so a specifier relative to the script resolves to the carried
+addon under either asset layout. A classic (non-module) script has no `import.meta`, so an addon
+is reachable only from `type="module"` scripts.
 
 This is why the runtime can afford to be unopinionated: anything we do not provide, the user
 can add without waiting for us.
+
+### Carrying an addon into an export
+
+An addon is **declared**, never inferred. `--addon <path>` (repeatable) and the `addons` array in
+the `blitsen` config name one; the ingest walk and `--include` are both bounded by the directory
+being ingested, and an addon normally lives outside it — `node_modules/<package>/build/Release`,
+`target/release`. A declared addon inside the output keeps its path, so the specifier the
+application was written against still resolves; one from outside lands at the top of the
+application tree under its own file name. An addon the walk *does* reach, because a reachable
+script names it as a literal that resolves to a file that exists, is carried by that reference
+alone — declaring is an addition to reachability, not a loosening of it.
+
+Every `.node` in an export is checked before it ships, however it arrived. Its container header
+(ELF, Mach-O including universal slices, PE) must be a dynamic object for the host platform and
+architecture, and it must export `napi_register_module_v1`; anything else fails the build naming
+the file and the mismatch. This is the same refusal `--target` makes for a cross-target export,
+for the same reason: every other asset is portable bytes, and an addon is the one thing that can
+be architecturally wrong. An addon that ships and then fails at `dlopen` in front of a user is
+worse than one that was never carried.
+
+Both layouts load. `--assets embedded` materializes the addon into the private temporary
+directory beside the scripts that require it; `--assets side-loaded` writes it into
+`<outfile>.assets/`. Neither needs an execute bit — `dlopen`/`LoadLibrary` read the mapping — but
+an embedded export does depend on the temporary directory being mappable, so a `noexec` `TMPDIR`
+is a side-loaded case.
+
+Declaration is an export concern only. `blitsen <directory>` runs the directory as it stands, so
+an addon a development run has to reach is one the user's build already put there; `--addon` is
+how that same addon survives into an executable when it did not.
 
 ---
 
@@ -616,6 +658,10 @@ are left exactly as authored.
 - Files the walk never reaches are reported and dropped — an unreferenced file is pure export
   size. `--include <glob>` keeps them, which is also the escape hatch for a URL the walk cannot
   see because the application computes it at runtime.
+- A native `.node` addon is declared with `--addon <path>` or the config's `addons` array, not
+  kept with `--include`: both the walk and `--include` are bounded by the ingested directory, and
+  an addon usually lives outside it. §9 covers what a declared addon is checked for and how
+  application code loads one.
 
 ### Collect and layout
 

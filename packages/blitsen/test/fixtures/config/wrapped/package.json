@@ -4,6 +4,7 @@
   "blitsen": {
     "build": "node emit-dist.mjs",
     "output": "dist",
-    "name": "Wrapped App"
+    "name": "Wrapped App",
+    "addons": ["native/greet.node"]
   }
 }

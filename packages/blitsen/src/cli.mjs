@@ -23,6 +23,7 @@ Options:
   --outfile <path>   Alias of --out
   --target <triple>  Build target; only the host target is supported (see #72)
   --include <glob>   Keep an unreferenced output file (repeatable)
+  --addon <path>     Carry a .node addon into the export (repeatable)
   --accept-errors    Export despite compatibility errors, accepting what they cost
   --assets <layout>  embedded (default) or side-loaded next to the executable
   --icon <path>      Application icon: PNG, or a platform-native .ico/.icns/.svg
@@ -41,7 +42,7 @@ export async function packageVersion() {
 }
 
 const PACKAGE_OPTIONS = { "--icon": "icon", "--bundle-id": "bundleId", "--app-version": "appVersion", "--sign": "sign" };
-const BUILD_OPTIONS = ["--out", "--outfile", "--name", "--target", "--include", "--assets",
+const BUILD_OPTIONS = ["--out", "--outfile", "--name", "--target", "--include", "--addon", "--assets",
   ...Object.keys(PACKAGE_OPTIONS)];
 const VALUE_OPTIONS = ["--width", "--height", "--title", ...BUILD_OPTIONS];
 // A build-only switch: doctor's own exit code must keep meaning what it says.
@@ -89,6 +90,9 @@ export function parseArgs(args) {
         options.target = value;
       }
       else if (argument === "--include") options.include = [...options.include ?? [], value];
+      // Resolved here rather than in the exporter: the path is the user's, and it
+      // usually points outside the directory being ingested.
+      else if (argument === "--addon") options.addons = [...options.addons ?? [], resolve(value)];
       else if (argument === "--assets") {
         if (!["embedded", "side-loaded"].includes(value))
           throw new Error("--assets must be embedded or side-loaded");
@@ -158,6 +162,7 @@ async function applyConfiguration(options, output) {
     await runBuildCommand(config.build, root);
   }
   options.directory = resolve(root, config.output);
+  options.addons = [...config.addons?.map(addon => resolve(root, addon)) ?? [], ...options.addons ?? []];
   options.name ??= config.name;
   applyName(options);
 }

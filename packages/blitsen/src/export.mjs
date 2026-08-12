@@ -1,5 +1,5 @@
 import { access, copyFile, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
-import { basename, dirname, extname, join, posix, relative, resolve, sep } from "node:path";
+import { basename, dirname, extname, isAbsolute, join, posix, relative, resolve, sep } from "node:path";
 import { packageBuild, signArtifact } from "./packaging.mjs";
 
 const HTML_EXTENSIONS = [".html", ".htm"];
@@ -181,6 +181,120 @@ export async function planIngest(root, { entrypoint = "index.html", include = []
   };
 }
 
+const ADDON_EXTENSION = ".node";
+const NAPI_ENTRYPOINT = "napi_register_module_v1";
+const ELF_MACHINES = { 0x03: "ia32", 0x28: "arm", 0x3e: "x64", 0xb7: "arm64" };
+const MACHO_CPUS = { 0x00000007: "ia32", 0x0000000c: "arm", 0x01000007: "x64", 0x0100000c: "arm64" };
+const PE_MACHINES = { 0x014c: "ia32", 0x01c4: "arm", 0x8664: "x64", 0xaa64: "arm64" };
+const hostTriple = () => `${process.platform}-${process.arch}`;
+const architecture = (table, code) => table[code] ?? `0x${code.toString(16)}`;
+
+// Only the container header is read, and only far enough to name the machine a
+// shared library was built for. Returns null when the bytes are not a dynamic
+// object at all, which covers both a text file renamed .node and an executable.
+export function describeNativeBinary(bytes) {
+  if (bytes.byteLength < 64) return null;
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  if (view.getUint32(0, false) === 0x7f454c46) {
+    const little = bytes[5] === 1;
+    if (view.getUint16(16, little) !== 3) return null; // ET_DYN
+    return {
+      format: "ELF",
+      platform: "linux",
+      architectures: [architecture(ELF_MACHINES, view.getUint16(18, little))],
+    };
+  }
+  const magic = view.getUint32(0, true);
+  if (magic === 0xfeedfacf || magic === 0xfeedface) {
+    const filetype = view.getUint32(12, true);
+    if (filetype !== 6 && filetype !== 8) return null; // MH_DYLIB, MH_BUNDLE
+    return {
+      format: "Mach-O",
+      platform: "darwin",
+      architectures: [architecture(MACHO_CPUS, view.getUint32(4, true))],
+    };
+  }
+  // A universal binary carries one slice per architecture; any of them matching
+  // the host is enough, because dyld picks the slice.
+  if (view.getUint32(0, false) === 0xcafebabe) {
+    const slices = view.getUint32(4, false);
+    if (slices === 0 || bytes.byteLength < 8 + slices * 20) return null;
+    return {
+      format: "Mach-O universal",
+      platform: "darwin",
+      architectures: Array.from({ length: slices }, (_, index) =>
+        architecture(MACHO_CPUS, view.getUint32(8 + index * 20, false))),
+    };
+  }
+  if (bytes[0] === 0x4d && bytes[1] === 0x5a) {
+    const header = view.getUint32(0x3c, true);
+    if (bytes.byteLength < header + 24) return null;
+    if (view.getUint32(header, true) !== 0x00004550) return null; // "PE\0\0"
+    if ((view.getUint16(header + 22, true) & 0x2000) === 0) return null; // IMAGE_FILE_DLL
+    return {
+      format: "PE",
+      platform: "win32",
+      architectures: [architecture(PE_MACHINES, view.getUint16(header + 4, true))],
+    };
+  }
+  return null;
+}
+
+// Every other asset in an export is portable bytes; a .node is a host shared
+// library, and is the one thing that can be architecturally wrong. --target
+// refuses a cross-target export for exactly this reason, so an addon is checked
+// here rather than discovered at dlopen in front of a user.
+async function inspectAddon(staged, path) {
+  const bytes = await readFile(staged);
+  const binary = describeNativeBinary(bytes);
+  if (!binary) {
+    throw new Error(`${path} is not a native addon: a .node file must be an ELF, Mach-O or PE `
+      + "shared library");
+  }
+  if (binary.platform !== process.platform || !binary.architectures.includes(process.arch)) {
+    throw new Error(`native addon ${path} is built for `
+      + `${binary.platform}-${binary.architectures.join("/")} (${binary.format}), `
+      + `but this export runs on ${hostTriple()}`);
+  }
+  // Bun loads Node-API addons only. A V8/NAN addon is a valid shared library for
+  // this host and would pass every check above, then fail at require.
+  if (!bytes.includes(NAPI_ENTRYPOINT)) {
+    throw new Error(`native addon ${path} does not export ${NAPI_ENTRYPOINT}: `
+      + "Blitsen loads Node-API addons, not V8/NAN addons");
+  }
+}
+
+// An addon normally lives outside the directory being ingested —
+// node_modules/<package>/build/Release/*.node, target/release/*.so — where
+// neither the reachability walk nor --include can name it, since both are bounded
+// by that directory. Declaring it is therefore a separate act from keeping a file.
+async function planAddons(root, addons) {
+  const planned = new Map();
+  for (const declared of addons) {
+    const source = resolve(declared);
+    if (extname(source).toLowerCase() !== ADDON_EXTENSION) {
+      throw new Error(`a native addon must be a ${ADDON_EXTENSION} file: ${declared} `
+        + "(rename the shared library, which is what require resolves)");
+    }
+    if (!(await stat(source).catch(() => null))?.isFile()) {
+      throw new Error(`native addon does not exist: ${declared}`);
+    }
+    // An addon already inside the output keeps its place, so the specifier the
+    // application was written against still resolves; one from outside lands at
+    // the top of the application tree under its own name.
+    const inside = relative(root, source);
+    const path = inside && !inside.startsWith("..") && !isAbsolute(inside)
+      ? inside.split(sep).join("/")
+      : basename(source);
+    const existing = planned.get(path);
+    if (existing !== undefined && existing !== source) {
+      throw new Error(`two native addons would both be exported as ${path}: ${existing} and ${source}`);
+    }
+    planned.set(path, source);
+  }
+  return planned;
+}
+
 async function hashFile(absolute) {
   const hasher = new Bun.CryptoHasher("sha256");
   for await (const chunk of Bun.file(absolute).stream()) hasher.update(chunk);
@@ -282,8 +396,8 @@ function summarize(paths, limit = 5) {
 
 export async function buildStandalone(
   {
-    root, width, height, title, outfile, force = false, include = [], assets = "embedded",
-    icon = null, bundleId = null, appVersion = null, sign = null,
+    root, width, height, title, outfile, force = false, include = [], addons = [],
+    assets = "embedded", icon = null, bundleId = null, appVersion = null, sign = null,
     platform = process.platform, progress = () => {},
   },
   nativePath,
@@ -308,34 +422,55 @@ export async function buildStandalone(
   }
 
   const plan = await planIngest(root, { include });
+  const carried = new Map(plan.files.map(file => [file.relative, file.absolute]));
+  for (const [path, source] of await planAddons(root, addons)) {
+    const occupant = carried.get(path);
+    if (occupant !== undefined && occupant !== source) {
+      throw new Error(`native addon ${source} would replace ${path} in the application output`);
+    }
+    carried.set(path, source);
+  }
+  const unreferenced = plan.unreferenced.filter(path => !carried.has(path));
   // Bun records the compiled entrypoint's path in the executable, so staging has
   // to be a stable location rather than a temporary one for reproducible output.
   const staging = join(dirname(destination), `.${basename(destination)}.blitsen-build`);
   await rm(staging, { recursive: true, force: true });
   try {
     const manifest = [];
-    for (const file of plan.files) {
-      const staged = join(staging, "app", ...file.relative.split("/"));
+    for (const [path, absolute] of [...carried].sort(([left], [right]) => left.localeCompare(right))) {
+      const staged = join(staging, "app", ...path.split("/"));
       await mkdir(dirname(staged), { recursive: true });
-      if (REWRITTEN_EXTENSIONS.includes(extname(file.relative).toLowerCase())) {
-        const resolutions = plan.resolutions.get(file.relative);
+      if (REWRITTEN_EXTENSIONS.includes(extname(path).toLowerCase())) {
+        const resolutions = plan.resolutions.get(path);
         const source = rewriteRootRelativeReferences(
-          await readFile(file.absolute, "utf8"),
-          file.relative,
-          path => resolutions?.get(path) ?? null,
+          await readFile(absolute, "utf8"),
+          path,
+          reference => resolutions?.get(reference) ?? null,
         );
         await writeFile(staged, source);
       } else {
-        await copyFile(file.absolute, staged);
+        await copyFile(absolute, staged);
       }
-      manifest.push({ path: file.relative, hash: await hashFile(staged) });
+      // Checked however it arrived: declared, reached from a script, or kept by
+      // --include. A carried addon that cannot load is worse than an absent one.
+      const native = extname(path).toLowerCase() === ADDON_EXTENSION;
+      if (native) await inspectAddon(staged, path);
+      manifest.push({ path, hash: await hashFile(staged), ...native ? { native: true } : {} });
     }
+    const carriedAddons = manifest.filter(asset => asset.native).map(asset => asset.path);
     progress({
       step: "collect",
       detail: `${manifest.length} ${assets} assets`,
-      notes: plan.unreferenced.length === 0 ? [] : [
-        `dropped ${plan.unreferenced.length} files unreachable from index.html `
-        + `(--include <glob> keeps them): ${summarize(plan.unreferenced)}`,
+      notes: [
+        ...unreferenced.length === 0 ? [] : [
+          `dropped ${unreferenced.length} files unreachable from index.html `
+          + `(--include <glob> keeps them): ${summarize(unreferenced)}`,
+        ],
+        ...carriedAddons.length === 0 ? [] : [
+          `carried ${carriedAddons.length} native `
+          + `${carriedAddons.length === 1 ? "addon" : "addons"}: ${summarize(carriedAddons)} `
+          + "(load one from a module script with createRequire(import.meta.url))",
+        ],
       ],
     });
     await copyFile(nativePath, join(staging, "blitsen.node"));
@@ -396,7 +531,8 @@ export async function buildStandalone(
       layout: assets,
       assets: manifest.length,
       manifest,
-      unreferenced: plan.unreferenced,
+      addons: carriedAddons,
+      unreferenced,
       assetDirectory: assets === "side-loaded" ? packaged?.assetDirectory ?? sideLoaded : null,
       bytes: (await stat(executable)).size,
       packaging: packaged,

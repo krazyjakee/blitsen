@@ -33,6 +33,13 @@ export const CONFIG_SCHEMA = {
       minLength: 1,
       description: "Application name. Sets the native window title and the default output file name.",
     },
+    addons: {
+      type: "array",
+      items: { type: "string", minLength: 1 },
+      description: "Native .node addons carried into the export, relative to this package.json. "
+        + "They live outside the output directory more often than not, so ingest cannot reach "
+        + "them and they have to be declared.",
+    },
   },
 };
 
@@ -54,11 +61,16 @@ export function validateConfig(config, source) {
   for (const key of CONFIG_SCHEMA.required) {
     if (!(key in config)) fail(`missing required key "${key}"`);
   }
+  const checkString = (label, value, rule) => {
+    if (typeof value !== rule.type) fail(`${label} must be a ${rule.type}, found ${describeType(value)}`);
+    if (value.trim().length < rule.minLength) fail(`${label} must not be empty`);
+  };
   for (const [key, rule] of Object.entries(CONFIG_SCHEMA.properties)) {
     if (!(key in config)) continue;
     const value = config[key];
-    if (typeof value !== rule.type) fail(`"${key}" must be a ${rule.type}, found ${describeType(value)}`);
-    if (value.trim().length < rule.minLength) fail(`"${key}" must not be empty`);
+    if (rule.type !== "array") checkString(`"${key}"`, value, rule);
+    else if (!Array.isArray(value)) fail(`"${key}" must be an array, found ${describeType(value)}`);
+    else value.forEach((item, index) => checkString(`"${key}[${index}]"`, item, rule.items));
   }
   return config;
 }

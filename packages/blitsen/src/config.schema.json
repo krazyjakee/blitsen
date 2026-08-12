@@ -23,6 +23,14 @@
       "type": "string",
       "minLength": 1,
       "description": "Application name. Sets the native window title and the default output file name."
+    },
+    "addons": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "description": "Native .node addons carried into the export, relative to this package.json. They live outside the output directory more often than not, so ingest cannot reach them and they have to be declared."
     }
   }
 }
