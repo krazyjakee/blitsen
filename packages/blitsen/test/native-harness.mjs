@@ -31,6 +31,8 @@ assert.equal(scriptTarget.attributes["data-order"], "inline,async,defer,module,i
 assert.match(scriptTarget.attributes["data-module-url"], /module\.js$/);
 assert.equal(scriptTarget.attributes["data-dom-content-loaded"], "interactive");
 assert.equal(scriptTarget.attributes["data-load"], "complete");
+assert.equal(scriptTarget.attributes["data-module-load"], "fired",
+  "an unqualified addEventListener from a module script binds to the window");
 const interactiveSnapshot = JSON.parse(native.runDocumentScriptsHarness(
   join(import.meta.dir, "../../../examples/interactive/index.html"),
   720,

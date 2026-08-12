@@ -2297,8 +2297,14 @@ const BOOTSTRAP: &str = r##"
     dialog: nativeMembers(nativeDialog),
   });
 
+  // Bound to the window. An unqualified call from an ES module has `this ===
+  // undefined`, and a browser substitutes the global for a WebIDL operation on
+  // Window — an unbound function would instead fail inside the listener table on
+  // `addEventListener("load", …)`, which is the first line of a great many
+  // entry scripts.
   for (const method of ["addEventListener", "removeEventListener", "dispatchEvent"])
-    Object.defineProperty(globalThis, method, { value: EventTarget.prototype[method], configurable: true });
+    Object.defineProperty(globalThis, method,
+      { value: EventTarget.prototype[method].bind(globalThis), configurable: true });
   const globals = {
     EventTarget, Node, Element, NodeList, Document, DocumentFragment, DOMTokenList,
     Attr, NamedNodeMap,
