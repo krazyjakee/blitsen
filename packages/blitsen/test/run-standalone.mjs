@@ -1,30 +1,16 @@
 import { strict as assert } from "node:assert";
-import { copyFile, mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { buildStandalone } from "../src/export.mjs";
+import { buildAddon, repository } from "./build-addon.mjs";
 
-const repository = resolve(import.meta.dir, "../../..");
-const libraryName = {
-  linux: "libblitsen_node.so",
-  darwin: "libblitsen_node.dylib",
-  win32: "blitsen_node.dll",
-}[process.platform];
-if (!libraryName) throw new Error(`unsupported standalone target: ${process.platform}`);
-
-const build = Bun.spawnSync({
-  cmd: ["cargo", "build", "--release", "-p", "blitsen-node"],
-  cwd: repository,
-  stdout: "inherit",
-  stderr: "inherit",
-});
-if (build.exitCode !== 0) process.exit(build.exitCode);
 
 const testDirectory = await mkdtemp(join(tmpdir(), "blitsen-standalone-test-"));
 try {
-  const addon = join(testDirectory, "blitsen.node");
+  const addon = await buildAddon({ purpose: "standalone target", release: true,
+    into: testDirectory });
   const outfile = join(testDirectory, process.platform === "win32" ? "pong.exe" : "pong");
-  await copyFile(join(repository, "target", "release", libraryName), addon);
   const result = await buildStandalone({
     root: join(repository, "examples/pong"),
     width: 720,

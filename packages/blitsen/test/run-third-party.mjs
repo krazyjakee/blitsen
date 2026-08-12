@@ -15,13 +15,13 @@
 // Zero source changes are made to any fixture. The only post-processing is on our
 // own capture: `<script>` elements are stripped from the serialized post-JS DOM so
 // the paint pass does not run the application a second time.
-import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { dirname, extname, join, resolve } from "node:path";
+import { dirname, extname, join } from "node:path";
 import { planIngest, rewriteRootRelativeReferences } from "../src/export.mjs";
+import { buildAddon, repository } from "./build-addon.mjs";
 
-const repository = resolve(import.meta.dir, "../../..");
 const WIDTH = 1280;
 const HEIGHT = 800;
 // The exported launcher mounts by running the document's scripts and then letting
@@ -150,21 +150,7 @@ for (const command of ["git", "npm", "npx", "corepack"]) {
   if (!Bun.which(command)) throw new Error(`missing required command: ${command}`);
 }
 
-const libraryName = {
-  linux: "libblitsen_node.so",
-  darwin: "libblitsen_node.dylib",
-  win32: "blitsen_node.dll",
-}[process.platform];
-if (!libraryName) throw new Error(`unsupported target: ${process.platform}`);
-const build = Bun.spawnSync({
-  cmd: ["cargo", "build", "--release", "-p", "blitsen-node"],
-  cwd: repository,
-  stdout: "inherit",
-  stderr: "inherit",
-});
-if (build.exitCode !== 0) process.exit(build.exitCode);
-const addon = join(repository, "target/release/blitsen.node");
-await copyFile(join(repository, "target/release", libraryName), addon);
+const addon = await buildAddon({ purpose: "third-party", release: true });
 
 const work = options.work ?? await mkdtemp(join(tmpdir(), "blitsen-third-party-"));
 await mkdir(work, { recursive: true });

@@ -1,0 +1,119 @@
+import { describe, expect, test } from "bun:test";
+import { cp, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { main } from "../src/cli.mjs";
+import { CONFIG_SCHEMA, defineConfig, loadConfig, runBuildCommand, validateConfig } from "../src/config.mjs";
+import { configFixtures, capture } from "./cli-support.mjs";
+
+describe("directory CLI", () => {
+  test("publishes the schema it validates against", async () => {
+    const published = join(import.meta.dir, "../src/config.schema.json");
+    expect(JSON.parse(await readFile(published, "utf8"))).toEqual(CONFIG_SCHEMA);
+    expect(defineConfig({ build: "vite build", output: "dist", name: "My App" }))
+      .toEqual({ build: "vite build", output: "dist", name: "My App" });
+  });
+
+  test("rejects a malformed config naming the key and the file it came from", async () => {
+    expect(() => defineConfig({ output: 7 }))
+      .toThrow('invalid blitsen config in defineConfig(): "output" must be a string, found a number');
+    expect(() => validateConfig({ output: "dist", name: " " }, "/app/package.json"))
+      .toThrow('invalid blitsen config in /app/package.json: "name" must not be empty');
+    expect(() => validateConfig({}, "/app/package.json"))
+      .toThrow('invalid blitsen config in /app/package.json: missing required key "output"');
+    expect(() => validateConfig(["dist"], "/app/package.json"))
+      .toThrow("invalid blitsen config in /app/package.json: expected an object, found an array");
+    expect(() => defineConfig({ output: "dist", addons: "physics.node" }))
+      .toThrow('invalid blitsen config in defineConfig(): "addons" must be an array, found a string');
+    expect(() => defineConfig({ output: "dist", addons: ["a.node", 7] }))
+      .toThrow('invalid blitsen config in defineConfig(): "addons[1]" must be a string, found a number');
+    expect(defineConfig({ output: "dist", addons: ["native/physics.node"] }).addons)
+      .toEqual(["native/physics.node"]);
+    const misspelled = join(configFixtures, "misspelled");
+    await expect(loadConfig(misspelled)).rejects.toThrow(
+      `invalid blitsen config in ${join(misspelled, "package.json")}: `
+      + 'unknown key "outputs" (known keys: build, output, name, addons)');
+  });
+
+  test("discovers the config in the nearest package.json declaring it", async () => {
+    const found = await loadConfig(join(configFixtures, "wrapped"));
+    expect(found.root).toBe(join(configFixtures, "wrapped"));
+    expect(found.config).toEqual({ build: "node emit-dist.mjs", output: "dist",
+      name: "Wrapped App", addons: ["native/greet.node"] });
+    // A package.json without the key is not a config, and neither is no package.json.
+    const bare = await mkdtemp(join(tmpdir(), "blitsen-config-"));
+    try {
+      expect(await loadConfig(bare)).toEqual({ path: null, root: null, config: null });
+      await writeFile(join(bare, "package.json"), '{"name":"bare"}');
+      expect(await loadConfig(bare))
+        .toEqual({ path: join(bare, "package.json"), root: null, config: null });
+      await writeFile(join(bare, "package.json"), "{ not json");
+      await expect(loadConfig(bare)).rejects.toThrow("package.json is not valid JSON");
+    } finally {
+      await rm(bare, { recursive: true, force: true });
+    }
+  });
+
+  test("fails the build when the configured command does", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "blitsen-command-"));
+    try {
+      await expect(runBuildCommand("exit 3", directory))
+        .rejects.toThrow("build command failed with exit code 3: exit 3");
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("runs the configured build and ingests the directory it wrote", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "blitsen-wrapped-"));
+    const project = join(workspace, "app");
+    await cp(join(configFixtures, "wrapped"), project, { recursive: true });
+    const cwd = process.cwd();
+    let built;
+    try {
+      process.chdir(project);
+      const here = process.cwd();
+      const { lines, output } = capture();
+      const runtime = {
+        build: async options => {
+          built = options;
+          return { outfile: options.outfile, assets: 1, bytes: 1 };
+        },
+      };
+      expect(await main(["build"], output, runtime)).toBe(0);
+      expect(lines[0][1])
+        .toBe(`⓪ build   node emit-dist.mjs (configured in ${join(project, "package.json")})`);
+      // The command really ran: Blitsen only knows the directory it left behind.
+      expect(await readFile(join(project, "dist/index.html"), "utf8")).toContain("wrapped");
+      expect(built.root).toBe(await realpath(join(project, "dist")));
+      expect(built.title).toBe("Wrapped App");
+      expect(built.outfile).toBe(join(here, "Wrapped App"));
+      // Configured addon paths are the user's, relative to their package.json.
+      expect(built.addons).toEqual([join(project, "native/greet.node")]);
+    } finally {
+      process.chdir(cwd);
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  test("asks for a directory or a config when neither is there", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "blitsen-unconfigured-"));
+    const cwd = process.cwd();
+    try {
+      process.chdir(directory);
+      const { lines, output } = capture();
+      expect(await main(["build"], output, { build: async () => ({}) })).toBe(1);
+      expect(lines[0][1]).toContain('pass one, or add a "blitsen" config to');
+      expect(lines[0][1]).toContain("package.json");
+    } finally {
+      process.chdir(cwd);
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("reports missing entrypoints and unavailable native addons", async () => {
+    const { lines, output } = capture();
+    expect(await main([import.meta.dir], output, {})).toBe(1);
+    expect(lines[0][1]).toContain("missing or unreadable entrypoint");
+  });
+});

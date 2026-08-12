@@ -12,7 +12,7 @@
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
+use std::sync::{Arc, Mutex};
 
 use blitsen_js::JsError;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
@@ -20,6 +20,8 @@ use reqwest::{Client, Method, Url};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::runtime::Runtime;
+
+use super::worker::{lock, runtime as worker_runtime};
 
 /// A `fetch` call as the bootstrap describes it, with the body passed
 /// separately so binary payloads never round-trip through a string.
@@ -45,28 +47,6 @@ pub(super) struct FetchHost {
     next_id: AtomicU64,
     inflight: Mutex<HashMap<u64, tokio::task::AbortHandle>>,
     shared: Arc<Shared>,
-}
-
-/// Locks without propagating poisoning: a panicked worker must not disable
-/// networking for the rest of the process.
-fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(PoisonError::into_inner)
-}
-
-/// Returns the process-wide worker pool, starting it on first use.
-fn worker_runtime() -> Result<&'static Runtime, JsError> {
-    static RUNTIME: OnceLock<Result<Runtime, String>> = OnceLock::new();
-    RUNTIME
-        .get_or_init(|| {
-            tokio::runtime::Builder::new_multi_thread()
-                .worker_threads(2)
-                .thread_name("blitsen-fetch")
-                .enable_all()
-                .build()
-                .map_err(|error| error.to_string())
-        })
-        .as_ref()
-        .map_err(|error| JsError::new(format!("could not start the fetch worker pool: {error}")))
 }
 
 /// Builds the header map, rejecting names or values HTTP cannot carry.

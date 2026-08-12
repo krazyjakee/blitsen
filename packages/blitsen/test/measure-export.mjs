@@ -1,18 +1,13 @@
 // One build, every artifact metric: installed and compressed size with a
 // component breakdown (issue #55) plus startup timing and resident memory
 // (issue #49). Both gates consume the same record so CI builds the export once.
-import { copyFile, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { buildStandalone } from "../src/export.mjs";
+import { buildAddon, repository } from "./build-addon.mjs";
 
-export const repository = resolve(import.meta.dir, "../../..");
-
-const libraryName = {
-  linux: "libblitsen_node.so",
-  darwin: "libblitsen_node.dylib",
-  win32: "blitsen_node.dll",
-}[process.platform];
+export { repository } from "./build-addon.mjs";
 
 export const platformKey = `${process.platform}-${process.arch}`;
 
@@ -109,24 +104,14 @@ async function compressedBytes(outfile) {
 // real (non-proxy) reading of P2 and P3, but it needs a live desktop session,
 // so CI and unattended runs must never depend on it.
 export async function measureExport({ runs = 5, windowed = false } = {}) {
-  if (!libraryName) throw new Error(`unsupported measurement target: ${process.platform}`);
   if (process.platform !== "linux") throw new Error("resident memory sampling requires /proc");
   if (windowed && !(process.env.DISPLAY || process.env.WAYLAND_DISPLAY)) {
     throw new Error("--windowed needs DISPLAY or WAYLAND_DISPLAY");
   }
 
-  const build = Bun.spawnSync({
-    cmd: ["cargo", "build", "--release", "-p", "blitsen-node"],
-    cwd: repository,
-    stdout: "inherit",
-    stderr: "inherit",
-  });
-  if (build.exitCode !== 0) throw new Error(`cargo build exited ${build.exitCode}`);
-
   const directory = await mkdtemp(join(tmpdir(), "blitsen-measure-"));
   try {
-    const addon = join(directory, "blitsen.node");
-    await copyFile(join(repository, "target", "release", libraryName), addon);
+    const addon = await buildAddon({ purpose: "measurement target", release: true, into: directory });
     const outfile = join(directory, "pong");
     const root = join(repository, "examples/pong");
     const result = await buildStandalone({

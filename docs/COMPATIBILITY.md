@@ -489,7 +489,7 @@ determinism gate instead.
 | WEB_STORAGE | `Storage`, `localStorage`, `sessionStorage` | `indexedDB` |
 | WEB_WORKER | — | `Worker`, `SharedWorker`, `ServiceWorker`, `ServiceWorkerContainer` |
 | WEB_MESSAGING | — | `MessageChannel`, `MessagePort`, `BroadcastChannel`, `postMessage` |
-| WEB_SOCKET | — | `WebSocket`, `EventSource` |
+| WEB_SOCKET | `WebSocket`, `MessageEvent`, `CloseEvent`, `WebSocket.url`, `WebSocket.readyState`, `WebSocket.protocol`, `WebSocket.extensions`, `WebSocket.bufferedAmount`, `WebSocket.binaryType`, `WebSocket.send`, `WebSocket.close` | `EventSource` |
 | WEB_XHR | — | `XMLHttpRequest` |
 | WEB_STREAM | — | `ReadableStream`, `WritableStream`, `TransformStream`, `Response.body`, `Response.clone` |
 | WEB_FORM | — | `FormData`, `File`, `FileReader` |
@@ -514,7 +514,7 @@ determinism gate instead.
 | `WEB_STORAGE` | warning | IndexedDB is not implemented. |
 | `WEB_WORKER` | warning | Web workers are not implemented. |
 | `WEB_MESSAGING` | warning | Message channels are not implemented. |
-| `WEB_SOCKET` | warning | Browser network streams are not implemented. |
+| `WEB_SOCKET` | warning | Server-sent events are not implemented; WebSocket is. |
 | `WEB_XHR` | warning | XMLHttpRequest is not implemented. |
 | `WEB_STREAM` | warning | Streaming bodies are not implemented; a response is buffered whole. |
 | `WEB_FORM` | warning | Multipart form bodies and file objects are not implemented. |

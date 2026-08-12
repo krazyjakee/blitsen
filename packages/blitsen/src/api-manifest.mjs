@@ -1,6 +1,7 @@
 import { readFile, writeFile } from "node:fs/promises";
 
-const RUNTIME_SOURCE = new URL("../../../crates/blitsen-node/src/dom_bridge.rs", import.meta.url);
+const RUNTIME_SOURCE_ROOT = "../../../crates/blitsen-node/src/";
+const RUNTIME_SOURCE = new URL(`${RUNTIME_SOURCE_ROOT}dom_bridge.rs`, import.meta.url);
 const MANIFEST_FILE = new URL("./api-manifest.json", import.meta.url);
 const COMPATIBILITY_DOC = new URL("../../../docs/COMPATIBILITY.md", import.meta.url);
 const SOURCE_NAME = "crates/blitsen-node/src/dom_bridge.rs";
@@ -69,7 +70,14 @@ const CATALOGUE = {
   WEB_STORAGE: ["Storage", "localStorage", "sessionStorage", "indexedDB"],
   WEB_WORKER: ["Worker", "SharedWorker", "ServiceWorker", "ServiceWorkerContainer"],
   WEB_MESSAGING: ["MessageChannel", "MessagePort", "BroadcastChannel", "postMessage"],
-  WEB_SOCKET: ["WebSocket", "EventSource"],
+  // `MessageEvent` is here rather than with the messaging APIs because a socket
+  // is the only thing in this runtime that delivers one. The four readyState
+  // constants are not listed: they are installed onto the constructor and the
+  // prototype rather than declared in the class body, which is not a shape this
+  // file's reader can verify, and `readyState` covers what a bundle reads.
+  WEB_SOCKET: ["WebSocket", "MessageEvent", "CloseEvent", "EventSource",
+    "WebSocket.url", "WebSocket.readyState", "WebSocket.protocol", "WebSocket.extensions",
+    "WebSocket.bufferedAmount", "WebSocket.binaryType", "WebSocket.send", "WebSocket.close"],
   WEB_XHR: ["XMLHttpRequest"],
   WEB_STREAM: ["ReadableStream", "WritableStream", "TransformStream", "Response.body",
     "Response.clone"],
@@ -200,8 +208,8 @@ const DIAGNOSTICS = {
     "Run the work in the main context or use a native/Node worker path."],
   WEB_MESSAGING: ["warning", "Message channels are not implemented.",
     "Feature-detect the channel; a scheduler that falls back to a timer keeps working."],
-  WEB_SOCKET: ["warning", "Browser network streams are not implemented.",
-    "Feature-detect this API or use a Node-compatible networking package."],
+  WEB_SOCKET: ["warning", "Server-sent events are not implemented; WebSocket is.",
+    "Feature-detect EventSource, or hold the stream open over a WebSocket instead."],
   WEB_XHR: ["warning", "XMLHttpRequest is not implemented.", "Use fetch with an absolute URL."],
   WEB_STREAM: ["warning", "Streaming bodies are not implemented; a response is buffered whole.",
     "Read the response with text(), json(), or arrayBuffer().", /\.body\s*\.\s*getReader\b/],
@@ -310,12 +318,18 @@ const RENDERER_RULES = [
 
 // Everything below reads the bootstrap as the JavaScript it is, rather than a
 // description of it kept alongside.
-function bootstrapScript(source) {
-  const opening = 'const BOOTSTRAP: &str = r##"';
-  const start = source.indexOf(opening);
-  const end = source.indexOf('"##;', start);
-  if (start < 0 || end < 0) throw new Error(`${SOURCE_NAME} no longer declares a BOOTSTRAP script`);
-  return source.slice(start + opening.length, end);
+//
+// The script is spliced together from `dom_bridge/bootstrap/*.js`, and the
+// splice order lives in the Rust that evaluates it. Reading the order from
+// there rather than restating it keeps the manifest describing the same script
+// the runtime actually runs, and turns a renamed fragment into a loud failure.
+export async function readBootstrapScript() {
+  const rust = await readFile(RUNTIME_SOURCE, "utf8");
+  const fragments = [...rust.matchAll(/include_str!\("(dom_bridge\/bootstrap\/[^"]+)"\)/g)]
+    .map(([, path]) => new URL(RUNTIME_SOURCE_ROOT + path, import.meta.url));
+  if (fragments.length === 0)
+    throw new Error(`${SOURCE_NAME} no longer splices a bootstrap script`);
+  return (await Promise.all(fragments.map(file => readFile(file, "utf8")))).join("");
 }
 
 // Blanks comments and literal contents while preserving every offset, so a
@@ -382,8 +396,7 @@ function stringList(script, pattern, name) {
 }
 
 // Reads the globals, class members and deliberate deletions out of the bootstrap.
-export function extractRuntimeSurface(source) {
-  const script = bootstrapScript(source);
+export function extractRuntimeSurface(script) {
   const structure = blanked(script);
   const globals = new Set(objectKeys(structure, "const globals = {"));
   for (const [, name] of structure.matchAll(/globalThis\.([A-Za-z_$][\w$]*)\s*=[^=]/g))
@@ -473,9 +486,9 @@ function nativeEntries(surface) {
 const sourceScanRule = ([kind, code, severity, pattern, message, guidance]) =>
   ({ kind, code, severity, pattern, message, guidance });
 
-// Builds the manifest from the runtime source, refusing anything the two disagree about.
-export function buildManifest(source) {
-  const surface = extractRuntimeSurface(source);
+// Builds the manifest from the bootstrap script, refusing anything the two disagree about.
+export function buildManifest(script) {
+  const surface = extractRuntimeSurface(script);
   const apis = Object.entries(CATALOGUE)
     .flatMap(([code, names]) => names.map(api => apiEntry(surface, api, code)));
 
@@ -518,7 +531,7 @@ export async function loadApiManifest() {
 }
 
 export async function generateApiManifest() {
-  return buildManifest(await readFile(RUNTIME_SOURCE, "utf8"));
+  return buildManifest(await readBootstrapScript());
 }
 
 const names = entries => entries.map(entry => `\`${entry.api}\``).join(", ") || "—";

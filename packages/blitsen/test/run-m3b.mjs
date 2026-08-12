@@ -1,16 +1,9 @@
-import { copyFile, mkdtemp, rm, stat } from "node:fs/promises";
+import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
+import { buildAddon, repository } from "./build-addon.mjs";
 
-const repository = resolve(import.meta.dir, "../../..");
 const example = join(repository, "examples/vite-react");
-const libraryName = {
-  linux: "libblitsen_node.so",
-  darwin: "libblitsen_node.dylib",
-  win32: "blitsen_node.dll",
-}[process.platform];
-
-if (!libraryName) throw new Error(`unsupported M3b target: ${process.platform}`);
 
 for (const command of [
   [process.execPath, "install", "--frozen-lockfile"],
@@ -21,17 +14,7 @@ for (const command of [
 }
 
 const dist = join(example, "dist");
-const build = Bun.spawnSync({
-  cmd: ["cargo", "build", "--release", "-p", "blitsen-node"],
-  cwd: repository,
-  stdout: "inherit",
-  stderr: "inherit",
-});
-if (build.exitCode !== 0) process.exit(build.exitCode);
-
-const target = join(repository, "target", "release");
-const addon = join(target, "blitsen.node");
-await copyFile(join(target, libraryName), addon);
+const addon = await buildAddon({ purpose: "M3b", release: true });
 const temporary = await mkdtemp(join(tmpdir(), "blitsen-m3b-"));
 const executable = join(temporary, process.platform === "win32" ? "ReactAcceptance.exe" : "ReactAcceptance");
 const cli = join(example, "node_modules/blitsen/bin/blitsen.mjs");

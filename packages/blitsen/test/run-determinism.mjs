@@ -9,11 +9,11 @@
 // which is what catches real nondeterminism.
 //
 // usage: bun run-determinism.mjs [--update] [--dump <dir>] [--debug]
-import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
+import { buildAddon, repository } from "./build-addon.mjs";
 
-const repository = resolve(import.meta.dir, "../../..");
 const traceFile = join(import.meta.dir, "replay/pong.trace.json");
 const update = process.argv.includes("--update");
 const debug = process.argv.includes("--debug");
@@ -22,24 +22,9 @@ const dumpDirectory = dumpIndex === -1
   ? join(repository, "target/determinism-divergence")
   : resolve(process.argv[dumpIndex + 1]);
 
-const libraryName = {
-  linux: "libblitsen_node.so",
-  darwin: "libblitsen_node.dylib",
-  win32: "blitsen_node.dll",
-}[process.platform];
-if (!libraryName) throw new Error(`unsupported determinism target: ${process.platform}`);
 const goldenFile = join(import.meta.dir, `replay/pong-${process.platform}-${process.arch}.golden.json`);
 
-const build = Bun.spawnSync({
-  cmd: ["cargo", "build", ...(debug ? [] : ["--release"]), "-p", "blitsen-node"],
-  cwd: repository,
-  stdout: "inherit",
-  stderr: "inherit",
-});
-if (build.exitCode !== 0) process.exit(build.exitCode);
-const target = join(repository, "target", debug ? "debug" : "release");
-const addon = join(target, "blitsen.node");
-await copyFile(join(target, libraryName), addon);
+const addon = await buildAddon({ purpose: "determinism target", release: !debug });
 
 const workspace = await mkdtemp(join(tmpdir(), "blitsen-determinism-"));
 const replay = async (name, extra = []) => {

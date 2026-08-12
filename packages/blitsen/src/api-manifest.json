@@ -1348,9 +1348,23 @@
     {
       "api": "WebSocket",
       "kind": "global",
-      "status": "absent",
+      "status": "implemented",
       "code": "WEB_SOCKET",
       "pattern": "(?<![.\\w$])WebSocket\\b"
+    },
+    {
+      "api": "MessageEvent",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_SOCKET",
+      "pattern": "(?<![.\\w$])MessageEvent\\b"
+    },
+    {
+      "api": "CloseEvent",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_SOCKET",
+      "pattern": "(?<![.\\w$])CloseEvent\\b"
     },
     {
       "api": "EventSource",
@@ -1358,6 +1372,78 @@
       "status": "absent",
       "code": "WEB_SOCKET",
       "pattern": "(?<![.\\w$])EventSource\\b"
+    },
+    {
+      "api": "WebSocket.url",
+      "kind": "member",
+      "owner": "WebSocket.prototype",
+      "member": "url",
+      "status": "implemented",
+      "code": "WEB_SOCKET",
+      "pattern": null
+    },
+    {
+      "api": "WebSocket.readyState",
+      "kind": "member",
+      "owner": "WebSocket.prototype",
+      "member": "readyState",
+      "status": "implemented",
+      "code": "WEB_SOCKET",
+      "pattern": null
+    },
+    {
+      "api": "WebSocket.protocol",
+      "kind": "member",
+      "owner": "WebSocket.prototype",
+      "member": "protocol",
+      "status": "implemented",
+      "code": "WEB_SOCKET",
+      "pattern": null
+    },
+    {
+      "api": "WebSocket.extensions",
+      "kind": "member",
+      "owner": "WebSocket.prototype",
+      "member": "extensions",
+      "status": "implemented",
+      "code": "WEB_SOCKET",
+      "pattern": null
+    },
+    {
+      "api": "WebSocket.bufferedAmount",
+      "kind": "member",
+      "owner": "WebSocket.prototype",
+      "member": "bufferedAmount",
+      "status": "implemented",
+      "code": "WEB_SOCKET",
+      "pattern": null
+    },
+    {
+      "api": "WebSocket.binaryType",
+      "kind": "member",
+      "owner": "WebSocket.prototype",
+      "member": "binaryType",
+      "status": "implemented",
+      "code": "WEB_SOCKET",
+      "pattern": null
+    },
+    {
+      "api": "WebSocket.send",
+      "kind": "member",
+      "owner": "WebSocket.prototype",
+      "member": "send",
+      "status": "implemented",
+      "code": "WEB_SOCKET",
+      "pattern": null
+    },
+    {
+      "api": "WebSocket.close",
+      "kind": "member",
+      "owner": "WebSocket.prototype",
+      "member": "close",
+      "status": "implemented",
+      "code": "WEB_SOCKET",
+      "pattern": null
     },
     {
       "api": "XMLHttpRequest",
@@ -2300,8 +2386,8 @@
     },
     "WEB_SOCKET": {
       "severity": "warning",
-      "message": "Browser network streams are not implemented.",
-      "guidance": "Feature-detect this API or use a Node-compatible networking package.",
+      "message": "Server-sent events are not implemented; WebSocket is.",
+      "guidance": "Feature-detect EventSource, or hold the stream open over a WebSocket instead.",
       "extra": null
     },
     "WEB_XHR": {

@@ -1,0 +1,252 @@
+//! Tree internals: node access, detachment bookkeeping, names and serialization.
+
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::rc::Rc;
+
+use blitsen_dom::{DomBackend, DomError, DomName, NATIVE_VIEWPORT_TAG, Namespace};
+use blitz::dom::{LocalName, NodeData, NodeId, QualName, ns};
+
+use crate::BlitzDom;
+use crate::viewport::{ViewportState, ViewportWidget};
+
+impl BlitzDom {
+    /// Gives every connected viewport element a surface, and forgets dead ones.
+    ///
+    /// Attaching is a tree mutation, so it runs before layout resolves: a
+    /// surface installed afterwards would first paint against the layout of the
+    /// frame that created it. A detached element keeps its surface, because a
+    /// reparented viewport is the same viewport.
+    pub(crate) fn attach_native_viewports(&mut self) -> Result<(), DomError> {
+        for node in self.query_selector_all(self.document(), NATIVE_VIEWPORT_TAG)? {
+            if self.native_viewports.contains_key(&node) {
+                continue;
+            }
+            let state = Rc::new(RefCell::new(ViewportState::default()));
+            let widget = ViewportWidget::new(Rc::clone(&state));
+            self.document
+                .mutate()
+                .set_custom_widget(node, Box::new(widget));
+            self.native_viewports.insert(node, state);
+        }
+        let dropped: Vec<NodeId> = self
+            .native_viewports
+            .keys()
+            .copied()
+            .filter(|node| self.document.get_node(*node).is_none())
+            .collect();
+        for node in dropped {
+            self.native_viewports.remove(&node);
+        }
+        Ok(())
+    }
+
+    /// Propagates the resolved box and display density into each surface.
+    pub(crate) fn resize_native_viewports(&mut self) {
+        let scale = self.document.viewport().scale_f64();
+        for (node, state) in &self.native_viewports {
+            let Some(element) = self.document.get_node(*node) else {
+                continue;
+            };
+            // Matches the size Blitz hands the widget when it paints, so the
+            // buffer the application allocates is the buffer it is asked for.
+            let size = element.final_layout().size;
+            state.borrow_mut().resize(
+                (f64::from(size.width) * scale) as u32,
+                (f64::from(size.height) * scale) as u32,
+                scale,
+            );
+        }
+    }
+
+    pub(crate) fn node(&self, node: NodeId) -> Result<&blitz::dom::Node, DomError> {
+        self.document.get_node(node).ok_or(DomError::StaleNode)
+    }
+
+    pub(crate) fn ensure_element(&self, node: NodeId) -> Result<(), DomError> {
+        if self.node(node)?.element_data().is_some() {
+            Ok(())
+        } else {
+            Err(DomError::InvalidNodeType)
+        }
+    }
+
+    /// Reports whether a node is an HTML element with the given local name.
+    pub(crate) fn is_tag(&self, node: NodeId, tag: &str) -> bool {
+        self.document
+            .get_node(node)
+            .and_then(|node| node.element_data())
+            .is_some_and(|element| {
+                element.name.local.as_ref() == tag && element.name.ns == ns!(html)
+            })
+    }
+
+    pub(crate) fn mutate(&mut self, style_node: Option<NodeId>, layout_node: Option<NodeId>) {
+        self.revision = self.revision.wrapping_add(1);
+        if let Some(node) = style_node {
+            self.invalidation.mark_style(node);
+        }
+        if let Some(node) = layout_node {
+            let parents = self.parent_chain(node);
+            self.invalidation
+                .mark_layout(node, |node| parents.get(&node).copied());
+        }
+    }
+
+    pub(crate) fn parent_chain(&self, node: NodeId) -> HashMap<NodeId, NodeId> {
+        let mut result = HashMap::new();
+        let mut current = node;
+        while let Some(parent) = self.document.get_node(current).and_then(|node| node.parent) {
+            result.insert(current, parent);
+            current = parent;
+        }
+        result
+    }
+
+    pub(crate) fn subtree_has_js_reference(&self, root: NodeId) -> bool {
+        let Some(root) = self.document.get_node(root) else {
+            return false;
+        };
+        self.js_references.contains_key(&root.id)
+            || root
+                .children
+                .iter()
+                .copied()
+                .any(|child| self.subtree_has_js_reference(child))
+    }
+
+    pub(crate) fn detached_root(&self, mut node: NodeId) -> NodeId {
+        while let Some(parent) = self.document.get_node(node).and_then(|node| node.parent) {
+            node = parent;
+        }
+        node
+    }
+
+    pub(crate) fn collect_detached_tree(&mut self, node: NodeId) -> bool {
+        let root = self.detached_root(node);
+        if root == self.document.root_node().id
+            || self.subtree_has_js_reference(root)
+            || self.document.get_node(root).is_none()
+        {
+            return false;
+        }
+        self.document.mutate().remove_and_drop_node(root).is_some()
+    }
+
+    pub(crate) fn detach_children(&mut self, parent: NodeId) -> Result<(), DomError> {
+        let children = self.node(parent)?.children.clone();
+        for child in children {
+            self.document.mutate().remove_node(child);
+            self.collect_detached_tree(child);
+        }
+        Ok(())
+    }
+
+    pub(crate) fn check_no_cycle(&self, parent: NodeId, child: NodeId) -> Result<(), DomError> {
+        let mut current = Some(parent);
+        while let Some(node) = current {
+            if node == child {
+                return Err(DomError::HierarchyRequest);
+            }
+            current = self.node(node)?.parent;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn qual_name(name: &DomName) -> QualName {
+        let namespace = match &name.namespace {
+            Namespace::Html => ns!(html),
+            Namespace::Svg => ns!(svg),
+            Namespace::MathMl => ns!(mathml),
+            Namespace::None => ns!(),
+            Namespace::Other(value) => value.clone().into(),
+        };
+        QualName::new(None, namespace, LocalName::from(name.local.clone()))
+    }
+
+    pub(crate) fn namespace(name: &QualName) -> Namespace {
+        if name.ns == ns!(html) {
+            Namespace::Html
+        } else if name.ns == ns!(svg) {
+            Namespace::Svg
+        } else if name.ns == ns!(mathml) {
+            Namespace::MathMl
+        } else if name.ns == ns!() {
+            Namespace::None
+        } else {
+            Namespace::Other(name.ns.to_string())
+        }
+    }
+
+    pub(crate) fn serialize_node(
+        &self,
+        node: NodeId,
+        output: &mut String,
+        raw_text: bool,
+    ) -> Result<(), DomError> {
+        let node = self.node(node)?;
+        match &node.data {
+            NodeData::Document(_) | NodeData::AnonymousBlock(_) => {
+                for child in &node.children {
+                    self.serialize_node(*child, output, false)?;
+                }
+            }
+            NodeData::Text(text) => {
+                if raw_text {
+                    output.push_str(&text.content);
+                } else {
+                    output.push_str(&html_escape::encode_text(&text.content));
+                }
+            }
+            NodeData::Comment { contents } => {
+                output.push_str("<!--");
+                output.push_str(contents);
+                output.push_str("-->");
+            }
+            NodeData::Element(element) => {
+                let tag = element.name.local.as_ref();
+                output.push('<');
+                output.push_str(tag);
+                for attribute in element.attrs() {
+                    output.push(' ');
+                    output.push_str(&attribute.name.local);
+                    output.push_str("=\"");
+                    output.push_str(&html_escape::encode_double_quoted_attribute(
+                        &attribute.value,
+                    ));
+                    output.push('"');
+                }
+                output.push('>');
+                let is_html = element.name.ns == ns!(html);
+                let is_void = is_html
+                    && matches!(
+                        tag,
+                        "area"
+                            | "base"
+                            | "br"
+                            | "col"
+                            | "embed"
+                            | "hr"
+                            | "img"
+                            | "input"
+                            | "link"
+                            | "meta"
+                            | "param"
+                            | "source"
+                            | "track"
+                            | "wbr"
+                    );
+                if !is_void {
+                    let children_are_raw = is_html && matches!(tag, "script" | "style");
+                    for child in &node.children {
+                        self.serialize_node(*child, output, children_are_raw)?;
+                    }
+                    output.push_str("</");
+                    output.push_str(tag);
+                    output.push('>');
+                }
+            }
+        }
+        Ok(())
+    }
+}

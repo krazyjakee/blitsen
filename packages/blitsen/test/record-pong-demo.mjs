@@ -1,18 +1,11 @@
 // Records docs/pong.gif. The frames come from the same document-animation harness
 // the acceptance gate asserts on, so the published recording cannot drift away from
 // what the tests actually verify. Needs ffmpeg on PATH for the GIF encode.
-import { copyFile, mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
+import { buildAddon, repository } from "./build-addon.mjs";
 
-const repository = resolve(import.meta.dir, "../../..");
-const libraryName = {
-  linux: "libblitsen_node.so",
-  darwin: "libblitsen_node.dylib",
-  win32: "blitsen_node.dll",
-}[process.platform];
-
-if (!libraryName) throw new Error(`unsupported recording platform: ${process.platform}`);
 
 const FRAMES = 480;
 const WIDTH = 720;
@@ -48,17 +41,7 @@ const setup = `{
   requestAnimationFrame(drive);
 }`;
 
-const build = Bun.spawnSync({
-  cmd: ["cargo", "build", "-p", "blitsen-node"],
-  cwd: repository,
-  stdout: "inherit",
-  stderr: "inherit",
-});
-if (build.exitCode !== 0) process.exit(build.exitCode);
-
-const target = join(repository, "target", "debug");
-const addon = join(target, "blitsen.node");
-await copyFile(join(target, libraryName), addon);
+const addon = await buildAddon({ purpose: "recording" });
 
 const frames = await mkdtemp(join(tmpdir(), "blitsen-demo-"));
 try {

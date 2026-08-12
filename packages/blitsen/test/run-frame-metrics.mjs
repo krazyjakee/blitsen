@@ -7,9 +7,10 @@
 // because a hosted runner's timings are not a gate.
 //
 // usage: bun run-frame-metrics.mjs [--out <file>] [--alloc-audit] [--debug]
-import { copyFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
+import { buildAddon, repository } from "./build-addon.mjs";
 
 const argv = process.argv.slice(2);
 const option = name => {
@@ -22,26 +23,10 @@ const debug = argv.includes("--debug");
 const audit = argv.includes("--alloc-audit");
 const outFile = option("--out");
 
-const repository = resolve(import.meta.dir, "../../..");
 const traceFile = join(import.meta.dir, "replay/pong.trace.json");
-const libraryName = {
-  linux: "libblitsen_node.so",
-  darwin: "libblitsen_node.dylib",
-  win32: "blitsen_node.dll",
-}[process.platform];
-if (!libraryName) throw new Error(`unsupported frame-metrics target: ${process.platform}`);
 
-const build = Bun.spawnSync({
-  cmd: ["cargo", "build", ...(debug ? [] : ["--release"]), "-p", "blitsen-node",
-    ...(audit ? ["--features", "alloc-audit"] : [])],
-  cwd: repository,
-  stdout: "inherit",
-  stderr: "inherit",
-});
-if (build.exitCode !== 0) process.exit(build.exitCode);
-const target = join(repository, "target", debug ? "debug" : "release");
-const addon = join(target, "blitsen.node");
-await copyFile(join(target, libraryName), addon);
+const addon = await buildAddon({ purpose: "frame-metrics target", release: !debug,
+  features: audit ? ["alloc-audit"] : [] });
 
 const run = (script, extra = []) => {
   const result = Bun.spawnSync({

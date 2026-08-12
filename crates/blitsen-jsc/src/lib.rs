@@ -7,6 +7,7 @@
 
 mod engine;
 mod ffi;
+mod runtime;
 
 use std::{env, fmt, path::PathBuf};
 
