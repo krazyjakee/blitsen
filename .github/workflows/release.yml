@@ -1,0 +1,53 @@
+name: Release (inert)
+
+# This workflow publishes nothing and never runs on its own.
+#
+# It exists to show — and to keep working — the one mechanical step between the
+# committed platform manifests (packages/platforms/) and a publishable package:
+# staging the compiled addon as blitsen.node. It stops at `npm publish --dry-run`,
+# there is no registry token in this repository, and only linux-x64 can be built
+# at all; the other five targets have no runner yet (issue #70).
+#
+# Turning it on means adding those runners, an NPM_TOKEN secret and dropping
+# --dry-run, in a commit that says so. Platform packages publish before `blitsen`,
+# because its optionalDependencies have to resolve.
+on:
+  workflow_dispatch:
+
+jobs:
+  pack:
+    name: Pack blitsen and @blitsen/linux-x64
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install Blitz system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libfontconfig1-dev libxkbcommon-dev libwayland-dev \
+            libx11-dev libxcursor-dev libxi-dev libxrandr-dev
+      - run: cargo build --release -p blitsen-node
+      # A platform package is its committed manifest plus exactly this artifact.
+      - name: Stage the runtime
+        run: cp target/release/libblitsen_node.so packages/platforms/linux-x64/blitsen.node
+      - run: bun install --frozen-lockfile
+      # Includes the manifest conformance test: every platform package declares its
+      # os/cpu pair and is pinned to blitsen's version exactly.
+      - run: bun test packages/blitsen
+      - name: Pack
+        run: |
+          npm pack --pack-destination "$RUNNER_TEMP" ./packages/platforms/linux-x64
+          npm pack --pack-destination "$RUNNER_TEMP" ./packages/blitsen
+      - uses: actions/upload-artifact@v4
+        with:
+          name: packages-${{ github.sha }}
+          path: ${{ runner.temp }}/*.tgz
+      - name: Publish (dry run)
+        run: |
+          npm publish --dry-run ./packages/platforms/linux-x64
+          npm publish --dry-run ./packages/blitsen

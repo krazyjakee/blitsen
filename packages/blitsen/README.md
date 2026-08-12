@@ -84,6 +84,29 @@ not embed icon or version-info resources into the PE image, and the build says s
 pretending otherwise. `--sign` runs your command with the artifact path as its only argument — the
 `.app` bundle on macOS, the executable elsewhere — and a non-zero exit fails the build. Blitsen
 never handles certificates.
+## The native runtime
+
+This package is thin JavaScript — CLI, config, types. The runtime is one prebuilt binary per
+target (`@blitsen/linux-x64`, `@blitsen/darwin-arm64`, and the four others), declared as
+`optionalDependencies` carrying `os` and `cpu` fields, so your package manager downloads only the
+one matching your machine. Install is a download: no postinstall compile step, no Rust toolchain.
+
+The runtime is pinned to this package's version **exactly**, because the two halves are one ABI
+built and tested together. Pin the pair by pinning `blitsen` — its lockfile entry is the pin, and
+Blitsen adds no second one that could disagree with it. A runtime that is not this version fails
+before your build command runs, naming both versions. Every export records what it linked against,
+on the build report and inside the executable:
+
+```
+Built /home/me/MyApp (12 assets, 58720256 bytes)
+Runtime: @blitsen/linux-x64@0.0.1
+```
+
+**No platform package is published yet, and only `linux-x64` is built at all.** Until they ship,
+Blitsen resolves the runtime from `BLITSEN_NATIVE_PATH`, or from an addon built inside a checkout
+of the repository, and otherwise refuses with the platform whose package it wanted rather than
+running against something else.
+
 ## Native modules
 
 Import them as ordinary package subpaths:
@@ -126,9 +149,9 @@ if (dialog.openFile) { … }
 ```
 
 Outside the Blitsen runtime — a browser, a plain Node script — every access throws instead, because
-that is a mistake rather than a missing capability. Note that the native modules themselves are not
-implemented yet; the specifier layer above is, so bundlers resolve today and the capabilities
-appear as they land.
+that is a mistake rather than a missing capability. `blitsen/app` and `blitsen/clipboard` carry
+members today; the rest resolve and expose nothing yet, which is what makes the feature test above
+the way to ask.
 
 Phase 1 exports are not yet cleared for redistribution: the automated notice and JSC relinking
 gate is still outstanding. Follow development and read the feasibility results at

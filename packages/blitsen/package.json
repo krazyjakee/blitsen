@@ -41,6 +41,14 @@
     "./os": { "types": "./src/native/native.d.ts", "import": "./src/native/os.mjs" }
   },
   "types": "./index.d.ts",
+  "optionalDependencies": {
+    "@blitsen/darwin-arm64": "0.0.1",
+    "@blitsen/darwin-x64": "0.0.1",
+    "@blitsen/linux-arm64": "0.0.1",
+    "@blitsen/linux-x64": "0.0.1",
+    "@blitsen/win32-arm64": "0.0.1",
+    "@blitsen/win32-x64": "0.0.1"
+  },
   "files": [
     "LICENSE",
     "README.md",

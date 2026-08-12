@@ -1,6 +1,7 @@
 import { access, copyFile, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, join, posix, relative, resolve, sep } from "node:path";
 import { packageBuild, signArtifact } from "./packaging.mjs";
+import { describeRuntime, hostTarget } from "./runtime.mjs";
 
 const HTML_EXTENSIONS = [".html", ".htm"];
 const SCRIPT_EXTENSIONS = [".js", ".mjs", ".cjs"];
@@ -186,7 +187,6 @@ const NAPI_ENTRYPOINT = "napi_register_module_v1";
 const ELF_MACHINES = { 0x03: "ia32", 0x28: "arm", 0x3e: "x64", 0xb7: "arm64" };
 const MACHO_CPUS = { 0x00000007: "ia32", 0x0000000c: "arm", 0x01000007: "x64", 0x0100000c: "arm64" };
 const PE_MACHINES = { 0x014c: "ia32", 0x01c4: "arm", 0x8664: "x64", 0xaa64: "arm64" };
-const hostTriple = () => `${process.platform}-${process.arch}`;
 const architecture = (table, code) => table[code] ?? `0x${code.toString(16)}`;
 
 // Only the container header is read, and only far enough to name the machine a
@@ -254,7 +254,7 @@ async function inspectAddon(staged, path) {
   if (binary.platform !== process.platform || !binary.architectures.includes(process.arch)) {
     throw new Error(`native addon ${path} is built for `
       + `${binary.platform}-${binary.architectures.join("/")} (${binary.format}), `
-      + `but this export runs on ${hostTriple()}`);
+      + `but this export runs on ${hostTarget()}`);
   }
   // Bun loads Node-API addons only. A V8/NAN addon is a valid shared library for
   // this host and would pass every check above, then fail at require.
@@ -301,6 +301,23 @@ async function hashFile(absolute) {
   return hasher.digest("hex");
 }
 
+// The runtime is either the descriptor the resolver produced (src/runtime.mjs) or a
+// bare addon path, which is what a repository script and bin/blitsen.mjs hand over.
+// Either way the export records what it linked against — issue #73.
+export function runtimeRecord(runtime) {
+  const record = typeof runtime === "string" ? { path: runtime } : runtime ?? {};
+  if (!record.path) {
+    throw new Error("native addon is unavailable; reinstall blitsen for this platform");
+  }
+  return {
+    path: record.path,
+    target: record.target ?? hostTarget(),
+    version: record.version ?? null,
+    package: record.package ?? null,
+    source: record.source ?? "path",
+  };
+}
+
 function launcherSource(assets, options) {
   const embedded = options.layout === "embedded";
   const imports = embedded
@@ -324,12 +341,19 @@ for (const asset of assets) {
   if (!await Bun.file(join(root, ...asset.path.split("/"))).exists())
     throw new Error("missing side-loaded asset: " + asset.path + " (expected under " + root + ")");
 }`;
+  const { path: _path, ...stamp } = options.runtime;
   return `import addonPath from "./blitsen.node" with { type: "file" };
 import { createRequire } from "node:module";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 ${imports}
+
+// Issue #73: an export names the runtime it was built against, in the binary and at
+// run time. Parsed from one string so the record survives bundling as a contiguous
+// literal a shipped artifact can be searched for. The linking path is deliberately
+// absent: it is machine-local.
+globalThis[Symbol.for("blitsen.runtime")] = JSON.parse(${JSON.stringify(JSON.stringify(stamp))});
 
 const assets = [
   ${manifest}
@@ -350,6 +374,7 @@ try {
       native.evaluateDocumentHarness(process.env.BLITSEN_STANDALONE_CHECK_ASSERT);
     native.snapshotDocumentHarness();
     console.log("Blitsen standalone check passed (${assets.length} ${options.layout} assets)");
+    console.log("Blitsen runtime: " + ${JSON.stringify(describeRuntime(options.runtime))});
   } else {
     engine.openDirectory({
       root,
@@ -400,9 +425,10 @@ export async function buildStandalone(
     assets = "embedded", icon = null, bundleId = null, appVersion = null, sign = null,
     platform = process.platform, progress = () => {},
   },
-  nativePath,
+  runtime,
 ) {
-  if (!nativePath) throw new Error("native addon is unavailable; reinstall blitsen for this platform");
+  const linkedRuntime = runtimeRecord(runtime);
+  const nativePath = linkedRuntime.path;
   if (!["embedded", "side-loaded"].includes(assets)) {
     throw new Error(`unknown asset layout: ${assets} (expected embedded or side-loaded)`);
   }
@@ -476,7 +502,7 @@ export async function buildStandalone(
     await copyFile(nativePath, join(staging, "blitsen.node"));
     const launcher = join(staging, "launcher.mjs");
     await writeFile(launcher, launcherSource(manifest, {
-      width, height, title, layout: assets, assetDirectory,
+      width, height, title, layout: assets, assetDirectory, runtime: linkedRuntime,
     }));
     const result = await Bun.build({
       entrypoints: [launcher],
@@ -528,6 +554,7 @@ export async function buildStandalone(
     });
     return {
       outfile: executable,
+      runtime: linkedRuntime,
       layout: assets,
       assets: manifest.length,
       manifest,

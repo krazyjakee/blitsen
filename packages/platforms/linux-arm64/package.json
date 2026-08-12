@@ -1,0 +1,24 @@
+{
+  "name": "@blitsen/linux-arm64",
+  "version": "0.0.1",
+  "description": "Blitsen native runtime for linux-arm64",
+  "license": "MIT OR Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/krazyjakee/blitsen.git",
+    "directory": "packages/platforms/linux-arm64"
+  },
+  "homepage": "https://github.com/krazyjakee/blitsen#readme",
+  "bugs": "https://github.com/krazyjakee/blitsen/issues",
+  "os": ["linux"],
+  "cpu": ["arm64"],
+  "exports": {
+    "./package.json": "./package.json",
+    "./blitsen.node": "./blitsen.node"
+  },
+  "files": ["blitsen.node"],
+  "preferUnplugged": true,
+  "publishConfig": {
+    "access": "public"
+  }
+}

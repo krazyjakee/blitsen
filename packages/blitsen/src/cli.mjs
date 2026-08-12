@@ -1,8 +1,11 @@
-import { access, readFile, realpath } from "node:fs/promises";
+import { access, realpath } from "node:fs/promises";
 import { constants, watch as watchFs } from "node:fs";
 import { extname, join, normalize, resolve } from "node:path";
 import { loadConfig, runBuildCommand } from "./config.mjs";
 import { doctorApplication, formatDiagnostic } from "./doctor.mjs";
+import { buildStandalone } from "./export.mjs";
+import { describeRuntime, hostTarget, openRuntime, packageVersion, resolveRuntime, TARGETS }
+  from "./runtime.mjs";
 
 const HELP = `Usage: blitsen <directory> [options]
        blitsen build [directory] [options]
@@ -35,11 +38,9 @@ Options:
   -h, --help         Show help
   -v, --version      Show version`;
 
-// Single source of truth: the published package manifest, not a literal.
-export async function packageVersion() {
-  const manifest = new URL("../package.json", import.meta.url);
-  return JSON.parse(await readFile(manifest, "utf8")).version;
-}
+// The resolver owns it now, because the version pin is checked there; still on this
+// module's surface, which is where callers ask for it.
+export { packageVersion };
 
 const PACKAGE_OPTIONS = { "--icon": "icon", "--bundle-id": "bundleId", "--app-version": "appVersion", "--sign": "sign" };
 const BUILD_OPTIONS = ["--out", "--outfile", "--name", "--target", "--include", "--addon", "--assets",
@@ -47,11 +48,8 @@ const BUILD_OPTIONS = ["--out", "--outfile", "--name", "--target", "--include", 
 const VALUE_OPTIONS = ["--width", "--height", "--title", ...BUILD_OPTIONS];
 // A build-only switch: doctor's own exit code must keep meaning what it says.
 const BUILD_FLAGS = ["--accept-errors"];
-// TECH.md §11: one binary package per target. Phase 1 links the host's addon, so
-// every other target is refused rather than silently built for the host.
-const TARGETS = ["darwin-arm64", "darwin-x64", "linux-arm64", "linux-x64", "win32-arm64", "win32-x64"];
-const hostTarget = () => `${process.platform}-${process.arch}`;
-
+// TECH.md §11: one binary package per target (src/runtime.mjs). Phase 1 links the
+// host's addon, so every other target is refused rather than silently built for the host.
 function checkTarget(value) {
   if (!TARGETS.includes(value)) {
     throw new Error(`unknown --target ${value} (expected one of: ${TARGETS.join(", ")})`);
@@ -230,8 +228,18 @@ export function watchApplication(root, runtime, output = console, debounceMs = 1
   };
 }
 
+// bin/blitsen.mjs loads whatever addon it can see without resolution work:
+// BLITSEN_NATIVE_PATH, or one staged beside the package. Everything else — the
+// platform package npm installed, an addon this checkout built — resolves here,
+// and naming the platform it wanted is the point of failing here rather than there.
+async function hostRuntime() {
+  const resolved = await resolveRuntime();
+  return { ...openRuntime(resolved), build: options => buildStandalone(options, resolved) };
+}
+
 export async function main(args, output = console, runtime = null) {
   try {
+    let active = runtime;
     const options = parseArgs(args);
     if (options.help) {
       output.log(HELP);
@@ -244,7 +252,8 @@ export async function main(args, output = console, runtime = null) {
     if (options.command === "build") {
       // Checked before anything runs: the user's build command must not be spent
       // on an export that cannot link.
-      if (!runtime?.build) {
+      active ??= await hostRuntime();
+      if (!active?.build) {
         throw new Error("native build runtime is unavailable; reinstall blitsen for this platform");
       }
       if (options.directory === null) await applyConfiguration(options, output);
@@ -282,34 +291,38 @@ export async function main(args, output = console, runtime = null) {
       }
       // Steps ③–⑤ report themselves as they run: only the exporter knows when
       // each one finished, and a long link should not look like a hang.
-      const result = await runtime.build({
+      const result = await active.build({
         ...application,
         ...options,
         outfile: buildOutfile(options),
         progress: event => reportStep(output, event),
       });
       output.log(`Built ${result.outfile} (${result.assets} assets, ${result.bytes} bytes)`);
+      // Issue #73: the export records the runtime it linked, so the line that
+      // announces the artifact names it too.
+      if (result.runtime) output.log(`Runtime: ${describeRuntime(result.runtime)}`);
       if (result.assetDirectory) output.log(`Side-loaded assets: ${result.assetDirectory}`);
       output.log("Phase 1 exports are architecture proofs and are not yet cleared for redistribution.");
       return 0;
     }
-    if (!runtime?.openDirectory) {
+    active ??= await hostRuntime();
+    if (!active?.openDirectory) {
       throw new Error("native addon is unavailable; reinstall blitsen for this platform");
     }
-    await runtime.openDirectory({ ...application, ...options });
-    const watcher = runtime.reloadCSS && runtime.reloadDirectory
-      ? watchApplication(application.root, runtime, output)
+    await active.openDirectory({ ...application, ...options });
+    const watcher = active.reloadCSS && active.reloadDirectory
+      ? watchApplication(application.root, active, output)
       : null;
     try {
-      if (runtime.pumpWindow) {
+      if (active.pumpWindow) {
         const frameInterval = 1000 / 60;
         let nextFrame = performance.now();
-        while (runtime.pumpWindow()) {
+        while (active.pumpWindow()) {
           nextFrame += frameInterval;
           const now = performance.now();
           if (nextFrame < now - frameInterval) nextFrame = now;
           const delay = Math.max(0, nextFrame - now);
-          await (runtime.waitForNextFrame?.(delay)
+          await (active.waitForNextFrame?.(delay)
             ?? new Promise(resolve => setTimeout(resolve, delay)));
         }
       }

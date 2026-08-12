@@ -791,6 +791,57 @@ blitsen                        ← thin JS: CLI, config, TypeScript definitions
 - Cross-platform export (`blitsen build --target win32-x64` from Linux) requires that target's
   package, which the CLI can fetch on demand rather than at install.
 
+The six manifests live in `packages/platforms/`, one directory per target, each declaring its
+`os`/`cpu` pair and a single `blitsen.node`. **None is published, and only `linux-x64` is built
+today**: no binary is committed, the other five have no runner, and `.github/workflows/release.yml`
+is manual-dispatch and packs rather than publishes. They are deliberately not workspace members —
+six unpublished names in the root lockfile would break `bun install --frozen-lockfile`.
+
+### Resolving the runtime
+
+`packages/blitsen/src/runtime.mjs` answers one question — where is this host's addon — in a
+fixed order, and every consumer shares that answer: the CLI's `run` and `build`, and the
+exporter, which links whatever was resolved rather than reaching into `target/` itself.
+
+1. `BLITSEN_NATIVE_PATH`, an explicit addon path or `file:` URL. Unversioned by construction: it
+   is the escape hatch the repository's own harnesses and example scripts use.
+2. `@blitsen/<platform>-<arch>`, found by resolving `@blitsen/<target>/package.json` through
+   ordinary package resolution rather than by walking `node_modules`, so workspaces, pnpm's store
+   and yarn PnP all resolve without special cases.
+3. An addon this checkout built into `target/release/`, so a clone that ran
+   `cargo build --release -p blitsen-node` needs no install at all.
+4. Otherwise it refuses, naming the platform and saying that its package is not published —
+   the same shape as `--target`'s refusal, and for the same reason: a runtime that silently
+   isn't the one you asked for is worse than a build that stops.
+
+### Runtime version pinning
+
+The platform package locks to the JS package **exactly** — `blitsen@X` declares
+`"@blitsen/<target>": "X"`, no range. The two halves are one Node-API ABI plus one launcher
+contract, built from the same commit and tested only as a pair; a range would license a
+combination nobody ran. A mismatch is therefore an error, not a warning, raised at resolution
+before a build command runs, and it names both versions and both ways out (move `blitsen`, or move
+the runtime).
+
+An application pins the runtime by pinning `blitsen` — its `devDependencies` entry and its
+lockfile, the mechanism it already has. Blitsen deliberately adds no second pin in its own config:
+a runtime version in `package.json`'s `blitsen` key could disagree with the dependency that
+installs it, and then one of the two is lying. Deliberately staying on an older runtime means
+staying on the matching `blitsen`, which keeps working and stays fetchable — nothing is
+unpublished — for as long as npm serves it.
+
+Every export records the runtime it linked: target, version, package name and how it was resolved,
+stamped into the executable as a contiguous literal (`Symbol.for("blitsen.runtime")`, readable with
+`strings`) and reported on the `blitsen build` line that announces the artifact. So an artifact
+whose rendering is in question can name what produced it, which is also the answer to a saved
+export config outliving a runtime release: the config never carried a version, the artifact
+always does.
+
+Support window: the current minor and the one before it. Older versions keep working; a report
+against them is answered with an upgrade. A runtime change that alters rendering is not silent —
+it re-records the committed layout goldens (§14), so it arrives as a reviewable diff and a release
+note rather than as a surprise in a user's window.
+
 ### Consequence for the Phase 1 → Phase 2 transition
 
 This packaging boundary is what makes the host-model change (§2) invisible to users. In Phase 1
@@ -927,8 +978,10 @@ Rules that, if broken, cost a rewrite rather than a refactor:
     Reconsider: a minimal in-memory `history` may be a v1 requirement rather than a "later".
 11. **Binary size vs. platform package count** — six prebuilt runtimes to build, sign, notarise
     and publish per release. What is the CI cost, and can it be cut with cross-compilation?
-12. **Runtime version pinning** — does the platform package version lock to the JS package
-    exactly, and what happens when an app's saved export config outlives a runtime release?
+12. **Runtime version pinning: decided.** The platform package locks to the JS package exactly,
+    the application pins the pair by pinning `blitsen`, a mismatch is a hard error at resolution,
+    and every export records the runtime it linked so an artifact can name what produced it. See
+    §11; the mechanical parts are implemented, the support window is policy.
 
 ---
 
