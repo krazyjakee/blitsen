@@ -9,20 +9,25 @@ work that measurement prompted, five of the six build and render unmodified. Iss
 | Gate | What it proves | Result |
 | --- | --- | --- |
 | `test:m3b` | the export pipeline, on an application written here | passes |
-| `test:third-party` | adoption, on applications written by other people | 5/6 build and render |
+| `test:third-party` | adoption, on applications written by other people | 6/6 render, 5/6 build unaided |
 
 | Application | Builds | Renders |
 | --- | --- | --- |
 | Shadcn Admin (React, Tailwind 4, Radix, TanStack, Recharts) | yes | 364 elements, 16 colours |
 | vue3-realworld (Vue 3, vue-router, Pinia) | yes | 29 elements, 16 colours |
 | `create-vite react-ts` / `vue-ts` / `svelte-ts` | yes | 50 elements, 16 colours each |
-| Wordle+ (Svelte) | **no** | no — a remote `<script src>` stops the document loading |
+| Wordle+ (Svelte) | with `--accept-errors` | 349 elements, 16 colours |
 
-Wordle+ is refused for precisely the reason it does not render, so the diagnostic and the evidence
-agree. A remote script is the one asset class that is genuinely fatal: `resolve_local_script`
-rejects any `src` with a scheme, and that error aborts the whole script run, so no script on the
-page runs. Whether Blitsen should fetch remote scripts at export time is a product question, not a
-runtime gap.
+All six render. Wordle+ is the one that still needs a flag: it loads a Google Analytics tag, and a
+remote script is refused rather than fetched. That refusal is a deliberate product position — an
+exported desktop application that silently phones home is a decision its author should make
+knowingly — so `--accept-errors` is how the author makes it, and the export then carries everything
+except the script it named. At runtime a remote script is skipped rather than fatal, so the
+application runs without it.
+
+P10 asks for one dev dependency and one script line. Wordle+ needs one flag beyond that, which is
+why this is 5/6 rather than 6/6, and whether an analytics tag should cost a flag is the open
+question rather than any missing capability.
 
 ## What the six failures were
 

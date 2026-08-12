@@ -300,6 +300,15 @@ describe("directory CLI", () => {
     expect(plan.unreferenced).toContain("assets/orphan.txt");
   });
 
+  // An error names something the export will not carry. Refusing by default is
+  // right; refusing with no way through makes a remote analytics tag fatal to an
+  // application that otherwise runs perfectly.
+  test("a compatibility error names the way through", () => {
+    expect(parseArgs(["build", "dist", "--accept-errors"]).acceptErrors).toBeTrue();
+    expect(() => parseArgs(["doctor", "dist", "--accept-errors"]))
+      .toThrow("--accept-errors is only valid with build");
+  });
+
   test("keeps unreferenced output that an --include glob asks for", async () => {
     const plan = await planIngest(viteBase, { include: ["assets/*.txt"] });
     expect(plan.files.some(file => file.relative === "assets/orphan.txt")).toBeTrue();

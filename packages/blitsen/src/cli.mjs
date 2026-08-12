@@ -23,6 +23,7 @@ Options:
   --outfile <path>   Alias of --out
   --target <triple>  Build target; only the host target is supported (see #72)
   --include <glob>   Keep an unreferenced output file (repeatable)
+  --accept-errors    Export despite compatibility errors, accepting what they cost
   --assets <layout>  embedded (default) or side-loaded next to the executable
   --icon <path>      Application icon: PNG, or a platform-native .ico/.icns/.svg
   --bundle-id <id>   macOS CFBundleIdentifier (default: com.blitsen.<title>)
@@ -43,6 +44,8 @@ const PACKAGE_OPTIONS = { "--icon": "icon", "--bundle-id": "bundleId", "--app-ve
 const BUILD_OPTIONS = ["--out", "--outfile", "--name", "--target", "--include", "--assets",
   ...Object.keys(PACKAGE_OPTIONS)];
 const VALUE_OPTIONS = ["--width", "--height", "--title", ...BUILD_OPTIONS];
+// A build-only switch: doctor's own exit code must keep meaning what it says.
+const BUILD_FLAGS = ["--accept-errors"];
 // TECH.md §11: one binary package per target. Phase 1 links the host's addon, so
 // every other target is refused rather than silently built for the host.
 const TARGETS = ["darwin-arm64", "darwin-x64", "linux-arm64", "linux-x64", "win32-arm64", "win32-x64"];
@@ -100,6 +103,9 @@ export function parseArgs(args) {
     } else if (argument === "--force") {
       if (command !== "build") throw new Error("--force is only valid with build");
       options.force = true;
+    } else if (BUILD_FLAGS.includes(argument)) {
+      if (command !== "build") throw new Error(`${argument} is only valid with build`);
+      options.acceptErrors = true;
     } else if (argument === "--json") {
       if (command !== "doctor") throw new Error("--json is only valid with doctor");
       options.json = true;
@@ -263,10 +269,11 @@ export async function main(args, output = console, runtime = null) {
       for (const diagnostic of report.diagnostics.filter(item => item.severity === "error")) {
         output.error(`${NOTE_INDENT}${formatDiagnostic(diagnostic)}`);
       }
-      if (report.errors > 0) {
+      if (report.errors > 0 && !options.acceptErrors) {
         throw new Error(`${report.errors} compatibility `
           + `${report.errors === 1 ? "error blocks" : "errors block"} this build; `
-          + "run 'blitsen doctor' for the full report");
+          + "run 'blitsen doctor' for the full report, "
+          + "or --accept-errors to export anyway with the reported behaviour missing");
       }
       // Steps ③–⑤ report themselves as they run: only the exporter knows when
       // each one finished, and a long link should not look like a hang.
