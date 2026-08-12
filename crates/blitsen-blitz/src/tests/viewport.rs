@@ -266,6 +266,83 @@ fn viewport_contents_composite_between_dom_layers_and_inside_every_clip() {
     );
 }
 
+/// Blob identity of every composited surface recorded into a scene.
+///
+/// Vello keys its image atlas on this id, so an id it has already seen is an
+/// atlas hit and an id it has not is one upload of the surface.
+fn surface_upload_ids(scene: &Scene) -> Vec<u64> {
+    scene
+        .commands
+        .iter()
+        .filter_map(|command| match command {
+            RenderCommand::Fill(fill) => match &fill.brush {
+                Paint::Image(brush) => Some(brush.image.data.id()),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn viewport_costs_one_upload_per_written_frame_and_none_otherwise() {
+    let mut dom = viewport_document(
+        r#"<blitsen-view id="view" style="width: 40px; height: 20px"></blitsen-view>"#,
+        1.0,
+    );
+    let snapshot = dom.flush_layout().unwrap();
+    let view = dom.get_element_by_id("view").unwrap().unwrap();
+    let byte_length = dom
+        .native_viewport_surface(view, snapshot)
+        .unwrap()
+        .byte_length();
+
+    let paint = |dom: &mut BlitzDom| {
+        let mut scene = Scene::new();
+        blitz_paint::paint_scene(&mut scene, dom.document_mut().as_mut(), 1.0, 60, 40, 0, 0);
+        surface_upload_ids(&scene)
+    };
+
+    assert!(
+        paint(&mut dom).is_empty(),
+        "a viewport the application has not drawn uploads nothing"
+    );
+
+    dom.write_native_viewport(view, &vec![0x11; byte_length])
+        .unwrap();
+    let first = paint(&mut dom);
+    assert_eq!(
+        first.len(),
+        1,
+        "one written frame is one composited surface"
+    );
+
+    // The application skips a frame. Blitz re-records the scene, but the
+    // surface blob is the same allocation, so Vello re-uses its atlas entry
+    // instead of copying the frame again.
+    assert_eq!(
+        paint(&mut dom),
+        first,
+        "a frame the application leaves alone costs no second upload"
+    );
+
+    // Even byte-identical contents are a new frame: the application said so by
+    // writing, and nothing may assume its pixels are unchanged.
+    dom.write_native_viewport(view, &vec![0x11; byte_length])
+        .unwrap();
+    let second = paint(&mut dom);
+    assert_eq!(second.len(), 1);
+    assert_ne!(second, first, "a written frame is uploaded once");
+
+    // Both scene recordings hold the surface, so there is one composited image
+    // and no second full-frame copy alongside it.
+    assert_eq!(
+        paint(&mut dom).len(),
+        1,
+        "the surface is composited once per frame, not blitted a second time"
+    );
+}
+
 #[test]
 fn viewport_pixels_reach_the_composited_frame() {
     let mut dom = viewport_document(

@@ -4,8 +4,8 @@ import { buildAddon, repository } from "./build-addon.mjs";
 const addon = await buildAddon({ purpose: "native-view demo" });
 
 console.log("blitsen-view: an application-drawn surface composited into the DOM frame.");
-console.log("Expect a gradient inside a rounded stage, red visible only where the corners");
-console.log("clip it, and a DOM chip drawn on top.");
+console.log("Expect an animating gradient with its own rounded corners, the red DOM underlay");
+console.log("showing around and behind it, and a DOM chip drawn on top of it.");
 const application = Bun.spawnSync({
   cmd: [
     process.execPath,
