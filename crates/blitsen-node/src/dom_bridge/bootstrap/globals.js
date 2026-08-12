@@ -6,6 +6,25 @@
   for (const method of ["addEventListener", "removeEventListener", "dispatchEvent"])
     Object.defineProperty(globalThis, method,
       { value: EventTarget.prototype[method].bind(globalThis), configurable: true });
+  // Document scrolling, under both the option-bag and the two-argument
+  // spellings. The scrolling element is where the document's offsets live, so
+  // moving the window is writing to it — there is no second scroll position to
+  // keep in step. `behavior` is accepted and ignored, as it is on
+  // `scrollIntoView`: the scroll lands rather than animating to its target.
+  const scrollArguments = (first, second) => typeof first === "object" && first !== null
+    ? { left: first.left, top: first.top } : { left: first, top: second };
+  const scrollTo = (first, second) => {
+    const { left, top } = scrollArguments(first, second);
+    const element = document.scrollingElement;
+    if (left !== undefined) element.scrollLeft = Number(left);
+    if (top !== undefined) element.scrollTop = Number(top);
+  };
+  const scrollBy = (first, second) => {
+    const { left, top } = scrollArguments(first, second);
+    const element = document.scrollingElement;
+    if (left !== undefined) element.scrollLeft += Number(left);
+    if (top !== undefined) element.scrollTop += Number(top);
+  };
   const globals = {
     EventTarget, Node, Element, NodeList, Document, DocumentFragment, DOMTokenList,
     Attr, NamedNodeMap,
@@ -18,7 +37,9 @@
     BlitsenViewElement, BlitsenViewSurface,
     getComputedStyle, matchMedia, MediaQueryList, MediaQueryListEvent,
     Event, MouseEvent, KeyboardEvent, CustomEvent, SubmitEvent, PopStateEvent, HashChangeEvent,
-    MessageEvent, CloseEvent,
+    MessageEvent, CloseEvent, FocusEvent, InputEvent, PointerEvent, WheelEvent,
+    CSS, DOMParser,
+    scrollTo, scrollBy, scroll: scrollTo,
     Headers, Request, Response, Blob, AbortController, AbortSignal, fetch, stop, WebSocket,
     Location, History,
     requestAnimationFrame, cancelAnimationFrame,
@@ -91,6 +112,13 @@
   };
   Object.assign(globalThis, globals);
   globalThis.window = globalThis;
+  // The document's scroll offsets, under all four names the platform has given
+  // them. Accessors rather than values: `pageYOffset` is the same live reading
+  // as `scrollY`, not a copy taken when the bridge was installed.
+  for (const [name, axis] of [["scrollX", "scrollLeft"], ["pageXOffset", "scrollLeft"],
+    ["scrollY", "scrollTop"], ["pageYOffset", "scrollTop"]])
+    Object.defineProperty(globalThis, name, {
+      get: () => document.scrollingElement[axis], enumerable: true, configurable: true });
   // Absent, not stubbed: an unimplemented API must not exist, so feature
   // detection selects a fallback. The Phase 1 host supplies several of these
   // itself, and leaving those in place would make them disappear at the Phase 2
@@ -110,6 +138,17 @@
     "cookieStore", "screen", "Notification", "caches",
     "IntersectionObserver", "PerformanceObserver",
     "CSSStyleRule", "CSSKeyframesRule", "CSSKeyframeRule", "CSSMediaRule",
-    "customElements", "ShadowRoot", "DOMParser"]) {
+    // Custom elements stay absent by decision rather than by omission. Upgrading
+    // an element after it is parsed, running the lifecycle callbacks and
+    // ordering reactions is a real piece of machinery, and `<blitsen-view>` is
+    // registered natively rather than through a registry — so a user-defined
+    // element would either need its own registry beside that one or a merge of
+    // the two. Neither is worth doing before something measured asks for it, and
+    // an absent `customElements` is a polyfill a library installs itself.
+    "customElements", "ShadowRoot",
+    // Selection and ranges: a large surface, and nothing measured has reached
+    // for it. `getSelection` returning null would be worse than its absence,
+    // because a caller checks the object and not the property.
+    "getSelection", "Range"]) {
     try { delete globalThis[key]; } catch {}
   }

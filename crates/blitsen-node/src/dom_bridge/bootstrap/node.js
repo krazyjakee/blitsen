@@ -67,6 +67,32 @@
       for (let parent = root.parentNode; parent; parent = parent.parentNode) root = parent;
       return root;
     }
+    // Where `other` sits relative to this node, as the DOM's bitmask. Answered
+    // by walking to the common ancestor and comparing child positions there,
+    // which is the same order a tree walk would visit them in. Two nodes in
+    // different trees are DISCONNECTED, and the direction reported for that
+    // case is arbitrary but stable — hence IMPLEMENTATION_SPECIFIC alongside it,
+    // exactly as a browser reports it.
+    compareDocumentPosition(other) {
+      if (!(other instanceof Node)) throw new TypeError("argument is not a Node");
+      if (other === this) return 0;
+      const chain = node => {
+        const ancestors = [];
+        for (let current = node; current; current = current.parentNode) ancestors.unshift(current);
+        return ancestors;
+      };
+      const mine = chain(this);
+      const theirs = chain(other);
+      if (mine[0] !== theirs[0]) return 1 + 2 + 32;
+      let depth = 0;
+      while (mine[depth] === theirs[depth]) depth += 1;
+      // One chain running out first is the containment case: the shorter node is
+      // the ancestor, and an ancestor precedes its descendant in document order.
+      if (depth === mine.length) return 16 + 4;
+      if (depth === theirs.length) return 8 + 2;
+      const siblings = [...mine[depth - 1].childNodes];
+      return siblings.indexOf(mine[depth]) < siblings.indexOf(theirs[depth]) ? 4 : 2;
+    }
     // Merges adjacent text and drops the empty ones, depth first. A comment
     // between two text nodes separates them, which is why any other child ends
     // the run rather than being skipped over.

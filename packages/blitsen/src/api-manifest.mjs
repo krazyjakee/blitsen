@@ -30,6 +30,12 @@ const CATALOGUE = {
     "Element.setAttributeNS", "Element.removeAttributeNS", "Element.hasAttributes",
     "Element.getAttributeNames", "Element.toggleAttribute", "Element.getClientRects",
     "Element.getRootNode", "Element.normalize", "Element.attributes",
+    "Element.insertAdjacentElement", "Element.innerText", "Element.compareDocumentPosition",
+    "Element.offsetParent", "Element.clientTop", "Element.clientLeft",
+    "Element.hidden", "Element.tabIndex", "Element.title",
+    "Document.title", "Document.dir", "Document.getElementsByName",
+    "Document.elementFromPoint", "Document.elementsFromPoint", "Document.scrollingElement",
+    "Document.characterSet", "Document.documentURI", "Document.hasFocus", "Document.adoptNode",
     "HTMLLinkElement.relList", "HTMLTemplateElement.content", "DOMTokenList.supports",
     "Document.createElementNS", "Document.createComment", "Document.createDocumentFragment",
     "Document.getElementsByTagName", "Document.getElementsByClassName", "Document.importNode",
@@ -59,7 +65,20 @@ const CATALOGUE = {
     "HTMLFormElement.reset", "HTMLFormElement.action", "HTMLFormElement.method",
     "HTMLFormElement.checkValidity"],
   WEB_EVENTS: ["EventTarget", "Event", "CustomEvent", "SubmitEvent", "MouseEvent",
-    "KeyboardEvent", "addEventListener", "removeEventListener", "dispatchEvent"],
+    "KeyboardEvent", "FocusEvent", "InputEvent", "PointerEvent", "WheelEvent",
+    "addEventListener", "removeEventListener", "dispatchEvent"],
+  // Document scrolling. `scroll` and `scrollTo` are the same function under two
+  // names, as they are on Window. The patterns are qualified because the bare
+  // words are far too ordinary to find in a bundle: `scroll` alone matches every
+  // scroll listener, class name and CSS property in the file.
+  WEB_SCROLL: [["scrollTo", "\\bwindow\\.scrollTo\\s*\\("],
+    ["scrollBy", "\\bwindow\\.scrollBy\\s*\\("], ["scroll", "\\bwindow\\.scroll\\s*\\("],
+    ["scrollX", "\\b(?:window|globalThis)\\.scrollX\\b"],
+    ["scrollY", "\\b(?:window|globalThis)\\.scrollY\\b"],
+    ["pageXOffset", "\\bpageXOffset\\b"], ["pageYOffset", "\\bpageYOffset\\b"]],
+  // Selection and ranges, absent together: a caller that has a selection wants
+  // the ranges in it, so implementing either alone would answer half a question.
+  WEB_SELECTION: [["getSelection", "\\b(?:window|document)\\.getSelection\\s*\\("], "Range"],
   WEB_SCHEDULING: ["requestAnimationFrame", "cancelAnimationFrame", "setTimeout", "clearTimeout",
     "setInterval", "clearInterval", "requestIdleCallback", "cancelIdleCallback"],
   WEB_NETWORK: ["fetch", "Headers", "Request", "Response", "Blob", "AbortController",
@@ -106,6 +125,7 @@ const CATALOGUE = {
   // absent is the rest of CSSOM — the rule subclasses, a rule's declarations and
   // selector, constructible and adopted sheets, and `disabled`.
   WEB_STYLE: ["getComputedStyle", "matchMedia", "MediaQueryList", "MediaQueryListEvent",
+    ["CSS", "\\bCSS\\.(?:escape|supports)\\s*\\("],
     "CSSStyleSheet", "StyleSheetList", "CSSRule", "CSSRuleList", "HTMLStyleElement",
     "CSSStyleRule", "CSSKeyframesRule", "CSSKeyframeRule", "CSSMediaRule",
     "document.styleSheets", "document.adoptedStyleSheets",
@@ -236,8 +256,10 @@ const DIAGNOSTICS = {
     "This part of CSSOM is not implemented; a sheet's rules are its source text.",
     "Insert or delete a whole rule through the sheet of a <style> element, and read values "
     + "back with getComputedStyle."],
-  WEB_COMPONENTS: ["warning", "Custom elements, shadow DOM and DOM parsing are not implemented.",
+  WEB_COMPONENTS: ["warning", "Custom elements and shadow DOM are not implemented; DOMParser is.",
     "Render with ordinary elements the bundler already emits."],
+  WEB_SELECTION: ["warning", "Text selection and ranges are not implemented.",
+    "Track the selected range in application state rather than reading it back from the DOM."],
 };
 
 // Diagnostics that are not an absence: an implemented API used in a way an
@@ -412,6 +434,12 @@ export function extractRuntimeSurface(script) {
   for (const name of stringList(script,
     /for \(const \[name, value\] of (\[\[[\s\S]*?\]\])\)\n\s*Object\.defineProperty\(globalThis, name,/,
     "location and history")) globals.add(name);
+  // The document's scroll offsets, which are accessors rather than values and
+  // so are not in the `globals` object literal. Only the first name of each
+  // pair is a global; the second is the element property it reads.
+  for (const [index, name] of stringList(script,
+    /for \(const \[name, axis\] of (\[\[[\s\S]*?\]\])\)\n\s*Object\.defineProperty\(globalThis, name,/,
+    "the scroll offsets").entries()) if (index % 2 === 0) globals.add(name);
   const deleted = new Set(stringList(script,
     /for \(const key of (\[[\s\S]*?\])\) \{\n\s*try \{ delete globalThis\[key\]; \} catch \{\}/,
     "the deliberately absent globals"));

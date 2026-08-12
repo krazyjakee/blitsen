@@ -363,7 +363,7 @@
       "kind": "member",
       "owner": "Element.prototype",
       "member": "scrollIntoView",
-      "status": "absent",
+      "status": "implemented",
       "code": "WEB_DOM",
       "pattern": null
     },
@@ -534,6 +534,177 @@
       "kind": "member",
       "owner": "Element.prototype",
       "member": "attributes",
+      "status": "implemented",
+      "code": "WEB_DOM",
+      "pattern": null
+    },
+    {
+      "api": "Element.insertAdjacentElement",
+      "kind": "member",
+      "owner": "Element.prototype",
+      "member": "insertAdjacentElement",
+      "status": "implemented",
+      "code": "WEB_DOM",
+      "pattern": null
+    },
+    {
+      "api": "Element.innerText",
+      "kind": "member",
+      "owner": "Element.prototype",
+      "member": "innerText",
+      "status": "implemented",
+      "code": "WEB_DOM",
+      "pattern": null
+    },
+    {
+      "api": "Element.compareDocumentPosition",
+      "kind": "member",
+      "owner": "Element.prototype",
+      "member": "compareDocumentPosition",
+      "status": "implemented",
+      "code": "WEB_DOM",
+      "pattern": null
+    },
+    {
+      "api": "Element.offsetParent",
+      "kind": "member",
+      "owner": "Element.prototype",
+      "member": "offsetParent",
+      "status": "implemented",
+      "code": "WEB_DOM",
+      "pattern": null
+    },
+    {
+      "api": "Element.clientTop",
+      "kind": "member",
+      "owner": "Element.prototype",
+      "member": "clientTop",
+      "status": "implemented",
+      "code": "WEB_DOM",
+      "pattern": null
+    },
+    {
+      "api": "Element.clientLeft",
+      "kind": "member",
+      "owner": "Element.prototype",
+      "member": "clientLeft",
+      "status": "implemented",
+      "code": "WEB_DOM",
+      "pattern": null
+    },
+    {
+      "api": "Element.hidden",
+      "kind": "member",
+      "owner": "Element.prototype",
+      "member": "hidden",
+      "status": "implemented",
+      "code": "WEB_DOM",
+      "pattern": null
+    },
+    {
+      "api": "Element.tabIndex",
+      "kind": "member",
+      "owner": "Element.prototype",
+      "member": "tabIndex",
+      "status": "implemented",
+      "code": "WEB_DOM",
+      "pattern": null
+    },
+    {
+      "api": "Element.title",
+      "kind": "member",
+      "owner": "Element.prototype",
+      "member": "title",
+      "status": "implemented",
+      "code": "WEB_DOM",
+      "pattern": null
+    },
+    {
+      "api": "Document.title",
+      "kind": "member",
+      "owner": "Document.prototype",
+      "member": "title",
+      "status": "implemented",
+      "code": "WEB_DOM",
+      "pattern": null
+    },
+    {
+      "api": "Document.dir",
+      "kind": "member",
+      "owner": "Document.prototype",
+      "member": "dir",
+      "status": "implemented",
+      "code": "WEB_DOM",
+      "pattern": null
+    },
+    {
+      "api": "Document.getElementsByName",
+      "kind": "member",
+      "owner": "Document.prototype",
+      "member": "getElementsByName",
+      "status": "implemented",
+      "code": "WEB_DOM",
+      "pattern": null
+    },
+    {
+      "api": "Document.elementFromPoint",
+      "kind": "member",
+      "owner": "Document.prototype",
+      "member": "elementFromPoint",
+      "status": "implemented",
+      "code": "WEB_DOM",
+      "pattern": null
+    },
+    {
+      "api": "Document.elementsFromPoint",
+      "kind": "member",
+      "owner": "Document.prototype",
+      "member": "elementsFromPoint",
+      "status": "implemented",
+      "code": "WEB_DOM",
+      "pattern": null
+    },
+    {
+      "api": "Document.scrollingElement",
+      "kind": "member",
+      "owner": "Document.prototype",
+      "member": "scrollingElement",
+      "status": "implemented",
+      "code": "WEB_DOM",
+      "pattern": null
+    },
+    {
+      "api": "Document.characterSet",
+      "kind": "member",
+      "owner": "Document.prototype",
+      "member": "characterSet",
+      "status": "implemented",
+      "code": "WEB_DOM",
+      "pattern": null
+    },
+    {
+      "api": "Document.documentURI",
+      "kind": "member",
+      "owner": "Document.prototype",
+      "member": "documentURI",
+      "status": "implemented",
+      "code": "WEB_DOM",
+      "pattern": null
+    },
+    {
+      "api": "Document.hasFocus",
+      "kind": "member",
+      "owner": "Document.prototype",
+      "member": "hasFocus",
+      "status": "implemented",
+      "code": "WEB_DOM",
+      "pattern": null
+    },
+    {
+      "api": "Document.adoptNode",
+      "kind": "member",
+      "owner": "Document.prototype",
+      "member": "adoptNode",
       "status": "implemented",
       "code": "WEB_DOM",
       "pattern": null
@@ -1073,6 +1244,34 @@
       "pattern": "(?<![.\\w$])KeyboardEvent\\b"
     },
     {
+      "api": "FocusEvent",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_EVENTS",
+      "pattern": "(?<![.\\w$])FocusEvent\\b"
+    },
+    {
+      "api": "InputEvent",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_EVENTS",
+      "pattern": "(?<![.\\w$])InputEvent\\b"
+    },
+    {
+      "api": "PointerEvent",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_EVENTS",
+      "pattern": "(?<![.\\w$])PointerEvent\\b"
+    },
+    {
+      "api": "WheelEvent",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_EVENTS",
+      "pattern": "(?<![.\\w$])WheelEvent\\b"
+    },
+    {
       "api": "addEventListener",
       "kind": "global",
       "status": "implemented",
@@ -1092,6 +1291,69 @@
       "status": "implemented",
       "code": "WEB_EVENTS",
       "pattern": "(?<![.\\w$])dispatchEvent\\b"
+    },
+    {
+      "api": "scrollTo",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_SCROLL",
+      "pattern": "\\bwindow\\.scrollTo\\s*\\("
+    },
+    {
+      "api": "scrollBy",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_SCROLL",
+      "pattern": "\\bwindow\\.scrollBy\\s*\\("
+    },
+    {
+      "api": "scroll",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_SCROLL",
+      "pattern": "\\bwindow\\.scroll\\s*\\("
+    },
+    {
+      "api": "scrollX",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_SCROLL",
+      "pattern": "\\b(?:window|globalThis)\\.scrollX\\b"
+    },
+    {
+      "api": "scrollY",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_SCROLL",
+      "pattern": "\\b(?:window|globalThis)\\.scrollY\\b"
+    },
+    {
+      "api": "pageXOffset",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_SCROLL",
+      "pattern": "\\bpageXOffset\\b"
+    },
+    {
+      "api": "pageYOffset",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_SCROLL",
+      "pattern": "\\bpageYOffset\\b"
+    },
+    {
+      "api": "getSelection",
+      "kind": "global",
+      "status": "absent",
+      "code": "WEB_SELECTION",
+      "pattern": "\\b(?:window|document)\\.getSelection\\s*\\("
+    },
+    {
+      "api": "Range",
+      "kind": "global",
+      "status": "absent",
+      "code": "WEB_SELECTION",
+      "pattern": "(?<![.\\w$])Range\\b"
     },
     {
       "api": "requestAnimationFrame",
@@ -1861,6 +2123,13 @@
       "pattern": "(?<![.\\w$])MediaQueryListEvent\\b"
     },
     {
+      "api": "CSS",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_STYLE",
+      "pattern": "\\bCSS\\.(?:escape|supports)\\s*\\("
+    },
+    {
       "api": "CSSStyleSheet",
       "kind": "global",
       "status": "implemented",
@@ -2102,7 +2371,7 @@
     {
       "api": "DOMParser",
       "kind": "global",
-      "status": "absent",
+      "status": "implemented",
       "code": "WEB_COMPONENTS",
       "pattern": "(?<![.\\w$])DOMParser\\b"
     }
@@ -2464,8 +2733,14 @@
     },
     "WEB_COMPONENTS": {
       "severity": "warning",
-      "message": "Custom elements, shadow DOM and DOM parsing are not implemented.",
+      "message": "Custom elements and shadow DOM are not implemented; DOMParser is.",
       "guidance": "Render with ordinary elements the bundler already emits.",
+      "extra": null
+    },
+    "WEB_SELECTION": {
+      "severity": "warning",
+      "message": "Text selection and ranges are not implemented.",
+      "guidance": "Track the selected range in application state rather than reading it back from the DOM.",
       "extra": null
     }
   },

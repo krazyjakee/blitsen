@@ -42,9 +42,52 @@
     createDocumentFragment() { return createFragment(); }
     // There is one document, so importing a node is copying it.
     importNode(node, deep = false) { requireNode(node); return node.cloneNode(deep); }
+    // Matched on the attribute rather than through a selector, for the reason
+    // `getElementsByClassName` is: a name a framework generates is not
+    // guaranteed to survive being spliced into selector syntax unescaped.
+    getElementsByName(name) {
+      name = String(name);
+      return new NodeList([...this.querySelectorAll("[name]")]
+        .filter(element => element.getAttribute("name") === name));
+    }
+    // Hit testing, which the native window already does for every click, asked
+    // the other way round. `elementsFromPoint` is the same test read whole: the
+    // path is what the hit walked through to reach the target.
+    elementFromPoint(x, y) {
+      return wrap(call("hitTest", Number(x), Number(y))?.target ?? null);
+    }
+    elementsFromPoint(x, y) {
+      const hit = call("hitTest", Number(x), Number(y));
+      return hit ? [wrap(hit.target), ...hit.path.map(wrap)] : [];
+    }
     get body() { return wrap(call("body")); }
     get head() { return this.querySelector("head"); }
     get documentElement() { return wrap(call("documentElement")); }
+    // The element the document's own scroll offsets live on, and the one
+    // `window.scrollTo` moves. Standards mode, so it is the root element.
+    get scrollingElement() { return this.documentElement; }
+    // The `<title>` element's text, created on demand when the document has
+    // none: setting the title of a document without one is how a single-page
+    // application gives itself a window title.
+    get title() { return this.querySelector("title")?.textContent ?? ""; }
+    set title(value) {
+      let element = this.querySelector("title");
+      if (!element) (this.head ?? this.documentElement).appendChild(element = this.createElement("title"));
+      element.textContent = String(value);
+    }
+    get dir() { return this.documentElement?.getAttribute("dir") ?? ""; }
+    set dir(value) { this.documentElement?.setAttribute("dir", value); }
+    // Blitz decodes every document and subresource as UTF-8, so this is a fact
+    // about the runtime rather than a value sniffed out of the document.
+    get characterSet() { return "UTF-8"; }
+    get documentURI() { return location.href; }
+    // Whether this window is the focused one, which is not the same question as
+    // whether anything inside it is focused. The native window reports its own
+    // focus changes as lifecycle events, and this is that state read back.
+    hasFocus() { return windowHasFocus(); }
+    // There is one document, so adopting a node into it is a no-op that returns
+    // the node — the same reasoning `importNode` is a clone under.
+    adoptNode(node) { requireNode(node); return node; }
     get defaultView() { return globalThis; }
     // The same Location the window exposes. Assignment stays absent for the same
     // reason `location.href =` throws: it would be a navigation, which is not.
@@ -101,3 +144,82 @@
     }
     static [Symbol.hasInstance](value) { return value instanceof HTMLImageElement; }
   }
+
+  // What `parseFromString` hands back. There is one document in this runtime, so
+  // a parsed string cannot become a second one: it becomes a detached fragment,
+  // and `body` and `documentElement` are that fragment. The consequence is worth
+  // being explicit about — the fragment parser drops `<html>`, `<head>` and
+  // `<body>` tags, so a parsed document is not split into head and body, and
+  // `head` is therefore null rather than an empty element that would read as a
+  // document with nothing in its head. What this does serve is what callers
+  // actually do with it: walk, query, and read text back out of `body`.
+  class ParsedDocument extends DocumentFragment {
+    get body() { return this; }
+    get documentElement() { return this; }
+    get head() { return null; }
+    get title() { return this.querySelector("title")?.textContent ?? ""; }
+    getElementById(id) { return this.querySelector(`[id="${String(id).replace(/["\\]/g, "\\$&")}"]`); }
+    getElementsByTagName(name) { return this.querySelectorAll(String(name)); }
+  }
+
+  // Only `text/html`. The backend's parser is an HTML parser, and running XML
+  // through it would silently mis-parse rather than fail — so an XML type is
+  // refused, which a caller can feature-detect, instead of answered wrongly.
+  class DOMParser {
+    parseFromString(text, type = "text/html") {
+      if (String(type) !== "text/html")
+        throw new TypeError(`DOMParser supports text/html only, not "${type}"`);
+      const parsed = Object.setPrototypeOf(createFragment(), ParsedDocument.prototype);
+      // Through the operation rather than an `innerHTML` setter: the fragment's
+      // interface is `Node`'s, and the backing node is the detached element a
+      // fragment is parked under.
+      call("setInnerHTML", parsed[handle], String(text));
+      return parsed;
+    }
+  }
+
+  // `CSS.escape` is what a library calls before putting a generated identifier
+  // into a selector, and it is pure string work — the algorithm is CSSOM's, not
+  // an approximation of it.
+  const cssEscape = value => {
+    const text = String(value);
+    let escaped = "";
+    for (let index = 0; index < text.length; index += 1) {
+      const code = text.charCodeAt(index);
+      if (code === 0) { escaped += "\uFFFD"; continue; }
+      const character = text[index];
+      if ((code >= 0x1 && code <= 0x1f) || code === 0x7f
+        || (index === 0 && code >= 0x30 && code <= 0x39)
+        || (index === 1 && code >= 0x30 && code <= 0x39 && text.charCodeAt(0) === 0x2d)) {
+        escaped += `\\${code.toString(16)} `;
+        continue;
+      }
+      if (index === 0 && code === 0x2d && text.length === 1) { escaped += `\\${character}`; continue; }
+      if (code >= 0x80 || code === 0x2d || code === 0x5f
+        || (code >= 0x30 && code <= 0x39) || (code >= 0x41 && code <= 0x5a)
+        || (code >= 0x61 && code <= 0x7a)) {
+        escaped += character;
+        continue;
+      }
+      escaped += `\\${character}`;
+    }
+    return escaped;
+  };
+  // Answered by the cascade's own parser rather than by a table kept here: a
+  // declaration that parses is one that round-trips through an inline style, and
+  // one that does not leaves the property empty. That is how the property is
+  // known to be supported *by this runtime*, which is the only useful answer.
+  const cssSupports = (property, value) => {
+    // The one-argument form takes a whole condition. Only the plain
+    // `(property: value)` shape is understood; a condition with `and`, `or` or
+    // `not` in it is not decomposed, and says so by answering false.
+    if (value === undefined) {
+      const condition = /^\s*\(\s*([\w-]+)\s*:\s*([^()]+?)\s*\)\s*$/.exec(String(property));
+      if (!condition) return false;
+      return cssSupports(condition[1], condition[2]);
+    }
+    const probe = document.createElement("div");
+    probe.style.setProperty(String(property), String(value));
+    return probe.style.getPropertyValue(String(property)) !== "";
+  };
+  const CSS = Object.freeze({ escape: cssEscape, supports: cssSupports });

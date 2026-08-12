@@ -26,7 +26,10 @@ JavaScript comes from the [generated manifest](#capability-tiers) below.
 | Framework DOM | Stable node identity, standard node type/name/value/owner fields, `MutationObserver`, creation/insertion/removal, text and attributes, elements, comments, namespaced elements, fragments and `<template>` |
 | Selection and collections | `querySelector`, `querySelectorAll`, `getElementsByTagName` and `getElementsByClassName` on the document and on an element, `getElementById`, `closest`, `matches`, `children` and the element-traversal properties, `dataset`, `attributes`, static `NodeList`, `classList`, `link.relList` |
 | Events | Capture/target/bubble listeners, click, mouse, wheel, keyboard, focus, resize and lifecycle events |
-| Style read-back | `getComputedStyle`, `matchMedia`/`MediaQueryList`, `ResizeObserver` |
+| Style read-back | `getComputedStyle`, `matchMedia`/`MediaQueryList`, `ResizeObserver`, `CSS.escape`/`CSS.supports` |
+| Geometry and text | `getBoundingClientRect`, `getClientRects`, the offset/client/scroll box properties, `clientTop`/`clientLeft`, `offsetParent`, `innerText`, `compareDocumentPosition`, `elementFromPoint` |
+| Scrolling | `window.scrollTo`/`scrollBy`/`scroll`, `scrollX`/`scrollY`/`pageXOffset`/`pageYOffset`, `element.scrollTop`/`scrollLeft`, `scrollIntoView` |
+| Parsing | `innerHTML`, `outerHTML`, `insertAdjacentHTML`, `insertAdjacentElement`, and `DOMParser` for `text/html` into a fragment |
 | Scheduling | `requestAnimationFrame`, timers and microtasks |
 | Networking | `fetch`, `Headers`, `Request`, `Response`, `Blob`, `AbortController` over `http`/`https`, with buffered bodies |
 | Routing | In-memory `history` and `location`, `popstate` and `hashchange` |
@@ -250,6 +253,74 @@ snapping it reports is not exposed; `inlineSize` is width and `blockSize` is hei
 for every writing mode this renderer lays out.
 
 `IntersectionObserver` and `PerformanceObserver` remain absent.
+
+## Rendered text, box reads and scrolling
+
+The read-back surface a component library reaches for once it starts measuring rather than only
+rendering. Each of these asks Blitz the question rather than keeping a second answer beside it.
+
+**`innerText`** is rendered text, which is the whole of what separates it from `textContent`: a
+`display: none` or `visibility: hidden` subtree contributes nothing, a `<br>` is a line break, and
+a block-level child starts a new line. What it does *not* do is re-derive line wrapping — it reads
+the tree and its computed display rather than Blitz's line boxes, so a paragraph that wrapped over
+three lines is one line here. Writing it is the inverse: newlines become `<br>` elements.
+
+**`clientTop` and `clientLeft`** are the resolved border widths, read from the computed style
+rather than differenced out of the border and content boxes — which would fold the padding in too.
+**`offsetParent`** is the nearest positioned ancestor, or the body once the walk runs out, and is
+`null` for an element the cascade is not laying out.
+
+**`compareDocumentPosition`** returns the DOM's bitmask, computed by walking to the common
+ancestor. Two nodes in different trees report `DISCONNECTED | PRECEDING |
+IMPLEMENTATION_SPECIFIC`, as a browser does.
+
+**`document.elementFromPoint`/`elementsFromPoint`** are the hit test the native window already runs
+for every click, asked the other way round. There is a live renderer defect behind them: a form
+control anywhere in the document answers for points outside its own box, so a hit test in a
+document containing an `<input>` may return that input instead of the box actually under the
+point. The same defect affects clicks, and is filed separately.
+
+**Scrolling.** `window.scrollTo`, `scrollBy` and `scroll` move the document — `document.scrollingElement`,
+the root element — and `scrollX`, `scrollY`, `pageXOffset` and `pageYOffset` read the offset back
+live. `element.scrollIntoView` scrolls each scrolling ancestor and then the document until the
+element's border box is inside each one, honouring `block` and `inline` including `nearest`.
+`behavior` is accepted and ignored on both: there is no animation to run, so the scroll lands.
+
+**`hidden` reflects the attribute and nothing more.** `element.hidden = true` writes the content
+attribute, as the DOM property is defined to, but Blitz has no user-agent rule mapping `[hidden]`
+to `display: none`, so the element stays visible. Hide with a class or an inline `display: none`
+until that rule lands.
+
+`CSS.escape` and `CSS.supports` are present. `supports` answers from the cascade's own parser, by
+round-tripping the declaration through an inline style, so it reports what *this* runtime accepts;
+its one-argument form understands a plain `(property: value)` condition and answers `false` for a
+compound one rather than guessing at it.
+
+**`DOMParser` parses `text/html` into a detached fragment**, not into a second document — there is
+one document in this runtime. `body` and `documentElement` are that fragment, and `head` is `null`,
+because the fragment parser drops `<html>`, `<head>` and `<body>` tags and a parsed string is
+therefore not split into head and body. An XML type is refused with a `TypeError` rather than run
+through the HTML parser, which would mis-parse it silently.
+
+### What is absent here, and why
+
+- **`customElements` and `ShadowRoot`** — a decision, not an omission. Upgrading elements after
+  parsing, running the lifecycle callbacks and ordering reactions is real machinery, and
+  `<blitsen-view>` is registered natively rather than through a registry, so a user-defined element
+  would need either its own registry beside that one or a merge of the two. Absent is also the
+  shape a polyfill installs itself into.
+- **`getSelection` and `Range`** — a large surface, and nothing measured has reached for it. They
+  are absent together: a caller with a selection wants the ranges in it.
+- **`document.currentScript`** — the script runner does not carry the script element through to
+  evaluation, and a module script's `currentScript` is `null` in a browser anyway, which is what
+  every bundler in the profile emits.
+- **`document.doctype`** — the backend's tree has no doctype node to report.
+- **`outerWidth`, `outerHeight`, `screenX`, `screenY`** — the platform layer exposes no window
+  frame or position, and `innerWidth`/`innerHeight` already answer for the viewport. A second
+  answer that could disagree with those is worse than no answer.
+- **`visibilityState`, `execCommand`, `createRange`, `createTreeWalker`, `createNodeIterator`, and
+  the `document.forms`/`images`/`links`/`scripts` collections** — each needs a reason to exist
+  rather than a reason not to, and none has one yet.
 
 ## Stylesheets
 
@@ -479,9 +550,11 @@ determinism gate instead.
 
 | Group | Implemented | Absent |
 | --- | --- | --- |
-| WEB_DOM | `document`, `Document`, `Node`, `Element`, `NodeList`, `DOMTokenList`, `Attr`, `NamedNodeMap`, `CSSStyleDeclaration`, `MutationObserver`, `HTMLElement`, `HTMLIFrameElement`, `SVGElement`, `Text`, `Comment`, `DocumentFragment`, `HTMLLinkElement`, `HTMLTemplateElement`, `HTMLImageElement`, `Image`, `HTMLImageElement.src`, `HTMLImageElement.naturalWidth`, `HTMLImageElement.naturalHeight`, `HTMLImageElement.complete`, `HTMLImageElement.onload`, `HTMLImageElement.onerror`, `Element.querySelector`, `Element.querySelectorAll`, `Element.closest`, `Element.matches`, `Element.cloneNode`, `Element.contains`, `Element.children`, `Element.previousSibling`, `Element.lastChild`, `Element.parentElement`, `Element.dataset`, `Element.nodeValue`, `Element.before`, `Element.after`, `Element.getElementsByTagName`, `Element.outerHTML`, `Element.insertAdjacentHTML`, `Element.getElementsByClassName`, `Element.firstElementChild`, `Element.lastElementChild`, `Element.nextElementSibling`, `Element.previousElementSibling`, `Element.childElementCount`, `Element.append`, `Element.prepend`, `Element.replaceChildren`, `Element.getAttributeNS`, `Element.setAttributeNS`, `Element.removeAttributeNS`, `Element.hasAttributes`, `Element.getAttributeNames`, `Element.toggleAttribute`, `Element.getClientRects`, `Element.getRootNode`, `Element.normalize`, `Element.attributes`, `HTMLLinkElement.relList`, `HTMLTemplateElement.content`, `DOMTokenList.supports`, `Document.createElementNS`, `Document.createComment`, `Document.createDocumentFragment`, `Document.getElementsByTagName`, `Document.getElementsByClassName`, `Document.importNode` | `Element.attachShadow`, `Element.scrollIntoView`, `Document.currentScript` |
+| WEB_DOM | `document`, `Document`, `Node`, `Element`, `NodeList`, `DOMTokenList`, `Attr`, `NamedNodeMap`, `CSSStyleDeclaration`, `MutationObserver`, `HTMLElement`, `HTMLIFrameElement`, `SVGElement`, `Text`, `Comment`, `DocumentFragment`, `HTMLLinkElement`, `HTMLTemplateElement`, `HTMLImageElement`, `Image`, `HTMLImageElement.src`, `HTMLImageElement.naturalWidth`, `HTMLImageElement.naturalHeight`, `HTMLImageElement.complete`, `HTMLImageElement.onload`, `HTMLImageElement.onerror`, `Element.querySelector`, `Element.querySelectorAll`, `Element.closest`, `Element.matches`, `Element.cloneNode`, `Element.contains`, `Element.children`, `Element.previousSibling`, `Element.lastChild`, `Element.parentElement`, `Element.dataset`, `Element.nodeValue`, `Element.before`, `Element.after`, `Element.getElementsByTagName`, `Element.outerHTML`, `Element.insertAdjacentHTML`, `Element.scrollIntoView`, `Element.getElementsByClassName`, `Element.firstElementChild`, `Element.lastElementChild`, `Element.nextElementSibling`, `Element.previousElementSibling`, `Element.childElementCount`, `Element.append`, `Element.prepend`, `Element.replaceChildren`, `Element.getAttributeNS`, `Element.setAttributeNS`, `Element.removeAttributeNS`, `Element.hasAttributes`, `Element.getAttributeNames`, `Element.toggleAttribute`, `Element.getClientRects`, `Element.getRootNode`, `Element.normalize`, `Element.attributes`, `Element.insertAdjacentElement`, `Element.innerText`, `Element.compareDocumentPosition`, `Element.offsetParent`, `Element.clientTop`, `Element.clientLeft`, `Element.hidden`, `Element.tabIndex`, `Element.title`, `Document.title`, `Document.dir`, `Document.getElementsByName`, `Document.elementFromPoint`, `Document.elementsFromPoint`, `Document.scrollingElement`, `Document.characterSet`, `Document.documentURI`, `Document.hasFocus`, `Document.adoptNode`, `HTMLLinkElement.relList`, `HTMLTemplateElement.content`, `DOMTokenList.supports`, `Document.createElementNS`, `Document.createComment`, `Document.createDocumentFragment`, `Document.getElementsByTagName`, `Document.getElementsByClassName`, `Document.importNode` | `Element.attachShadow`, `Document.currentScript` |
 | WEB_FORM_CONTROLS | `HTMLInputElement`, `HTMLTextAreaElement`, `HTMLSelectElement`, `HTMLOptionElement`, `HTMLButtonElement`, `HTMLFormElement`, `HTMLInputElement.value`, `HTMLInputElement.defaultValue`, `HTMLInputElement.checked`, `HTMLInputElement.defaultChecked`, `HTMLInputElement.type`, `HTMLInputElement.name`, `HTMLInputElement.disabled`, `HTMLInputElement.form`, `HTMLTextAreaElement.value`, `HTMLTextAreaElement.defaultValue`, `HTMLSelectElement.options`, `HTMLSelectElement.selectedIndex`, `HTMLSelectElement.value`, `HTMLSelectElement.length`, `HTMLSelectElement.selectedOptions`, `HTMLSelectElement.multiple`, `HTMLOptionElement.value`, `HTMLOptionElement.text`, `HTMLOptionElement.selected`, `HTMLOptionElement.index`, `HTMLOptionElement.label`, `HTMLOptionElement.defaultSelected`, `HTMLButtonElement.value`, `HTMLButtonElement.type`, `HTMLFormElement.elements`, `HTMLFormElement.requestSubmit` | `HTMLInputElement.files`, `HTMLInputElement.labels`, `HTMLInputElement.validity`, `HTMLInputElement.checkValidity`, `HTMLInputElement.select`, `HTMLInputElement.setSelectionRange`, `HTMLInputElement.selectionStart`, `HTMLInputElement.selectionEnd`, `HTMLSelectElement.add`, `HTMLFormElement.submit`, `HTMLFormElement.reset`, `HTMLFormElement.action`, `HTMLFormElement.method`, `HTMLFormElement.checkValidity` |
-| WEB_EVENTS | `EventTarget`, `Event`, `CustomEvent`, `SubmitEvent`, `MouseEvent`, `KeyboardEvent`, `addEventListener`, `removeEventListener`, `dispatchEvent` | — |
+| WEB_EVENTS | `EventTarget`, `Event`, `CustomEvent`, `SubmitEvent`, `MouseEvent`, `KeyboardEvent`, `FocusEvent`, `InputEvent`, `PointerEvent`, `WheelEvent`, `addEventListener`, `removeEventListener`, `dispatchEvent` | — |
+| WEB_SCROLL | `scrollTo`, `scrollBy`, `scroll`, `scrollX`, `scrollY`, `pageXOffset`, `pageYOffset` | — |
+| WEB_SELECTION | — | `getSelection`, `Range` |
 | WEB_SCHEDULING | `requestAnimationFrame`, `cancelAnimationFrame`, `setTimeout`, `clearTimeout`, `setInterval`, `clearInterval` | `requestIdleCallback`, `cancelIdleCallback` |
 | WEB_NETWORK | `fetch`, `Headers`, `Request`, `Response`, `Blob`, `AbortController`, `AbortSignal` | — |
 | WEB_ROUTING | `window`, `location`, `history`, `Location`, `History`, `PopStateEvent`, `HashChangeEvent` | — |
@@ -501,8 +574,8 @@ determinism gate instead.
 | WEB_COOKIE | — | `document.cookie`, `cookieStore`, `Headers.getSetCookie` |
 | WEB_DEVICE | `Navigator`, `navigator`, `navigator.userAgent`, `navigator.platform`, `navigator.language` | `screen`, `Notification`, `caches` |
 | WEB_OBSERVER | `ResizeObserver` | `IntersectionObserver`, `PerformanceObserver` |
-| WEB_STYLE | `getComputedStyle`, `matchMedia`, `MediaQueryList`, `MediaQueryListEvent`, `CSSStyleSheet`, `StyleSheetList`, `CSSRule`, `CSSRuleList`, `HTMLStyleElement`, `document.styleSheets`, `HTMLStyleElement.sheet`, `HTMLLinkElement.sheet`, `CSSStyleSheet.cssRules`, `CSSStyleSheet.insertRule`, `CSSStyleSheet.deleteRule`, `CSSStyleSheet.ownerNode`, `CSSStyleSheet.href`, `CSSStyleSheet.title`, `CSSRule.cssText`, `CSSRule.parentStyleSheet` | `CSSStyleRule`, `CSSKeyframesRule`, `CSSKeyframeRule`, `CSSMediaRule`, `document.adoptedStyleSheets`, `CSSStyleSheet.disabled`, `CSSStyleSheet.replaceSync`, `CSSStyleSheet.replace`, `CSSRule.style`, `CSSRule.selectorText`, `CSSRule.type` |
-| WEB_COMPONENTS | — | `customElements`, `ShadowRoot`, `DOMParser` |
+| WEB_STYLE | `getComputedStyle`, `matchMedia`, `MediaQueryList`, `MediaQueryListEvent`, `CSS`, `CSSStyleSheet`, `StyleSheetList`, `CSSRule`, `CSSRuleList`, `HTMLStyleElement`, `document.styleSheets`, `HTMLStyleElement.sheet`, `HTMLLinkElement.sheet`, `CSSStyleSheet.cssRules`, `CSSStyleSheet.insertRule`, `CSSStyleSheet.deleteRule`, `CSSStyleSheet.ownerNode`, `CSSStyleSheet.href`, `CSSStyleSheet.title`, `CSSRule.cssText`, `CSSRule.parentStyleSheet` | `CSSStyleRule`, `CSSKeyframesRule`, `CSSKeyframeRule`, `CSSMediaRule`, `document.adoptedStyleSheets`, `CSSStyleSheet.disabled`, `CSSStyleSheet.replaceSync`, `CSSStyleSheet.replace`, `CSSRule.style`, `CSSRule.selectorText`, `CSSRule.type` |
+| WEB_COMPONENTS | `DOMParser` | `customElements`, `ShadowRoot` |
 
 | Diagnostic | Severity | Reported as |
 | --- | --- | --- |
@@ -510,6 +583,7 @@ determinism gate instead.
 | `WEB_STORAGE_MEMORY` | warning | localStorage is in memory only: what it stores is gone when the application exits. |
 | `WEB_DOM` | warning | This DOM method is not implemented. |
 | `WEB_FORM_CONTROLS` | warning | This form-control API is not implemented. |
+| `WEB_SELECTION` | warning | Text selection and ranges are not implemented. |
 | `WEB_SCHEDULING` | warning | Idle-callback scheduling is not implemented. |
 | `WEB_STORAGE` | warning | IndexedDB is not implemented. |
 | `WEB_WORKER` | warning | Web workers are not implemented. |
@@ -527,7 +601,7 @@ determinism gate instead.
 | `WEB_DEVICE` | warning | This device API is not implemented. |
 | `WEB_OBSERVER` | warning | This observer is not implemented; only ResizeObserver is. |
 | `WEB_STYLE` | warning | This part of CSSOM is not implemented; a sheet's rules are its source text. |
-| `WEB_COMPONENTS` | warning | Custom elements, shadow DOM and DOM parsing are not implemented. |
+| `WEB_COMPONENTS` | warning | Custom elements and shadow DOM are not implemented; DOMParser is. |
 | `CSS_TRANSITION` | warning | A property named by `transition` keeps its pre-stylesheet value (Blitz bug 689). |
 | `CSS_FIXED` | warning | Fixed and sticky boxes resolve against the root box, not the viewport (Blitz bug 690). |
 | `CSS_EFFECT` | warning | This paint effect is ignored rather than applied. |

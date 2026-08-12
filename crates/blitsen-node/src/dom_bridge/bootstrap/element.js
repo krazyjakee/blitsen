@@ -1,3 +1,51 @@
+  // A resolved length as a number. Anything the cascade could not resolve to
+  // one — `auto`, a keyword, the empty string — is 0, which is what every
+  // caller of these means by "no border".
+  const resolvedLength = (element, property) => {
+    const value = Number.parseFloat(getComputedStyle(element).getPropertyValue(property));
+    return Number.isFinite(value) ? value : 0;
+  };
+  const SCROLLING_OVERFLOWS = ["auto", "scroll", "overlay"];
+  const isScrollable = element => {
+    const style = getComputedStyle(element);
+    return SCROLLING_OVERFLOWS.includes(style.getPropertyValue("overflow-y"))
+      || SCROLLING_OVERFLOWS.includes(style.getPropertyValue("overflow-x"));
+  };
+  // How far a container must move along one axis to satisfy an alignment.
+  // `nearest` is the one that can answer zero: a box already inside the
+  // container does not move, and one outside moves by the smaller of the two
+  // edge distances rather than to an edge it was not asked for.
+  const scrollDelta = (alignment, start, end, containerStart, containerEnd) => {
+    if (alignment === "start") return start - containerStart;
+    if (alignment === "end") return end - containerEnd;
+    if (alignment === "center") return (start + end) / 2 - (containerStart + containerEnd) / 2;
+    if (start >= containerStart && end <= containerEnd) return 0;
+    return Math.abs(start - containerStart) < Math.abs(end - containerEnd)
+      ? start - containerStart : end - containerEnd;
+  };
+  // The displays that put their contents on their own line. Anything else —
+  // `inline`, `inline-block`, `contents` — runs on with the text around it.
+  const BLOCK_DISPLAY = /^(block|flex|grid|list-item|table|flow-root)/;
+  // Appends one node's rendered text to `lines`, which the caller reads back as
+  // the paragraphs `innerText` reports. A hidden subtree is skipped whole:
+  // `display:none` is not laid out and `visibility:hidden` is laid out but not
+  // painted, and neither is text a user could read.
+  const appendRenderedText = (node, lines) => {
+    if (node.nodeType === 3) {
+      lines[lines.length - 1] += node.textContent.replace(/\s+/g, " ");
+      return;
+    }
+    if (node.nodeType !== 1) return;
+    const style = getComputedStyle(node);
+    const display = style.getPropertyValue("display");
+    if (display === "none" || style.getPropertyValue("visibility") === "hidden") return;
+    if (elementTag(node) === "br") { lines.push(""); return; }
+    const breaks = BLOCK_DISPLAY.test(display);
+    if (breaks && lines[lines.length - 1] !== "") lines.push("");
+    for (const child of node.childNodes) appendRenderedText(child, lines);
+    if (breaks && lines[lines.length - 1] !== "") lines.push("");
+  };
+
   class Element extends Node {
     get tagName() {
       const name = elementTag(this);
@@ -130,6 +178,95 @@
       notifyMutation({ type: "childList", target, addedNodes: new NodeList(inserted),
         removedNodes: new NodeList([]), previousSibling: inserted[0].previousSibling,
         nextSibling: inserted[inserted.length - 1].nextSibling });
+    }
+    insertAdjacentElement(position, element) {
+      if (!(element instanceof Element)) throw new TypeError("argument is not an Element");
+      const parent = this.parentNode;
+      switch (String(position).toLowerCase()) {
+        // A node with no parent has no "before" or "after" to insert into, and
+        // the DOM says that is a null return rather than an error.
+        case "beforebegin": return parent ? (parent.insertBefore(element, this), element) : null;
+        case "afterbegin": return this.insertBefore(element, this.firstChild), element;
+        case "beforeend": return this.appendChild(element), element;
+        case "afterend": return parent ? (parent.insertBefore(element, this.nextSibling), element) : null;
+        default: throw new DOMException(
+          `insertAdjacentElement does not support "${position}"`, "SyntaxError");
+      }
+    }
+    // Rendered text, which is the whole of what separates it from
+    // `textContent`: a subtree the cascade has hidden contributes nothing, and a
+    // block boundary is a line break. What it does not do is re-derive line
+    // wrapping — this reads the tree and its computed display, not Blitz's line
+    // boxes, so a paragraph that wrapped over three lines is still one line
+    // here. Writing it is the inverse: newlines become `<br>`.
+    get innerText() {
+      const lines = [""];
+      for (const child of this.childNodes) appendRenderedText(child, lines);
+      while (lines.length && lines[0].trim() === "") lines.shift();
+      while (lines.length && lines[lines.length - 1].trim() === "") lines.pop();
+      return lines.map(line => line.trim()).join("\n");
+    }
+    set innerText(value) {
+      this.replaceChildren();
+      String(value).split("\n").forEach((part, index) => {
+        if (index > 0) this.appendChild(document.createElement("br"));
+        if (part) this.appendChild(document.createTextNode(part));
+      });
+    }
+    // Reflected content attributes. `hidden` is the boolean form — present is
+    // true whatever the value reads — and `title` is the plain string one.
+    get hidden() { return this.hasAttribute("hidden"); }
+    set hidden(value) { this.toggleAttribute("hidden", Boolean(value)); }
+    get title() { return this.getAttribute("title") ?? ""; }
+    set title(value) { this.setAttribute("title", value); }
+    // A missing `tabindex` is 0 on something focusable and -1 on everything
+    // else. That is the default the DOM defines, and `isFocusable` is the same
+    // predicate the runtime's own focus walk uses, so the two cannot disagree.
+    get tabIndex() {
+      const declared = Number.parseInt(this.getAttribute("tabindex"), 10);
+      return Number.isInteger(declared) ? declared : (isFocusable(this) ? 0 : -1);
+    }
+    set tabIndex(value) {
+      const number = Number.parseInt(value, 10);
+      this.setAttribute("tabindex", String(Number.isInteger(number) ? number : 0));
+    }
+    // The border edge to the padding edge — the offset `clientWidth` and
+    // `clientHeight` measure in from. Read off the resolved border widths
+    // rather than differenced out of the two boxes, which would fold the
+    // padding in as well.
+    get clientTop() { return resolvedLength(this, "border-top-width"); }
+    get clientLeft() { return resolvedLength(this, "border-left-width"); }
+    // The box `offsetTop` and `offsetLeft` would be relative to: the nearest
+    // positioned ancestor, or the body once the walk runs out. An element the
+    // cascade is not laying out has none at all, which is how a library tells
+    // "not rendered" from "rendered at the origin".
+    get offsetParent() {
+      if (this === document.body || this === document.documentElement) return null;
+      if (getComputedStyle(this).getPropertyValue("display") === "none") return null;
+      for (let parent = this.parentElement; parent; parent = parent.parentElement) {
+        if (parent === document.body) return parent;
+        if (getComputedStyle(parent).getPropertyValue("position") !== "static") return parent;
+      }
+      return null;
+    }
+    // Scrolls each scrolling ancestor, and then the document, until this box is
+    // inside it. Measured as a delta between the two rectangles rather than
+    // computed from scroll extents, because the backend clamps a scroll offset
+    // it cannot honour and a delta therefore needs no extent to be correct.
+    // `behavior` is accepted and ignored: there is no animation to run, so the
+    // scroll simply lands.
+    scrollIntoView(options = true) {
+      const block = typeof options === "object" && options !== null
+        ? String(options.block ?? "start") : (options === false ? "end" : "start");
+      const inline = typeof options === "object" && options !== null
+        ? String(options.inline ?? "nearest") : "nearest";
+      for (let parent = this.parentElement; parent; parent = parent.parentElement) {
+        if (parent !== document.documentElement && !isScrollable(parent)) continue;
+        const box = this.getBoundingClientRect();
+        const container = parent.getBoundingClientRect();
+        parent.scrollTop += scrollDelta(block, box.top, box.bottom, container.top, container.bottom);
+        parent.scrollLeft += scrollDelta(inline, box.left, box.right, container.left, container.right);
+      }
     }
     // Blitz lays an element out as one box: there is no fragmentation across
     // columns or line boxes to report, so the list is the border box and the

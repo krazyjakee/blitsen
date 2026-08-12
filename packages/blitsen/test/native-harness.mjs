@@ -13,6 +13,7 @@ await import("./native-harness/bridge.mjs");
 await import("./native-harness/events.mjs");
 await import("./native-harness/forms.mjs");
 await import("./native-harness/dom.mjs");
+await import("./native-harness/read-back-and-scrolling.mjs");
 const { styled } = await import("./native-harness/style.mjs");
 await import("./native-harness/layout-and-images.mjs");
 await import("./native-harness/runtime-surface.mjs");

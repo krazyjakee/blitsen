@@ -61,6 +61,64 @@
     }
   }
 
+  // A pointer is a mouse here: this runtime has one pointing device, it is
+  // always primary, and it reports no tilt or pressure. The members are present
+  // and truthful about that rather than absent, because a library reads
+  // `pointerType` unguarded once it has decided to use pointer events at all.
+  class PointerEvent extends MouseEvent {
+    constructor(type, options = {}) {
+      super(type, options);
+      Object.defineProperties(this, {
+        pointerId: { value: Number(options.pointerId ?? 1), enumerable: true },
+        pointerType: { value: String(options.pointerType ?? "mouse"), enumerable: true },
+        isPrimary: { value: options.isPrimary === undefined ? true : Boolean(options.isPrimary), enumerable: true },
+        width: { value: Number(options.width ?? 1), enumerable: true },
+        height: { value: Number(options.height ?? 1), enumerable: true },
+        pressure: { value: Number(options.pressure ?? 0), enumerable: true },
+        tangentialPressure: { value: Number(options.tangentialPressure ?? 0), enumerable: true },
+        tiltX: { value: Number(options.tiltX ?? 0), enumerable: true },
+        tiltY: { value: Number(options.tiltY ?? 0), enumerable: true },
+        twist: { value: Number(options.twist ?? 0), enumerable: true },
+      });
+    }
+  }
+
+  // `deltaX`/`deltaY` are already on `MouseEvent` because that is where the
+  // native window's wheel input lands; this adds the two members that are only
+  // a wheel's. `deltaMode` is 0 — pixels — because that is the unit the
+  // platform delivers scrolling in, not a line or page count.
+  class WheelEvent extends MouseEvent {
+    constructor(type, options = {}) {
+      super(type, options);
+      Object.defineProperties(this, {
+        deltaZ: { value: Number(options.deltaZ ?? 0), enumerable: true },
+        deltaMode: { value: Number(options.deltaMode ?? 0), enumerable: true },
+      });
+    }
+  }
+
+  class FocusEvent extends Event {
+    constructor(type, options = {}) {
+      super(type, options);
+      Object.defineProperty(this, "relatedTarget",
+        { value: options.relatedTarget ?? null, enumerable: true });
+    }
+  }
+
+  // `data` is the text an input contributed and `inputType` how it got there.
+  // Composition is never in progress: there is no IME path into this runtime,
+  // so `isComposing` is false rather than unknown.
+  class InputEvent extends Event {
+    constructor(type, options = {}) {
+      super(type, options);
+      Object.defineProperties(this, {
+        data: { value: options.data === undefined ? null : String(options.data), enumerable: true },
+        inputType: { value: String(options.inputType ?? ""), enumerable: true },
+        isComposing: { value: Boolean(options.isComposing), enumerable: true },
+      });
+    }
+  }
+
   class KeyboardEvent extends Event {
     constructor(type, options = {}) {
       super(type, options);
@@ -244,13 +302,20 @@
     return ["button", "input", "select", "textarea"].includes(tag) ||
       (tag === "a" && element.hasAttribute("href"));
   };
+  // Four events, not two. `focus` and `blur` do not bubble, so a framework that
+  // delegates from the root — React has since 17 — sees nothing unless the
+  // bubbling `focusin`/`focusout` pair is dispatched as well. Each carries the
+  // other end of the move as `relatedTarget`, which is what a component reads to
+  // tell "focus left this subtree" from "focus moved inside it".
   const setFocus = element => {
     const next = element ?? document.body;
     const previous = activeElement ?? document.body;
     if (next === previous) { activeElement = next; return; }
     activeElement = next;
-    previous?.dispatchEvent(new Event("blur"));
-    next?.dispatchEvent(new Event("focus"));
+    previous?.dispatchEvent(new FocusEvent("blur", { relatedTarget: next }));
+    next?.dispatchEvent(new FocusEvent("focus", { relatedTarget: previous }));
+    previous?.dispatchEvent(new FocusEvent("focusout", { bubbles: true, relatedTarget: next }));
+    next?.dispatchEvent(new FocusEvent("focusin", { bubbles: true, relatedTarget: previous }));
   };
   const focusNearest = target => {
     for (let element = target; element instanceof Element; element = element.parentNode)
@@ -291,7 +356,14 @@
     }
     return allowed;
   };
+  // The native window reports gaining and losing focus as window-level `focus`
+  // and `blur`. Nothing else changes it, so tracking it here is the whole of
+  // what `document.hasFocus()` has to answer. A window that has not been told
+  // otherwise is the focused one: it was just opened.
+  let windowFocused = true;
+  const windowHasFocus = () => windowFocused;
   const dispatchLifecycleEvent = type => {
+    if (type === "focus" || type === "blur") windowFocused = type === "focus";
     if (type === "DOMContentLoaded") {
       readyState = "interactive";
       return document.dispatchEvent(new Event(type, { bubbles: true }));
