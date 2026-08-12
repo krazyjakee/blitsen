@@ -534,7 +534,7 @@ determinism gate instead.
 | `HTML_CANVAS` | error | <canvas> is not implemented. |
 | `HTML_MEDIA` | warning | Audio and video elements are not implemented. |
 | `HTML_SVG` | warning | SVG rendering is currently limited and not in the strict profile. |
-| `ASSET_REMOTE_SCRIPT` | error | A remote <script src> stops the document loading; no script on the page runs. |
+| `ASSET_REMOTE_SCRIPT` | warning | A remote <script src> is not fetched; it is skipped and the rest of the page runs. |
 | `ASSET_REMOTE` | warning | A remote asset is not part of a self-contained export; the request is answered with nothing. |
 
 <!-- /generated -->

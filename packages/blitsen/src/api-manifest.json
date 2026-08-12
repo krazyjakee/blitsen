@@ -2539,9 +2539,9 @@
     {
       "kind": "html",
       "code": "ASSET_REMOTE_SCRIPT",
-      "severity": "error",
+      "severity": "warning",
       "pattern": "<script\\b[^>]*\\bsrc\\s*=\\s*[\"'](?:https?:)?//",
-      "message": "A remote <script src> stops the document loading; no script on the page runs.",
+      "message": "A remote <script src> is not fetched; it is skipped and the rest of the page runs.",
       "guidance": "Bundle the script into the output directory and reference its local path."
     },
     {

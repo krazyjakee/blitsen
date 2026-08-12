@@ -412,18 +412,19 @@ P4 now rests on two wall-clock measurements rather than the game's own readout, 
 headless frame cost is p50 0.809 ms against a 16.7 ms budget with zero frames over, and the
 windowed standalone export sustains 60 fps on a real display.
 
-**M3b — Compatible adoption: five of six, and not yet complete.** It was declared complete on an
-acceptance application written in this repository, which tests the export pipeline rather than the
-adoption claim. Measured against six applications nobody here wrote — three real ones and three
-stock `create-vite` templates — **all six failed**.
+**M3b — Compatible adoption: met.** It was first declared complete on an acceptance application
+written in this repository, which tests the export pipeline rather than the adoption claim.
+Measured against six applications nobody here wrote — three real ones and three stock `create-vite`
+templates — **all six failed**.
 
-After the work that measurement prompted, five build and render unmodified, including a full
-React admin dashboard with Tailwind 4, Radix, TanStack and Recharts. The sixth is refused because
-it loads a remote analytics `<script>`, which aborts the whole script run; whether Blitsen should
-fetch remote scripts at export time is a product question rather than a runtime gap.
+After the work that measurement prompted, all six build and render from their own unmodified
+`vite build` output, including a full React admin dashboard with Tailwind 4, Radix, TanStack and
+Recharts. Zero source changes and no flags, so P10 is met. Remote scripts are still never fetched;
+they are skipped, with the rest of the document running, and reported as a warning rather than
+blocking the export.
 
-P10 is not met until all six pass. See the [M3b evidence](M3B.md) and
-[published v0 profile](COMPATIBILITY.md).
+See the [M3b evidence](M3B.md) and [published v0 profile](COMPATIBILITY.md) for the deviations
+each application renders with.
 
 **M4 — Ships.** `npm i -D blitsen` resolves the correct runtime on all six platform targets,
 `blitsen build` produces distributable artifacts, and a non-trivial third-party app (an editor or

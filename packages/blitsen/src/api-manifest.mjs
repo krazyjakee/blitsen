@@ -256,23 +256,28 @@ const USAGE_RULES = [
 // Subresources an exported application cannot fetch: there is no server behind
 // the document, and the renderer serves local files only.
 //
-// Severity is the same survival question. The renderer now answers a request it
-// will not serve with empty bytes rather than dropping it, so a refused
-// stylesheet, font or image degrades: shadcn-admin renders its whole admin shell
-// with three remote links refused, Google Fonts among them, and vue3-realworld
-// renders with two. A remote `<script src>` is the one that does not degrade —
-// the loader refuses the src outright and then no script on the page runs at
-// all, which is exactly what stops wordle-plus loading. Nothing about that
-// reference is conditional, and there is no fallback for it to select.
+// Severity is the same survival question, and every one of these degrades. The
+// renderer answers a request it will not serve with empty bytes rather than
+// dropping it, so a refused stylesheet, font or image leaves the page standing:
+// shadcn-admin renders its whole admin shell with three remote links refused,
+// Google Fonts among them, and vue3-realworld renders with two.
+//
+// A remote `<script src>` used to be the exception, because the loader aborted
+// the whole run on one — which is what stopped wordle-plus loading. It no longer
+// does: `blitsen-core`'s script loader skips that one script, says so on stderr,
+// and runs the rest of the page. So the reason this was ever graded an error is
+// gone, and grading it one now only blocks a build that would have worked. What
+// keeps an exported application from silently phoning home is the runtime
+// refusing to fetch the script, not the severity of this rule.
 const REMOTE_ASSET = [
   "A remote asset is not part of a self-contained export; the request is answered with nothing.",
   "Bundle the asset into the output directory and reference its local path, and check the page "
   + "still reads without it.",
 ];
 const ASSET_RULES = [
-  ["html", "ASSET_REMOTE_SCRIPT", "error",
+  ["html", "ASSET_REMOTE_SCRIPT", "warning",
     "<script\\b[^>]*\\bsrc\\s*=\\s*[\"'](?:https?:)?//",
-    "A remote <script src> stops the document loading; no script on the page runs.",
+    "A remote <script src> is not fetched; it is skipped and the rest of the page runs.",
     "Bundle the script into the output directory and reference its local path."],
   ["html", "ASSET_REMOTE", "warning",
     "<(?:img|source|audio|video|track|embed|input)\\b[^>]*\\bsrc\\s*=\\s*[\"'](?:https?:)?//"

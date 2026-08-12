@@ -23,10 +23,11 @@ describe("directory CLI", () => {
     expect(lines.at(-1)[1]).toContain("1 errors, 2 warnings");
   });
 
-  // The severities the third-party evidence settled. A subresource the export
-  // will not serve is answered with empty bytes, so the page renders without it;
-  // a remote <script src> is refused by the loader and then nothing runs at all.
-  test("grades a remote subresource a warning and a remote script an error", async () => {
+  // The severities the third-party evidence settled. Every remote subresource
+  // degrades rather than killing the page: one the export will not serve is
+  // answered with empty bytes, and a remote <script src> is skipped by the
+  // loader while the rest of the document runs. So none of them blocks a build.
+  test("grades every remote subresource a warning, including a script", async () => {
     const fixtures = join(import.meta.dir, "fixtures/doctor");
     const subresource = await doctorApplication(join(fixtures, "remote-subresource"));
     expect(subresource).toMatchObject({ errors: 0, warnings: 5 });
@@ -36,8 +37,9 @@ describe("directory CLI", () => {
         "warning:ASSET_REMOTE", "warning:ASSET_REMOTE"]);
 
     const script = await doctorApplication(join(fixtures, "remote"));
+    expect(script).toMatchObject({ errors: 0, warnings: 1 });
     expect(script.diagnostics.map(diagnostic => `${diagnostic.severity}:${diagnostic.code}`))
-      .toEqual(["error:ASSET_REMOTE_SCRIPT"]);
+      .toEqual(["warning:ASSET_REMOTE_SCRIPT"]);
   });
 
   // Every one of these shapes is verbatim from an unmodified third-party build

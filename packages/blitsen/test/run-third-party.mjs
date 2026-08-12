@@ -15,7 +15,7 @@
 // Zero source changes are made to any fixture. The only post-processing is on our
 // own capture: `<script>` elements are stripped from the serialized post-JS DOM so
 // the paint pass does not run the application a second time.
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, extname, join } from "node:path";

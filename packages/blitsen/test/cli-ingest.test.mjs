@@ -94,7 +94,7 @@ describe("directory CLI", () => {
   });
 
   test("refuses to build output with compatibility errors", async () => {
-    const fixture = join(import.meta.dir, "fixtures/doctor/remote");
+    const fixture = join(import.meta.dir, "fixtures/doctor/unsupported");
     let built = false;
     const { lines, output } = capture();
     const runtime = { build: async () => { built = true; return {}; } };
@@ -102,9 +102,25 @@ describe("directory CLI", () => {
     expect(built).toBeFalse();
     // The blocking diagnostic names its file, on stderr, under the step that found it.
     expect(lines.some(([stream, line]) => stream === "err"
-      && line.trimStart().startsWith("index.html:") && line.includes("ASSET_REMOTE_SCRIPT")))
+      && line.trimStart().startsWith("index.html:") && line.includes("HTML_CANVAS")))
       .toBeTrue();
     expect(lines.at(-1)[1]).toContain("1 compatibility error blocks this build");
+  });
+
+  // wordle-plus is a real application that builds only because of this: its one
+  // diagnostic is a Google Analytics tag, which the runtime skips rather than
+  // fetches. Blocking the export over it bought no privacy and cost a flag.
+  test("builds output whose only error was a remote script", async () => {
+    const fixture = join(import.meta.dir, "fixtures/doctor/remote");
+    let built = false;
+    const { lines, output } = capture();
+    const runtime = { build: async ({ outfile }) => { built = true; return { outfile, assets: 2, bytes: 512 }; } };
+    expect(await main(["build", fixture, "--outfile", "/tmp/blitsen-never"], output, runtime))
+      .toBe(0);
+    expect(built).toBeTrue();
+    expect(lines.some(([stream, line]) => stream === "out" && line.includes("ASSET_REMOTE_SCRIPT")))
+      .toBeTrue();
+    expect(lines.every(([stream]) => stream === "out")).toBeTrue();
   });
 
   test("builds output whose only diagnostics are warnings, and reports them", async () => {

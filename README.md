@@ -35,8 +35,8 @@ absent is genuinely `undefined` against a real bridge context.
 **Rendering real applications.** Six applications written by other people — a React admin dashboard
 using Tailwind 4, Radix, TanStack and Recharts; a Vue 3 app with vue-router and Pinia; a Svelte
 game; and the three stock `create-vite` templates — all render from their own unmodified
-`vite build` output. Five export with nothing but a dev dependency and a script line. All six
-failed when first measured. See the [M3b evidence](docs/M3B.md).
+`vite build` output, and all six export with nothing but a dev dependency and a script line. All
+six failed when first measured. See the [M3b evidence](docs/M3B.md).
 
 ![Shadcn Admin rendered by Blitsen](docs/shadcn-admin.png)
 
