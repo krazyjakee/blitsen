@@ -1,8 +1,16 @@
 import { strict as assert } from "node:assert";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
-import { join } from "node:path";
+import { homedir, tmpdir } from "node:os";
+import { basename, isAbsolute, join } from "node:path";
+
+import { loadApiManifest } from "../src/api-manifest.mjs";
+// The specifier layer an application imports, exercised against the namespace
+// the addon installs into this realm rather than against a stand-in.
+import app from "../src/native/app.mjs";
+import clipboard from "../src/native/clipboard.mjs";
 
 const addonPath = process.argv[2];
 if (!addonPath) throw new Error("usage: bun native-harness.mjs <addon.node>");
@@ -1465,4 +1473,162 @@ try {
   probe.close();
 }
 
+// The `native:` modules. Everything below reaches them the way an application
+// does — through the `blitsen/app` and `blitsen/clipboard` proxies — so what is
+// asserted is the installed namespace, not a description of it.
+const nativeManifest = await loadApiManifest();
+const namespaces = { app, clipboard };
+// The one member whose presence is a platform fact rather than a version fact.
+const unixOnly = new Set(["app.requestSingleInstanceLock"]);
+for (const entry of nativeManifest.native) {
+  const namespace = namespaces[entry.module];
+  assert(namespace, `the manifest names native:${entry.module}, which the harness does not import`);
+  const installed = entry.status === "implemented"
+    && !(unixOnly.has(entry.api) && process.platform === "win32");
+  if (installed) {
+    assert.equal(typeof namespace[entry.member], "function",
+      `native:${entry.api} is implemented and must be installed`);
+    assert.equal(entry.member in namespace, true, `native:${entry.api} must be enumerable`);
+  } else {
+    // Absent, not stubbed: the property does not exist, so `if (app.onSuspend)`
+    // selects a fallback instead of calling something that throws.
+    assert.equal(namespace[entry.member], undefined,
+      `native:${entry.api} is absent and must not be installed`);
+    assert.equal(entry.member in namespace, false,
+      `native:${entry.api} must not answer an "in" check`);
+  }
+}
+assert.deepEqual(Object.keys(clipboard).sort(),
+  nativeManifest.native.filter(entry => entry.module === "clipboard" && entry.status === "implemented")
+    .map(entry => entry.member).sort(),
+  "the namespace enumerates exactly what the runtime installed");
+assert.throws(() => { app.dataDir = () => "/tmp"; }, /read-only/);
+
+// Application directories. The application names itself, because the runtime
+// cannot: the executable here is Bun.
+const applicationName = "Blitsen Harness";
+const directories = [app.dataDir(applicationName), app.cacheDir(applicationName),
+  app.configDir(applicationName)];
+for (const directory of directories) {
+  assert.equal(isAbsolute(directory), true, `${directory} must be absolute`);
+  assert.equal(basename(directory), applicationName);
+}
+assert.notEqual(directories[0], directories[1], "cache is not where data lives");
+if (process.platform === "linux") {
+  const home = (variable, fallback) => process.env[variable] || join(homedir(), fallback);
+  assert.deepEqual(directories, [
+    join(home("XDG_DATA_HOME", ".local/share"), applicationName),
+    join(home("XDG_CACHE_HOME", ".cache"), applicationName),
+    join(home("XDG_CONFIG_HOME", ".config"), applicationName),
+  ], "the XDG base directories, or their defaults");
+}
+for (const rejected of ["", ".", "..", "escape/../..", "escape\\out"]) {
+  assert.throws(() => app.dataDir(rejected), /not a valid application name/,
+    `${JSON.stringify(rejected)} must not reach out of the directory the platform chose`);
+}
+// The directory is named, not created: making it is `node:fs`.
+assert.equal(existsSync(directories[0]), false);
+
+// The clipboard. A read is a round-trip through the real X11/Wayland selection
+// or the system pasteboard; there is no in-process shortcut behind it.
+assert.throws(() => clipboard.writeImage({ width: 2, height: 2, data: new Uint8Array(8) }),
+  /RGBA bytes/, "an image must carry its own pixels");
+const displayed = process.platform !== "linux"
+  || Boolean(process.env.DISPLAY || process.env.WAYLAND_DISPLAY);
+if (displayed) {
+  const text = `blitsen harness ${process.pid}`;
+  clipboard.writeText(text);
+  assert.equal(clipboard.readText(), text);
+  clipboard.writeHtml("<b>bold</b>", "bold");
+  assert.equal(clipboard.readHtml(), "<b>bold</b>");
+  assert.equal(clipboard.readText(), "bold",
+    "HTML carries the plain text a paste that cannot read it receives");
+  const pixels = new Uint8Array([255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255]);
+  clipboard.writeImage({ width: 2, height: 2, data: pixels });
+  const image = clipboard.readImage();
+  assert.equal(image.width, 2);
+  assert.equal(image.height, 2);
+  assert.deepEqual([...image.data], [...pixels], "RGBA survives the clipboard's own encoding");
+  assert.equal(clipboard.readText(), null, "an image is not text, and says so rather than throwing");
+  clipboard.clear();
+  assert.equal(clipboard.readText(), null);
+  assert.equal(clipboard.readImage(), null);
+} else {
+  console.log("clipboard round-trips skipped: no DISPLAY or WAYLAND_DISPLAY on this host");
+}
+
+// The single-instance lock, over the real socket: the second request finds the
+// lock held, hands this invocation over, and the first instance is handed it
+// back on a frame turn.
+if (process.platform !== "win32") {
+  const received = [];
+  // A stable name, so a run after one that crashed also exercises taking over a
+  // socket whose owner is gone.
+  const lockName = "blitsen-native-harness";
+  assert.equal(app.requestSingleInstanceLock(lockName, invocation => received.push(invocation)),
+    true, "the first instance owns the lock");
+  assert.throws(() => app.requestSingleInstanceLock(lockName, "not a function"), TypeError);
+  assert.equal(app.requestSingleInstanceLock(lockName), false,
+    "a second request finds the lock held and hands its invocation over");
+  // The hand-off crosses a socket and a listener thread, so the wait is for the
+  // host to report work; the delivery itself is one turn, not a poll.
+  let waiting = false;
+  for (let turn = 0; turn < 200 && !waiting; turn++) {
+    waiting = globalThis.__blitsenAnimationFramesPending();
+    if (!waiting) await Bun.sleep(5);
+  }
+  assert.equal(waiting, true, "an undelivered invocation keeps the host turning");
+  assert.equal(received.length, 0, "nothing is delivered between frame turns");
+  globalThis.__blitsenAnimationFrameTick(0);
+  assert.equal(received.length, 1, "the invocation arrived on the next frame turn");
+  assert.deepEqual(received[0].argv, process.argv.map(String),
+    "the second instance's command line, as the OS gave it");
+  assert.equal(received[0].cwd, process.cwd());
+  assert.equal(globalThis.__blitsenAnimationFramesPending(), false,
+    "a delivered invocation stops asking for frames");
+}
+
+// `relaunch`. The successor is this process's own command line run again, so it
+// is tested with a script that counts its own generations and stops at two.
+const relaunchDirectory = mkdtempSync(join(tmpdir(), "blitsen-relaunch-"));
+try {
+  const marker = join(relaunchDirectory, "generations");
+  const script = join(relaunchDirectory, "relaunch.mjs");
+  writeFileSync(marker, "");
+  writeFileSync(script, `
+    import { appendFileSync, readFileSync } from "node:fs";
+    import { createRequire } from "node:module";
+    const native = createRequire(import.meta.url)(process.env.BLITSEN_RELAUNCH_ADDON);
+    native.runBridgeHarness("<div></div>", "", 32, 32);
+    const { default: app } = await import(process.env.BLITSEN_RELAUNCH_MODULE);
+    const marker = process.env.BLITSEN_RELAUNCH_MARKER;
+    appendFileSync(marker, process.argv.join(" ") + "\\n");
+    const generations = readFileSync(marker, "utf8").split("\\n").filter(Boolean);
+    if (generations.length < 2) app.relaunch();
+  `);
+  const relaunched = Bun.spawnSync({
+    cmd: [process.execPath, script],
+    env: {
+      ...process.env,
+      BLITSEN_RELAUNCH_ADDON: addonPath,
+      BLITSEN_RELAUNCH_MARKER: marker,
+      BLITSEN_RELAUNCH_MODULE: new URL("../src/native/app.mjs", import.meta.url).href,
+    },
+    stdout: "inherit",
+    stderr: "inherit",
+  });
+  assert.equal(relaunched.exitCode, 0, "the relaunching process exits cleanly");
+  let generations = [];
+  for (let wait = 0; wait < 200 && generations.length < 2; wait++) {
+    await Bun.sleep(25);
+    generations = readFileSync(marker, "utf8").split("\n").filter(Boolean);
+  }
+  assert.equal(generations.length, 2, "relaunch starts a successor that outlives this process");
+  assert.equal(generations[0], generations[1],
+    "the successor runs the same command line, argument for argument");
+} finally {
+  rmSync(relaunchDirectory, { recursive: true, force: true });
+}
+
+console.log("native modules passed", `clipboard=${displayed ? "round-tripped" : "skipped"}`);
 console.log("bridge harness passed", process.platform, process.arch, `style=${styled.attributes["data-style-call-us"]}us/call`);

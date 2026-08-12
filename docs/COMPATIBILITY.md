@@ -543,3 +543,63 @@ The scanner cannot prove visual equivalence or determine that an unsupported ref
 code. Treat a zero-error report as the build-time gate and retain visual/interaction acceptance tests
 for the application itself. See the earlier [S6 renderer evidence](../spikes/s6/README.md) for why
 this boundary exists.
+
+## Native modules
+
+The profile above is what a web application may already assume. The `native:` modules are the
+other direction: capability the web has no spelling for, imported under a name that makes the
+non-portability obvious at the import site.
+
+```js
+import app from "blitsen/app";
+import clipboard from "blitsen/clipboard";
+```
+
+**`native:` is additive, never a superset** (TECH.md §9). Anything Node already names keeps its
+Node name — the command line is `process.argv`, the executable is `process.execPath`, stopping is
+`process.exit`, CPU and platform facts are `node:os`, and files are `node:fs`. So there is no
+`app.argv` and no `app.quit`: a `native:` member exists only where neither Node nor the web has a
+word for the thing.
+
+**Absence is the API.** Outside the runtime — a browser tab, a plain Node script — every access on
+these modules throws, because importing them there is a mistake. Inside it, a capability this
+build does not implement is genuinely `undefined`, so feature detection works and reads the same
+as it does for the web surface:
+
+```js
+if (app.requestSingleInstanceLock && !app.requestSingleInstanceLock("My App", relaunchedWith)) {
+  process.exit(0);
+}
+```
+
+The tables are generated from the same runtime source as the tiers above, by the same reader.
+
+<!-- generated: native-modules -->
+
+| Module | Implemented | Absent |
+| --- | --- | --- |
+| `blitsen/app` | `dataDir`, `cacheDir`, `configDir`, `requestSingleInstanceLock`, `relaunch` | `onQuitRequest`, `onSuspend`, `onResume`, `registerProtocol`, `registerFileAssociation` |
+| `blitsen/clipboard` | `readText`, `readHtml`, `readImage`, `writeText`, `writeHtml`, `writeImage`, `clear` | `readMime`, `writeMime` |
+
+| Absent member | Why |
+| --- | --- |
+| `app.onQuitRequest` | A close request is a window event, and windows are issue #77's to expose; delivering one from here would mean a second, competing event loop. |
+| `app.onSuspend` | Linux has no process-level suspend notification to report. The desktop portals that come closest describe the session, not this application. |
+| `app.onResume` | The counterpart of `onSuspend`, absent for the same reason. |
+| `app.registerProtocol` | Registering `myapp://` on Linux means installing a `.desktop` entry that names the executable, which is what `blitsen build` already writes. A running process editing that entry would fight its own packaging. The activation itself arrives: the desktop launches the handler with the URL in `argv`, and the single-instance lock hands that to the instance already running. |
+| `app.registerFileAssociation` | The same `.desktop` entry, with `MimeType` instead of a scheme. |
+| `clipboard.readMime` | `arboard` reads the flavours above and no others. Arbitrary MIME needs a different mechanism on each platform — X11 selection targets, `wl_data_offer`, `NSPasteboardType`, a registered Windows format — and no part of that is shared. |
+| `clipboard.writeMime` | The counterpart of `readMime`, absent for the same reason. |
+
+<!-- /generated -->
+
+### Platform differences
+
+Where a member exists, it means the same thing everywhere. What differs is underneath it.
+
+| Member | What differs |
+| --- | --- |
+| `app.dataDir`, `app.cacheDir`, `app.configDir` | The application passes its own name, because the runtime does not know one: during development the executable is the host runtime, and a window title is not an identity. The name must be a single path segment. Linux answers with `$XDG_DATA_HOME`/`$XDG_CACHE_HOME`/`$XDG_CONFIG_HOME` and their `~/.local/share`, `~/.cache`, `~/.config` defaults; macOS with `~/Library/Application Support` and `~/Library/Caches`, so data and config are the same directory; Windows with `%APPDATA%` and `%LOCALAPPDATA%`. The directory is returned, never created — making it is `node:fs`. |
+| `app.requestSingleInstanceLock` | Unix only, and absent on Windows rather than approximated: the lock is a Unix domain socket in `$XDG_RUNTIME_DIR`, which is both the claim and the channel the second invocation's `argv` and `cwd` arrive on. Windows wants a named mutex and a named pipe, which is a different design rather than this one with the socket swapped. A socket left behind by a process that crashed is detected and taken over. Second invocations are delivered on the frame turn, alongside `fetch` completions, so an application is never re-entered part-way through a frame. |
+| `app.relaunch` | Spawns a copy of this process with the same arguments, environment and working directory, and drops the single-instance lock so the successor can take it. It does not stop this process: that is `process.exit`, and only the application knows what it still has to flush. |
+| `clipboard.*` | On X11 and Wayland the process that copied is the one that serves the selection, so **what an exported Blitsen application copies disappears when it exits**, unless the desktop runs a clipboard manager that takes a copy. macOS and Windows hand the data to the system and it survives. `writeHtml` also stores the plain text an application that cannot read HTML will paste instead. Images cross as 8-bit RGBA, `{ width, height, data }`, and are carried as PNG on Linux, `CF_DIB` on Windows and an `NSImage` on macOS — a decoded image is not guaranteed to be byte-identical to the one that was copied. A read finds `null` where the clipboard holds nothing in that flavour; a clipboard the session does not offer at all — a headless process — throws instead, because that is an environment refusing rather than an empty clipboard. |

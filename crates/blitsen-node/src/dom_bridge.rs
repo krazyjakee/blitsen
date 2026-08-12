@@ -14,6 +14,7 @@ use serde_json::{Value, json};
 use super::{DomRuntime, NodeApiEngine, NodeWeakRef, callback_string, check, unknown};
 
 mod fetch;
+mod native;
 mod web_url;
 
 const BOOTSTRAP: &str = r##"
@@ -83,6 +84,7 @@ const BOOTSTRAP: &str = r##"
     notifyMediaQueries();
     settleFetches();
     settleImages();
+    deliverSecondInstances();
     const callbacks = animationFrames;
     animationFrames = new Map();
     runningAnimationFrames = callbacks;
@@ -2145,6 +2147,64 @@ const BOOTSTRAP: &str = r##"
 
   const navigator = Object.create(Navigator.prototype);
 
+  // The `native:` modules. `packages/blitsen/src/native/module.mjs` proxies every
+  // `blitsen/<module>` subpath onto the namespace installed below, and reports a
+  // member it cannot find as absent rather than as an error — so a capability the
+  // host could not install must not appear here at all, and a member is dropped
+  // when its host function is missing rather than stubbed with a thrower.
+  //
+  // Only capability with no Node or web spelling belongs here: argv, the
+  // executable path and exit stay `process.argv`, `process.execPath` and
+  // `process.exit` (TECH.md §9).
+  const nativeMembers = members => Object.freeze(Object.fromEntries(
+    Object.entries(members).filter(([, member]) => member !== undefined)));
+  const nativePending = typeof __blitsenNativeAppPending === "function"
+    ? __blitsenNativeAppPending : () => false;
+  let secondInstanceHandler = null;
+  // Second invocations land here and nowhere else in the turn, for the same
+  // reason `fetch` completions do: an application must never be re-entered from
+  // a listener thread part-way through a frame.
+  const deliverSecondInstances = () => {
+    if (!nativePending()) return;
+    for (const invocation of JSON.parse(__blitsenNativeAppSecondInstances())) {
+      Object.freeze(invocation.argv);
+      try { secondInstanceHandler?.(Object.freeze(invocation)); }
+      catch (error) { console.error("Uncaught exception in the second-instance handler", error); }
+    }
+  };
+  const nativeApp = {
+    dataDir: name => __blitsenNativeAppDirectory("data", String(name)),
+    cacheDir: name => __blitsenNativeAppDirectory("cache", String(name)),
+    configDir: name => __blitsenNativeAppDirectory("config", String(name)),
+    relaunch: () => { __blitsenNativeAppRelaunch(); },
+    requestSingleInstanceLock: typeof __blitsenNativeAppSingleInstance === "function"
+      ? (name, onSecondInstance = null) => {
+          if (onSecondInstance !== null && typeof onSecondInstance !== "function")
+            throw new TypeError("the second-instance handler must be a function");
+          const primary = __blitsenNativeAppSingleInstance(String(name));
+          if (primary) secondInstanceHandler = onSecondInstance;
+          return primary;
+        }
+      : undefined,
+  };
+  const nativeClipboard = {
+    readText: () => __blitsenNativeClipboardRead("text"),
+    readHtml: () => __blitsenNativeClipboardRead("html"),
+    readImage: () => __blitsenNativeClipboardReadImage(),
+    writeText: text => { __blitsenNativeClipboardWrite("text", String(text)); },
+    writeHtml: (html, alternative = "") => {
+      __blitsenNativeClipboardWrite("html", String(html), String(alternative));
+    },
+    writeImage: image => {
+      __blitsenNativeClipboardWriteImage(String(image.width), String(image.height), image.data);
+    },
+    clear: () => { __blitsenNativeClipboardClear(); },
+  };
+  globalThis[Symbol.for("blitsen.native")] = Object.freeze({
+    app: nativeMembers(nativeApp),
+    clipboard: nativeMembers(nativeClipboard),
+  });
+
   for (const method of ["addEventListener", "removeEventListener", "dispatchEvent"])
     Object.defineProperty(globalThis, method, { value: EventTarget.prototype[method], configurable: true });
   const globals = {
@@ -2166,7 +2226,7 @@ const BOOTSTRAP: &str = r##"
     __blitsenAnimationFrameTick: animationFrameTick,
     __blitsenAnimationFramesPending: () =>
       animationFrames.size > 0 || inflightFetches.size > 0 || pendingResizeObservations() > 0
-      || waitingImages() > 0 || call("isAnimating"),
+      || waitingImages() > 0 || nativePending() || call("isAnimating"),
     __blitsenForcedLayoutsThisFrame: () => forcedLayoutsThisFrame,
     __blitsenEventInternals: eventInternals,
     __blitsenDispatchMouseEvent: dispatchMouseEvent,
@@ -2185,6 +2245,7 @@ const BOOTSTRAP: &str = r##"
       wrapperCache.clear();
       pendingImages.clear();
       inflightFetches.clear();
+      secondInstanceHandler = null;
       __blitsenFetchDispose();
       historyEntries = [{ url: documentUrl, state: null }];
       historyIndex = 0;
@@ -2364,6 +2425,7 @@ pub(super) fn install(
     engine.set_global("__blitsenViewportWrite", &viewport_write_function)?;
     install_text_codec(engine, raw_env)?;
     install_fetch(engine, raw_env)?;
+    native::install(engine, raw_env)?;
     let dev_layout_warnings = std::env::var("BLITSEN_DEV_LAYOUT_WARNINGS").is_ok_and(|value| {
         !value.is_empty() && value != "0" && !value.eq_ignore_ascii_case("false")
     });

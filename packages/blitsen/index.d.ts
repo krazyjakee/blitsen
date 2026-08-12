@@ -1,3 +1,14 @@
+/**
+ * The `native:` module surfaces, re-exported so an application can name one.
+ * The modules themselves are the `blitsen/app` … `blitsen/os` subpaths.
+ */
+export type {
+  ClipboardImage,
+  Invocation,
+  NativeApp,
+  NativeClipboard,
+} from "./src/native/native.js";
+
 /** The `blitsen` key of `package.json`, the one place Blitsen reads configuration from. */
 export interface BlitsenConfig {
   /**

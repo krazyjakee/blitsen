@@ -110,6 +110,41 @@ const CATALOGUE = {
   WEB_COMPONENTS: ["customElements", "ShadowRoot", "DOMParser"],
 };
 
+// The `native:` modules, declared the same way and for the same reason: the
+// names live here and whether each one is implemented is read out of the
+// bootstrap, so this file cannot claim capability the runtime does not install.
+// Nothing here has a Node or web spelling — that is the entry condition for a
+// `native:` member (TECH.md §9), which is why `argv`, `execPath` and `quit` are
+// not listed as absent: they are `process.argv`, `process.execPath` and
+// `process.exit`, and they are not this layer's to name.
+const NATIVE = {
+  app: ["dataDir", "cacheDir", "configDir", "requestSingleInstanceLock", "relaunch",
+    "onQuitRequest", "onSuspend", "onResume", "registerProtocol", "registerFileAssociation"],
+  clipboard: ["readText", "readHtml", "readImage", "writeText", "writeHtml", "writeImage",
+    "clear", "readMime", "writeMime"],
+};
+
+// Why a declared member is not implemented. Absence is the answer, not an
+// oversight: the member is `undefined`, so `if (app.onQuitRequest)` selects a
+// fallback, and this is what the documentation says about each one.
+const NATIVE_ABSENT = {
+  "app.onQuitRequest": "A close request is a window event, and windows are issue #77's to expose; "
+    + "delivering one from here would mean a second, competing event loop.",
+  "app.onSuspend": "Linux has no process-level suspend notification to report. The desktop "
+    + "portals that come closest describe the session, not this application.",
+  "app.onResume": "The counterpart of `onSuspend`, absent for the same reason.",
+  "app.registerProtocol": "Registering `myapp://` on Linux means installing a `.desktop` entry "
+    + "that names the executable, which is what `blitsen build` already writes. A running process "
+    + "editing that entry would fight its own packaging. The activation itself arrives: the "
+    + "desktop launches the handler with the URL in `argv`, and the single-instance lock hands "
+    + "that to the instance already running.",
+  "app.registerFileAssociation": "The same `.desktop` entry, with `MimeType` instead of a scheme.",
+  "clipboard.readMime": "`arboard` reads the flavours above and no others. Arbitrary MIME needs a "
+    + "different mechanism on each platform — X11 selection targets, `wl_data_offer`, "
+    + "`NSPasteboardType`, a registered Windows format — and no part of that is shared.",
+  "clipboard.writeMime": "The counterpart of `readMime`, absent for the same reason.",
+};
+
 // What `doctor` says about a group whose APIs turn out to be absent, plus an
 // optional pattern for a usage that names no API at all.
 //
@@ -355,9 +390,13 @@ export function extractRuntimeSurface(source) {
   for (const [, name, constructed, created] of structure
     .matchAll(/\n {2}const (\w+) = (?:new (\w+)\(\)|Object\.create\((\w+)\.prototype\));/g))
     if (classes.has(constructed ?? created)) instances.set(name, constructed ?? created);
+  const native = new Map(Object.keys(NATIVE).map(module =>
+    [module, new Set(objectKeys(structure, `const native${capitalized(module)} = {`))]));
   return { globals: [...globals].filter(name => !name.startsWith("__blitsen")), classes, instances,
-    deleted: [...deleted] };
+    deleted: [...deleted], native };
 }
+
+const capitalized = name => `${name[0].toUpperCase()}${name.slice(1)}`;
 
 function memberOwner(surface, owner) {
   const className = surface.instances.get(owner) ?? owner;
@@ -383,6 +422,31 @@ function apiEntry(surface, entry, code) {
   return { api, kind: "member", owner: resolved.target, member,
     status: resolved.members.has(member) ? "implemented" : "absent", code,
     pattern: override === undefined ? pattern : override };
+}
+
+// Reads the `native:` surface out of the bootstrap, refusing anything the two
+// disagree about — an installed member this file does not declare, or an absent
+// one it cannot say why about.
+function nativeEntries(surface) {
+  const entries = Object.entries(NATIVE).flatMap(([module, members]) => {
+    const installed = surface.native.get(module);
+    const undeclared = [...installed].filter(member => !members.includes(member));
+    if (undeclared.length > 0)
+      throw new Error(`${SOURCE_NAME} installs native:${module}.`
+        + `${undeclared.join(`, native:${module}.`)}, which this manifest does not declare; `
+        + "add each one to NATIVE");
+    return members.map(member => {
+      const api = `${module}.${member}`;
+      const status = installed.has(member) ? "implemented" : "absent";
+      const reason = NATIVE_ABSENT[api];
+      if (status === "absent" && !reason)
+        throw new Error(`native:${api} is not installed and NATIVE_ABSENT does not say why`);
+      if (status === "implemented" && reason)
+        throw new Error(`native:${api} is installed, so NATIVE_ABSENT must not explain it away`);
+      return { api, module, member, status, ...(reason ? { reason } : {}) };
+    });
+  });
+  return entries;
 }
 
 // A rule matched against a source file of one kind, rather than against an API.
@@ -417,6 +481,7 @@ export function buildManifest(source) {
     generatedBy: `packages/blitsen/src/api-manifest.mjs from ${SOURCE_NAME}`,
     profile: "v0-strict",
     apis,
+    native: nativeEntries(surface),
     diagnostics: Object.fromEntries(Object.entries(DIAGNOSTICS)
       .map(([code, [severity, message, guidance, extra]]) =>
         [code, { severity, message, guidance, extra: extra?.source ?? null }])),
@@ -461,6 +526,20 @@ export function renderCapabilityTiers(manifest) {
     "| Diagnostic | Severity | Reported as |", "| --- | --- | --- |", ...diagnosed].join("\n");
 }
 
+// Renders the `native:` module surface documented in COMPATIBILITY.md.
+export function renderNativeModules(manifest) {
+  const modules = [...new Set(manifest.native.map(entry => entry.module))];
+  const members = (module, status) => manifest.native
+    .filter(entry => entry.module === module && entry.status === status)
+    .map(entry => `\`${entry.member}\``).join(", ") || "—";
+  const surface = modules.map(module => `| \`blitsen/${module}\` `
+    + `| ${members(module, "implemented")} | ${members(module, "absent")} |`);
+  const absent = manifest.native.filter(entry => entry.status === "absent")
+    .map(entry => `| \`${entry.api}\` | ${entry.reason} |`);
+  return ["| Module | Implemented | Absent |", "| --- | --- | --- |", ...surface, "",
+    "| Absent member | Why |", "| --- | --- |", ...absent].join("\n");
+}
+
 function replaceGenerated(document, section, body) {
   const open = `<!-- generated: ${section} -->`;
   const close = "<!-- /generated -->";
@@ -471,8 +550,9 @@ function replaceGenerated(document, section, body) {
 }
 
 export async function renderCompatibilityDoc(manifest) {
-  return replaceGenerated(await readFile(COMPATIBILITY_DOC, "utf8"), "api-manifest",
+  const document = replaceGenerated(await readFile(COMPATIBILITY_DOC, "utf8"), "api-manifest",
     renderCapabilityTiers(manifest));
+  return replaceGenerated(document, "native-modules", renderNativeModules(manifest));
 }
 
 if (import.meta.main) {
@@ -480,6 +560,8 @@ if (import.meta.main) {
   await writeFile(MANIFEST_FILE, `${JSON.stringify(manifest, null, 2)}\n`);
   await writeFile(COMPATIBILITY_DOC, await renderCompatibilityDoc(manifest));
   const absent = manifest.apis.filter(entry => entry.status === "absent").length;
+  const nativeAbsent = manifest.native.filter(entry => entry.status === "absent").length;
   console.log(`api-manifest: ${manifest.apis.length - absent} implemented, ${absent} absent APIs `
-    + `read from ${SOURCE_NAME}`);
+    + `and ${manifest.native.length - nativeAbsent} implemented, ${nativeAbsent} absent native `
+    + `members read from ${SOURCE_NAME}`);
 }

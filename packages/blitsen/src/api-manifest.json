@@ -2021,6 +2021,129 @@
       "pattern": "(?<![.\\w$])DOMParser\\b"
     }
   ],
+  "native": [
+    {
+      "api": "app.dataDir",
+      "module": "app",
+      "member": "dataDir",
+      "status": "implemented"
+    },
+    {
+      "api": "app.cacheDir",
+      "module": "app",
+      "member": "cacheDir",
+      "status": "implemented"
+    },
+    {
+      "api": "app.configDir",
+      "module": "app",
+      "member": "configDir",
+      "status": "implemented"
+    },
+    {
+      "api": "app.requestSingleInstanceLock",
+      "module": "app",
+      "member": "requestSingleInstanceLock",
+      "status": "implemented"
+    },
+    {
+      "api": "app.relaunch",
+      "module": "app",
+      "member": "relaunch",
+      "status": "implemented"
+    },
+    {
+      "api": "app.onQuitRequest",
+      "module": "app",
+      "member": "onQuitRequest",
+      "status": "absent",
+      "reason": "A close request is a window event, and windows are issue #77's to expose; delivering one from here would mean a second, competing event loop."
+    },
+    {
+      "api": "app.onSuspend",
+      "module": "app",
+      "member": "onSuspend",
+      "status": "absent",
+      "reason": "Linux has no process-level suspend notification to report. The desktop portals that come closest describe the session, not this application."
+    },
+    {
+      "api": "app.onResume",
+      "module": "app",
+      "member": "onResume",
+      "status": "absent",
+      "reason": "The counterpart of `onSuspend`, absent for the same reason."
+    },
+    {
+      "api": "app.registerProtocol",
+      "module": "app",
+      "member": "registerProtocol",
+      "status": "absent",
+      "reason": "Registering `myapp://` on Linux means installing a `.desktop` entry that names the executable, which is what `blitsen build` already writes. A running process editing that entry would fight its own packaging. The activation itself arrives: the desktop launches the handler with the URL in `argv`, and the single-instance lock hands that to the instance already running."
+    },
+    {
+      "api": "app.registerFileAssociation",
+      "module": "app",
+      "member": "registerFileAssociation",
+      "status": "absent",
+      "reason": "The same `.desktop` entry, with `MimeType` instead of a scheme."
+    },
+    {
+      "api": "clipboard.readText",
+      "module": "clipboard",
+      "member": "readText",
+      "status": "implemented"
+    },
+    {
+      "api": "clipboard.readHtml",
+      "module": "clipboard",
+      "member": "readHtml",
+      "status": "implemented"
+    },
+    {
+      "api": "clipboard.readImage",
+      "module": "clipboard",
+      "member": "readImage",
+      "status": "implemented"
+    },
+    {
+      "api": "clipboard.writeText",
+      "module": "clipboard",
+      "member": "writeText",
+      "status": "implemented"
+    },
+    {
+      "api": "clipboard.writeHtml",
+      "module": "clipboard",
+      "member": "writeHtml",
+      "status": "implemented"
+    },
+    {
+      "api": "clipboard.writeImage",
+      "module": "clipboard",
+      "member": "writeImage",
+      "status": "implemented"
+    },
+    {
+      "api": "clipboard.clear",
+      "module": "clipboard",
+      "member": "clear",
+      "status": "implemented"
+    },
+    {
+      "api": "clipboard.readMime",
+      "module": "clipboard",
+      "member": "readMime",
+      "status": "absent",
+      "reason": "`arboard` reads the flavours above and no others. Arbitrary MIME needs a different mechanism on each platform — X11 selection targets, `wl_data_offer`, `NSPasteboardType`, a registered Windows format — and no part of that is shared."
+    },
+    {
+      "api": "clipboard.writeMime",
+      "module": "clipboard",
+      "member": "writeMime",
+      "status": "absent",
+      "reason": "The counterpart of `readMime`, absent for the same reason."
+    }
+  ],
   "diagnostics": {
     "WEB_DOM": {
       "severity": "warning",
