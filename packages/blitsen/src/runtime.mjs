@@ -365,7 +365,7 @@ export function openRuntime(resolved) {
   return {
     resolved,
     openDirectory(options) {
-      return engine.openDirectory?.(options) ?? engine.loadHTML(options.entrypoint);
+      return engine.openDirectory(options);
     },
     reloadCSS: engine.reloadCSS ? file => engine.reloadCSS(file) : null,
     reloadDirectory: engine.reloadDirectory ? () => engine.reloadDirectory() : null,

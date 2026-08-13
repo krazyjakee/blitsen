@@ -223,7 +223,10 @@ fn hit_testing_subtracts_the_offsets_of_anonymous_block_boxes() {
         .hit_test(box_of_inline.x + 5.0, box_of_inline.y + 5.0, snapshot)
         .unwrap()
         .unwrap();
-    assert_eq!(hit.target, inline, "the inline element is still hit-testable");
+    assert_eq!(
+        hit.target, inline,
+        "the inline element is still hit-testable"
+    );
     assert_eq!(
         hit.path.last(),
         Some(&inline),

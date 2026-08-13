@@ -36,7 +36,8 @@ const CATALOGUE = {
     "Document.title", "Document.dir", "Document.getElementsByName",
     "Document.elementFromPoint", "Document.elementsFromPoint", "Document.scrollingElement",
     "Document.characterSet", "Document.documentURI", "Document.hasFocus", "Document.adoptNode",
-    "HTMLLinkElement.relList", "HTMLTemplateElement.content", "DOMTokenList.supports",
+    "HTMLLinkElement.relList", "HTMLLinkElement.onload", "HTMLLinkElement.onerror",
+    "HTMLTemplateElement.content", "DOMTokenList.supports",
     "Document.createElementNS", "Document.createComment", "Document.createDocumentFragment",
     "Document.getElementsByTagName", "Document.getElementsByClassName", "Document.importNode",
     "Document.currentScript"],
@@ -66,7 +67,7 @@ const CATALOGUE = {
     "HTMLFormElement.checkValidity"],
   WEB_EVENTS: ["EventTarget", "Event", "CustomEvent", "SubmitEvent", "MouseEvent",
     "KeyboardEvent", "FocusEvent", "InputEvent", "PointerEvent", "WheelEvent",
-    "addEventListener", "removeEventListener", "dispatchEvent"],
+    "addEventListener", "removeEventListener", "dispatchEvent", "ErrorEvent"],
   // Document scrolling. `scroll` and `scrollTo` are the same function under two
   // names, as they are on Window. The patterns are qualified because the bare
   // words are far too ordinary to find in a bundle: `scroll` alone matches every
@@ -76,19 +77,54 @@ const CATALOGUE = {
     ["scrollX", "\\b(?:window|globalThis)\\.scrollX\\b"],
     ["scrollY", "\\b(?:window|globalThis)\\.scrollY\\b"],
     ["pageXOffset", "\\bpageXOffset\\b"], ["pageYOffset", "\\bpageYOffset\\b"]],
-  // Selection and ranges, absent together: a caller that has a selection wants
-  // the ranges in it, so implementing either alone would answer half a question.
-  WEB_SELECTION: [["getSelection", "\\b(?:window|document)\\.getSelection\\s*\\("], "Range"],
+  // Selection and ranges. Geometry is why they are here: measuring a run of
+  // characters means putting a range around it and asking where it is, and
+  // nothing else in the DOM can answer that. A selection is declared alongside
+  // because a caller that has one wants the ranges in it.
+  //
+  // What stays absent is every method that edits the tree through a range —
+  // `deleteContents`, `extractContents`, `cloneContents`, `insertNode`,
+  // `surroundContents` — and the reason is in COMPATIBILITY.md: each one splits
+  // a text node at a boundary point, and this runtime has no character-data
+  // interface to split one with.
+  WEB_SELECTION: [["getSelection", "\\b(?:window|document)\\.getSelection\\s*\\("], "Range",
+    "Selection", "CaretPosition",
+    "Document.createRange", "Document.getSelection", "Document.caretRangeFromPoint",
+    "Document.caretPositionFromPoint",
+    "Range.setStart", "Range.setEnd", "Range.setStartBefore", "Range.setStartAfter",
+    "Range.setEndBefore", "Range.setEndAfter", "Range.selectNode", "Range.selectNodeContents",
+    "Range.collapse", "Range.cloneRange", "Range.startContainer", "Range.startOffset",
+    "Range.endContainer", "Range.endOffset", "Range.collapsed",
+    "Range.commonAncestorContainer", "Range.comparePoint", "Range.compareBoundaryPoints",
+    "Range.intersectsNode", "Range.isPointInRange", "Range.toString",
+    "Range.getClientRects", "Range.getBoundingClientRect",
+    "Range.deleteContents", "Range.extractContents", "Range.cloneContents", "Range.insertNode",
+    "Range.surroundContents",
+    "Selection.anchorNode", "Selection.anchorOffset", "Selection.focusNode",
+    "Selection.focusOffset", "Selection.isCollapsed", "Selection.rangeCount", "Selection.type",
+    "Selection.direction", "Selection.getRangeAt", "Selection.addRange",
+    "Selection.removeAllRanges", "Selection.setBaseAndExtent", "Selection.collapse",
+    "Selection.extend", "Selection.selectAllChildren", "Selection.containsNode",
+    "Selection.toString",
+    "CaretPosition.offsetNode", "CaretPosition.offset", "CaretPosition.getClientRect"],
   WEB_SCHEDULING: ["requestAnimationFrame", "cancelAnimationFrame", "setTimeout", "clearTimeout",
     "setInterval", "clearInterval", "requestIdleCallback", "cancelIdleCallback"],
   WEB_NETWORK: ["fetch", "Headers", "Request", "Response", "Blob", "AbortController",
     "AbortSignal"],
-  WEB_ROUTING: ["window", "location", "history", "Location", "History", "PopStateEvent",
+  WEB_ROUTING: ["window", ["self", "\\bself\\."], "location", "history", "Location", "History", "PopStateEvent",
     "HashChangeEvent"],
   WEB_VIEWPORT: ["BlitsenViewElement", "BlitsenViewSurface"],
   WEB_STORAGE: ["Storage", "localStorage", "sessionStorage", "indexedDB"],
-  WEB_WORKER: ["Worker", "SharedWorker", "ServiceWorker", "ServiceWorkerContainer"],
-  WEB_MESSAGING: ["MessageChannel", "MessagePort", "BroadcastChannel", "postMessage"],
+  // A worker is a second JavaScript context on a thread of its own, with the
+  // same application behind it and no DOM in front of it. `SharedWorker` and
+  // the service worker family stay absent: both are about sharing one worker
+  // between documents, and there is one document.
+  WEB_WORKER: ["Worker", "Worker.postMessage", "Worker.terminate",
+    "SharedWorker", "ServiceWorker", "ServiceWorkerContainer"],
+  WEB_MESSAGING: ["MessageChannel", "MessagePort", "structuredClone",
+    ["postMessage", "\\b(?:window|globalThis|self)\\.postMessage\\s*\\("],
+    "MessagePort.postMessage", "MessagePort.start", "MessagePort.close",
+    "BroadcastChannel"],
   // `MessageEvent` is here rather than with the messaging APIs because a socket
   // is the only thing in this runtime that delivers one. The four readyState
   // constants are not listed: they are installed onto the constructor and the
@@ -255,10 +291,12 @@ const DIAGNOSTICS = {
     "Schedule the work with requestAnimationFrame or a timer."],
   WEB_STORAGE: ["warning", "IndexedDB is not implemented.",
     "Use a Node filesystem/database package, or the Web Storage APIs for session state."],
-  WEB_WORKER: ["warning", "Web workers are not implemented.",
-    "Run the work in the main context or use a native/Node worker path."],
-  WEB_MESSAGING: ["warning", "Message channels are not implemented.",
-    "Feature-detect the channel; a scheduler that falls back to a timer keeps working."],
+  WEB_WORKER: ["warning", "Shared and service workers are not implemented; dedicated Worker is.",
+    "Use a dedicated Worker, which this runtime runs on a thread of its own, and keep whatever "
+    + "the workers were sharing in the document that started them."],
+  WEB_MESSAGING: ["warning", "BroadcastChannel is not implemented; MessageChannel and Worker are.",
+    "There is one document behind an application, so a channel between two of them has nothing "
+    + "to connect; pass a MessagePort to whoever needs one."],
   WEB_SOCKET: ["warning", "Server-sent events are not implemented; WebSocket is.",
     "Feature-detect EventSource, or hold the stream open over a WebSocket instead."],
   WEB_XHR: ["warning", "XMLHttpRequest is not implemented.", "Use fetch with an absolute URL."],
@@ -290,8 +328,10 @@ const DIAGNOSTICS = {
     + "back with getComputedStyle."],
   WEB_COMPONENTS: ["warning", "Custom elements and shadow DOM are not implemented; DOMParser is.",
     "Render with ordinary elements the bundler already emits."],
-  WEB_SELECTION: ["warning", "Text selection and ranges are not implemented.",
-    "Track the selected range in application state rather than reading it back from the DOM."],
+  WEB_SELECTION: ["warning",
+    "This part of the range API is not implemented; the boundary, text and geometry reads are.",
+    "Edit the tree with the node methods rather than through a range: a range here measures "
+    + "and compares, and does not cut."],
 };
 
 // Diagnostics that are not an absence: an implemented API used in a way an

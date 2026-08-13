@@ -1,7 +1,6 @@
 //! Runtime-neutral bridge between a DOM backend and JavaScript engine.
 
 mod attributes;
-mod bridge;
 pub mod bundle;
 mod document;
 pub mod events;
@@ -18,7 +17,6 @@ mod tests;
 
 // The crate is split by concern; the public surface is unchanged.
 pub use attributes::*;
-pub use bridge::*;
 pub use document::*;
 pub use node::*;
 pub use scripts::*;

@@ -60,6 +60,25 @@
       const hit = call("hitTest", Number(x), Number(y));
       return hit ? [wrap(hit.target), ...hit.path.map(wrap)] : [];
     }
+    createRange() { return new Range(); }
+    // The same laid-out text a range measures, asked the other way round: which
+    // character is under this point. Answered as a collapsed range under the
+    // name WebKit gave it and as a position under the name the standard gave
+    // it — the two are the same reading, and a caller has one or the other
+    // spelling compiled into it.
+    caretRangeFromPoint(x, y) {
+      const caret = this.caretPositionFromPoint(x, y);
+      if (caret === null) return null;
+      const range = this.createRange();
+      range.setStart(caret.offsetNode, caret.offset);
+      range.collapse(true);
+      return range;
+    }
+    caretPositionFromPoint(x, y) {
+      const caret = recordForcedLayout(call("caretPosition", Number(x), Number(y)));
+      return caret.node === null ? null : new CaretPosition(wrap(caret.node), caret.offset);
+    }
+    getSelection() { return getSelection(); }
     get body() { return wrap(call("body")); }
     get head() { return this.querySelector("head"); }
     get documentElement() { return wrap(call("documentElement")); }

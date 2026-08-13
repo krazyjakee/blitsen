@@ -50,6 +50,11 @@
   class MouseEvent extends Event {
     constructor(type, options = {}) {
       super(type, options);
+      // The browsing context the event belongs to. D3 reads this to install
+      // its temporary move/up listeners on the window during a drag.
+      Object.defineProperty(this, "view", {
+        value: options.view ?? null, enumerable: true,
+      });
       const numbers = ["clientX", "clientY", "offsetX", "offsetY", "screenX", "screenY",
         "button", "buttons", "deltaX", "deltaY"];
       for (const property of numbers) Object.defineProperty(this, property, {
@@ -333,7 +338,7 @@
   };
   const dispatchMouseEvent = (type, rawHandle, init) => {
     const target = wrap(String(rawHandle));
-    const event = new MouseEvent(String(type), init);
+    const event = new MouseEvent(String(type), { ...init, view: init.view ?? globalThis });
     const allowed = target.dispatchEvent(event);
     if (type === "click" && allowed) { focusNearest(target); activateControl(target); }
     if (type === "wheel" && allowed)
@@ -374,4 +379,3 @@
     }
     return globalThis.dispatchEvent(new Event(type));
   };
-

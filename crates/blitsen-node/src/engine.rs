@@ -138,6 +138,10 @@ pub struct NodeApiEngine {
 impl NodeApiEngine {
     /// Creates an engine view for the current addon environment.
     pub fn new(env: Env) -> Self {
+        // Every entry point into this addon comes through here, which makes it
+        // the one place a worker launcher can be registered before any document
+        // could construct a `Worker`. Registration is idempotent.
+        blitsen_host::worker::register_launcher(Box::new(crate::workers::Workers));
         Self { env }
     }
 
@@ -514,6 +518,16 @@ impl JsEngine for NodeApiEngine {
         external_from_raw(self.raw_env(), raw(value))
     }
 
+    fn detach_array_buffer(&mut self, buffer: &Self::Value) -> Result<(), JsError> {
+        // Node-API refuses a value that is not an ArrayBuffer, so the status is
+        // the check: a transfer list that quietly detached nothing is exactly
+        // the failure this call exists to prevent.
+        check(
+            unsafe { sys::napi_detach_arraybuffer(self.raw_env(), raw(buffer)) },
+            "detach an ArrayBuffer",
+        )
+    }
+
     fn downgrade(&mut self, value: &Self::Value) -> Result<Self::WeakRef, JsError> {
         let mut reference = ptr::null_mut();
         check(
@@ -588,8 +602,8 @@ impl JsEngine for NodeApiEngine {
         // that disagreed should not take the document down with it.
         let source = match document_url(identifier) {
             Some(url) => {
-                let url = serde_json::to_string(&url)
-                    .map_err(|error| JsError::new(error.to_string()))?;
+                let url =
+                    serde_json::to_string(&url).map_err(|error| JsError::new(error.to_string()))?;
                 format!("try {{ import.meta.url = {url}; }} catch {{}}\n{source}")
             }
             None => source.to_owned(),

@@ -28,6 +28,7 @@ JavaScript comes from the [generated manifest](#capability-tiers) below.
 | Events | Capture/target/bubble listeners, click, mouse, wheel, keyboard, focus, resize and lifecycle events |
 | Style read-back | `getComputedStyle`, `matchMedia`/`MediaQueryList`, `ResizeObserver`, `CSS.escape`/`CSS.supports` |
 | Geometry and text | `getBoundingClientRect`, `getClientRects`, the offset/client/scroll box properties, `clientTop`/`clientLeft`, `offsetParent`, `innerText`, `compareDocumentPosition`, `elementFromPoint` |
+| Ranges and selection | `Range` and `document.createRange` for boundary points, text and geometry — `getClientRects` over a run of characters — `caretRangeFromPoint`/`caretPositionFromPoint`, and a `Selection` a script sets and reads; not the tree-editing range methods, and not a selection the user can make by dragging |
 | Scrolling | `window.scrollTo`/`scrollBy`/`scroll`, `scrollX`/`scrollY`/`pageXOffset`/`pageYOffset`, `element.scrollTop`/`scrollLeft`, `scrollIntoView` |
 | Parsing | `innerHTML`, `outerHTML`, `insertAdjacentHTML`, `insertAdjacentElement`, and `DOMParser` for `text/html` into a fragment |
 | Scheduling | `requestAnimationFrame`, timers and microtasks |
@@ -183,6 +184,81 @@ deliver. A non-`ws:`/`wss:` address is refused with a `SyntaxError` at construct
 
 `EventSource` is absent. Feature-detect it, or hold the stream open over a socket instead.
 
+## Workers and messaging
+
+A `Worker` is a whole JavaScript engine on a thread of its own, and **nothing is shared with the
+document but messages**. That is not a restriction Blitsen adds: the DOM is not thread-safe and no
+host's values are shareable across threads, which is the same reason the web specifies workers
+this way.
+
+**A worker loads its script out of the application**, through the same resolver the document's
+modules go through, so `new Worker(new URL("./work.js", import.meta.url), { type: "module" })`
+names the same file whether the application is a directory being run or a section inside an
+exported executable. `import` works inside a worker and resolves against the worker's own URL. A
+script the application does not ship is refused at the constructor, naming it, rather than
+becoming an `error` event a turn later.
+
+**What a worker's global scope has:** `self`, `name`, `location`, `postMessage`, `close`,
+`onmessage`/`onmessageerror`, `addEventListener`, the timers, `queueMicrotask`, `console`,
+`performance`, `fetch` and the request/response classes, `MessageChannel`, `MessagePort`,
+`structuredClone`, `DOMException`, and `Worker` itself — a worker may start a worker.
+
+**What it does not have:** any DOM at all — no `document`, no `window`, no `localStorage`, no
+`requestAnimationFrame` — and no `navigator`, no `WebSocket`, and no `importScripts`. A classic
+worker (`type: "classic"`, the default) therefore has no way to load a second file; use a module
+worker, which is what every bundler emits anyway.
+
+### Delivery lands in the frame turn
+
+A message from a worker is delivered at the **start of the animation-frame stage**, the same
+point `fetch` completions and socket frames land at, so it can never arrive part-way through a
+callback. The cost is stated plainly: a reply's latency is bounded by the frame, not by the thread
+that sent it — around 16 ms at 60 Hz. A worker that answers a thousand messages a second will be
+paced by the document's frame rate, so batch them. Inside a worker the same messages are delivered
+at the top of its own turn, which is not frame-paced. A live worker keeps the host turning, for
+the same reason an open socket does.
+
+### What survives a message
+
+Structured clone, not JSON. Cycles and shared references are preserved, so an object that refers
+to itself arrives referring to itself, and two `Uint8Array`s over one `ArrayBuffer` arrive as two
+views over one buffer. `Map`, `Set`, `Date`, `RegExp`, `Error` and its subclasses, `BigInt`,
+typed arrays and `DataView`, boxed primitives, array holes and `-0` all cross unchanged.
+
+Refused with a `DataCloneError`, rather than silently flattened: functions, symbols, DOM nodes,
+and anything else whose prototype the other side could not rebuild. **`SharedArrayBuffer` is
+refused too** — the engine defines it, because it is an ECMAScript global, but each worker has a
+heap of its own and there is no shared memory between them. `Atomics` on a buffer that cannot
+cross is not useful, and a copy pretending to be shared memory would be worse than a refusal.
+
+### Transfer moves rather than copies
+
+`postMessage(value, [buffer])` detaches the `ArrayBuffer` here and delivers it whole there;
+reading the buffer afterwards finds it zero-length, as the specification requires. A transfer list
+is emptied by a *successful* send, so a message that could not be serialized leaves the sender
+still holding everything it was about to give away.
+
+A `MessagePort` may be transferred the same way, including to a worker, and **its queued messages
+travel with it**: a message sent just before the port was handed over arrives where the port went.
+A transferred port arrives stopped, so the receiving side's `onmessage` — or `start()` — decides
+when its queue begins moving. Ports named in the transfer list arrive as `event.ports` whether or
+not they also appear in the message body.
+
+### Ending a worker
+
+`terminate()` stops the worker even if it is inside a loop that never yields: the engine's
+interrupt handler sees the same flag the worker's event loop does. Whatever the worker had queued
+for this side is dropped. Reloading a document ends every worker it started.
+
+An exception nothing in a worker caught — including one thrown while its module was evaluating —
+is reported to the `Worker` object as an `error` event carrying the message, as well as to this
+process's stderr. The worker keeps running, as a browser's does.
+
+`window.postMessage(message)` also works, and means the same-window one: the message is serialized
+at the call, delivered as a later task, and `targetOrigin` is accepted and ignored, because there
+is one origin behind an application. `SharedWorker`, `ServiceWorker` and `BroadcastChannel` are
+absent — all three are about sharing something between documents, and there is one document.
+
 ## Audio
 
 Backed by [`web-audio-api`](https://crates.io/crates/web-audio-api), which is a Rust
@@ -328,13 +404,32 @@ A comment's data is fixed when it is created, and data that would close the comm
 local name, which is the pair they ask for — so `xlink:href` round-trips and `getAttribute`
 correctly does not see it. The prefix itself is not stored: `getAttributeNames()` reports `href`
 and serialization writes `href="…"`, which is already true of markup the parser read.
-`getClientRects` returns the one border box `getBoundingClientRect` does, off the same layout
-flush, because Blitz lays an element out as a single box with no fragmentation to report.
+`getClientRects` returns one rectangle per line box the element was broken across, off the same
+layout flush. Anything with a box of its own has exactly one, and it is the border box
+`getBoundingClientRect` returns; an inline element that wraps has one per line, and their union is
+all a single rectangle could have said.
 
 `link.relList` exists chiefly so that `relList.supports("modulepreload")` can answer truthfully.
 Without it Vite's own module-preload polyfill installs itself and `fetch`es every chunk over an
 address with no server behind it, which takes down any code-split build. The preload keywords are
 honoured by doing nothing: an exported application's chunks are local files with no cache to warm.
+
+**`link.onload` and `link.onerror` fire for a `<link rel="stylesheet">`**, including one script
+inserted after the document loaded — the path a theme switcher and every deferred-CSS loader takes.
+The event is delivered at the frame boundary, where image completions and `fetch` answers land, and
+it is delivered *after* the sheet is in the cascade: a handler that calls `getComputedStyle` reads
+the values the sheet resolved to, not the ones it replaced. Rewriting `href` on a link that has
+already loaded is a new request and fires again. Three things to know:
+
+- **Only `rel="stylesheet"` fires either event.** A `preload`, `prefetch` or `icon` link is never
+  fetched — see `relList` above — so it is owed no outcome, and reporting one would mean announcing
+  a request that was never made. Nothing fires for those, in either direction.
+- **An empty stylesheet file reports `error`.** The renderer answers a subresource it cannot serve
+  with zero bytes rather than dropping the request, because a dropped one leaves Blitz waiting on a
+  critical resource for the life of the document. That makes "the file is missing" and "the file is
+  genuinely empty" the same signal. An empty sheet contributes nothing to the cascade either way.
+- **Nothing is delivered retroactively.** A listener attached after the sheet settled receives
+  nothing, exactly as in a browser. Attach the handler before connecting the element.
 
 ## Reading style back
 
@@ -456,8 +551,6 @@ through the HTML parser, which would mis-parse it silently.
   `<blitsen-view>` is registered natively rather than through a registry, so a user-defined element
   would need either its own registry beside that one or a merge of the two. Absent is also the
   shape a polyfill installs itself into.
-- **`getSelection` and `Range`** — a large surface, and nothing measured has reached for it. They
-  are absent together: a caller with a selection wants the ranges in it.
 - **`document.currentScript`** — the script runner does not carry the script element through to
   evaluation, and a module script's `currentScript` is `null` in a browser anyway, which is what
   every bundler in the profile emits.
@@ -465,9 +558,57 @@ through the HTML parser, which would mis-parse it silently.
 - **`outerWidth`, `outerHeight`, `screenX`, `screenY`** — the platform layer exposes no window
   frame or position, and `innerWidth`/`innerHeight` already answer for the viewport. A second
   answer that could disagree with those is worse than no answer.
-- **`visibilityState`, `execCommand`, `createRange`, `createTreeWalker`, `createNodeIterator`, and
-  the `document.forms`/`images`/`links`/`scripts` collections** — each needs a reason to exist
-  rather than a reason not to, and none has one yet.
+- **`visibilityState`, `execCommand`, `createTreeWalker`, `createNodeIterator`, and the
+  `document.forms`/`images`/`links`/`scripts` collections** — each needs a reason to exist rather
+  than a reason not to, and none has one yet.
+
+## Ranges, carets and the selection
+
+**A range is how text is measured.** Every other geometry read in this runtime answers for an
+element, and an element is the wrong unit for text: an editor laying out a line needs to know where
+characters 4 to 11 of a text node are, and only the range API can ask that. `range.getClientRects()`
+is the answer, and it is a real measurement of the laid-out text rather than an estimate from a
+font metric — the same Parley layout the renderer paints from, read at the same flush and charged
+as the same forced synchronous layout `getBoundingClientRect` is.
+
+The list has **one rectangle per line box** a run was broken across, in line order, plus the border
+boxes of the elements the range covers whole. `getBoundingClientRect()` is their union, and an
+empty box when a range measured nothing — text in a `display: none` subtree, or a collapsed range,
+which covers no characters and so returns no rectangles at all.
+
+**Offsets are the DOM's, not the layout's.** The text Blitz lays out is not the text in the tree:
+whitespace has been collapsed across node boundaries, `text-transform` has rewritten letters, a
+`<br>` has contributed a newline no node owns and a list marker text that no node owns either. A
+range counts UTF-16 code units in a text node's own data, the way a JavaScript string does, so
+`node.textContent.slice(start, end)` and the rectangles for `start`–`end` always describe the same
+characters. Rebuilding that correspondence is what the backend does before it measures.
+
+**`caretRangeFromPoint(x, y)` and `caretPositionFromPoint(x, y)` are the same reading asked the
+other way round**: which character is under this point. Both are here because a bundle has one or
+the other spelling compiled into it — the first answers with a collapsed range, the second with a
+`CaretPosition` carrying `offsetNode`, `offset` and a zero-width `getClientRect()`. A point over a
+box that holds no text has no answer rather than a nearest one, so both return `null`. The
+character the point is *inside* decides the node: a click on the right-hand half of `AB` in
+`AB<span>CD</span>` is offset 2 of `AB`, not offset 0 of `CD`, even though those name the same
+place in the text.
+
+**`getSelection()` returns one object for the life of the document**, holding an anchor and a focus
+rather than a range — that is what carries `direction`, which is `forward`, `backward` or `none`
+and is what an editor reads to know which end is being dragged. `getRangeAt(0)` hands back a copy
+in tree order rather than the live range a browser gives, and `selectionchange` is dispatched on
+`document` in a later task, so a run of changes announces itself once, settled.
+
+Two things the selection is not. **Nothing paints it**: this is the selection a script sets and
+reads, and the renderer draws no highlight behind it. And **the user cannot make one**: dragging
+across text does not move it, because text selection is a shell behaviour and the shell here has
+none. A widget that maintains its own visible selection — which is what every editor does — works;
+one that expects the platform to select text for it does not.
+
+**Nothing edits through a range.** `deleteContents`, `extractContents`, `cloneContents`,
+`insertNode` and `surroundContents` are absent, and absent rather than half-built: each one splits
+a text node at a boundary point, this runtime has no `splitText` and no character-data interface to
+split one with, and a range that cut in the wrong place would be worse than one that does not cut.
+Edit the tree with the node methods, and use a range to measure and compare.
 
 ## Stylesheets
 
@@ -556,6 +697,16 @@ Two divergences worth knowing:
 - **`:checked` does not restyle.** A selector query evaluates it against current state and finds
   the right element, but changing checkedness does not invalidate the cascade, so a `:checked` CSS
   rule will not repaint. This is Blitz's behaviour for its own checkboxes too.
+
+What a control *looks* like is a separate question from what it does, and it is the weaker half.
+Blitz ships no equivalent of a browser's `forms.css`, so Blitsen appends the part of that baseline
+the engine can honour — control cursors, unselectable labels, a visibly disabled control, a
+`<fieldset>` that is a bordered block, and an `<a>` with no `href` that is not painted as a link.
+The controls with no widget behind them are not covered and cannot be by a stylesheet: `<select>`,
+`<meter>`, `<progress>` and `input[type=range|color|number]` paint nothing usable, `placeholder`
+text is not drawn, and only `<input>` and `<textarea>` can show a focus ring. See G4 in
+[`BLITZ-GAPS.md`](BLITZ-GAPS.md). An application that styles its own controls — as most component
+libraries do — is unaffected by all of it.
 
 ### Submission
 
@@ -703,18 +854,18 @@ determinism gate instead.
 
 | Group | Implemented | Absent |
 | --- | --- | --- |
-| WEB_DOM | `document`, `Document`, `Node`, `Element`, `NodeList`, `DOMTokenList`, `Attr`, `NamedNodeMap`, `CSSStyleDeclaration`, `MutationObserver`, `HTMLElement`, `HTMLIFrameElement`, `SVGElement`, `Text`, `Comment`, `DocumentFragment`, `HTMLLinkElement`, `HTMLTemplateElement`, `HTMLImageElement`, `Image`, `HTMLImageElement.src`, `HTMLImageElement.naturalWidth`, `HTMLImageElement.naturalHeight`, `HTMLImageElement.complete`, `HTMLImageElement.onload`, `HTMLImageElement.onerror`, `Element.querySelector`, `Element.querySelectorAll`, `Element.closest`, `Element.matches`, `Element.cloneNode`, `Element.contains`, `Element.children`, `Element.previousSibling`, `Element.lastChild`, `Element.parentElement`, `Element.dataset`, `Element.nodeValue`, `Element.before`, `Element.after`, `Element.getElementsByTagName`, `Element.outerHTML`, `Element.insertAdjacentHTML`, `Element.scrollIntoView`, `Element.getElementsByClassName`, `Element.firstElementChild`, `Element.lastElementChild`, `Element.nextElementSibling`, `Element.previousElementSibling`, `Element.childElementCount`, `Element.append`, `Element.prepend`, `Element.replaceChildren`, `Element.getAttributeNS`, `Element.setAttributeNS`, `Element.removeAttributeNS`, `Element.hasAttributes`, `Element.getAttributeNames`, `Element.toggleAttribute`, `Element.getClientRects`, `Element.getRootNode`, `Element.normalize`, `Element.attributes`, `Element.insertAdjacentElement`, `Element.innerText`, `Element.compareDocumentPosition`, `Element.offsetParent`, `Element.clientTop`, `Element.clientLeft`, `Element.hidden`, `Element.tabIndex`, `Element.title`, `Document.title`, `Document.dir`, `Document.getElementsByName`, `Document.elementFromPoint`, `Document.elementsFromPoint`, `Document.scrollingElement`, `Document.characterSet`, `Document.documentURI`, `Document.hasFocus`, `Document.adoptNode`, `HTMLLinkElement.relList`, `HTMLTemplateElement.content`, `DOMTokenList.supports`, `Document.createElementNS`, `Document.createComment`, `Document.createDocumentFragment`, `Document.getElementsByTagName`, `Document.getElementsByClassName`, `Document.importNode` | `Element.attachShadow`, `Document.currentScript` |
+| WEB_DOM | `document`, `Document`, `Node`, `Element`, `NodeList`, `DOMTokenList`, `Attr`, `NamedNodeMap`, `CSSStyleDeclaration`, `MutationObserver`, `HTMLElement`, `HTMLIFrameElement`, `SVGElement`, `Text`, `Comment`, `DocumentFragment`, `HTMLLinkElement`, `HTMLTemplateElement`, `HTMLImageElement`, `Image`, `HTMLImageElement.src`, `HTMLImageElement.naturalWidth`, `HTMLImageElement.naturalHeight`, `HTMLImageElement.complete`, `HTMLImageElement.onload`, `HTMLImageElement.onerror`, `Element.querySelector`, `Element.querySelectorAll`, `Element.closest`, `Element.matches`, `Element.cloneNode`, `Element.contains`, `Element.children`, `Element.previousSibling`, `Element.lastChild`, `Element.parentElement`, `Element.dataset`, `Element.nodeValue`, `Element.before`, `Element.after`, `Element.getElementsByTagName`, `Element.outerHTML`, `Element.insertAdjacentHTML`, `Element.scrollIntoView`, `Element.getElementsByClassName`, `Element.firstElementChild`, `Element.lastElementChild`, `Element.nextElementSibling`, `Element.previousElementSibling`, `Element.childElementCount`, `Element.append`, `Element.prepend`, `Element.replaceChildren`, `Element.getAttributeNS`, `Element.setAttributeNS`, `Element.removeAttributeNS`, `Element.hasAttributes`, `Element.getAttributeNames`, `Element.toggleAttribute`, `Element.getClientRects`, `Element.getRootNode`, `Element.normalize`, `Element.attributes`, `Element.insertAdjacentElement`, `Element.innerText`, `Element.compareDocumentPosition`, `Element.offsetParent`, `Element.clientTop`, `Element.clientLeft`, `Element.hidden`, `Element.tabIndex`, `Element.title`, `Document.title`, `Document.dir`, `Document.getElementsByName`, `Document.elementFromPoint`, `Document.elementsFromPoint`, `Document.scrollingElement`, `Document.characterSet`, `Document.documentURI`, `Document.hasFocus`, `Document.adoptNode`, `HTMLLinkElement.relList`, `HTMLLinkElement.onload`, `HTMLLinkElement.onerror`, `HTMLTemplateElement.content`, `DOMTokenList.supports`, `Document.createElementNS`, `Document.createComment`, `Document.createDocumentFragment`, `Document.getElementsByTagName`, `Document.getElementsByClassName`, `Document.importNode` | `Element.attachShadow`, `Document.currentScript` |
 | WEB_FORM_CONTROLS | `HTMLInputElement`, `HTMLTextAreaElement`, `HTMLSelectElement`, `HTMLOptionElement`, `HTMLButtonElement`, `HTMLFormElement`, `HTMLInputElement.value`, `HTMLInputElement.defaultValue`, `HTMLInputElement.checked`, `HTMLInputElement.defaultChecked`, `HTMLInputElement.type`, `HTMLInputElement.name`, `HTMLInputElement.disabled`, `HTMLInputElement.form`, `HTMLTextAreaElement.value`, `HTMLTextAreaElement.defaultValue`, `HTMLSelectElement.options`, `HTMLSelectElement.selectedIndex`, `HTMLSelectElement.value`, `HTMLSelectElement.length`, `HTMLSelectElement.selectedOptions`, `HTMLSelectElement.multiple`, `HTMLOptionElement.value`, `HTMLOptionElement.text`, `HTMLOptionElement.selected`, `HTMLOptionElement.index`, `HTMLOptionElement.label`, `HTMLOptionElement.defaultSelected`, `HTMLButtonElement.value`, `HTMLButtonElement.type`, `HTMLFormElement.elements`, `HTMLFormElement.requestSubmit` | `HTMLInputElement.files`, `HTMLInputElement.labels`, `HTMLInputElement.validity`, `HTMLInputElement.checkValidity`, `HTMLInputElement.select`, `HTMLInputElement.setSelectionRange`, `HTMLInputElement.selectionStart`, `HTMLInputElement.selectionEnd`, `HTMLSelectElement.add`, `HTMLFormElement.submit`, `HTMLFormElement.reset`, `HTMLFormElement.action`, `HTMLFormElement.method`, `HTMLFormElement.checkValidity` |
-| WEB_EVENTS | `EventTarget`, `Event`, `CustomEvent`, `SubmitEvent`, `MouseEvent`, `KeyboardEvent`, `FocusEvent`, `InputEvent`, `PointerEvent`, `WheelEvent`, `addEventListener`, `removeEventListener`, `dispatchEvent` | — |
+| WEB_EVENTS | `EventTarget`, `Event`, `CustomEvent`, `SubmitEvent`, `MouseEvent`, `KeyboardEvent`, `FocusEvent`, `InputEvent`, `PointerEvent`, `WheelEvent`, `addEventListener`, `removeEventListener`, `dispatchEvent`, `ErrorEvent` | — |
 | WEB_SCROLL | `scrollTo`, `scrollBy`, `scroll`, `scrollX`, `scrollY`, `pageXOffset`, `pageYOffset` | — |
-| WEB_SELECTION | — | `getSelection`, `Range` |
+| WEB_SELECTION | `getSelection`, `Range`, `Selection`, `CaretPosition`, `Document.createRange`, `Document.getSelection`, `Document.caretRangeFromPoint`, `Document.caretPositionFromPoint`, `Range.setStart`, `Range.setEnd`, `Range.setStartBefore`, `Range.setStartAfter`, `Range.setEndBefore`, `Range.setEndAfter`, `Range.selectNode`, `Range.selectNodeContents`, `Range.collapse`, `Range.cloneRange`, `Range.startContainer`, `Range.startOffset`, `Range.endContainer`, `Range.endOffset`, `Range.collapsed`, `Range.commonAncestorContainer`, `Range.comparePoint`, `Range.compareBoundaryPoints`, `Range.intersectsNode`, `Range.isPointInRange`, `Range.toString`, `Range.getClientRects`, `Range.getBoundingClientRect`, `Selection.anchorNode`, `Selection.anchorOffset`, `Selection.focusNode`, `Selection.focusOffset`, `Selection.isCollapsed`, `Selection.rangeCount`, `Selection.type`, `Selection.direction`, `Selection.getRangeAt`, `Selection.addRange`, `Selection.removeAllRanges`, `Selection.setBaseAndExtent`, `Selection.collapse`, `Selection.extend`, `Selection.selectAllChildren`, `Selection.containsNode`, `Selection.toString`, `CaretPosition.offsetNode`, `CaretPosition.offset`, `CaretPosition.getClientRect` | `Range.deleteContents`, `Range.extractContents`, `Range.cloneContents`, `Range.insertNode`, `Range.surroundContents` |
 | WEB_SCHEDULING | `requestAnimationFrame`, `cancelAnimationFrame`, `setTimeout`, `clearTimeout`, `setInterval`, `clearInterval` | `requestIdleCallback`, `cancelIdleCallback` |
 | WEB_NETWORK | `fetch`, `Headers`, `Request`, `Response`, `Blob`, `AbortController`, `AbortSignal` | — |
-| WEB_ROUTING | `window`, `location`, `history`, `Location`, `History`, `PopStateEvent`, `HashChangeEvent` | — |
+| WEB_ROUTING | `window`, `self`, `location`, `history`, `Location`, `History`, `PopStateEvent`, `HashChangeEvent` | — |
 | WEB_VIEWPORT | `BlitsenViewElement`, `BlitsenViewSurface` | — |
 | WEB_STORAGE | `Storage`, `localStorage`, `sessionStorage` | `indexedDB` |
-| WEB_WORKER | — | `Worker`, `SharedWorker`, `ServiceWorker`, `ServiceWorkerContainer` |
-| WEB_MESSAGING | — | `MessageChannel`, `MessagePort`, `BroadcastChannel`, `postMessage` |
+| WEB_WORKER | `Worker`, `Worker.postMessage`, `Worker.terminate` | `SharedWorker`, `ServiceWorker`, `ServiceWorkerContainer` |
+| WEB_MESSAGING | `MessageChannel`, `MessagePort`, `structuredClone`, `postMessage`, `MessagePort.postMessage`, `MessagePort.start`, `MessagePort.close` | `BroadcastChannel` |
 | WEB_SOCKET | `WebSocket`, `MessageEvent`, `CloseEvent`, `WebSocket.url`, `WebSocket.readyState`, `WebSocket.protocol`, `WebSocket.extensions`, `WebSocket.bufferedAmount`, `WebSocket.binaryType`, `WebSocket.send`, `WebSocket.close` | `EventSource` |
 | WEB_XHR | — | `XMLHttpRequest` |
 | WEB_STREAM | — | `ReadableStream`, `WritableStream`, `TransformStream`, `Response.body`, `Response.clone` |
@@ -738,11 +889,11 @@ determinism gate instead.
 | `WEB_STORAGE_MEMORY` | warning | localStorage is in memory only: what it stores is gone when the application exits. |
 | `WEB_DOM` | warning | This DOM method is not implemented. |
 | `WEB_FORM_CONTROLS` | warning | This form-control API is not implemented. |
-| `WEB_SELECTION` | warning | Text selection and ranges are not implemented. |
+| `WEB_SELECTION` | warning | This part of the range API is not implemented; the boundary, text and geometry reads are. |
 | `WEB_SCHEDULING` | warning | Idle-callback scheduling is not implemented. |
 | `WEB_STORAGE` | warning | IndexedDB is not implemented. |
-| `WEB_WORKER` | warning | Web workers are not implemented. |
-| `WEB_MESSAGING` | warning | Message channels are not implemented. |
+| `WEB_WORKER` | warning | Shared and service workers are not implemented; dedicated Worker is. |
+| `WEB_MESSAGING` | warning | BroadcastChannel is not implemented; MessageChannel and Worker are. |
 | `WEB_SOCKET` | warning | Server-sent events are not implemented; WebSocket is. |
 | `WEB_XHR` | warning | XMLHttpRequest is not implemented. |
 | `WEB_STREAM` | warning | Streaming bodies are not implemented; a response is buffered whole. |

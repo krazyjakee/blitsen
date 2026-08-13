@@ -41,6 +41,14 @@
     if (result.forced) forcedLayoutsThisFrame++;
     return result;
   };
+  // The shape every geometry read answers in: the box, its four edges, and a
+  // `toJSON` that carries both. Frozen, because a client rectangle is a reading
+  // taken at a moment and not a handle onto the box it measured.
+  const clientRect = (x, y, width, height) => {
+    const values = { x, y, width, height,
+      top: y, right: x + width, bottom: y + height, left: x };
+    return Object.freeze({ ...values, toJSON() { return { ...values }; } });
+  };
 
   const requestAnimationFrame = callback => {
     if (typeof callback !== "function") throw new TypeError("requestAnimationFrame callback must be a function");
@@ -63,8 +71,10 @@
     notifyMediaQueries();
     settleFetches();
     settleSockets();
+    settlePorts();
     settleAudio();
     settleImages();
+    settleLinks();
     deliverSecondInstances();
     settleDialogs();
     const callbacks = animationFrames;
@@ -79,16 +89,18 @@
     if (__blitsenDevLayoutWarnings && forcedLayoutsThisFrame > 0)
       console.warn(`Blitsen: ${forcedLayoutsThisFrame} forced synchronous layout(s) in this frame`);
     forcedLayoutsThisFrame = 0;
-    // In-flight requests, live sockets, undecoded images and undelivered resize
-    // observations keep the host turning: their landing point is this function,
-    // so a loop that stopped would never deliver them. A running CSS animation
-    // is owed a frame for the same reason — the clock only moves when this is
-    // called, so a loop that idled would freeze it part-way through. An open
-    // dialog is the same argument twice over: its answer lands here, and the
-    // window has to go on painting behind it rather than freeze until it is
-    // dismissed.
+    // In-flight requests, live sockets, undecoded images, unfetched stylesheets
+    // and undelivered resize observations keep the host turning: their landing
+    // point is this function, so a loop that stopped would never deliver them.
+    // A running CSS animation is owed a frame for the same reason — the clock
+    // only moves when this is called, so a loop that idled would freeze it
+    // part-way through. An open dialog is the same argument twice over: its
+    // answer lands here, and the window has to go on painting behind it rather
+    // than freeze until it is dismissed.
     return animationFrames.size + inflightFetches.size + liveSockets.size
-      + pendingResizeObservations() + waitingImages() + (audioPending() ? 1 : 0)
-      + (call("isAnimating") ? 1 : 0) + (nativeDialogPending() ? 1 : 0);
+      + pendingResizeObservations() + waitingImages() + waitingLinks()
+      + (audioPending() ? 1 : 0)
+      + (call("isAnimating") ? 1 : 0) + (nativeDialogPending() ? 1 : 0)
+      + (portsPending() ? 1 : 0);
   };
 

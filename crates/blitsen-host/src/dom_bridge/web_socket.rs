@@ -29,7 +29,7 @@ use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
 use tokio_tungstenite::tungstenite::{Bytes, Message, Utf8Bytes, protocol::CloseFrame};
 use url::Url;
 
-use super::worker::{lock, runtime as worker_runtime};
+use super::net_pool::{lock, runtime as net_runtime};
 
 /// Reported when a connection ends without a close frame from either side.
 const ABNORMAL_CLOSURE: u16 = 1006;
@@ -197,7 +197,7 @@ impl WebSocketHost {
     /// Creates a host bound to the shared worker pool.
     pub(super) fn new() -> Result<Self, JsError> {
         Ok(Self {
-            runtime: worker_runtime()?,
+            runtime: net_runtime()?,
             next_id: AtomicU64::new(1),
             open: Mutex::new(HashMap::new()),
             shared: Arc::default(),

@@ -16,11 +16,14 @@ mod assets;
 pub mod dom_bridge;
 pub mod frame_loop;
 pub mod harness;
+pub mod messaging;
 pub mod modules;
 pub mod native_window;
+pub mod ports;
 pub mod replay;
 pub mod runtime_services;
 pub mod standalone;
+pub mod worker;
 
 use std::cell::RefCell;
 use std::rc::Rc;

@@ -8,6 +8,8 @@ pub mod timers;
 
 use std::error::Error;
 use std::fmt;
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 /// Stable identifier stored as opaque data on a native JavaScript object.
 ///
@@ -304,6 +306,21 @@ pub trait JsEngine {
         name: &str,
         callback: NativeCallback<Self::Value>,
     ) -> Result<Self::Value, JsError>;
+    /// Defines a native function and installs it on the global object under the
+    /// same name.
+    ///
+    /// Every host function the bridge installs is a global named exactly as it
+    /// was defined, so the two names are one fact rather than two: spelling it
+    /// once is what stops a rename from leaving the function reachable under
+    /// its old name, or under no name at all.
+    fn define_global_function(
+        &mut self,
+        name: &str,
+        callback: NativeCallback<Self::Value>,
+    ) -> Result<(), JsError> {
+        let function = self.define_function(name, callback)?;
+        self.set_global(name, &function)
+    }
     /// Invokes a callable value and captures any thrown exception.
     fn call(
         &mut self,
@@ -344,6 +361,31 @@ pub trait JsEngine {
     /// Reads opaque external data, rejecting values not created by
     /// [`JsEngine::instantiate`].
     fn external_id(&mut self, value: &Self::Value) -> Result<ExternalId, JsError>;
+
+    /// Detaches an `ArrayBuffer`, leaving it zero-length and unusable.
+    ///
+    /// What `postMessage` does to a buffer in its transfer list. There is no way
+    /// to express it in JavaScript, and a transfer that copied instead would be
+    /// a different operation wearing the same name — the sender would go on
+    /// reading bytes the receiver now owns. A host that cannot detach must say
+    /// so rather than pretend, which is what the default does.
+    fn detach_array_buffer(&mut self, buffer: &Self::Value) -> Result<(), JsError> {
+        let _ = buffer;
+        Err(JsError::new(
+            "this JavaScript host cannot transfer an ArrayBuffer",
+        ))
+    }
+
+    /// Asks the engine to abandon running JavaScript once `stop` is set.
+    ///
+    /// How `worker.terminate()` reaches a worker that is inside a loop rather
+    /// than between turns. A host without an interrupt hook keeps the default:
+    /// the flag is still honoured, but only where the worker's own event loop
+    /// can see it, so a script that never yields runs to its end.
+    fn set_interrupt_flag(&mut self, stop: Arc<AtomicBool>) -> Result<(), JsError> {
+        let _ = stop;
+        Ok(())
+    }
 
     /// Creates a weak reference that does not keep its target alive.
     fn downgrade(&mut self, value: &Self::Value) -> Result<Self::WeakRef, JsError>;

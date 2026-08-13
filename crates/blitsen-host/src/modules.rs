@@ -283,7 +283,7 @@ impl ModuleRegistry {
     /// module graph without unpacking anything.
     pub fn install<E: JsEngine + 'static>(self: &Rc<Self>, engine: &mut E) -> Result<(), JsError> {
         let resolver = Rc::clone(self);
-        let resolve = engine.define_function(
+        engine.define_global_function(
             "__blitsenModuleResolve",
             Box::new(move |call| {
                 let mut engine = E::from_value(&call.this);
@@ -292,10 +292,9 @@ impl ModuleRegistry {
                 engine.string(&resolver.resolve(&referrer, &specifier)?)
             }),
         )?;
-        engine.set_global("__blitsenModuleResolve", &resolve)?;
 
         let reader = Rc::clone(self);
-        let source = engine.define_function(
+        engine.define_global_function(
             "__blitsenModuleSource",
             Box::new(move |call| {
                 let mut engine = E::from_value(&call.this);
@@ -303,17 +302,15 @@ impl ModuleRegistry {
                 engine.string(&reader.source(&url)?)
             }),
         )?;
-        engine.set_global("__blitsenModuleSource", &source)?;
 
         let cache = Rc::clone(self);
-        let reset = engine.define_function(
+        engine.define_global_function(
             "__blitsenModuleReset",
             Box::new(move |call| {
                 cache.reset();
                 Ok(call.this)
             }),
         )?;
-        engine.set_global("__blitsenModuleReset", &reset)?;
 
         let origin = engine.string(APP_ORIGIN)?;
         engine.set_global("__blitsenAppOrigin", &origin)
@@ -374,8 +371,14 @@ mod tests {
         let entry = url_of("assets/index.js");
         for specifier in ["node:fs", "bun:sqlite"] {
             let error = resolve(&entry, specifier).unwrap_err();
-            assert!(error.message().contains("implements no"), "{specifier}: {error}");
-            assert!(error.message().contains("blitsen/*"), "{specifier}: {error}");
+            assert!(
+                error.message().contains("implements no"),
+                "{specifier}: {error}"
+            );
+            assert!(
+                error.message().contains("blitsen/*"),
+                "{specifier}: {error}"
+            );
         }
     }
 

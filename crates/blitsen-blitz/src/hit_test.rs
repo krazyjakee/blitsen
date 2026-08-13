@@ -2,7 +2,7 @@
 
 use std::cmp::Ordering;
 
-use blitsen_dom::DomError;
+use blitsen_dom::{DomBackend, DomError};
 use blitz::dom::NodeId;
 use kurbo::Point;
 use style::computed_values::pointer_events::T as PointerEvents;
@@ -28,6 +28,37 @@ pub(crate) fn compare_stacking_paths(left: &[i32], right: &[i32]) -> Ordering {
 }
 
 impl BlitzDom {
+    /// The topmost node at a viewport point, in paint order.
+    ///
+    /// Ranked rather than found: every element is a candidate, and the one in
+    /// front is the one whose stacking path wins, then the one painted later,
+    /// then the deepest of those. Callers that want only the node it landed on
+    /// — the caret read does — take it from here rather than repeat the walk.
+    pub(crate) fn ranked_hit(&self, x: f32, y: f32) -> Result<Option<RankedHit>, DomError> {
+        let mut best: Option<RankedHit> = None;
+        for (order, node) in self
+            .query_selector_all(self.document(), "*")?
+            .into_iter()
+            .enumerate()
+        {
+            let Some((stacking_path, depth, offset_x, offset_y)) =
+                self.hit_candidate(node, x, y)?
+            else {
+                continue;
+            };
+            let candidate = (stacking_path, order, depth, node, offset_x, offset_y);
+            if best.as_ref().is_none_or(|current| {
+                compare_stacking_paths(&candidate.0, &current.0)
+                    .then_with(|| candidate.1.cmp(&current.1))
+                    .then_with(|| candidate.2.cmp(&current.2))
+                    == Ordering::Greater
+            }) {
+                best = Some(candidate);
+            }
+        }
+        Ok(best)
+    }
+
     pub(crate) fn hit_candidate(
         &self,
         target: NodeId,

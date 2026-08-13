@@ -78,7 +78,6 @@ dependencies = [
 [[package]]
 name = "accesskit_xplat"
 version = "0.1.1"
-source = "git+https://github.com/DioxusLabs/blitz?rev=1efe22d2524d71ede5b94592204c21f0de644219#1efe22d2524d71ede5b94592204c21f0de644219"
 dependencies = [
  "accesskit",
  "accesskit_macos",
@@ -412,10 +411,12 @@ dependencies = [
  "blitz",
  "blitz-dom",
  "blitz-paint",
+ "cursor-icon",
  "data-url",
  "html-escape",
  "image",
  "kurbo",
+ "parley",
  "peniko",
  "png",
  "serde_json",
@@ -489,6 +490,7 @@ dependencies = [
  "blitsen-dom",
  "blitsen-host",
  "blitsen-js",
+ "blitsen-quickjs",
  "blitz",
  "napi",
  "napi-build",
@@ -531,7 +533,6 @@ dependencies = [
 [[package]]
 name = "blitz"
 version = "0.3.0-beta.1"
-source = "git+https://github.com/DioxusLabs/blitz?rev=1efe22d2524d71ede5b94592204c21f0de644219#1efe22d2524d71ede5b94592204c21f0de644219"
 dependencies = [
  "anyrender_vello",
  "blitz-dom",
@@ -548,7 +549,6 @@ dependencies = [
 [[package]]
 name = "blitz-dom"
 version = "0.3.0-beta.1"
-source = "git+https://github.com/DioxusLabs/blitz?rev=1efe22d2524d71ede5b94592204c21f0de644219#1efe22d2524d71ede5b94592204c21f0de644219"
 dependencies = [
  "accesskit",
  "anyrender",
@@ -559,7 +559,7 @@ dependencies = [
  "color",
  "cssparser",
  "cursor-icon",
- "debug_timer 0.1.3 (git+https://github.com/DioxusLabs/blitz?rev=1efe22d2524d71ede5b94592204c21f0de644219)",
+ "debug_timer 0.1.3",
  "euclid",
  "html-escape",
  "image",
@@ -592,7 +592,6 @@ dependencies = [
 [[package]]
 name = "blitz-html"
 version = "0.3.0-beta.1"
-source = "git+https://github.com/DioxusLabs/blitz?rev=1efe22d2524d71ede5b94592204c21f0de644219#1efe22d2524d71ede5b94592204c21f0de644219"
 dependencies = [
  "blitz-dom",
  "blitz-traits",
@@ -604,7 +603,6 @@ dependencies = [
 [[package]]
 name = "blitz-net"
 version = "0.3.0-beta.1"
-source = "git+https://github.com/DioxusLabs/blitz?rev=1efe22d2524d71ede5b94592204c21f0de644219#1efe22d2524d71ede5b94592204c21f0de644219"
 dependencies = [
  "blitz-traits",
  "data-url",
@@ -617,7 +615,6 @@ dependencies = [
 [[package]]
 name = "blitz-paint"
 version = "0.3.0-beta.1"
-source = "git+https://github.com/DioxusLabs/blitz?rev=1efe22d2524d71ede5b94592204c21f0de644219#1efe22d2524d71ede5b94592204c21f0de644219"
 dependencies = [
  "anyrender",
  "blitz-dom",
@@ -635,7 +632,6 @@ dependencies = [
 [[package]]
 name = "blitz-shell"
 version = "0.3.0-beta.1"
-source = "git+https://github.com/DioxusLabs/blitz?rev=1efe22d2524d71ede5b94592204c21f0de644219#1efe22d2524d71ede5b94592204c21f0de644219"
 dependencies = [
  "accesskit",
  "accesskit_xplat",
@@ -657,7 +653,6 @@ dependencies = [
 [[package]]
 name = "blitz-traits"
 version = "0.3.0-beta.1"
-source = "git+https://github.com/DioxusLabs/blitz?rev=1efe22d2524d71ede5b94592204c21f0de644219#1efe22d2524d71ede5b94592204c21f0de644219"
 dependencies = [
  "atomic_refcell",
  "bitflags 2.13.1",
@@ -1162,13 +1157,12 @@ checksum = "be1e0bca6c3637f992fc1cc7cbc52a78c1ef6db076dbf1059c4323d6a2048376"
 [[package]]
 name = "debug_timer"
 version = "0.1.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "da220af51a1a335e9a930beaaef53d261e41ea9eecfb3d973a3ddae1a7284b9c"
 
 [[package]]
 name = "debug_timer"
 version = "0.1.3"
-source = "git+https://github.com/DioxusLabs/blitz?rev=1efe22d2524d71ede5b94592204c21f0de644219#1efe22d2524d71ede5b94592204c21f0de644219"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "da220af51a1a335e9a930beaaef53d261e41ea9eecfb3d973a3ddae1a7284b9c"
 
 [[package]]
 name = "derive_more"
@@ -4219,7 +4213,6 @@ dependencies = [
 [[package]]
 name = "stylo_taffy"
 version = "0.3.0-beta.1"
-source = "git+https://github.com/DioxusLabs/blitz?rev=1efe22d2524d71ede5b94592204c21f0de644219#1efe22d2524d71ede5b94592204c21f0de644219"
 dependencies = [
  "stylo",
  "stylo_atoms",

@@ -1,0 +1,6 @@
+/* A sheet that exists only to be fetched over a URL, so that "did the linked
+   stylesheet arrive" is answerable from a resolved value rather than from the
+   loading state alone. */
+#box {
+  width: 150px;
+}

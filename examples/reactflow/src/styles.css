@@ -1,0 +1,125 @@
+:root {
+  color: #e2e8f0;
+  background: #0f172a;
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+}
+
+html,
+body,
+#root,
+.canvas {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  overflow: hidden;
+}
+
+.react-flow {
+  background: radial-gradient(circle at top, #253454 0%, #111827 48%, #090f1d 100%);
+}
+
+.react-flow__node {
+  width: 180px;
+  padding: 14px 18px;
+  border: 1px solid #a78bfa;
+  border-radius: 10px;
+  color: #f8fafc;
+  background: #312e81;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.28);
+  font-weight: 700;
+}
+
+.react-flow__node.selected {
+  border-color: #f0abfc;
+  box-shadow: 0 0 0 2px rgba(240, 171, 252, 0.3);
+}
+
+.react-flow__handle {
+  width: 10px;
+  height: 10px;
+  border: 2px solid #1e1b4b;
+  background: #c4b5fd;
+}
+
+.html-edge {
+  position: absolute;
+  height: 2px;
+  transform-origin: 0 50%;
+  background: #c4b5fd;
+  box-shadow: 0 0 8px rgba(196, 181, 253, 0.5);
+  pointer-events: none;
+}
+
+.html-edge i {
+  position: absolute;
+  top: -4px;
+  right: -1px;
+  width: 0;
+  height: 0;
+  border-top: 5px solid transparent;
+  border-bottom: 5px solid transparent;
+  border-left: 8px solid #c4b5fd;
+}
+
+.text-controls {
+  display: flex;
+  gap: 6px;
+  margin: 18px;
+  padding: 6px;
+  border: 1px solid #475569;
+  border-radius: 10px;
+  background: #172033;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.22);
+}
+
+.text-controls button {
+  min-width: 36px;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid #475569;
+  border-radius: 7px;
+  color: #e2e8f0;
+  background: #25314a;
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.title-card {
+  position: absolute;
+  top: 24px;
+  left: 24px;
+  z-index: 5;
+  width: 250px;
+  padding: 18px 20px;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  border-radius: 14px;
+  background: rgba(15, 23, 42, 0.9);
+  box-shadow: 0 16px 38px rgba(0, 0, 0, 0.25);
+  pointer-events: none;
+}
+
+.title-card span {
+  color: #c4b5fd;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.title-card h1 {
+  margin: 5px 0 4px;
+  color: #f8fafc;
+  font-size: 28px;
+  line-height: 1.1;
+}
+
+.title-card p {
+  margin: 0;
+  color: #aebbd0;
+  font-size: 14px;
+  line-height: 1.45;
+}

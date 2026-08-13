@@ -179,3 +179,114 @@ fn animations_stand_still_until_the_host_supplies_a_clock() {
         Some((100, 0, 40, 40))
     );
 }
+
+/// The `<link>` half of the subresource state an application waits on, over
+/// the four answers a `rel`/`href` pair can produce. A rel this renderer
+/// fetches nothing for is idle rather than loaded: reporting an outcome for a
+/// request nobody made is how a caller ends up waiting forever.
+#[test]
+fn a_linked_stylesheet_reports_whether_its_sheet_arrived() {
+    let mut dom = fixture_document(
+        r#"<link id="arrived" rel="stylesheet" href="linked.css">
+               <link id="missing" rel="stylesheet" href="does-not-exist.css">
+               <link id="remote" rel="stylesheet" href="https://example.com/theme.css">
+               <link id="preload" rel="preload" href="linked.css">
+               <link id="hrefless" rel="stylesheet">
+               <p id="paragraph">not a link</p>"#,
+        None,
+    );
+    let snapshot = dom.flush_layout().unwrap();
+    let state = |id: &str| dom.link_state(dom.get_element_by_id(id).unwrap().unwrap(), snapshot);
+    assert_eq!(state("arrived"), Ok(LinkState::LOADED));
+    assert_eq!(state("missing"), Ok(LinkState::FAILED));
+    assert_eq!(
+        state("remote"),
+        Ok(LinkState::FAILED),
+        "a refused remote fetch is an error, not an unfinished one"
+    );
+    assert_eq!(
+        state("preload"),
+        Ok(LinkState::IDLE),
+        "a rel this renderer requests nothing for owes no outcome"
+    );
+    assert_eq!(
+        state("hrefless"),
+        Ok(LinkState::IDLE),
+        "a link with no address is not waiting on anything"
+    );
+    assert_eq!(state("paragraph"), Err(DomError::InvalidNodeType));
+}
+
+/// The state a script actually observes: in flight first, and complete only
+/// once the sheet is in the cascade. The resolved width is the whole point of
+/// the snapshot gate — a `load` handler that ran a flush too early would read
+/// the style the sheet was about to replace.
+#[test]
+fn a_linked_stylesheet_is_in_the_cascade_by_the_time_it_says_it_loaded() {
+    let network = DeferredResources::default();
+    let mut dom = fixture_document(
+        r#"<link id="sheet" rel="stylesheet" href="linked.css"><div id="box"></div>"#,
+        Some(Arc::new(network.clone())),
+    );
+    let snapshot = dom.flush_layout().unwrap();
+    let sheet = dom.get_element_by_id("sheet").unwrap().unwrap();
+    let box_id = dom.get_element_by_id("box").unwrap().unwrap();
+    assert_eq!(dom.link_state(sheet, snapshot), Ok(LinkState::LOADING));
+    assert_eq!(
+        dom.resolved_style(box_id, "width", snapshot),
+        Ok(Some("400px".to_owned())),
+        "the sheet has not applied yet, so the block is still viewport wide"
+    );
+
+    network.deliver();
+    let snapshot = dom.flush_layout().unwrap();
+    assert_eq!(dom.link_state(sheet, snapshot), Ok(LinkState::LOADED));
+    assert_eq!(
+        dom.resolved_style(box_id, "width", snapshot),
+        Ok(Some("150px".to_owned())),
+        "a sheet that reports itself loaded is one the cascade has already read"
+    );
+}
+
+/// The path a theme switcher takes: an element built by script, given a `rel`
+/// and an `href` and then connected, has to load exactly like a parsed one.
+#[test]
+fn a_scripted_link_loads_when_it_is_connected() {
+    let mut dom = fixture_document(r#"<div id="box"></div>"#, None);
+    let body = dom.body().unwrap();
+    let link = dom.create_element(&DomName::html("link")).unwrap();
+    dom.set_attribute(link, &DomName::attribute("rel"), "stylesheet")
+        .unwrap();
+    let snapshot = dom.flush_layout().unwrap();
+    assert_eq!(
+        dom.link_state(link, snapshot),
+        Ok(LinkState::IDLE),
+        "a link with no address has nothing to wait for, attached or not"
+    );
+
+    dom.set_attribute(link, &DomName::attribute("href"), "linked.css")
+        .unwrap();
+    let snapshot = dom.flush_layout().unwrap();
+    assert_eq!(
+        dom.link_state(link, snapshot),
+        Ok(LinkState::LOADING),
+        "a detached link is waiting on a request nothing has made yet"
+    );
+
+    dom.append_child(body, link).unwrap();
+    let snapshot = dom.flush_layout().unwrap();
+    assert_eq!(dom.link_state(link, snapshot), Ok(LinkState::LOADED));
+    let box_id = dom.get_element_by_id("box").unwrap().unwrap();
+    assert_eq!(
+        dom.resolved_style(box_id, "width", snapshot),
+        Ok(Some("150px".to_owned()))
+    );
+
+    dom.set_attribute(link, &DomName::attribute("media"), "all")
+        .unwrap();
+    assert_eq!(
+        dom.link_state(link, snapshot),
+        Err(DomError::LayoutNotFlushed),
+        "a sheet enters the cascade while layout resolves, so the state is snapshot gated"
+    );
+}

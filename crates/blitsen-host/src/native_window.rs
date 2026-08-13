@@ -43,6 +43,16 @@ pub struct WindowApplication<Rend: anyrender::WindowRenderer, E: JsEngine + Clon
     pub(crate) document: Rc<RefCell<BlitzDom>>,
     pub(crate) pending_mouse_input: Vec<(WindowId, PendingMouseInput)>,
     pub(crate) pending_keyboard_input: Vec<(WindowId, PendingKeyboardInput)>,
+    /// The last surface size winit reported, and the last one acted on.
+    ///
+    /// A drag reports a new size far faster than a size can be applied: every
+    /// one costs a swapchain reconfigure, measured at ~30 ms on an X11 session
+    /// because configuring waits for the frames already in flight. All but the
+    /// last are stale before anything is painted, so they are collapsed here to
+    /// one reconfigure, one layout and one `resize` event per turn — the size
+    /// the window ended the turn at, which is the only one worth painting.
+    pub(crate) pending_resize: HashMap<WindowId, winit::dpi::PhysicalSize<u32>>,
+    pub(crate) applied_resize: HashMap<WindowId, winit::dpi::PhysicalSize<u32>>,
     pub(crate) pointer_positions: HashMap<WindowId, (f64, f64)>,
     pub(crate) mouse_down_targets: HashMap<u16, NodeId>,
     pub(crate) mouse_buttons: u16,
@@ -184,6 +194,8 @@ impl<E: JsEngine + Clone + 'static> WindowSession<E> {
             document: document.document,
             pending_mouse_input: Vec::new(),
             pending_keyboard_input: Vec::new(),
+            pending_resize: HashMap::new(),
+            applied_resize: HashMap::new(),
             pointer_positions: HashMap::new(),
             mouse_down_targets: HashMap::new(),
             mouse_buttons: 0,
@@ -795,6 +807,32 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Ren
         self.window_event(event_loop, window_id, WindowEvent::SurfaceResized(size));
     }
 
+    /// Applies the size the window arrived at, if it is not the one it is at.
+    ///
+    /// The whole cost of a resize is here — the swapchain reconfigure, the
+    /// relayout the new viewport forces, and the `resize` listeners an
+    /// application registered — so a size that changes nothing is dropped
+    /// rather than paid for. Winit reports the size again on every configure a
+    /// window manager sends, including the ones that only moved it.
+    fn apply_pending_resize(&mut self, event_loop: &dyn ActiveEventLoop, window_id: WindowId) {
+        let Some(size) = self.pending_resize.remove(&window_id) else {
+            return;
+        };
+        if self.applied_resize.get(&window_id) == Some(&size) {
+            return;
+        }
+        self.applied_resize.insert(window_id, size);
+        self.inner
+            .window_event(event_loop, window_id, WindowEvent::SurfaceResized(size));
+        self.sync_native_window(window_id);
+        if let Err(error) = self.dispatch_window_event("resize") {
+            *self.error.borrow_mut() = Some(error);
+        }
+        if let Some(view) = self.inner.windows.get(&window_id) {
+            view.window.request_redraw();
+        }
+    }
+
     fn maybe_dispatch_load(&mut self) {
         if self.load_dispatched || self.error.borrow().is_some() {
             return;
@@ -879,14 +917,24 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> ApplicationHandler
         window_id: WindowId,
         event: WindowEvent,
     ) {
+        // Held rather than acted on, and applied below once the turn's last one
+        // is known. Winit has already coalesced the redraw requests that follow
+        // it, so the frame this turn paints is the one that pays for the size.
+        if let WindowEvent::SurfaceResized(size) = event {
+            self.pending_resize.insert(window_id, size);
+            if let Some(view) = self.inner.windows.get(&window_id) {
+                view.window.request_redraw();
+            }
+            return;
+        }
         let queued_mouse_input = self.queue_mouse_input(window_id, &event);
         let queued_keyboard_input = self.queue_keyboard_input(window_id, &event);
-        let viewport_changed = matches!(
-            &event,
-            WindowEvent::SurfaceResized(_) | WindowEvent::ScaleFactorChanged { .. }
-        );
+        let viewport_changed = matches!(&event, WindowEvent::ScaleFactorChanged { .. });
         let redraw = matches!(&event, WindowEvent::RedrawRequested);
         if redraw {
+            // Before the frame rather than after it: a redraw that painted the
+            // size before last would be a frame the drag visibly lagged by.
+            self.apply_pending_resize(event_loop, window_id);
             self.drain_mouse_input(window_id);
             self.drain_keyboard_input(window_id);
         }
@@ -923,6 +971,12 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> ApplicationHandler
     fn about_to_wait(&mut self, event_loop: &dyn ActiveEventLoop) {
         self.inner.about_to_wait(event_loop);
         self.settle_native_resize(event_loop);
+        // The turn's last reported size, applied once. A redraw in the same
+        // turn has usually taken it already; this is the turn that had none.
+        let windows: Vec<_> = self.pending_resize.keys().copied().collect();
+        for window_id in windows {
+            self.apply_pending_resize(event_loop, window_id);
+        }
         self.maybe_dispatch_load();
         if self.animation_frames_pending() {
             for view in self.inner.windows.values() {

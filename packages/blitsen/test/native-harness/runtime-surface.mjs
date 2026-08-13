@@ -23,9 +23,15 @@ const declared = JSON.parse(native.runBridgeHarness(
 assert.equal(declared.nodes.find(node => node.attributes.id === "surface").attributes["data-surface"], "ok");
 const runtimeSurface = new Map(globalThis.__blitsenSurface);
 delete globalThis.__blitsenSurface;
-for (const entry of manifest.apis)
+for (const entry of manifest.apis) {
+  // What the *engine* does not supply is not answerable here: this harness runs
+  // the bridge inside the host's own JavaScript realm, which is not the engine
+  // an exported application runs on. `cli-doctor.test.mjs` runs the built
+  // runtime and checks those against the engine that is actually there.
+  if (entry.origin === "engine") continue;
   assert.equal(runtimeSurface.get(entry.api), entry.status === "implemented",
     `${entry.api} is ${entry.status} in the API manifest but the opposite in the runtime`);
+}
 
 const routing = JSON.parse(native.runBridgeHarness(
   `<div id="routing"></div>`,

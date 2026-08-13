@@ -268,16 +268,18 @@
         parent.scrollLeft += scrollDelta(inline, box.left, box.right, container.left, container.right);
       }
     }
-    // Blitz lays an element out as one box: there is no fragmentation across
-    // columns or line boxes to report, so the list is the border box and the
-    // same layout read `getBoundingClientRect` is.
-    getClientRects() { return Object.freeze([this.getBoundingClientRect()]); }
+    // One box per line box the element was broken across, which for anything
+    // with a box of its own is the single border box `getBoundingClientRect`
+    // returns. An inline element is not laid out as a box at all — it is a run
+    // of styled text inside its block — so one that wraps has a fragment per
+    // line, and the bounding rectangle is only their union.
+    getClientRects() {
+      const { rects } = recordForcedLayout(call("clientRects", this[handle]));
+      return Object.freeze(rects.map(rect => clientRect(rect.x, rect.y, rect.width, rect.height)));
+    }
     getBoundingClientRect() {
       const { x, y, width, height } = recordForcedLayout(call("layoutMetrics", this[handle]));
-      return Object.freeze({
-        x, y, width, height, top: y, right: x + width, bottom: y + height, left: x,
-        toJSON() { return { x, y, width, height, top: y, right: x + width, bottom: y + height, left: x }; },
-      });
+      return clientRect(x, y, width, height);
     }
     get offsetWidth() { return recordForcedLayout(call("layoutMetrics", this[handle])).offsetWidth; }
     get offsetHeight() { return recordForcedLayout(call("layoutMetrics", this[handle])).offsetHeight; }
@@ -351,6 +353,57 @@
     "license", "manifest", "modulepreload", "next", "pingback", "preconnect", "prefetch",
     "preload", "prev", "search", "stylesheet"];
 
+  // `load` and `error` for a subresource, shared by the elements that own one.
+  // Blitz fetches these beside the DOM and announces nothing when one lands, so
+  // both events are delivered by polling the elements that owe an outcome — at
+  // the frame boundary, where `fetch` completions land too.
+  //
+  // Over a copy: a handler that gives another element a source owes that
+  // outcome to the next frame, not to the rest of this pass. A `read` that
+  // answers null means the element is no longer waiting on anything, so it
+  // leaves the set without an event: there is no request to report the end of.
+  const settleResources = (pending, read) => {
+    for (const element of [...pending]) {
+      const state = read(element);
+      if (state && !state.complete) continue;
+      pending.delete(element);
+      if (state) element.dispatchEvent(new Event(state.errored ? "error" : "load"));
+    }
+  };
+  // Blitz requests a subresource only once its element is in the document, so a
+  // detached one is waiting on nothing and must not hold the host open.
+  const waitingFor = pending => {
+    let waiting = 0;
+    for (const element of pending) if (element.isConnected) waiting++;
+    return waiting;
+  };
+  // An `onload` property replaces the listener it installed, which is the one
+  // thing a plain listener list cannot express — hence a handler held per
+  // element beside it.
+  const setResourceHandler = (registry, element, type, callback) => {
+    let handlers = registry.get(element);
+    if (!handlers) registry.set(element, handlers = { load: null, error: null });
+    if (handlers[type]) element.removeEventListener(type, handlers[type]);
+    handlers[type] = typeof callback === "function" ? callback : null;
+    if (handlers[type]) element.addEventListener(type, handlers[type]);
+  };
+
+  // Linked stylesheets. Only `rel="stylesheet"` is ever waited on, because it is
+  // the only `rel` Blitz requests anything for — a preload hint that pended here
+  // would be waiting on a request nobody made, and holding the host open to do
+  // it. That is what the renderer's `pending` answers, and why a link that stops
+  // naming a stylesheet leaves the set silently rather than reporting an error.
+  const pendingLinks = new Set();
+  const linkHandlers = new WeakMap();
+  const linkState = element => {
+    const state = call("linkState", element[handle]);
+    return state.pending ? state : null;
+  };
+  const setLinkHandler = (element, type, callback) =>
+    setResourceHandler(linkHandlers, element, type, callback);
+  const settleLinks = () => settleResources(pendingLinks, linkState);
+  const waitingLinks = () => waitingFor(pendingLinks);
+
   class HTMLLinkElement extends Element {
     get relList() {
       let list = relListCache.get(this);
@@ -373,6 +426,28 @@
     get sheet() {
       return this.isConnected && this.relList.contains("stylesheet") ? sheetFor(this) : null;
     }
+    // An `href` is a request whatever it resolves to, so the outcome is owed
+    // from the write — which is also what makes a theme swap fire a second
+    // time. Through `setAttribute` rather than the `href` setter because that
+    // is the one a framework renders through.
+    setAttribute(name, value) {
+      super.setAttribute(name, value);
+      if (String(name) === "href" && this.relList.contains("stylesheet")) pendingLinks.add(this);
+    }
+    // Nothing is delivered retroactively: a sheet that has already landed is
+    // read through `document.styleSheets`, or simply through the styles it
+    // resolved to.
+    addEventListener(type, callback, options = false) {
+      super.addEventListener(type, callback, options);
+      if (type === "load" || type === "error") {
+        const state = call("linkState", this[handle]);
+        if (state.pending && !state.complete) pendingLinks.add(this);
+      }
+    }
+    get onload() { return linkHandlers.get(this)?.load ?? null; }
+    set onload(callback) { setLinkHandler(this, "load", callback); }
+    get onerror() { return linkHandlers.get(this)?.error ?? null; }
+    set onerror(callback) { setLinkHandler(this, "error", callback); }
   }
 
   // A `<style>` element's text is its sheet's source, which is what makes the
@@ -390,30 +465,10 @@
   const pendingImages = new Set();
   const imageHandlers = new WeakMap();
   const imageState = element => call("imageState", element[handle]);
-  const setImageHandler = (element, type, callback) => {
-    let handlers = imageHandlers.get(element);
-    if (!handlers) imageHandlers.set(element, handlers = { load: null, error: null });
-    if (handlers[type]) element.removeEventListener(type, handlers[type]);
-    handlers[type] = typeof callback === "function" ? callback : null;
-    if (handlers[type]) element.addEventListener(type, handlers[type]);
-  };
-  // Over a copy: a handler that gives another image a source owes that outcome
-  // to the next frame, not to the rest of this pass.
-  const settleImages = () => {
-    for (const element of [...pendingImages]) {
-      const state = imageState(element);
-      if (!state.complete) continue;
-      pendingImages.delete(element);
-      element.dispatchEvent(new Event(state.errored ? "error" : "load"));
-    }
-  };
-  // Blitz requests a source only once the element is in the document, so a
-  // detached image is waiting on nothing and must not hold the host open.
-  const waitingImages = () => {
-    let waiting = 0;
-    for (const element of pendingImages) if (element.isConnected) waiting++;
-    return waiting;
-  };
+  const setImageHandler = (element, type, callback) =>
+    setResourceHandler(imageHandlers, element, type, callback);
+  const settleImages = () => settleResources(pendingImages, imageState);
+  const waitingImages = () => waitingFor(pendingImages);
 
   class HTMLImageElement extends Element {
     // Decoded size is applied while layout resolves, so reading it is a layout

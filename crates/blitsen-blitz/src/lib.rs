@@ -5,11 +5,14 @@
 //! no parallel tree or attribute store is maintained.
 
 mod backend;
+mod canvas;
 mod forms;
 mod hit_test;
 pub mod resources;
 mod stylesheets;
+mod text;
 mod tree;
+mod ua;
 mod viewport;
 
 #[cfg(test)]
@@ -26,8 +29,10 @@ use blitsen_dom::{
 use blitz::dom::{DocumentConfig, NodeId};
 use blitz::html::{HtmlDocument, HtmlProvider};
 
+use canvas::CanvasState;
 use forms::FormState;
 use resources::ResourceLog;
+use ua::BASELINE_UA_CSS;
 use viewport::{NATIVE_VIEWPORT_UA_CSS, ViewportState};
 
 /// Upper bound on resolve passes one layout flush will spend chasing resources.
@@ -58,6 +63,7 @@ pub struct BlitzDom {
     last_frame_was_full_document: bool,
     js_references: HashMap<NodeId, u32>,
     native_viewports: HashMap<NodeId, Rc<RefCell<ViewportState>>>,
+    canvases: HashMap<NodeId, Rc<RefCell<CanvasState>>>,
     resources: ResourceLog,
     form_state: HashMap<NodeId, FormState>,
     animation_time: f64,
@@ -93,6 +99,7 @@ impl BlitzDom {
     /// Wraps an existing Blitz document and installs the fragment parser.
     pub fn new(mut document: HtmlDocument) -> Self {
         document.set_html_parser_provider(Arc::new(HtmlProvider));
+        document.add_user_agent_stylesheet(BASELINE_UA_CSS);
         document.add_user_agent_stylesheet(NATIVE_VIEWPORT_UA_CSS);
         let invalidation_mode = if document.incremental_layout() {
             InvalidationMode::FineGrained
@@ -108,6 +115,7 @@ impl BlitzDom {
             last_frame_was_full_document: false,
             js_references: HashMap::new(),
             native_viewports: HashMap::new(),
+            canvases: HashMap::new(),
             resources: ResourceLog::default(),
             form_state: HashMap::new(),
             animation_time: 0.0,
@@ -142,11 +150,6 @@ impl BlitzDom {
     /// writes go through [`DomBackend`] so revision tracking remains sound.
     pub fn document_mut(&mut self) -> &mut HtmlDocument {
         &mut self.document
-    }
-
-    /// Returns the owned Blitz document for transfer to the window renderer.
-    pub fn into_document(self) -> HtmlDocument {
-        self.document
     }
 
     /// Retains a node while a JavaScript wrapper is live.

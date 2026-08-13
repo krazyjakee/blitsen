@@ -72,7 +72,7 @@ describe("directory CLI", () => {
         `typeof ShadowRoot<"u"&&e instanceof ShadowRoot;`,
         `typeof customElements<"u"&&customElements.get(n);`,
         `try{document.cookie="theme=dark"}catch{}`,
-        `typeof Worker<"u"&&new Worker(u);`,
+        `typeof SharedWorker<"u"&&new SharedWorker(u);`,
         `if(t.getContext)t.getContext("2d");`,
         `e?window.open(u,"_blank"):0;`,
         `typeof indexedDB<"u"&&indexedDB.open("x");`,
@@ -149,11 +149,12 @@ describe("directory CLI", () => {
   // bootstrap, so each way the two can diverge is made to happen here.
   test("refuses a manifest the runtime source disagrees with", async () => {
     const source = await readBootstrapScript();
-    expect(buildManifest(source).apis.find(entry => entry.api === "Worker").status).toBe("absent");
+    expect(buildManifest(source).apis.find(entry => entry.api === "SharedWorker").status)
+      .toBe("absent");
     const implemented = source
-      .replace('"Worker", "SharedWorker"', '"SharedWorker"')
-      .replace("const globals = {", "const globals = {\n    Worker,");
-    expect(buildManifest(implemented).apis.find(entry => entry.api === "Worker").status)
+      .replace('"SharedWorker", "ServiceWorker"', '"ServiceWorker"')
+      .replace("const globals = {", "const globals = {\n    SharedWorker,");
+    expect(buildManifest(implemented).apis.find(entry => entry.api === "SharedWorker").status)
       .toBe("implemented");
 
     expect(() => buildManifest(source.replace("const globals = {", "const globals = {\n    speechSynthesis,")))
@@ -170,7 +171,7 @@ describe("directory CLI", () => {
     const directory = await mkdtemp(join(tmpdir(), "blitsen-manifest-test-"));
     try {
       await writeFile(join(directory, "app.js"),
-        "new Worker(url); customElements.define(); indexedDB.open('x'); window.open('/x');\n"
+        "new SharedWorker(url); customElements.define(); indexedDB.open('x'); window.open('/x');\n"
         + "localStorage.setItem('theme', 'dark');");
       const codes = (await doctorApplication(directory)).diagnostics.map(entry => entry.code);
       expect(codes.sort()).toEqual(["WEB_COMPONENTS", "WEB_NAVIGATION", "WEB_STORAGE",

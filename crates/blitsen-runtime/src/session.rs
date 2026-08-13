@@ -134,6 +134,9 @@ pub fn run_bundle(bundle: AppBundle, arguments: &[String]) -> Result<ExitCode, S
 
 fn run(files: AppFiles, arguments: &[String]) -> Result<ExitCode, String> {
     let settings = Settings::read(&files, arguments)?;
+    // Before anything can construct a `Worker`, and once for the process: which
+    // engine a worker thread runs is a property of this executable.
+    blitsen_host::worker::register_launcher(Box::new(engine::Workers));
     let mut engine = engine::load()?;
 
     // Order matters. The services install the timers and the console the DOM
@@ -199,4 +202,3 @@ fn run(files: AppFiles, arguments: &[String]) -> Result<ExitCode, String> {
     pacer.report();
     Ok(ExitCode::SUCCESS)
 }
-

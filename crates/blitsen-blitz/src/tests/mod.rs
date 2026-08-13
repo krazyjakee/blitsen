@@ -1,10 +1,13 @@
 //! Shared fixtures for the backend tests, and the topic modules that use them.
 
 mod boundary;
+mod canvas;
 mod forms;
 mod images;
+mod ranges;
 mod stylesheets;
 mod text;
+mod ua;
 mod viewport;
 
 use anyrender::recording::RenderCommand;
@@ -12,7 +15,7 @@ use anyrender::{Paint, Scene};
 use anyrender_vello_cpu::VelloCpuImageRenderer;
 use std::sync::{Arc, Mutex};
 
-use blitsen_dom::{DomBackend, DomError, DomName, ImageState, NodeKind};
+use blitsen_dom::{DomBackend, DomError, DomName, ImageState, LinkState, NodeKind};
 use blitz::dom::DocumentConfig;
 use blitz::traits::net::{NetHandler, NetProvider, Request};
 use blitz::traits::shell::{ColorScheme, Viewport};

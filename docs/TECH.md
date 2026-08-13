@@ -74,7 +74,7 @@ ABI-stable by design, which matters for the third-party addon story later.
 import { Engine } from "blitsen:native";   // a .node addon under the hood
 
 const app = new Engine();
-app.loadHTML("./index.html");
+app.openDirectory({ entrypoint: "./index.html" });
 ```
 
 Bun and the Rust engine live in **one process**, sharing one thread for the main loop. There is
@@ -139,11 +139,27 @@ main thread
 Work that must not block the frame goes off-thread and returns through a queue drained at a
 defined point in the turn:
 
-- **I/O, `fetch`, sockets, filesystem** — tokio runtime on a worker pool.
+- **I/O, `fetch`, sockets, filesystem** — tokio runtime on a thread pool.
 - **Asset decode** (images, audio, fonts, glTF) — rayon pool; results uploaded on the main
   thread.
 - **Web Workers** — separate JS contexts on their own threads, structured-clone message
   passing only. No shared DOM access, exactly as on the web.
+
+Workers are built. A worker is a whole engine on a thread of its own — not a second context in
+the document's — because the DOM is not thread-safe and neither host's values are shareable
+across threads. Messages travel as a flattened record graph plus whole binary payloads through
+one process-wide port registry (`blitsen-host/src/ports.rs`), which is what lets a port be
+*transferred*: the queue hangs off the port rather than off the context, so a message sent just
+before a port was handed to a worker arrives there rather than being left behind. Delivery is
+polled at the same point every other off-thread source lands — the start of the animation-frame
+stage — so a message cannot arrive part-way through a callback. The cost of that is a message's
+latency being bounded by the frame rather than by the thread that sent it.
+
+`blitsen-host` cannot create an engine, only use one, so the crate that chose the engine
+registers a launcher (`worker::WorkerLauncher`) and everything after the engine exists is
+engine-neutral. The shipped runtime launches QuickJS-ng; the Phase 1 addon launches QuickJS-ng
+too, rather than Node-API, because there is no second `napi_env` to be had — which means a
+worker's global scope is the same source and the same behaviour on both hosts.
 
 ### Event loop integration is the sharpest Phase 1 hazard
 
@@ -410,7 +426,6 @@ What remains here is what a table cannot express: why a thing sits where it does
 | --- | --- |
 | `WebSocket` | tokio-tungstenite |
 | `Audio`, basic Web Audio | rodio / cpal |
-| `Worker` | second JS context + channel |
 | Clipboard, drag & drop | arboard, winit |
 | `navigator.getGamepads` | gilrs |
 | Pointer lock, fullscreen | winit |
@@ -419,7 +434,8 @@ What remains here is what a table cannot express: why a thing sits where it does
 | WebRTC | webrtc-rs |
 
 Deliberately absent, with no plan: same-origin policy, CSP, cookies, **document navigation**,
-service workers, `document.write`, quirks mode. `history` and `location` do exist, but as an
+service workers, `SharedWorker`, `BroadcastChannel`, `document.write`, quirks mode. The three
+after navigation are all about sharing something between documents, and there is one document. `history` and `location` do exist, but as an
 in-memory session history at a synthetic address — enough for a client-side router, and nothing
 that navigates. `navigator` answers identity (`userAgent`, `platform`, `language`) and no
 capability. `localStorage` and `sessionStorage` hold data for the life of the process and say so
@@ -440,9 +456,13 @@ them.
   out: `getAttributeNames()` reports `href`, and serialization writes `href="…"`. The same is
   already true of markup the parser read, so this is the backend's attribute model rather than a
   bridge choice.
-- **`getClientRects` returns one rect.** Blitz lays an element out as a single box, so there is no
-  fragmentation across columns or line boxes to report. It is the border box
-  `getBoundingClientRect` returns, off the same layout flush, charged as the same forced layout.
+- **`getClientRects` returns one rect per line box.** Anything with a box of its own has exactly
+  one, and it is the border box `getBoundingClientRect` returns, off the same layout flush and
+  charged as the same forced layout. An inline element is not laid out as a box at all — it is a
+  run of styled text inside its block — so one that wraps reports a fragment per line, and the
+  bounding rectangle is only their union. A `<br>` and a `display: none` element report none:
+  nothing laid them out, and an empty box at the origin would be an invention. There is still no
+  fragmentation across columns or pages, because Blitz has neither.
 
 ### Compatibility policy
 

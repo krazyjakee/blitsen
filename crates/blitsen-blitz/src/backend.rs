@@ -3,11 +3,10 @@
 //! One `impl` block, because a trait implementation cannot be split across
 //! modules; the helpers it leans on live beside it in sibling files.
 
-use std::cmp::Ordering;
-
 use blitsen_dom::{
-    DomBackend, DomError, DomName, HitTest, ImageState, LayoutMetrics, LayoutSnapshot,
-    MediaQueryMatch, NATIVE_VIEWPORT_TAG, NodeKind, Rect, ViewportSurface,
+    CaretPosition, DomBackend, DomError, DomName, HitTest, ImageState, LayoutMetrics,
+    LayoutSnapshot, LinkState, MediaQueryMatch, NATIVE_VIEWPORT_TAG, NodeKind, Rect,
+    ViewportSurface,
 };
 use blitz::dom::node::ImageData;
 use blitz::dom::{NodeData, NodeId};
@@ -16,7 +15,6 @@ use style::properties::{PropertyDeclaration, PropertyId};
 use style::stylesheets::{CssRule, CustomMediaEvaluator};
 use style::values::computed::Overflow;
 
-use crate::hit_test::{RankedHit, compare_stacking_paths};
 use crate::resources::ResourceState;
 use crate::{BlitzDom, RESOURCE_RESOLVE_PASSES, css_pixels};
 
@@ -478,6 +476,7 @@ impl DomBackend for BlitzDom {
         let now = self.animation_time;
         self.take_frame_invalidation();
         self.attach_native_viewports()?;
+        self.attach_canvases()?;
         for _ in 0..RESOURCE_RESOLVE_PASSES {
             let settled = self.resources.settlements();
             self.document.resolve(now);
@@ -522,6 +521,54 @@ impl DomBackend for BlitzDom {
             }
         };
         Ok(rect)
+    }
+
+    fn client_rects(&self, node: NodeId, snapshot: LayoutSnapshot) -> Result<Vec<Rect>, DomError> {
+        if snapshot.revision() != self.revision || self.flushed_revision != self.revision {
+            return Err(DomError::LayoutNotFlushed);
+        }
+        // Validates the handle before asking Blitz, which answers a stale one
+        // with an empty list rather than an error.
+        self.node(node)?;
+        // Nothing laid out is no rectangles, rather than the empty box at the
+        // origin `bounding_rect` reports: a `display: none` element and a `<br>`
+        // both have geometry to describe only if you invent it.
+        Ok(self
+            .document
+            .node_client_rects(node)
+            .into_iter()
+            .map(|rect| Rect {
+                x: rect.x as f32,
+                y: rect.y as f32,
+                width: rect.width as f32,
+                height: rect.height as f32,
+            })
+            .collect())
+    }
+
+    fn text_rects(
+        &self,
+        node: NodeId,
+        start: u32,
+        end: u32,
+        snapshot: LayoutSnapshot,
+    ) -> Result<Vec<Rect>, DomError> {
+        if snapshot.revision() != self.revision || self.flushed_revision != self.revision {
+            return Err(DomError::LayoutNotFlushed);
+        }
+        self.text_node_rects(node, start, end)
+    }
+
+    fn caret_position(
+        &self,
+        x: f32,
+        y: f32,
+        snapshot: LayoutSnapshot,
+    ) -> Result<Option<CaretPosition<NodeId>>, DomError> {
+        if snapshot.revision() != self.revision || self.flushed_revision != self.revision {
+            return Err(DomError::LayoutNotFlushed);
+        }
+        self.caret_at_point(x, y)
     }
 
     fn layout_metrics(
@@ -739,28 +786,7 @@ impl DomBackend for BlitzDom {
         if snapshot.revision() != self.revision || self.flushed_revision != self.revision {
             return Err(DomError::LayoutNotFlushed);
         }
-        let mut best: Option<RankedHit> = None;
-        for (order, node) in self
-            .query_selector_all(self.document(), "*")?
-            .into_iter()
-            .enumerate()
-        {
-            let Some((stacking_path, depth, offset_x, offset_y)) =
-                self.hit_candidate(node, x, y)?
-            else {
-                continue;
-            };
-            let candidate = (stacking_path, order, depth, node, offset_x, offset_y);
-            if best.as_ref().is_none_or(|current| {
-                compare_stacking_paths(&candidate.0, &current.0)
-                    .then_with(|| candidate.1.cmp(&current.1))
-                    .then_with(|| candidate.2.cmp(&current.2))
-                    == Ordering::Greater
-            }) {
-                best = Some(candidate);
-            }
-        }
-        let Some((_, _, _, target, offset_x, offset_y)) = best else {
+        let Some((_, _, _, target, offset_x, offset_y)) = self.ranked_hit(x, y)? else {
             return Ok(None);
         };
         let mut path = vec![target];
@@ -812,6 +838,53 @@ impl DomBackend for BlitzDom {
             // the flush that is reading it back.
             Ok(None) => ImageState::LOADING,
         })
+    }
+
+    fn link_state(&self, node: NodeId, snapshot: LayoutSnapshot) -> Result<LinkState, DomError> {
+        if snapshot.revision() != self.revision || self.flushed_revision != self.revision {
+            return Err(DomError::LayoutNotFlushed);
+        }
+        let element = self
+            .node(node)?
+            .element_data()
+            .ok_or(DomError::InvalidNodeType)?;
+        if element.name.local.as_ref() != "link" {
+            return Err(DomError::InvalidNodeType);
+        }
+        // The same test Blitz applies before it requests anything, down to the
+        // case sensitivity: a `rel` this agrees is a stylesheet but Blitz does
+        // not would leave a caller waiting on a request nobody made.
+        let stylesheet = self
+            .attribute(node, &DomName::attribute("rel"))?
+            .is_some_and(|rel| rel.split_ascii_whitespace().any(|rel| rel == "stylesheet"));
+        let href = self
+            .attribute(node, &DomName::attribute("href"))?
+            .filter(|href| !href.is_empty());
+        let (true, Some(href)) = (stylesheet, href) else {
+            return Ok(LinkState::IDLE);
+        };
+        Ok(
+            match self
+                .document
+                .url()
+                .join(&href)
+                .map(|url| self.resources.state(url.as_str()))
+            {
+                Ok(Some(ResourceState::Loaded)) => LinkState::LOADED,
+                // An answer with no bytes. The renderer cannot tell a refused
+                // request from a sheet that really is empty, and reports the
+                // one that matters: an empty sheet contributes nothing either
+                // way, and a missing one has to be able to say so.
+                Ok(Some(ResourceState::Failed)) => LinkState::FAILED,
+                Ok(Some(ResourceState::Loading)) => LinkState::LOADING,
+                // An `href` that cannot become a URL will never be requested,
+                // so waiting on it would be waiting forever.
+                Err(_) => LinkState::FAILED,
+                // Requested by nothing yet: an element connected during the
+                // flush that is reading it back, or one still detached.
+                Ok(None) => LinkState::LOADING,
+            },
+        )
     }
 
     fn native_viewports(&self) -> Result<Vec<NodeId>, DomError> {

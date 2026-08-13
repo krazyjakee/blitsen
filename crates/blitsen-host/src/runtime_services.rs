@@ -47,25 +47,23 @@ impl<E: JsEngine + 'static> RuntimeServices<E> {
             .as_secs_f64()
             * 1_000.0;
 
-        let now = engine.define_function(
+        engine.define_global_function(
             "__blitsenNow",
             Box::new(move |call| {
                 let mut engine = E::from_value(&call.this);
                 Ok(engine.number(clock.elapsed().as_secs_f64() * 1_000.0))
             }),
         )?;
-        engine.set_global("__blitsenNow", &now)?;
 
-        let time_origin = engine.define_function(
+        engine.define_global_function(
             "__blitsenTimeOrigin",
             Box::new(move |call| {
                 let mut engine = E::from_value(&call.this);
                 Ok(engine.number(origin))
             }),
         )?;
-        engine.set_global("__blitsenTimeOrigin", &time_origin)?;
 
-        let console = engine.define_function(
+        engine.define_global_function(
             "__blitsenConsoleWrite",
             Box::new(move |call| {
                 let mut engine = E::from_value(&call.this);
@@ -81,7 +79,6 @@ impl<E: JsEngine + 'static> RuntimeServices<E> {
                 Ok(call.this)
             }),
         )?;
-        engine.set_global("__blitsenConsoleWrite", &console)?;
 
         Self::install_timers(engine, &timers, clock)?;
         engine.evaluate_script(BOOTSTRAP, "blitsen:runtime-services")?;
@@ -98,7 +95,7 @@ impl<E: JsEngine + 'static> RuntimeServices<E> {
             ("__blitsenSetInterval", true),
         ] {
             let queue = Rc::clone(timers);
-            let schedule = engine.define_function(
+            engine.define_global_function(
                 name,
                 Box::new(move |call| {
                     let mut engine = E::from_value(&call.this);
@@ -122,11 +119,10 @@ impl<E: JsEngine + 'static> RuntimeServices<E> {
                     Ok(engine.number(f64::from(id)))
                 }),
             )?;
-            engine.set_global(name, &schedule)?;
         }
 
         let queue = Rc::clone(timers);
-        let clear = engine.define_function(
+        engine.define_global_function(
             "__blitsenClearTimer",
             Box::new(move |call| {
                 let mut engine = E::from_value(&call.this);
@@ -138,8 +134,7 @@ impl<E: JsEngine + 'static> RuntimeServices<E> {
                 }
                 Ok(call.this)
             }),
-        )?;
-        engine.set_global("__blitsenClearTimer", &clear)
+        )
     }
 
     /// Runs every timer due at the start of this turn, then drains microtasks.

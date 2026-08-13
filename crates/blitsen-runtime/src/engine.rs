@@ -1,10 +1,13 @@
 //! Which JavaScript engine this runtime hosts, and the two things that differ.
 //!
 //! Everything else in this executable — and all of `blitsen-host` beneath it —
-//! is generic over [`blitsen_js::JsEngine`]. Only loading the engine and
-//! pointing its module loader at the registry are engine-specific, so only
-//! those two live here. Selecting the engine is therefore this file and a
-//! feature flag, which is the claim `spikes/s8` set out to test.
+//! is generic over [`blitsen_js::JsEngine`]. Only three things are
+//! engine-specific — loading the engine, pointing its module loader at the
+//! registry, and creating a second engine for a worker thread — so only those
+//! live here. Selecting the engine is therefore this file and a feature flag,
+//! which is the claim `spikes/s8` set out to test.
+
+use blitsen_js::JsError;
 
 /// The engine this build hosts.
 #[cfg(not(feature = "quickjs"))]
@@ -54,9 +57,11 @@ pub fn install_module_loader(engine: &mut Engine) -> Result<(), String> {
     use blitsen_js::JsEngine;
     if !engine.supports_modules() {
         if std::env::var_os("BLITSEN_REQUIRE_MODULES").is_some() {
-            return Err("this JavaScriptCore library cannot link a module graph; use Blitsen's \
+            return Err(
+                "this JavaScriptCore library cannot link a module graph; use Blitsen's \
                  pinned build (docs/JSC.md)"
-                .to_owned());
+                    .to_owned(),
+            );
         }
         return Ok(());
     }
@@ -79,6 +84,49 @@ pub fn install_module_loader(engine: &mut Engine) -> Result<(), String> {
 pub fn install_module_loader(engine: &mut Engine) -> Result<(), String> {
     engine.install_module_loader();
     Ok(())
+}
+
+/// How this runtime starts a web worker: a thread, and an engine of its own.
+///
+/// The third thing that is engine-specific, and it is here for the same reason
+/// the other two are — `blitsen-host` cannot create an engine, only use one.
+/// Everything after the engine exists is `blitsen_host::worker::run`, which
+/// names no engine at all.
+pub struct Workers;
+
+impl blitsen_host::worker::WorkerLauncher for Workers {
+    fn launch(&self, boot: blitsen_host::worker::WorkerBoot) -> Result<(), JsError> {
+        let label = if boot.name.is_empty() {
+            boot.entry.clone()
+        } else {
+            boot.name.clone()
+        };
+        std::thread::Builder::new()
+            // Named for the thread lists a profiler and a debugger show, where
+            // "worker" alone would be three threads with one name.
+            .name(format!("blitsen-worker {label}"))
+            .spawn(move || {
+                let engine = load()
+                    .and_then(|mut engine| install_module_loader(&mut engine).map(|()| engine));
+                match engine {
+                    Ok(engine) => blitsen_host::worker::run(engine, boot),
+                    Err(error) => {
+                        // Reported to the `Worker` object as an `error` event,
+                        // because a thread that could not start an engine is
+                        // exactly the failure its `onerror` is for.
+                        blitsen_host::ports::registry().post(
+                            boot.port,
+                            blitsen_host::ports::Delivery::Error(format!(
+                                "a worker could not start a JavaScript engine: {error}"
+                            )),
+                        );
+                        blitsen_host::ports::registry().release(boot.context);
+                    }
+                }
+            })
+            .map(|_| ())
+            .map_err(|error| JsError::new(format!("could not start a worker thread: {error}")))
+    }
 }
 
 /// Whether this build can evaluate module scripts, for `--engine-report`.

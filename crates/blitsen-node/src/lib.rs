@@ -1,18 +1,19 @@
 //! Bun-loadable Node-API addon: the Phase 1 JavaScript host.
 //!
-//! Two things live here and nowhere else — the [`JsEngine`] implementation over
+//! Two things live here and nowhere else — the [`JsEngine`](blitsen_js::JsEngine)
+//! implementation over
 //! Node-API, and the `#[napi]` surface Bun calls. Everything between the DOM and
 //! the application is in `blitsen-host`, which names no engine at all.
 
 mod engine;
 mod exports;
+mod workers;
 
 use std::cell::RefCell;
-use std::path::Path;
 
 use blitsen_host::app::AppFiles;
 use blitsen_host::{OpenDirectoryOptions as HostOptions, WindowSession, native_window};
-use blitsen_js::{JsEngine, JsError};
+use blitsen_js::JsError;
 use napi::{Env, Status};
 use napi_derive::napi;
 
@@ -70,23 +71,6 @@ impl Engine {
             runtime: RefCell::new(NodeApiEngine::new(env)),
             session: RefCell::new(None),
         }
-    }
-
-    /// Loads an HTML file from disk and returns its source for the document
-    /// loader added by the following milestone issues.
-    #[napi(js_name = "loadHTML")]
-    pub fn load_html(&self, path: String) -> napi::Result<String> {
-        let path = Path::new(&path);
-        let source = std::fs::read_to_string(path).map_err(|error| {
-            napi::Error::new(
-                Status::GenericFailure,
-                format!("could not read {}: {error}", path.display()),
-            )
-        })?;
-        // Exercise the owned runtime here so constructor state is not merely
-        // decorative; document installation follows in issues #23 and #24.
-        let _ = self.runtime.borrow_mut().undefined();
-        Ok(source)
     }
 
     /// Parses `index.html` and initializes a native Blitz window session.

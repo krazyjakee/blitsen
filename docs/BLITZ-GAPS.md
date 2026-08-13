@@ -25,7 +25,7 @@ Status values: **open** (reproduced, unfiled), **filed** (upstream issue exists)
 | G1 | Digits absent from some text runs while letters and punctuation render | filed | `spikes/s6/results/blitz-snapshot/react.png` | [blitz#688](https://github.com/DioxusLabs/blitz/issues/688); see below |
 | G2 | A property named by `transition` keeps its pre-stylesheet value for good | filed | `crates/blitsen-blitz/tests/reductions/transition-stale-style.html` | [blitz#689](https://github.com/DioxusLabs/blitz/issues/689); the hidden overlays were a symptom. Now reachable through Blitsen, which it was not when this was written; see below |
 | G3 | `absolute`/`fixed` insets and auto margins resolve against the wrong box | filed | `crates/blitsen-blitz/tests/conformance/cases/defect-*.html` | [blitz#690](https://github.com/DioxusLabs/blitz/issues/690), [blitz#691](https://github.com/DioxusLabs/blitz/issues/691); gated as known-failing cases |
-| G4 | Form controls and anchors fall back to native/default styling | open | `spikes/s6/results/blitz-snapshot/{react,vue}.png` | `appearance`, inherited anchor colour, Tailwind 4 reset, control UA CSS |
+| G4 | Form controls and anchors fall back to native/default styling | open | `crates/blitsen-blitz/src/tests/ua.rs`; `spikes/s6/results/blitz-snapshot/{react,vue}.png` | Blitz ships a trimmed `html.css` and no `forms.css` or `ua.css` at all. The half of that baseline this engine can honour now ships in `crates/blitsen-blitz/src/ua.rs`; the controls with no widget behind them do not. See below |
 | G5 | SVG paints nothing in Blitsen's build; wrong geometry in upstream's | filed upstream | `spikes/s6/results/blitz-snapshot/react.png` | [blitz#448](https://github.com/DioxusLabs/blitz/issues/448); which of the two you get depends on the `svg` feature, and Blitsen cannot enable it (G7). See below |
 | G6 | Accumulating line-height, antialiasing and vertical spacing differences | open, low priority | `spikes/s6/results/metrics.tsv` | Needs a tolerance corpus before it can be actioned |
 | G7 | `blitz-dom`'s `svg` feature does not compile at the pinned revision | filed | Build failure, reproducible | [blitz#687](https://github.com/DioxusLabs/blitz/issues/687); see below |
@@ -34,6 +34,9 @@ Status values: **open** (reproduced, unfiled), **filed** (upstream issue exists)
 | G10 | Changing checkedness does not invalidate the cascade, so a `:checked` rule never repaints | open | `blitz-dom`'s `stylo.rs`, `document.rs` and `events/pointer.rs` at the pin; measured in pixels | Blitz's own click on its own checkbox has it too; see below |
 | G11 | A subresource whose handler never completes blocks painting for the life of the document | open | `crates/blitsen-blitz/tests/conformance/cases/unservable-subresource.html` | `NetProvider`'s only failure signal is dropping the handler, which is also the thing that blocks. Worked around in `resources.rs`; see below |
 | G12 | Blitz has no `[hidden]` user-agent rule | withdrawn | `docs/COMPATIBILITY.md`, "Rendered text, box reads and scrolling" | It has the rule. The probe that said otherwise put an author `display: block` on the element, which correctly wins the cascade |
+| G13 | Link-ness never reaches `ElementState`, so the style-sharing cache hands one anchor's style to another | open | `crates/blitsen-blitz/src/tests/ua.rs::only_an_anchor_with_an_href_is_painted_as_a_link` | stylo's cascade layer: `:any-link` and `:link` are matched ad hoc in `blitz-dom`'s `stylo.rs`, so two sibling anchors of opposite kinds are sharing candidates. Same shape as G10. See below |
+
+| G14 | A replaced element panics in layout the moment it carries a custom widget | filed | `crates/blitsen-blitz/src/tests/canvas.rs::canvas_survives_carrying_a_custom_widget` | [blitz#706](https://github.com/DioxusLabs/blitz/issues/706); patched in a local checkout rather than worked around, because there is nothing to work around it with. See below |
 
 Broad Tailwind/renderer work has an upstream collection in
 [blitz#389](https://github.com/DioxusLabs/blitz/issues/389).
@@ -124,6 +127,42 @@ instead, and both are now gated as known-failing conformance cases (see
 Together they are why Wordle+'s modals sit at the left edge and stop short of the viewport. Both
 reproduce in upstream Blitz's `screenshot` example as well as in Blitsen's renderer, and the numbers
 in both cases were confirmed against Chromium at the same viewport.
+
+## G4 — the missing sheet is `forms.css`, and half of it we can ship ourselves
+
+Blitz's `packages/blitz-dom/assets/default.css` is Gecko's `html.css` with the internal
+pseudo-classes trimmed out, plus a fifty-line form-control shim. Gecko's other two user-agent
+sheets — `forms.css` (965 lines) and `ua.css` (567) — have no counterpart. That is not a decoration
+gap: it is the part of the baseline no application writes down, because every browser supplies it.
+Compared against the sheets extracted from a local Firefox build, and confirmed by headless renders
+of the controls:
+
+- **No `cursor` declaration exists anywhere in the sheet.** Every element resolves `cursor: auto`,
+  so `BaseDocument::get_cursor` falls through to its text-hit fallback and a button hovers with the
+  text caret. Gecko sets `cursor: default` and `user-select: none` on buttons (`forms.css`), and
+  `:any-link { cursor: pointer }` (`ua.css`).
+- **`:disabled` never appears in a rule**, so a disabled control paints identically to a live one.
+  The pseudo-class itself matches fine.
+- **`fieldset` and `legend` have no rules**, so a fieldset is inline and borderless and its legend
+  runs into the contents on one line.
+- **Every `<a>` is coloured and underlined**, including one with no `href`.
+- **`<select>`, `<meter>` and `<progress>` paint nothing at all** — no box, no border, no text — and
+  `input[type=range|color|number]` collapse to a four-pixel bordered box with no widget and no value.
+- **`::placeholder` renders nothing** and `:placeholder-shown` is hardcoded to `false`
+  (`stylo.rs`); **`:focus-visible` is hardcoded to `false` too**, so nothing but `input` and
+  `textarea` — which use `:focus` — can show a focus ring.
+- **`<table border="1">` draws no borders.** The `border` attribute is not one of the presentation
+  attributes `stylo.rs` maps, and the sheet's rules for it are keyed on Gecko's
+  `:-moz-table-border-nonzero`, which is not implemented — so they can never match. (The `[frame]`
+  and `[rules]` rules beside them are ordinary attribute selectors and do work.) `cellpadding` and
+  `cellspacing` are not mapped either.
+- **A closed `<details>` still shows bare text children**, because the rule that hides them can only
+  reach elements.
+
+The first four, plus `textarea`'s `white-space: pre-wrap`, are pure cascade and now ship in
+`crates/blitsen-blitz/src/ua.rs`, appended after Blitz's own sheet and below anything an author
+writes. The rest need a widget or engine support before a rule would mean anything, and are left
+alone deliberately: a UA rule for a control nobody paints is a lie in a stylesheet.
 
 ## G5 — what SVG does depends on a feature Blitsen cannot turn on
 
@@ -281,6 +320,58 @@ body is now indistinguishable from a failure, which is why the tracker grades on
 **Next step:** file it. The fix upstream is a failure signal on the trait — a provider should be
 able to say "I will not serve this" without lying with an empty body, and a dropped handler should
 release the resource rather than pin it.
+
+## G13 — an anchor can be handed the style of the anchor next to it
+
+Writing G4's "an `<a>` with no `href` is not a link" rule as `a:not(:any-link)` produced a result
+that depended on document order: whichever anchor came first won, and its sibling of the opposite
+kind resolved the same colour and decoration. Two anchors, one with `href` and one without, in a
+document with no author styles: put the link first and the bare anchor is blue and underlined; put
+the bare anchor first and the *link* is black with no underline.
+
+The rule is fine; the sharing is not. `blitz-dom`'s `stylo.rs` matches `:any-link` and `:link` ad
+hoc off the element's tag and `href` attribute, and never records link-ness in `ElementState`.
+stylo's style-sharing cache keys on element state and revalidates the rest through selectors it
+knows are unreliable — attribute selectors among them — so two sibling `<a>`s with the same tag and
+no attribute dependency look interchangeable to it, and one gets the other's computed style. Adding
+*any* attribute-dependent rule for anchors to the document makes the correct result reappear, which
+is what makes this so easy to mistake for a cascade bug in your own sheet.
+
+This is G10's shape again — state that the cascade cannot see because it never enters
+`ElementState` — one step further along: G10 loses an invalidation, this loses the sharing check.
+
+Blitsen's baseline sheet sidesteps it by keying on the attribute (`a:not([href])`), which is a
+revalidation selector, and the test asserts both document orders so a change upstream cannot
+quietly reintroduce it.
+
+**Next step:** an upstream issue, with the two-anchor reduction.
+
+## G14 — the custom-widget seam and the replaced elements are mutually exclusive
+
+`set_custom_widget` writes `SpecialElementData::CustomWidget` into the one slot replaced layout
+reads. `blitz-dom`'s `layout/mod.rs` matches `Image`, then `Canvas | SubDocument | None`, then
+`_ => unreachable!()` — so a `<canvas>`, `<img>`, `<svg>`, `<video>`, `<embed>` or `<iframe>`
+carrying a widget reaches the last arm and takes the process down on the next layout.
+
+This is the one gap so far with no workaround available on Blitsen's side. `<blitsen-view>` only
+avoids it by not being a replaced element: it is an unknown tag given a replaced element's box by
+user-agent CSS, which is why `viewport.rs` carries that sheet. Tag membership in
+`is_replaced_element` is not something CSS can opt out of, and the alternative paint path —
+`SpecialElementData::Canvas` with a `custom_paint_source_id` — is inert at the pin, because
+`blitz-paint` never reads `canvas_data`.
+
+What makes it worth patching rather than deferring: everything else `<canvas>` needs from Blitz is
+already correct. `<canvas>` is in `is_replaced_element`, and `layout/mod.rs` already implements the
+spec sizing — intrinsic size from the `width`/`height` content attributes, defaulting to 300×150,
+with an intrinsic aspect ratio that only `<canvas>` gets. Measured through Blitsen: a
+`<canvas width="200" height="100">` lays out at 200×100, and adding `style="width: 50px"` gives
+50×25.
+
+Filed as [blitz#706](https://github.com/DioxusLabs/blitz/issues/706). Until it is resolved upstream,
+the workspace `[patch]` points `blitz*` at a local checkout at the pinned revision carrying one
+change: the existing sizing body factored into a `default_object_size` helper, called from a new
+`CustomWidget` arm. **A fresh clone of Blitsen does not build without that checkout**, which is the
+cost of the decision and the reason it is recorded here as well as in `Cargo.toml`.
 
 ## Keeping this list honest
 

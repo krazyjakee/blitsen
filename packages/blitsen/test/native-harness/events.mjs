@@ -13,10 +13,11 @@ const eventSurface = JSON.parse(native.runBridgeHarness(
      event.preventDefault();
      if (!event.defaultPrevented) throw new Error("preventDefault");
      const mouse = new MouseEvent("click", { clientX: 10, clientY: 11, offsetX: 2, offsetY: 3,
-       screenX: 50, screenY: 60, button: 1, buttons: 2, ctrlKey: true, shiftKey: true });
+       screenX: 50, screenY: 60, button: 1, buttons: 2, ctrlKey: true, shiftKey: true, view: window });
      if (mouse.clientX !== 10 || mouse.clientY !== 11 || mouse.offsetX !== 2 || mouse.offsetY !== 3 ||
          mouse.screenX !== 50 || mouse.screenY !== 60 || mouse.button !== 1 || mouse.buttons !== 2 ||
-         !mouse.ctrlKey || !mouse.shiftKey || mouse.altKey || mouse.metaKey) throw new Error("MouseEvent property surface");
+         !mouse.ctrlKey || !mouse.shiftKey || mouse.altKey || mouse.metaKey || mouse.view !== window)
+       throw new Error("MouseEvent property surface");
      const keyboard = new KeyboardEvent("keydown", { key: "A", code: "KeyA", repeat: true,
        altKey: true, metaKey: true });
      if (keyboard.key !== "A" || keyboard.code !== "KeyA" || !keyboard.repeat ||
@@ -57,7 +58,8 @@ const eventDispatch = JSON.parse(native.runBridgeHarness(
      let event;
      target.addEventListener("probe", current => { event = current; }, { once: true });
      if (__blitsenInjectMouseEvent("probe", target, { bubbles: true, cancelable: true }) !== false ||
-         !event.defaultPrevented || event.currentTarget !== null || event.eventPhase !== 0)
+         !event.defaultPrevented || event.currentTarget !== null || event.eventPhase !== 0 ||
+         event.view !== window)
        throw new Error("injected event result or final state");
      const expected = ["window-capture:1", "document-capture:1", "outer-capture:1",
        "target-capture:2", "target-bubble:2", "outer-bubble:3", "document-bubble:3", "window-bubble:3"];
@@ -204,4 +206,3 @@ const defaultScroller = defaultActions.nodes.find(node => node.attributes.id ===
 assert.equal(defaultScroller.attributes["data-defaults"], "ok");
 assert.equal(defaultScroller.scroll_y, 80,
   "wheel and keyboard scroll the nearest ancestor while prevented defaults do nothing");
-

@@ -14,7 +14,7 @@ mod tree;
 
 use blitsen_blitz::BlitzDom;
 use blitsen_core::js_property_to_css;
-use blitsen_dom::{DomBackend, DomError, DomName, Namespace, NodeKind};
+use blitsen_dom::{DomBackend, DomError, DomName, Namespace, NodeKind, Rect};
 use blitsen_js::JsError;
 use blitz::dom::NodeId;
 use serde_json::{Value, json};

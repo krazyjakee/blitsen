@@ -21,7 +21,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::runtime::Runtime;
 
-use super::worker::{lock, runtime as worker_runtime};
+use super::net_pool::{lock, runtime as net_runtime};
 
 /// A `fetch` call as the bootstrap describes it, with the body passed
 /// separately so binary payloads never round-trip through a string.
@@ -185,7 +185,7 @@ async fn completion(
 impl FetchHost {
     /// Creates a host bound to the shared worker pool.
     pub(super) fn new(reader: Option<crate::app::AppReader>) -> Result<Self, JsError> {
-        let runtime = worker_runtime()?;
+        let runtime = net_runtime()?;
         // The connection pool spawns its idle reaper on construction, so the
         // client has to be built inside the runtime it will run on.
         let guard = runtime.enter();
@@ -495,7 +495,8 @@ mod tests {
 
     /// A directory of application files, and a host that can read them.
     fn application(name: &str, files: &[(&str, &[u8])]) -> (std::path::PathBuf, FetchHost) {
-        let root = std::env::temp_dir().join(format!("blitsen-fetch-{name}-{}", std::process::id()));
+        let root =
+            std::env::temp_dir().join(format!("blitsen-fetch-{name}-{}", std::process::id()));
         std::fs::create_dir_all(&root).unwrap();
         for (path, bytes) in files {
             let target = root.join(path);

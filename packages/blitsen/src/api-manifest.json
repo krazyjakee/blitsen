@@ -719,6 +719,24 @@
       "pattern": null
     },
     {
+      "api": "HTMLLinkElement.onload",
+      "kind": "member",
+      "owner": "HTMLLinkElement.prototype",
+      "member": "onload",
+      "status": "implemented",
+      "code": "WEB_DOM",
+      "pattern": null
+    },
+    {
+      "api": "HTMLLinkElement.onerror",
+      "kind": "member",
+      "owner": "HTMLLinkElement.prototype",
+      "member": "onerror",
+      "status": "implemented",
+      "code": "WEB_DOM",
+      "pattern": null
+    },
+    {
       "api": "HTMLTemplateElement.content",
       "kind": "member",
       "owner": "HTMLTemplateElement.prototype",
@@ -1293,6 +1311,13 @@
       "pattern": "(?<![.\\w$])dispatchEvent\\b"
     },
     {
+      "api": "ErrorEvent",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_EVENTS",
+      "pattern": "(?<![.\\w$])ErrorEvent\\b"
+    },
+    {
       "api": "scrollTo",
       "kind": "global",
       "status": "implemented",
@@ -1344,16 +1369,498 @@
     {
       "api": "getSelection",
       "kind": "global",
-      "status": "absent",
+      "status": "implemented",
       "code": "WEB_SELECTION",
       "pattern": "\\b(?:window|document)\\.getSelection\\s*\\("
     },
     {
       "api": "Range",
       "kind": "global",
-      "status": "absent",
+      "status": "implemented",
       "code": "WEB_SELECTION",
       "pattern": "(?<![.\\w$])Range\\b"
+    },
+    {
+      "api": "Selection",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_SELECTION",
+      "pattern": "(?<![.\\w$])Selection\\b"
+    },
+    {
+      "api": "CaretPosition",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_SELECTION",
+      "pattern": "(?<![.\\w$])CaretPosition\\b"
+    },
+    {
+      "api": "Document.createRange",
+      "kind": "member",
+      "owner": "Document.prototype",
+      "member": "createRange",
+      "status": "implemented",
+      "code": "WEB_SELECTION",
+      "pattern": null
+    },
+    {
+      "api": "Document.getSelection",
+      "kind": "member",
+      "owner": "Document.prototype",
+      "member": "getSelection",
+      "status": "implemented",
+      "code": "WEB_SELECTION",
+      "pattern": null
+    },
+    {
+      "api": "Document.caretRangeFromPoint",
+      "kind": "member",
+      "owner": "Document.prototype",
+      "member": "caretRangeFromPoint",
+      "status": "implemented",
+      "code": "WEB_SELECTION",
+      "pattern": null
+    },
+    {
+      "api": "Document.caretPositionFromPoint",
+      "kind": "member",
+      "owner": "Document.prototype",
+      "member": "caretPositionFromPoint",
+      "status": "implemented",
+      "code": "WEB_SELECTION",
+      "pattern": null
+    },
+    {
+      "api": "Range.setStart",
+      "kind": "member",
+      "owner": "Range.prototype",
+      "member": "setStart",
+      "status": "implemented",
+      "code": "WEB_SELECTION",
+      "pattern": null
+    },
+    {
+      "api": "Range.setEnd",
+      "kind": "member",
+      "owner": "Range.prototype",
+      "member": "setEnd",
+      "status": "implemented",
+      "code": "WEB_SELECTION",
+      "pattern": null
+    },
+    {
+      "api": "Range.setStartBefore",
+      "kind": "member",
+      "owner": "Range.prototype",
+      "member": "setStartBefore",
+      "status": "implemented",
+      "code": "WEB_SELECTION",
+      "pattern": null
+    },
+    {
+      "api": "Range.setStartAfter",
+      "kind": "member",
+      "owner": "Range.prototype",
+      "member": "setStartAfter",
+      "status": "implemented",
+      "code": "WEB_SELECTION",
+      "pattern": null
+    },
+    {
+      "api": "Range.setEndBefore",
+      "kind": "member",
+      "owner": "Range.prototype",
+      "member": "setEndBefore",
+      "status": "implemented",
+      "code": "WEB_SELECTION",
+      "pattern": null
+    },
+    {
+      "api": "Range.setEndAfter",
+      "kind": "member",
+      "owner": "Range.prototype",
+      "member": "setEndAfter",
+      "status": "implemented",
+      "code": "WEB_SELECTION",
+      "pattern": null
+    },
+    {
+      "api": "Range.selectNode",
+      "kind": "member",
+      "owner": "Range.prototype",
+      "member": "selectNode",
+      "status": "implemented",
+      "code": "WEB_SELECTION",
+      "pattern": null
+    },
+    {
+      "api": "Range.selectNodeContents",
+      "kind": "member",
+      "owner": "Range.prototype",
+      "member": "selectNodeContents",
+      "status": "implemented",
+      "code": "WEB_SELECTION",
+      "pattern": null
+    },
+    {
+      "api": "Range.collapse",
+      "kind": "member",
+      "owner": "Range.prototype",
+      "member": "collapse",
+      "status": "implemented",
+      "code": "WEB_SELECTION",
+      "pattern": null
+    },
+    {
+      "api": "Range.cloneRange",
+      "kind": "member",
+      "owner": "Range.prototype",
+      "member": "cloneRange",
+      "status": "implemented",
+      "code": "WEB_SELECTION",
+      "pattern": null
+    },
+    {
+      "api": "Range.startContainer",
+      "kind": "member",
+      "owner": "Range.prototype",
+      "member": "startContainer",
+      "status": "implemented",
+      "code": "WEB_SELECTION",
+      "pattern": null
+    },
+    {
+      "api": "Range.startOffset",
+      "kind": "member",
+      "owner": "Range.prototype",
+      "member": "startOffset",
+      "status": "implemented",
+      "code": "WEB_SELECTION",
+      "pattern": null
+    },
+    {
+      "api": "Range.endContainer",
+      "kind": "member",
+      "owner": "Range.prototype",
+      "member": "endContainer",
+      "status": "implemented",
+      "code": "WEB_SELECTION",
+      "pattern": null
+    },
+    {
+      "api": "Range.endOffset",
+      "kind": "member",
+      "owner": "Range.prototype",
+      "member": "endOffset",
+      "status": "implemented",
+      "code": "WEB_SELECTION",
+      "pattern": null
+    },
+    {
+      "api": "Range.collapsed",
+      "kind": "member",
+      "owner": "Range.prototype",
+      "member": "collapsed",
+      "status": "implemented",
+      "code": "WEB_SELECTION",
+      "pattern": null
+    },
+    {
+      "api": "Range.commonAncestorContainer",
+      "kind": "member",
+      "owner": "Range.prototype",
+      "member": "commonAncestorContainer",
+      "status": "implemented",
+      "code": "WEB_SELECTION",
+      "pattern": null
+    },
+    {
+      "api": "Range.comparePoint",
+      "kind": "member",
+      "owner": "Range.prototype",
+      "member": "comparePoint",
+      "status": "implemented",
+      "code": "WEB_SELECTION",
+      "pattern": null
+    },
+    {
+      "api": "Range.compareBoundaryPoints",
+      "kind": "member",
+      "owner": "Range.prototype",
+      "member": "compareBoundaryPoints",
+      "status": "implemented",
+      "code": "WEB_SELECTION",
+      "pattern": null
+    },
+    {
+      "api": "Range.intersectsNode",
+      "kind": "member",
+      "owner": "Range.prototype",
+      "member": "intersectsNode",
+      "status": "implemented",
+      "code": "WEB_SELECTION",
+      "pattern": null
+    },
+    {
+      "api": "Range.isPointInRange",
+      "kind": "member",
+      "owner": "Range.prototype",
+      "member": "isPointInRange",
+      "status": "implemented",
+      "code": "WEB_SELECTION",
+      "pattern": null
+    },
+    {
+      "api": "Range.toString",
+      "kind": "member",
+      "owner": "Range.prototype",
+      "member": "toString",
+      "status": "implemented",
+      "code": "WEB_SELECTION",
+      "pattern": null
+    },
+    {
+      "api": "Range.getClientRects",
+      "kind": "member",
+      "owner": "Range.prototype",
+      "member": "getClientRects",
+      "status": "implemented",
+      "code": "WEB_SELECTION",
+      "pattern": null
+    },
+    {
+      "api": "Range.getBoundingClientRect",
+      "kind": "member",
+      "owner": "Range.prototype",
+      "member": "getBoundingClientRect",
+      "status": "implemented",
+      "code": "WEB_SELECTION",
+      "pattern": null
+    },
+    {
+      "api": "Range.deleteContents",
+      "kind": "member",
+      "owner": "Range.prototype",
+      "member": "deleteContents",
+      "status": "absent",
+      "code": "WEB_SELECTION",
+      "pattern": null
+    },
+    {
+      "api": "Range.extractContents",
+      "kind": "member",
+      "owner": "Range.prototype",
+      "member": "extractContents",
+      "status": "absent",
+      "code": "WEB_SELECTION",
+      "pattern": null
+    },
+    {
+      "api": "Range.cloneContents",
+      "kind": "member",
+      "owner": "Range.prototype",
+      "member": "cloneContents",
+      "status": "absent",
+      "code": "WEB_SELECTION",
+      "pattern": null
+    },
+    {
+      "api": "Range.insertNode",
+      "kind": "member",
+      "owner": "Range.prototype",
+      "member": "insertNode",
+      "status": "absent",
+      "code": "WEB_SELECTION",
+      "pattern": null
+    },
+    {
+      "api": "Range.surroundContents",
+      "kind": "member",
+      "owner": "Range.prototype",
+      "member": "surroundContents",
+      "status": "absent",
+      "code": "WEB_SELECTION",
+      "pattern": null
+    },
+    {
+      "api": "Selection.anchorNode",
+      "kind": "member",
+      "owner": "Selection.prototype",
+      "member": "anchorNode",
+      "status": "implemented",
+      "code": "WEB_SELECTION",
+      "pattern": null
+    },
+    {
+      "api": "Selection.anchorOffset",
+      "kind": "member",
+      "owner": "Selection.prototype",
+      "member": "anchorOffset",
+      "status": "implemented",
+      "code": "WEB_SELECTION",
+      "pattern": null
+    },
+    {
+      "api": "Selection.focusNode",
+      "kind": "member",
+      "owner": "Selection.prototype",
+      "member": "focusNode",
+      "status": "implemented",
+      "code": "WEB_SELECTION",
+      "pattern": null
+    },
+    {
+      "api": "Selection.focusOffset",
+      "kind": "member",
+      "owner": "Selection.prototype",
+      "member": "focusOffset",
+      "status": "implemented",
+      "code": "WEB_SELECTION",
+      "pattern": null
+    },
+    {
+      "api": "Selection.isCollapsed",
+      "kind": "member",
+      "owner": "Selection.prototype",
+      "member": "isCollapsed",
+      "status": "implemented",
+      "code": "WEB_SELECTION",
+      "pattern": null
+    },
+    {
+      "api": "Selection.rangeCount",
+      "kind": "member",
+      "owner": "Selection.prototype",
+      "member": "rangeCount",
+      "status": "implemented",
+      "code": "WEB_SELECTION",
+      "pattern": null
+    },
+    {
+      "api": "Selection.type",
+      "kind": "member",
+      "owner": "Selection.prototype",
+      "member": "type",
+      "status": "implemented",
+      "code": "WEB_SELECTION",
+      "pattern": null
+    },
+    {
+      "api": "Selection.direction",
+      "kind": "member",
+      "owner": "Selection.prototype",
+      "member": "direction",
+      "status": "implemented",
+      "code": "WEB_SELECTION",
+      "pattern": null
+    },
+    {
+      "api": "Selection.getRangeAt",
+      "kind": "member",
+      "owner": "Selection.prototype",
+      "member": "getRangeAt",
+      "status": "implemented",
+      "code": "WEB_SELECTION",
+      "pattern": null
+    },
+    {
+      "api": "Selection.addRange",
+      "kind": "member",
+      "owner": "Selection.prototype",
+      "member": "addRange",
+      "status": "implemented",
+      "code": "WEB_SELECTION",
+      "pattern": null
+    },
+    {
+      "api": "Selection.removeAllRanges",
+      "kind": "member",
+      "owner": "Selection.prototype",
+      "member": "removeAllRanges",
+      "status": "implemented",
+      "code": "WEB_SELECTION",
+      "pattern": null
+    },
+    {
+      "api": "Selection.setBaseAndExtent",
+      "kind": "member",
+      "owner": "Selection.prototype",
+      "member": "setBaseAndExtent",
+      "status": "implemented",
+      "code": "WEB_SELECTION",
+      "pattern": null
+    },
+    {
+      "api": "Selection.collapse",
+      "kind": "member",
+      "owner": "Selection.prototype",
+      "member": "collapse",
+      "status": "implemented",
+      "code": "WEB_SELECTION",
+      "pattern": null
+    },
+    {
+      "api": "Selection.extend",
+      "kind": "member",
+      "owner": "Selection.prototype",
+      "member": "extend",
+      "status": "implemented",
+      "code": "WEB_SELECTION",
+      "pattern": null
+    },
+    {
+      "api": "Selection.selectAllChildren",
+      "kind": "member",
+      "owner": "Selection.prototype",
+      "member": "selectAllChildren",
+      "status": "implemented",
+      "code": "WEB_SELECTION",
+      "pattern": null
+    },
+    {
+      "api": "Selection.containsNode",
+      "kind": "member",
+      "owner": "Selection.prototype",
+      "member": "containsNode",
+      "status": "implemented",
+      "code": "WEB_SELECTION",
+      "pattern": null
+    },
+    {
+      "api": "Selection.toString",
+      "kind": "member",
+      "owner": "Selection.prototype",
+      "member": "toString",
+      "status": "implemented",
+      "code": "WEB_SELECTION",
+      "pattern": null
+    },
+    {
+      "api": "CaretPosition.offsetNode",
+      "kind": "member",
+      "owner": "CaretPosition.prototype",
+      "member": "offsetNode",
+      "status": "implemented",
+      "code": "WEB_SELECTION",
+      "pattern": null
+    },
+    {
+      "api": "CaretPosition.offset",
+      "kind": "member",
+      "owner": "CaretPosition.prototype",
+      "member": "offset",
+      "status": "implemented",
+      "code": "WEB_SELECTION",
+      "pattern": null
+    },
+    {
+      "api": "CaretPosition.getClientRect",
+      "kind": "member",
+      "owner": "CaretPosition.prototype",
+      "member": "getClientRect",
+      "status": "implemented",
+      "code": "WEB_SELECTION",
+      "pattern": null
     },
     {
       "api": "requestAnimationFrame",
@@ -1468,6 +1975,13 @@
       "pattern": "(?<![.\\w$])window\\b"
     },
     {
+      "api": "self",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_ROUTING",
+      "pattern": "\\bself\\."
+    },
+    {
       "api": "location",
       "kind": "global",
       "status": "implemented",
@@ -1554,9 +2068,27 @@
     {
       "api": "Worker",
       "kind": "global",
-      "status": "absent",
+      "status": "implemented",
       "code": "WEB_WORKER",
       "pattern": "(?<![.\\w$])Worker\\b"
+    },
+    {
+      "api": "Worker.postMessage",
+      "kind": "member",
+      "owner": "Worker.prototype",
+      "member": "postMessage",
+      "status": "implemented",
+      "code": "WEB_WORKER",
+      "pattern": null
+    },
+    {
+      "api": "Worker.terminate",
+      "kind": "member",
+      "owner": "Worker.prototype",
+      "member": "terminate",
+      "status": "implemented",
+      "code": "WEB_WORKER",
+      "pattern": null
     },
     {
       "api": "SharedWorker",
@@ -1582,16 +2114,57 @@
     {
       "api": "MessageChannel",
       "kind": "global",
-      "status": "absent",
+      "status": "implemented",
       "code": "WEB_MESSAGING",
       "pattern": "(?<![.\\w$])MessageChannel\\b"
     },
     {
       "api": "MessagePort",
       "kind": "global",
-      "status": "absent",
+      "status": "implemented",
       "code": "WEB_MESSAGING",
       "pattern": "(?<![.\\w$])MessagePort\\b"
+    },
+    {
+      "api": "structuredClone",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_MESSAGING",
+      "pattern": "(?<![.\\w$])structuredClone\\b"
+    },
+    {
+      "api": "postMessage",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_MESSAGING",
+      "pattern": "\\b(?:window|globalThis|self)\\.postMessage\\s*\\("
+    },
+    {
+      "api": "MessagePort.postMessage",
+      "kind": "member",
+      "owner": "MessagePort.prototype",
+      "member": "postMessage",
+      "status": "implemented",
+      "code": "WEB_MESSAGING",
+      "pattern": null
+    },
+    {
+      "api": "MessagePort.start",
+      "kind": "member",
+      "owner": "MessagePort.prototype",
+      "member": "start",
+      "status": "implemented",
+      "code": "WEB_MESSAGING",
+      "pattern": null
+    },
+    {
+      "api": "MessagePort.close",
+      "kind": "member",
+      "owner": "MessagePort.prototype",
+      "member": "close",
+      "status": "implemented",
+      "code": "WEB_MESSAGING",
+      "pattern": null
     },
     {
       "api": "BroadcastChannel",
@@ -1599,13 +2172,6 @@
       "status": "absent",
       "code": "WEB_MESSAGING",
       "pattern": "(?<![.\\w$])BroadcastChannel\\b"
-    },
-    {
-      "api": "postMessage",
-      "kind": "global",
-      "status": "absent",
-      "code": "WEB_MESSAGING",
-      "pattern": "(?<![.\\w$])postMessage\\b"
     },
     {
       "api": "WebSocket",
@@ -2817,14 +3383,14 @@
     },
     "WEB_WORKER": {
       "severity": "warning",
-      "message": "Web workers are not implemented.",
-      "guidance": "Run the work in the main context or use a native/Node worker path.",
+      "message": "Shared and service workers are not implemented; dedicated Worker is.",
+      "guidance": "Use a dedicated Worker, which this runtime runs on a thread of its own, and keep whatever the workers were sharing in the document that started them.",
       "extra": null
     },
     "WEB_MESSAGING": {
       "severity": "warning",
-      "message": "Message channels are not implemented.",
-      "guidance": "Feature-detect the channel; a scheduler that falls back to a timer keeps working.",
+      "message": "BroadcastChannel is not implemented; MessageChannel and Worker are.",
+      "guidance": "There is one document behind an application, so a channel between two of them has nothing to connect; pass a MessagePort to whoever needs one.",
       "extra": null
     },
     "WEB_SOCKET": {
@@ -2913,8 +3479,8 @@
     },
     "WEB_SELECTION": {
       "severity": "warning",
-      "message": "Text selection and ranges are not implemented.",
-      "guidance": "Track the selected range in application state rather than reading it back from the DOM.",
+      "message": "This part of the range API is not implemented; the boundary, text and geometry reads are.",
+      "guidance": "Edit the tree with the node methods rather than through a range: a range here measures and compares, and does not cut.",
       "extra": null
     }
   },

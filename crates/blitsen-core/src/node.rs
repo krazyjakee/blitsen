@@ -155,11 +155,6 @@ impl<'a, D: NodeTreeBackend> NodeTreeApi<'a, D> {
         Self { backend, node }
     }
 
-    /// Returns this wrapper's node handle.
-    pub fn node_id(&self) -> D::NodeId {
-        self.node
-    }
-
     /// Implements `appendChild` and returns the appended node.
     pub fn append_child(&mut self, child: D::NodeId) -> Result<D::NodeId, DomError> {
         self.backend.node_append(self.node, child)?;
@@ -194,11 +189,6 @@ impl<'a, D: NodeTreeBackend> NodeTreeApi<'a, D> {
     /// Implements the one-node v0 form of `replaceWith`.
     pub fn replace_with(&mut self, replacement: D::NodeId) -> Result<(), DomError> {
         self.backend.node_replace(self.node, replacement)
-    }
-
-    /// Implements `parentNode`.
-    pub fn parent_node(&self) -> Result<Option<D::NodeId>, DomError> {
-        self.backend.node_parent(self.node)
     }
 
     /// Implements `childNodes` as a snapshot for the current bridge turn.

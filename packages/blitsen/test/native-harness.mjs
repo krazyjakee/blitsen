@@ -14,11 +14,13 @@ await import("./native-harness/events.mjs");
 await import("./native-harness/forms.mjs");
 await import("./native-harness/dom.mjs");
 await import("./native-harness/read-back-and-scrolling.mjs");
+await import("./native-harness/ranges.mjs");
 const { styled } = await import("./native-harness/style.mjs");
 await import("./native-harness/layout-and-images.mjs");
 await import("./native-harness/runtime-surface.mjs");
 await import("./native-harness/network.mjs");
 await import("./native-harness/web-socket.mjs");
+await import("./native-harness/messaging.mjs");
 await import("./native-harness/audio.mjs");
 const { displayed } = await import("./native-harness/native-modules.mjs");
 

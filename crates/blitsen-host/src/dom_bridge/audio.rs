@@ -40,7 +40,7 @@ use web_audio_api::node::{
     AudioBufferSourceNode, AudioNode, AudioScheduledSourceNode, GainNode, StereoPannerNode,
 };
 
-use super::worker::{lock, runtime as worker_runtime};
+use super::net_pool::{lock, runtime as net_runtime};
 
 /// How the bridge is rendering.
 ///
@@ -291,7 +291,7 @@ impl AudioHost {
         let id = self.id();
         let shared = Arc::clone(&self.shared);
         self.pending.fetch_add(1, Ordering::Relaxed);
-        worker_runtime()?.spawn_blocking(move || {
+        net_runtime()?.spawn_blocking(move || {
             let result = decode_bytes(bytes, sample_rate);
             lock(&shared.decoded).push(Decoded { id, result });
         });
@@ -579,7 +579,7 @@ impl AudioHost {
         let shared = Arc::clone(&self.shared);
         let sample_rate = self.sample_rate()?;
         self.pending.fetch_add(1, Ordering::Relaxed);
-        let runtime = worker_runtime()?;
+        let runtime = net_runtime()?;
         match parsed.scheme() {
             "file" => {
                 let path = parsed

@@ -65,4 +65,5 @@ button {
   border-radius: 8px;
   font: inherit;
   font-weight: 700;
+  cursor: pointer;
 }

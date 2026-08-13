@@ -27,7 +27,7 @@ pub(super) fn install<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsErr
 }
 
 fn install_app<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsError> {
-    let directory = engine.define_function(
+    engine.define_global_function(
         "__blitsenNativeAppDirectory",
         Box::new(move |call| {
             let mut engine = E::from_value(&call.this);
@@ -42,16 +42,14 @@ fn install_app<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsError> {
             engine.string(&path.to_string_lossy())
         }),
     )?;
-    engine.set_global("__blitsenNativeAppDirectory", &directory)?;
 
-    let relaunch = engine.define_function(
+    engine.define_global_function(
         "__blitsenNativeAppRelaunch",
         Box::new(move |call| {
             app::relaunch().map_err(failed)?;
             Ok(call.this)
         }),
     )?;
-    engine.set_global("__blitsenNativeAppRelaunch", &relaunch)?;
 
     install_single_instance(engine)
 }
@@ -64,7 +62,7 @@ fn install_single_instance<E: JsEngine + 'static>(engine: &mut E) -> Result<(), 
     // this is the same command line `process.argv` reports, and asking the
     // bootstrap for it would make the bridge depend on the Phase 1 host's
     // `process` object.
-    let request = engine.define_function(
+    engine.define_global_function(
         "__blitsenNativeAppSingleInstance",
         Box::new(move |call| {
             let mut engine = E::from_value(&call.this);
@@ -82,25 +80,22 @@ fn install_single_instance<E: JsEngine + 'static>(engine: &mut E) -> Result<(), 
             Ok(engine.boolean(instance == Instance::Primary))
         }),
     )?;
-    engine.set_global("__blitsenNativeAppSingleInstance", &request)?;
 
-    let pending = engine.define_function(
+    engine.define_global_function(
         "__blitsenNativeAppPending",
         Box::new(move |call| {
             let mut engine = E::from_value(&call.this);
             Ok(engine.boolean(single_instance::pending()))
         }),
     )?;
-    engine.set_global("__blitsenNativeAppPending", &pending)?;
 
-    let take = engine.define_function(
+    engine.define_global_function(
         "__blitsenNativeAppSecondInstances",
         Box::new(move |call| {
             let mut engine = E::from_value(&call.this);
             json_value(&mut engine, &json!(single_instance::take()))
         }),
-    )?;
-    engine.set_global("__blitsenNativeAppSecondInstances", &take)
+    )
 }
 
 // Nothing to install: a named mutex and a pipe are a different design, not this
@@ -111,7 +106,7 @@ fn install_single_instance<E: JsEngine + 'static>(_engine: &mut E) -> Result<(),
 }
 
 fn install_clipboard<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsError> {
-    let read = engine.define_function(
+    engine.define_global_function(
         "__blitsenNativeClipboardRead",
         Box::new(move |call| {
             let mut engine = E::from_value(&call.this);
@@ -128,9 +123,8 @@ fn install_clipboard<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsErro
             }
         }),
     )?;
-    engine.set_global("__blitsenNativeClipboardRead", &read)?;
 
-    let write = engine.define_function(
+    engine.define_global_function(
         "__blitsenNativeClipboardWrite",
         Box::new(move |call| {
             let mut engine = E::from_value(&call.this);
@@ -148,9 +142,8 @@ fn install_clipboard<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsErro
             Ok(call.this)
         }),
     )?;
-    engine.set_global("__blitsenNativeClipboardWrite", &write)?;
 
-    let read_image = engine.define_function(
+    engine.define_global_function(
         "__blitsenNativeClipboardReadImage",
         Box::new(move |call| {
             let image = clipboard::read_image().map_err(failed)?;
@@ -169,9 +162,8 @@ fn install_clipboard<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsErro
             Ok(object)
         }),
     )?;
-    engine.set_global("__blitsenNativeClipboardReadImage", &read_image)?;
 
-    let write_image = engine.define_function(
+    engine.define_global_function(
         "__blitsenNativeClipboardWriteImage",
         Box::new(move |call| {
             let mut engine = E::from_value(&call.this);
@@ -204,23 +196,21 @@ fn install_clipboard<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsErro
             Ok(call.this)
         }),
     )?;
-    engine.set_global("__blitsenNativeClipboardWriteImage", &write_image)?;
 
-    let clear = engine.define_function(
+    engine.define_global_function(
         "__blitsenNativeClipboardClear",
         Box::new(move |call| {
             clipboard::clear().map_err(failed)?;
             Ok(call.this)
         }),
-    )?;
-    engine.set_global("__blitsenNativeClipboardClear", &clear)
+    )
 }
 
 /// The window this session already owns, never a second one: creating windows
 /// waits on the shared-versus-isolated JavaScript context decision, and the
 /// members that would need it are declared absent instead.
 fn install_window<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsError> {
-    let set = engine.define_function(
+    engine.define_global_function(
         "__blitsenNativeWindowSet",
         Box::new(move |call| {
             let mut engine = E::from_value(&call.this);
@@ -230,9 +220,8 @@ fn install_window<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsError> 
             Ok(call.this)
         }),
     )?;
-    engine.set_global("__blitsenNativeWindowSet", &set)?;
 
-    let get = engine.define_function(
+    engine.define_global_function(
         "__blitsenNativeWindowGet",
         Box::new(move |call| {
             let mut engine = E::from_value(&call.this);
@@ -241,9 +230,8 @@ fn install_window<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsError> 
             Ok(engine.boolean(value))
         }),
     )?;
-    engine.set_global("__blitsenNativeWindowGet", &get)?;
 
-    let resize = engine.define_function(
+    engine.define_global_function(
         "__blitsenNativeWindowResize",
         Box::new(move |call| {
             let mut engine = E::from_value(&call.this);
@@ -258,16 +246,14 @@ fn install_window<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsError> 
             Ok(call.this)
         }),
     )?;
-    engine.set_global("__blitsenNativeWindowResize", &resize)?;
 
-    let monitors = engine.define_function(
+    engine.define_global_function(
         "__blitsenNativeWindowMonitors",
         Box::new(move |call| {
             let mut engine = E::from_value(&call.this);
             json_value(&mut engine, &window::monitors()?)
         }),
-    )?;
-    engine.set_global("__blitsenNativeWindowMonitors", &monitors)
+    )
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]
@@ -305,7 +291,7 @@ fn install_dialog<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsError> 
             .map_err(|error| JsError::new(format!("malformed dialog options: {error}")))
     }
 
-    let file = engine.define_function(
+    engine.define_global_function(
         "__blitsenNativeDialogFile",
         Box::new(move |call| {
             let mut engine = E::from_value(&call.this);
@@ -339,9 +325,8 @@ fn install_dialog<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsError> 
             engine.string(&id.to_string())
         }),
     )?;
-    engine.set_global("__blitsenNativeDialogFile", &file)?;
 
-    let message = engine.define_function(
+    engine.define_global_function(
         "__blitsenNativeDialogMessage",
         Box::new(move |call| {
             let mut engine = E::from_value(&call.this);
@@ -377,18 +362,16 @@ fn install_dialog<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsError> 
             engine.string(&id.to_string())
         }),
     )?;
-    engine.set_global("__blitsenNativeDialogMessage", &message)?;
 
-    let pending = engine.define_function(
+    engine.define_global_function(
         "__blitsenNativeDialogPending",
         Box::new(move |call| {
             let mut engine = E::from_value(&call.this);
             Ok(engine.boolean(dialog::pending()))
         }),
     )?;
-    engine.set_global("__blitsenNativeDialogPending", &pending)?;
 
-    let take = engine.define_function(
+    engine.define_global_function(
         "__blitsenNativeDialogTake",
         Box::new(move |call| {
             let mut engine = E::from_value(&call.this);
@@ -414,8 +397,7 @@ fn install_dialog<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsError> 
                 .collect::<Vec<_>>();
             json_value(&mut engine, &json!(closed))
         }),
-    )?;
-    engine.set_global("__blitsenNativeDialogTake", &take)
+    )
 }
 
 // Nothing to install: `rfd` opens a macOS file dialog on the main thread, which

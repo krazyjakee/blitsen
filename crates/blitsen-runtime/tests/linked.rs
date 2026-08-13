@@ -15,25 +15,50 @@ fn runtime_binary() -> Option<PathBuf> {
     path.is_file().then_some(path)
 }
 
-fn workspace_temp(name: &str) -> PathBuf {
+/// A linked executable, and the directory holding it, for one test.
+///
+/// Every one of these is a whole copy of the runtime binary — hundreds of
+/// megabytes — and the directory name carries a process ID, so a run never
+/// reuses the previous run's. Left behind they accumulate rather than replace:
+/// `target/tmp` grew to 23 GB before this cleanup existed. Removing the
+/// directory in `Drop` rather than at the end of each test means a failing
+/// assertion takes its copy with it too.
+struct Linked {
+    directory: PathBuf,
+    executable: PathBuf,
+}
+
+impl Linked {
+    fn path(&self) -> &Path {
+        &self.executable
+    }
+}
+
+impl Drop for Linked {
+    fn drop(&mut self) {
+        // A test that is already failing should report that, not an unlink error.
+        let _ = std::fs::remove_dir_all(&self.directory);
+    }
+}
+
+fn link(files: &[(String, Vec<u8>)], name: &str) -> Option<Linked> {
+    let runtime = runtime_binary()?;
     let directory = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../target/tmp")
         .join(format!("linked-{}-{name}", std::process::id()));
     std::fs::create_dir_all(&directory).expect("temp directory");
-    directory.join(name)
-}
-
-fn link(files: &[(String, Vec<u8>)], name: &str) -> Option<PathBuf> {
-    let runtime = runtime_binary()?;
-    let output = workspace_temp(name);
-    blitsen_core::bundle::write_bundle(&runtime, &output, files).expect("link");
+    let executable = directory.join(name);
+    blitsen_core::bundle::write_bundle(&runtime, &executable, files).expect("link");
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&output, std::fs::Permissions::from_mode(0o755))
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755))
             .expect("make the linked application executable");
     }
-    Some(output)
+    Some(Linked {
+        directory,
+        executable,
+    })
 }
 
 fn sample() -> Vec<(String, Vec<u8>)> {
@@ -61,7 +86,7 @@ fn a_linked_executable_reports_the_application_it_carries() {
         eprintln!("skipping: the runtime binary was not built");
         return;
     };
-    let output = Command::new(&application)
+    let output = Command::new(application.path())
         .arg("--bundle-report")
         .output()
         .expect("run the linked application");
@@ -127,7 +152,7 @@ fn a_linked_application_runs_its_scripts_out_of_the_executable() {
         eprintln!("skipping: the runtime binary was not built");
         return;
     };
-    let output = Command::new(&application)
+    let output = Command::new(application.path())
         .env("BLITSEN_STANDALONE_FRAMES", "2")
         .output()
         .expect("run the linked application");

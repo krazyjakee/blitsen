@@ -34,6 +34,43 @@ pub(super) fn dispatch(
                 "scrollTop": metrics.scroll_top,
             }))
         }
+        "clientRects" => {
+            let forced = dom.layout_is_dirty();
+            let node = handle(runtime, arguments, 0)?;
+            let snapshot = dom.flush_layout().map_err(dom_error)?;
+            let rects = dom.client_rects(node, snapshot).map_err(dom_error)?;
+            Ok(json!({ "forced": forced, "rects": serialize_rects(rects) }))
+        }
+        // A run of characters inside one text node, offsets counted the way a
+        // `Range` counts them: in UTF-16 code units, which is what a JavaScript
+        // string is indexed by.
+        "textRects" => {
+            let forced = dom.layout_is_dirty();
+            let node = handle(runtime, arguments, 0)?;
+            let start = bridge_offset(arguments, 1)?;
+            let end = bridge_offset(arguments, 2)?;
+            let snapshot = dom.flush_layout().map_err(dom_error)?;
+            let rects = dom
+                .text_rects(node, start, end, snapshot)
+                .map_err(dom_error)?;
+            Ok(json!({ "forced": forced, "rects": serialize_rects(rects) }))
+        }
+        "caretPosition" => {
+            let x = bridge_arg(arguments, 0, "caret x")?
+                .parse::<f32>()
+                .map_err(|_| JsError::new("invalid caret x"))?;
+            let y = bridge_arg(arguments, 1, "caret y")?
+                .parse::<f32>()
+                .map_err(|_| JsError::new("invalid caret y"))?;
+            let forced = dom.layout_is_dirty();
+            let snapshot = dom.flush_layout().map_err(dom_error)?;
+            let caret = dom.caret_position(x, y, snapshot).map_err(dom_error)?;
+            Ok(json!({
+                "forced": forced,
+                "node": caret.map(|caret| DomRuntime::serialize_handle(caret.node)),
+                "offset": caret.map_or(0, |caret| caret.offset),
+            }))
+        }
         "imageState" => {
             let forced = dom.layout_is_dirty();
             let node = handle(runtime, arguments, 0)?;
@@ -43,6 +80,18 @@ pub(super) fn dispatch(
                 "forced": forced,
                 "naturalWidth": state.natural_width,
                 "naturalHeight": state.natural_height,
+                "complete": state.complete,
+                "errored": state.errored,
+            }))
+        }
+        "linkState" => {
+            let forced = dom.layout_is_dirty();
+            let node = handle(runtime, arguments, 0)?;
+            let snapshot = dom.flush_layout().map_err(dom_error)?;
+            let state = dom.link_state(node, snapshot).map_err(dom_error)?;
+            Ok(json!({
+                "forced": forced,
+                "pending": state.pending,
                 "complete": state.complete,
                 "errored": state.errored,
             }))
@@ -105,4 +154,25 @@ pub(super) fn dispatch(
         _ => return Ok(None),
     }?;
     Ok(Some(value))
+}
+
+/// Reads a text offset, which JavaScript has already clamped to the node.
+fn bridge_offset(arguments: &[String], index: usize) -> Result<u32, JsError> {
+    bridge_arg(arguments, index, "text offset")?
+        .parse::<u32>()
+        .map_err(|_| JsError::new("invalid text offset"))
+}
+
+fn serialize_rects(rects: Vec<Rect>) -> Value {
+    rects
+        .into_iter()
+        .map(|rect| {
+            json!({
+                "x": rect.x,
+                "y": rect.y,
+                "width": rect.width,
+                "height": rect.height,
+            })
+        })
+        .collect()
 }

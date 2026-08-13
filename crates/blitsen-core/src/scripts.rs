@@ -101,6 +101,21 @@ pub trait ScriptLoader {
     /// its own imports resolve against — so it is a URL or path the loader can
     /// resolve again, not a display string.
     fn load(&self, root: &Path, src: &str) -> Result<(String, String), JsError>;
+
+    /// The document's own address, when it has one an import can resolve
+    /// against.
+    ///
+    /// Only inline scripts need this: an external one is named by [`load`]. An
+    /// inline module still has to resolve *its* imports against something, and
+    /// the entrypoint's path on disk is not something the module resolver
+    /// accepts — so a loader that serves an application answers with its
+    /// application URL, and one reading loose files off disk answers `None` and
+    /// keeps being named by its path.
+    ///
+    /// [`load`]: ScriptLoader::load
+    fn document_url(&self) -> Option<String> {
+        None
+    }
 }
 
 /// Reads scripts from the filesystem, below the entrypoint's directory.
@@ -175,15 +190,18 @@ where
             match loader.load(root, &src) {
                 Ok(loaded) => loaded,
                 Err(error) => {
-                    eprintln!("blitsen: skipping a script that will not load: {}", error.message());
+                    eprintln!(
+                        "blitsen: skipping a script that will not load: {}",
+                        error.message()
+                    );
                     continue;
                 }
             }
         } else {
-            (
-                script.source,
-                format!("{}#script-{}", entrypoint.display(), index + 1),
-            )
+            let document = loader
+                .document_url()
+                .unwrap_or_else(|| entrypoint.display().to_string());
+            (script.source, format!("{document}#script-{}", index + 1))
         };
         let result = if module {
             engine.run_module(&source, &identifier)

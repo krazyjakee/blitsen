@@ -229,6 +229,75 @@ assert(halfway?.pixels > 5_000,
   `a rule inserted from JavaScript animates in the painted frame: ${
     JSON.stringify(stylesheets.paint_colors)}`);
 
+// `<link rel="stylesheet">` load/error, which is what a theme switcher and
+// every deferred-CSS loader waits on. The assertion that matters is inside the
+// handler: a `load` that fired before the sheet reached the cascade would still
+// arrive here and still read the width the sheet was about to replace.
+const THEME = "data:text/css;base64,I3RoZW1lZHt3aWR0aDoxNTBweH0=";
+const SWAPPED = "data:text/css;base64,I3RoZW1lZHt3aWR0aDo2MHB4fQ==";
+const linked = JSON.parse(native.runBridgeHarness(
+  `<div id="themed"></div>`,
+  `{ const expect = (condition, message) => { if (!condition) throw new Error(message); };
+     const seen = [];
+     const themed = document.getElementById("themed");
+     const width = () => getComputedStyle(themed).width;
+
+     const link = document.createElement("link");
+     expect(link instanceof HTMLLinkElement, "a <link> wrapper is an HTMLLinkElement");
+     link.rel = "stylesheet";
+     link.href = ${JSON.stringify(THEME)};
+     link.onload = event => seen.push([event.type, width()]);
+     link.onerror = () => seen.push("wrong-error");
+     document.head.appendChild(link);
+     expect(seen.length === 0, "load is not delivered synchronously");
+     expect(__blitsenAnimationFramesPending(), "a sheet in flight keeps the host turning");
+     __blitsenAnimationFrameTick(0);
+     expect(JSON.stringify(seen) === JSON.stringify([["load", "150px"]]),
+       "a linked sheet fires load once, with the cascade already reading it: " +
+       JSON.stringify(seen));
+     expect(!__blitsenAnimationFramesPending(), "a settled sheet stops holding the host open");
+     __blitsenAnimationFrameTick(16);
+     expect(seen.length === 1, "load is delivered exactly once");
+
+     // The theme swap: a new address on the same element is a new request, and
+     // owes a second outcome to the handler that is still installed.
+     link.href = ${JSON.stringify(SWAPPED)};
+     __blitsenAnimationFrameTick(32);
+     expect(JSON.stringify(seen[1]) === JSON.stringify(["load", "60px"]),
+       "a rewritten href loads again: " + JSON.stringify(seen));
+
+     const missing = document.createElement("link");
+     missing.rel = "stylesheet";
+     missing.href = "https://example.com/theme.css";
+     missing.onload = () => seen.push("wrong-load");
+     missing.addEventListener("error", event => seen.push(event.type));
+     document.head.appendChild(missing);
+     __blitsenAnimationFrameTick(48);
+     expect(seen[2] === "error",
+       "a sheet that cannot be fetched fires error: " + JSON.stringify(seen));
+
+     // Nothing is fetched for a preload hint, so nothing is owed for one — and
+     // an element owed nothing must not hold the host open waiting for it.
+     const hint = document.createElement("link");
+     hint.rel = "preload";
+     hint.href = ${JSON.stringify(THEME)};
+     hint.onload = () => seen.push("wrong-preload-load");
+     hint.onerror = () => seen.push("wrong-preload-error");
+     document.head.appendChild(hint);
+     expect(!__blitsenAnimationFramesPending(), "a preload hint is waiting on nothing");
+     __blitsenAnimationFrameTick(64);
+     expect(seen.length === 3, "only the stylesheets reported: " + JSON.stringify(seen));
+
+     expect(__blitsenForcedLayoutsThisFrame() === 0, "the settle poll charges no forced layout");
+     themed.setAttribute("data-linked", "ok"); }`,
+  320,
+  180,
+));
+assert.equal(linked.nodes.find(node => node.attributes.id === "themed").attributes["data-linked"],
+  "ok");
+assert.equal(linked.nodes.find(node => node.attributes.id === "themed").layout.width, 60,
+  "the swapped-in sheet is the one the frame was laid out with");
+
 const acceptanceHtml =
   `<style>#x { width: 180px; height: 80px; background: #ef4444 }</style><div id="x">old</div>`;
 const acceptanceScript = `{ const painted = document.querySelector("#x");

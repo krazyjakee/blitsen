@@ -7,10 +7,10 @@
 use std::path::Path;
 use std::process::ExitCode;
 
+use crate::engine;
 use blitsen_core::bundle::AppBundle;
 use blitsen_core::replay::InputTrace;
 use blitsen_host::runtime_services::RuntimeServices;
-use crate::engine;
 use serde_json::json;
 
 /// Prints the bundle appended to this executable, as JSON.

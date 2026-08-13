@@ -30,11 +30,18 @@ html-escape = "0.2"
 # feature, which does not compile at this pin (see the blitz-dom entry above).
 image = { version = "0.25", default-features = false, features = ["gif", "jpeg", "png", "webp"] }
 kurbo = "0.13"
+# The text layout blitz-dom builds is Parley's, and its geometry is only
+# readable through Parley's own cursor and selection types. Taken at the
+# version blitz-dom takes, so both crates name one `Layout`.
+parley = "0.10"
 peniko = "0.6"
 style = { package = "stylo", version = "0.20" }
 
 [dev-dependencies]
 anyrender_vello_cpu = "0.15"
+# The cursor the shell would set is the observable half of the UA baseline for
+# controls; naming it needs the same enum blitz-dom returns.
+cursor-icon = "1.2"
 blitsen-core = { path = "../blitsen-core" }
 blitz-paint = { git = "https://github.com/DioxusLabs/blitz", rev = "1efe22d2524d71ede5b94592204c21f0de644219", default-features = false, features = ["custom-widget"] }
 png = "0.18"

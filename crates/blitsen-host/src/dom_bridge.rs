@@ -20,11 +20,14 @@ use crate::DomRuntime;
 mod audio;
 mod fetch;
 mod native;
+// The thread pool the network runs on. Not a web worker — those are
+// [`crate::worker`], and the two were one name for long enough to be worth
+// spelling out.
+mod net_pool;
 mod ops;
 mod web_socket;
 mod web_url;
 pub mod window;
-mod worker;
 
 // The DOM runtime the application sees, evaluated into the context before any
 // document script runs. It is a single closure so the objects can share the
@@ -41,8 +44,11 @@ const BOOTSTRAP: &str = concat!(
     include_str!("dom_bridge/bootstrap/cssom.js"),
     include_str!("dom_bridge/bootstrap/forms.js"),
     include_str!("dom_bridge/bootstrap/document.js"),
+    include_str!("dom_bridge/bootstrap/range.js"),
     include_str!("dom_bridge/bootstrap/fetch.js"),
     include_str!("dom_bridge/bootstrap/web_socket.js"),
+    include_str!("dom_bridge/bootstrap/clone.js"),
+    include_str!("dom_bridge/bootstrap/messaging.js"),
     include_str!("dom_bridge/bootstrap/audio.js"),
     include_str!("dom_bridge/bootstrap/history.js"),
     include_str!("dom_bridge/bootstrap/storage.js"),
@@ -70,7 +76,7 @@ pub fn install<E: JsEngine + 'static>(
     let wrapper_runtime = runtime.clone();
     let wrapper_table = Rc::clone(&table);
     let wrapper_class = Rc::clone(&class);
-    let wrap_function = engine.define_function(
+    engine.define_global_function(
         "__blitsenWrap",
         Box::new(move |call| {
             let mut engine = E::from_value(&call.this);
@@ -95,10 +101,9 @@ pub fn install<E: JsEngine + 'static>(
             })
         }),
     )?;
-    engine.set_global("__blitsenWrap", &wrap_function)?;
 
     let dispatch_runtime = runtime.clone();
-    let call_function = engine.define_function(
+    engine.define_global_function(
         "__blitsenDomCall",
         Box::new(move |call| {
             let mut engine = E::from_value(&call.this);
@@ -108,9 +113,8 @@ pub fn install<E: JsEngine + 'static>(
             json_value(&mut engine, &result)
         }),
     )?;
-    engine.set_global("__blitsenDomCall", &call_function)?;
     let default_scroll_runtime = runtime.clone();
-    let default_scroll_function = engine.define_function(
+    engine.define_global_function(
         "__blitsenScrollDefault",
         Box::new(move |call| {
             let mut engine = E::from_value(&call.this);
@@ -130,9 +134,8 @@ pub fn install<E: JsEngine + 'static>(
             Ok(call.this)
         }),
     )?;
-    engine.set_global("__blitsenScrollDefault", &default_scroll_function)?;
     let viewport_runtime = runtime.clone();
-    let viewport_write_function = engine.define_function(
+    engine.define_global_function(
         "__blitsenViewportWrite",
         Box::new(move |call| {
             let mut engine = E::from_value(&call.this);
@@ -159,9 +162,9 @@ pub fn install<E: JsEngine + 'static>(
             Ok(call.this)
         }),
     )?;
-    engine.set_global("__blitsenViewportWrite", &viewport_write_function)?;
     install_text_codec(engine)?;
     install_fetch(engine, reader.clone())?;
+    install_messaging(engine, reader.clone())?;
     install_audio(engine, reader)?;
     install_web_socket(engine)?;
     native::install(engine)?;
@@ -189,7 +192,7 @@ pub fn install<E: JsEngine + 'static>(
     )?;
     let resize_state = Rc::clone(&window_state);
     let resize_runtime = runtime;
-    let resize_function = engine.define_function(
+    engine.define_global_function(
         "__blitsenWindowResize",
         Box::new(move |call| {
             let mut engine = E::from_value(&call.this);
@@ -214,8 +217,58 @@ pub fn install<E: JsEngine + 'static>(
             Ok(call.this)
         }),
     )?;
-    engine.set_global("__blitsenWindowResize", &resize_function)?;
     Ok(window_state)
+}
+
+/// Installs the document's ports, channels and workers.
+///
+/// The application's files reach a worker through here: a worker loads its
+/// script out of the same application the document did, so a context with no
+/// files behind it — the bare bridge harness — can hold ports and channels but
+/// has no script to start a worker from, and says so at the constructor.
+fn install_messaging<E: JsEngine + 'static>(
+    engine: &mut E,
+    reader: Option<crate::app::AppReader>,
+) -> Result<(), JsError> {
+    let files = reader.map(|reader| crate::messaging::WorkerFiles {
+        source: reader.source(),
+        reader: Some(reader),
+    });
+    let host = Rc::new(crate::messaging::MessagingHost::new(
+        crate::ports::registry().new_context(),
+        files,
+    ));
+    crate::messaging::install(engine, &host)
+}
+
+/// Installs what a worker's global scope needs from this module.
+///
+/// A worker gets `fetch` and the UTF-8 codec under it, and nothing else from
+/// here: there is no document on its thread and no DOM object may cross to it.
+/// URL resolution is a host function of its own because the document's goes
+/// through a DOM operation — `resolveUrl` on the tree — which a worker has no
+/// tree to ask.
+pub fn install_worker_services<E: JsEngine + 'static>(
+    engine: &mut E,
+    reader: Option<crate::app::AppReader>,
+) -> Result<(), JsError> {
+    install_text_codec(engine)?;
+    install_fetch(engine, reader)?;
+    // The same three facts the document's `navigator` states. A worker has one
+    // in a browser, and library code reaches for it to decide what it is running
+    // on — Monaco's platform detection gives up without it.
+    let navigator = json_value(engine, &navigator_state())?;
+    engine.set_global("__blitsenNavigatorState", &navigator)?;
+    engine.define_global_function(
+        "__blitsenResolveUrl",
+        Box::new(move |call| {
+            let mut engine = E::from_value(&call.this);
+            let base = argument(&mut engine, &call, 0, "base URL")?;
+            let relative = argument(&mut engine, &call, 1, "URL")?;
+            let resolved = web_url::resolve(&base, &relative).map_err(JsError::new)?;
+            json_value(&mut engine, &resolved)
+        }),
+    )
 }
 
 /// The three facts `navigator` is allowed to state about this machine.
@@ -256,7 +309,7 @@ fn navigator_state() -> Value {
 /// host's would make the request and response bodies change shape under the
 /// Phase 2 engine.
 fn install_text_codec<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsError> {
-    let encode = engine.define_function(
+    engine.define_global_function(
         "__blitsenUtf8Encode",
         Box::new(move |call| {
             let mut engine = E::from_value(&call.this);
@@ -265,8 +318,7 @@ fn install_text_codec<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsErr
             engine.typed_array(&bytes)
         }),
     )?;
-    engine.set_global("__blitsenUtf8Encode", &encode)?;
-    let decode = engine.define_function(
+    engine.define_global_function(
         "__blitsenUtf8Decode",
         Box::new(move |call| {
             let mut engine = E::from_value(&call.this);
@@ -277,8 +329,7 @@ fn install_text_codec<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsErr
                 .and_then(|value| engine.to_typed_array(value))?;
             engine.string(&String::from_utf8_lossy(&bytes.bytes))
         }),
-    )?;
-    engine.set_global("__blitsenUtf8Decode", &decode)
+    )
 }
 
 /// Installs the audio graph the bootstrap's Web Audio classes call through.
@@ -295,7 +346,7 @@ fn install_audio<E: JsEngine + 'static>(
     let host = Rc::new(audio::AudioHost::new(offline, reader));
 
     let call_host = Rc::clone(&host);
-    let call = engine.define_function(
+    engine.define_global_function(
         "__blitsenAudioCall",
         Box::new(move |call| {
             let mut engine = E::from_value(&call.this);
@@ -305,10 +356,9 @@ fn install_audio<E: JsEngine + 'static>(
             json_value(&mut engine, &result)
         }),
     )?;
-    engine.set_global("__blitsenAudioCall", &call)?;
 
     let decode_host = Rc::clone(&host);
-    let decode = engine.define_function(
+    engine.define_global_function(
         "__blitsenAudioDecode",
         Box::new(move |call| {
             let mut engine = E::from_value(&call.this);
@@ -321,10 +371,9 @@ fn install_audio<E: JsEngine + 'static>(
             Ok(engine.number(id as f64))
         }),
     )?;
-    engine.set_global("__blitsenAudioDecode", &decode)?;
 
     let load_host = Rc::clone(&host);
-    let load = engine.define_function(
+    engine.define_global_function(
         "__blitsenAudioLoad",
         Box::new(move |call| {
             let mut engine = E::from_value(&call.this);
@@ -333,30 +382,27 @@ fn install_audio<E: JsEngine + 'static>(
             Ok(engine.number(id as f64))
         }),
     )?;
-    engine.set_global("__blitsenAudioLoad", &load)?;
 
     let poll_host = Rc::clone(&host);
-    let poll = engine.define_function(
+    engine.define_global_function(
         "__blitsenAudioPoll",
         Box::new(move |call| {
             let mut engine = E::from_value(&call.this);
             json_value(&mut engine, &poll_host.poll())
         }),
     )?;
-    engine.set_global("__blitsenAudioPoll", &poll)?;
 
     let pending_host = Rc::clone(&host);
-    let pending = engine.define_function(
+    engine.define_global_function(
         "__blitsenAudioPending",
         Box::new(move |call| {
             let mut engine = E::from_value(&call.this);
             Ok(engine.boolean(pending_host.pending()))
         }),
     )?;
-    engine.set_global("__blitsenAudioPending", &pending)?;
 
     let channel_host = Rc::clone(&host);
-    let channel = engine.define_function(
+    engine.define_global_function(
         "__blitsenAudioChannel",
         Box::new(move |call| {
             let mut engine = E::from_value(&call.this);
@@ -374,16 +420,14 @@ fn install_audio<E: JsEngine + 'static>(
             engine.typed_array(&TypedArray::new(TypedArrayKind::Float32, bytes)?)
         }),
     )?;
-    engine.set_global("__blitsenAudioChannel", &channel)?;
 
-    let dispose = engine.define_function(
+    engine.define_global_function(
         "__blitsenAudioDispose",
         Box::new(move |call| {
             host.dispose();
             Ok(call.this)
         }),
-    )?;
-    engine.set_global("__blitsenAudioDispose", &dispose)
+    )
 }
 
 /// Installs the transport the bootstrap's `fetch` classes call through.
@@ -394,7 +438,7 @@ fn install_fetch<E: JsEngine + 'static>(
     let host = Rc::new(fetch::FetchHost::new(reader)?);
 
     let start_host = Rc::clone(&host);
-    let start = engine.define_function(
+    engine.define_global_function(
         "__blitsenFetchStart",
         Box::new(move |call| {
             let mut engine = E::from_value(&call.this);
@@ -411,20 +455,18 @@ fn install_fetch<E: JsEngine + 'static>(
             Ok(engine.number(id as f64))
         }),
     )?;
-    engine.set_global("__blitsenFetchStart", &start)?;
 
     let poll_host = Rc::clone(&host);
-    let poll = engine.define_function(
+    engine.define_global_function(
         "__blitsenFetchPoll",
         Box::new(move |call| {
             let mut engine = E::from_value(&call.this);
             json_value(&mut engine, &poll_host.poll())
         }),
     )?;
-    engine.set_global("__blitsenFetchPoll", &poll)?;
 
     let body_host = Rc::clone(&host);
-    let body = engine.define_function(
+    engine.define_global_function(
         "__blitsenFetchBody",
         Box::new(move |call| {
             let mut engine = E::from_value(&call.this);
@@ -438,10 +480,9 @@ fn install_fetch<E: JsEngine + 'static>(
             }
         }),
     )?;
-    engine.set_global("__blitsenFetchBody", &body)?;
 
     let cancel_host = Rc::clone(&host);
-    let cancel = engine.define_function(
+    engine.define_global_function(
         "__blitsenFetchCancel",
         Box::new(move |call| {
             let mut engine = E::from_value(&call.this);
@@ -449,16 +490,14 @@ fn install_fetch<E: JsEngine + 'static>(
             Ok(call.this)
         }),
     )?;
-    engine.set_global("__blitsenFetchCancel", &cancel)?;
 
-    let dispose = engine.define_function(
+    engine.define_global_function(
         "__blitsenFetchDispose",
         Box::new(move |call| {
             host.dispose();
             Ok(call.this)
         }),
-    )?;
-    engine.set_global("__blitsenFetchDispose", &dispose)
+    )
 }
 
 fn fetch_id<E: JsEngine>(engine: &mut E, call: &NativeCall<E::Value>) -> Result<u64, JsError> {
@@ -472,7 +511,7 @@ fn install_web_socket<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsErr
     let host = Rc::new(web_socket::WebSocketHost::new()?);
 
     let open_host = Rc::clone(&host);
-    let open = engine.define_function(
+    engine.define_global_function(
         "__blitsenSocketOpen",
         Box::new(move |call| {
             let mut engine = E::from_value(&call.this);
@@ -484,10 +523,9 @@ fn install_web_socket<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsErr
             Ok(engine.number(id as f64))
         }),
     )?;
-    engine.set_global("__blitsenSocketOpen", &open)?;
 
     let text_host = Rc::clone(&host);
-    let send_text = engine.define_function(
+    engine.define_global_function(
         "__blitsenSocketSendText",
         Box::new(move |call| {
             let mut engine = E::from_value(&call.this);
@@ -496,10 +534,9 @@ fn install_web_socket<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsErr
             Ok(call.this)
         }),
     )?;
-    engine.set_global("__blitsenSocketSendText", &send_text)?;
 
     let binary_host = Rc::clone(&host);
-    let send_binary = engine.define_function(
+    engine.define_global_function(
         "__blitsenSocketSendBinary",
         Box::new(move |call| {
             let mut engine = E::from_value(&call.this);
@@ -512,10 +549,9 @@ fn install_web_socket<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsErr
             Ok(call.this)
         }),
     )?;
-    engine.set_global("__blitsenSocketSendBinary", &send_binary)?;
 
     let buffered_host = Rc::clone(&host);
-    let buffered = engine.define_function(
+    engine.define_global_function(
         "__blitsenSocketBuffered",
         Box::new(move |call| {
             let mut engine = E::from_value(&call.this);
@@ -523,10 +559,9 @@ fn install_web_socket<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsErr
             Ok(engine.number(bytes as f64))
         }),
     )?;
-    engine.set_global("__blitsenSocketBuffered", &buffered)?;
 
     let close_host = Rc::clone(&host);
-    let close = engine.define_function(
+    engine.define_global_function(
         "__blitsenSocketClose",
         Box::new(move |call| {
             let mut engine = E::from_value(&call.this);
@@ -545,20 +580,18 @@ fn install_web_socket<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsErr
             Ok(call.this)
         }),
     )?;
-    engine.set_global("__blitsenSocketClose", &close)?;
 
     let poll_host = Rc::clone(&host);
-    let poll = engine.define_function(
+    engine.define_global_function(
         "__blitsenSocketPoll",
         Box::new(move |call| {
             let mut engine = E::from_value(&call.this);
             json_value(&mut engine, &poll_host.poll())
         }),
     )?;
-    engine.set_global("__blitsenSocketPoll", &poll)?;
 
     let payload_host = Rc::clone(&host);
-    let payload = engine.define_function(
+    engine.define_global_function(
         "__blitsenSocketBinary",
         Box::new(move |call| {
             let mut engine = E::from_value(&call.this);
@@ -570,16 +603,14 @@ fn install_web_socket<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsErr
             engine.typed_array(&TypedArray::new(TypedArrayKind::Uint8, bytes)?)
         }),
     )?;
-    engine.set_global("__blitsenSocketBinary", &payload)?;
 
-    let dispose = engine.define_function(
+    engine.define_global_function(
         "__blitsenSocketDispose",
         Box::new(move |call| {
             host.dispose();
             Ok(call.this)
         }),
-    )?;
-    engine.set_global("__blitsenSocketDispose", &dispose)
+    )
 }
 
 fn socket_id<E: JsEngine>(engine: &mut E, call: &NativeCall<E::Value>) -> Result<u64, JsError> {

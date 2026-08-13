@@ -29,7 +29,17 @@
   // inspector belongs to a devtools story that does not exist yet.
   const format = value => {
     if (typeof value === "string") return value;
-    if (value instanceof Error) return value.stack ?? `${value.name}: ${value.message}`;
+    if (value instanceof Error) {
+      // The name and message first, then the frames. Not `stack` alone: V8
+      // begins it with "Name: message" and both engines Blitsen hosts do not,
+      // so an error logged under QuickJS printed its frames and never said what
+      // went wrong. Checked rather than assumed, so a host whose stack already
+      // carries the header does not repeat it.
+      const heading = `${value.name}: ${value.message}`;
+      const stack = value.stack ?? "";
+      if (!stack) return heading;
+      return stack.startsWith(`${value.name}`) ? stack : `${heading}\n${stack}`;
+    }
     if (typeof value === "bigint") return `${value}n`;
     if (typeof value === "symbol" || typeof value === "function") return String(value);
     if (value === null || value === undefined || typeof value !== "object") return String(value);

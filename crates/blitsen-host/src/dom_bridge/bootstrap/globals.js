@@ -25,6 +25,23 @@
     if (left !== undefined) element.scrollLeft += Number(left);
     if (top !== undefined) element.scrollTop += Number(top);
   };
+  // A worker script is named relative to the document, exactly as any other
+  // subresource is, and a message from another context in this application
+  // reports the one origin there is.
+  const resolveWorkerUrl = url => resolveAgainstDocument(url).href;
+  const messageOrigin = resolveAgainstDocument("/").origin;
+  // `window.postMessage`, which is the same-window one: a message to yourself,
+  // delivered in a later task. `targetOrigin` is accepted and ignored — there is
+  // a single origin behind an application, so every value of it either matches
+  // or names somewhere that does not exist.
+  const windowPostMessage = (message, targetOrigin = "*", transfer = []) => {
+    // Serialized at the call and deserialized at delivery, so a later mutation
+    // of the object posted is not visible to the listener. That ordering is the
+    // whole reason schedulers use this as a yield.
+    const copy = structuredClone(message, { transfer });
+    hostSetTimeout(() => globalThis.dispatchEvent(new MessageEvent("message",
+      { data: copy, origin: messageOrigin, source: globalThis })), 0);
+  };
   const globals = {
     EventTarget, Node, Element, NodeList, Document, DocumentFragment, DOMTokenList,
     Attr, NamedNodeMap,
@@ -35,9 +52,12 @@
     HTMLInputElement, HTMLTextAreaElement, HTMLSelectElement, HTMLOptionElement,
     HTMLButtonElement, HTMLFormElement,
     BlitsenViewElement, BlitsenViewSurface,
+    Range, Selection, CaretPosition, getSelection,
     getComputedStyle, matchMedia, MediaQueryList, MediaQueryListEvent,
     Event, MouseEvent, KeyboardEvent, CustomEvent, SubmitEvent, PopStateEvent, HashChangeEvent,
-    MessageEvent, CloseEvent, FocusEvent, InputEvent, PointerEvent, WheelEvent,
+    MessageEvent, CloseEvent, ErrorEvent, FocusEvent, InputEvent, PointerEvent, WheelEvent,
+    Worker, MessagePort, MessageChannel, structuredClone,
+    postMessage: windowPostMessage,
     CSS, DOMParser,
     scrollTo, scrollBy, scroll: scrollTo,
     Headers, Request, Response, Blob, AbortController, AbortSignal, fetch, stop, WebSocket,
@@ -50,7 +70,11 @@
     __blitsenAnimationFramesPending: () =>
       animationFrames.size > 0 || inflightFetches.size > 0 || liveSockets.size > 0
       || pendingResizeObservations() > 0 || audioPending()
-      || waitingImages() > 0 || nativePending() || nativeDialogPending() || call("isAnimating"),
+      || waitingImages() > 0 || waitingLinks() > 0
+      || nativePending() || nativeDialogPending() || call("isAnimating")
+      // A message from a worker lands in the frame turn, so a loop that idled
+      // would never deliver it — the same reason an open socket is listed.
+      || portsPending(),
     __blitsenForcedLayoutsThisFrame: () => forcedLayoutsThisFrame,
     __blitsenEventInternals: eventInternals,
     __blitsenDispatchMouseEvent: dispatchMouseEvent,
@@ -70,10 +94,16 @@
       pendingImages.clear();
       inflightFetches.clear();
       liveSockets.clear();
+      livePorts.clear();
+      liveWorkers.clear();
       dialogs.clear();
       secondInstanceHandler = null;
       __blitsenFetchDispose();
       __blitsenSocketDispose();
+      // Ends the worker threads this document started. A reload that left them
+      // running would leave the new document's messages arriving at the old
+      // document's workers.
+      __blitsenMessagingDispose();
       __blitsenAudioDispose();
       historyEntries = [{ url: documentUrl, state: null }];
       historyIndex = 0;
@@ -115,6 +145,12 @@
   };
   Object.assign(globalThis, globals);
   globalThis.window = globalThis;
+  // `self` is the global under the name code shares with a worker, which is why
+  // library configuration is written through it — `self.MonacoEnvironment` is
+  // how Monaco is told where its workers are. A worker scope already answers to
+  // it; a document that did not made the same line a ReferenceError here and
+  // fine there.
+  globalThis.self = globalThis;
   // The document's scroll offsets, under all four names the platform has given
   // them. Accessors rather than values: `pageYOffset` is the same live reading
   // as `scrollY`, not a copy taken when the bridge was installed.
@@ -128,8 +164,8 @@
   // engine swap. `packages/blitsen/src/api-manifest.mjs` reads this list, and
   // refuses to generate a manifest that describes any other API as absent.
   for (const key of ["requestIdleCallback", "cancelIdleCallback", "indexedDB",
-    "Worker", "SharedWorker", "ServiceWorker", "ServiceWorkerContainer",
-    "MessageChannel", "MessagePort", "BroadcastChannel", "postMessage",
+    "SharedWorker", "ServiceWorker", "ServiceWorkerContainer",
+    "BroadcastChannel",
     "EventSource", "XMLHttpRequest",
     "ReadableStream", "WritableStream", "TransformStream",
     "FormData", "File", "FileReader",
@@ -148,10 +184,6 @@
     // element would either need its own registry beside that one or a merge of
     // the two. Neither is worth doing before something measured asks for it, and
     // an absent `customElements` is a polyfill a library installs itself.
-    "customElements", "ShadowRoot",
-    // Selection and ranges: a large surface, and nothing measured has reached
-    // for it. `getSelection` returning null would be worse than its absence,
-    // because a caller checks the object and not the property.
-    "getSelection", "Range"]) {
+    "customElements", "ShadowRoot"]) {
     try { delete globalThis[key]; } catch {}
   }

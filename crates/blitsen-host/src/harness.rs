@@ -189,7 +189,21 @@ pub fn execute_window_scripts_from<E: JsEngine + 'static>(
             })()"#,
         "blitsen:capture-runtime-globals",
     )?;
-    execute_collected_document_scripts_from(scripts, engine, Path::new(entrypoint), loader)?;
+    let results =
+        execute_collected_document_scripts_from(scripts, engine, Path::new(entrypoint), loader)?;
+    // A module's evaluation is a promise, so an exception at the top level of a
+    // document script is a rejection rather than an `Err` above. Unobserved, it
+    // is a blank window and nothing on either stream — the application simply
+    // never ran. A classic script's result is not a promise and falls through
+    // the optional calls untouched.
+    for result in results {
+        engine.set_global("__blitsenDocumentModule", &result)?;
+        engine.evaluate_script(
+            "globalThis.__blitsenDocumentModule?.then?.(undefined, globalThis.reportError); \
+             delete globalThis.__blitsenDocumentModule;",
+            "blitsen:document-module-result",
+        )?;
+    }
     engine.evaluate_script(
         "globalThis.__blitsenDispatchLifecycleEvent('DOMContentLoaded')",
         "blitsen:dom-content-loaded",

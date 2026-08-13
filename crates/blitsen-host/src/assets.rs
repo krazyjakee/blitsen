@@ -175,7 +175,10 @@ mod tests {
         // directory it was exported from. `examples/assets` is exactly that
         // document, and its missing image is the point of it.
         for (source, expected) in [
-            ("<img src='./missing.png'>", "does not ship this subresource"),
+            (
+                "<img src='./missing.png'>",
+                "does not ship this subresource",
+            ),
             (
                 "<script src='/nowhere.js'></script>",
                 "does not ship this subresource",

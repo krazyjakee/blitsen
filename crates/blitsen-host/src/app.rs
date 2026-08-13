@@ -143,11 +143,21 @@ impl AppFiles {
 
     /// How the document's `<script src>` elements are read.
     pub fn script_loader(&self) -> Box<dyn ScriptLoader> {
+        Box::new(AppScripts {
+            source: self.source(),
+            entrypoint: self.entrypoint_path(),
+        })
+    }
+
+    /// The entrypoint's path inside the application, which is what its scripts
+    /// and their imports are addressed relative to.
+    fn entrypoint_path(&self) -> String {
         match self {
-            Self::Directory { .. } => Box::new(blitsen_core::LocalScripts),
-            Self::Bundle { bundle, .. } => Box::new(BundleScripts {
-                bundle: Arc::clone(bundle),
-            }),
+            Self::Directory { root, entrypoint } => entrypoint
+                .strip_prefix(root)
+                .map(|relative| relative.to_string_lossy().replace('\\', "/"))
+                .unwrap_or_else(|_| "index.html".to_owned()),
+            Self::Bundle { entrypoint, .. } => entrypoint.clone(),
         }
     }
 
@@ -201,12 +211,16 @@ pub enum NotRead {
 }
 
 impl AppReader {
+    /// The application's files, for a reader that also has to resolve modules —
+    /// which is what a worker's own context does with them.
+    pub fn source(&self) -> Arc<dyn AppSource> {
+        Arc::clone(&self.source)
+    }
+
     /// Reads what `url` names inside the application.
     pub fn read_url(&self, url: &Url) -> Result<Vec<u8>, NotRead> {
         let path = self.path_of_url(url).ok_or(NotRead::Outside)?;
-        self.source
-            .read(&path)
-            .ok_or(NotRead::Missing(path))
+        self.source.read(&path).ok_or(NotRead::Missing(path))
     }
 
     /// The application-relative path `url` addresses, if any.
@@ -323,23 +337,41 @@ fn count_files(root: &Path) -> usize {
         .sum()
 }
 
-/// Reads `<script src>` out of the appended section.
-struct BundleScripts {
-    bundle: Arc<AppBundle>,
+/// Reads `<script src>` out of the application, whichever shape it came in.
+///
+/// One loader for both, because the identifier it hands back is load-bearing: a
+/// module resolves its own imports against it, and the resolver accepts nothing
+/// but application URLs. A directory run used to be named by its path on disk,
+/// so every `import` in a document module failed with "is not an application
+/// URL" — while the same application, exported, ran. That is exactly the
+/// difference between `blitsen run ./dist` and the binary it exports to that
+/// `modules.rs` says must not exist.
+///
+/// A script is still confined to the application: `resolve` refuses anything
+/// that would leave it, which is the same check reading loose files off disk
+/// made with a canonicalized prefix.
+struct AppScripts {
+    source: Arc<dyn AppSource>,
+    /// The entrypoint's application-relative path, which a `src` resolves
+    /// against.
+    entrypoint: String,
 }
 
-impl ScriptLoader for BundleScripts {
+impl ScriptLoader for AppScripts {
     fn load(&self, _root: &Path, src: &str) -> Result<(String, String), JsError> {
-        // The entrypoint is at the application root, so a script's `src` is
-        // resolved against the root itself. `resolve` refuses anything that
-        // would leave the application.
-        let url = crate::modules::resolve(&url_of("index.html"), &relative(src))?;
+        let url = crate::modules::resolve(&url_of(&self.entrypoint), &relative(src))?;
         let path = path_of(&url).expect("resolve returns application URLs");
-        let source = self
-            .bundle
-            .read_to_string(path)
-            .map_err(|error| JsError::new(error.to_string()))?;
+        let bytes = self
+            .source
+            .read(path)
+            .ok_or_else(|| JsError::new(format!("the application has no script at {path}")))?;
+        let source = String::from_utf8(bytes)
+            .map_err(|_| JsError::new(format!("the script at {path} is not UTF-8")))?;
         Ok((source, url))
+    }
+
+    fn document_url(&self) -> Option<String> {
+        Some(url_of(&self.entrypoint))
     }
 }
 
@@ -479,7 +511,9 @@ mod tests {
         std::fs::write(root.join("index.html"), b"<p>hi").unwrap();
         std::fs::write(root.join("assets/app.css"), b"body{margin:0}").unwrap();
         let files = AppFiles::directory(root.join("index.html")).unwrap();
-        let provider = files.net_provider().expect("a directory serves its own files");
+        let provider = files
+            .net_provider()
+            .expect("a directory serves its own files");
 
         let collector = Collector::default();
         let served = |url: &str| {
