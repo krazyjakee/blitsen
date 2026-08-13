@@ -28,6 +28,28 @@ Bun's and the new runtime has none, so an export that could not load your addon 
 and broken. `blitsen build` decides this from what your application carries and says so under step
 ③, with what the copy of Bun costs.
 
+## How long the old host stays selectable
+
+`BLITSEN_HOST=bun` forces the Phase 1 pair, and `BLITSEN_HOST=blitsen` forces the new one. It is an
+escape hatch and a measuring instrument, not a supported configuration: neither spelling is a CLI
+flag or a config key, because which host an export links is not something a user should have to
+decide (structural constraint 7).
+
+It stays for exactly as long as it does something the exporter cannot decide for itself:
+
+- **Until `.node` addons have another answer**, the Bun host is not optional — it is the only one
+  with Node-API, and an application that carries an addon links it whether or not the variable is
+  set. Nothing here is scheduled for removal while that is true.
+- **`BLITSEN_HOST=bun` for an application without an addon** is a regression escape hatch. It is
+  supported while both hosts are in the tree and `test:hosts` keeps them both green
+  ([#90](https://github.com/krazyjakee/blitsen/issues/90)); it will go in the release after the one
+  where nothing has needed it, and the note that goes with that release will say so.
+- **The Node surface does not come back either way.** The new runtime implements no `process`,
+  `node:fs` or `node:os`, by decision. Code that reaches for them runs on the Bun host today and
+  will stop when it goes, so `BLITSEN_HOST=bun` is not a way to depend on them —
+  [`COMPATIBILITY.md`](COMPATIBILITY.md#node-compatibility-in-the-shipped-runtime) has what the
+  shipped runtime does provide.
+
 ## What does not change
 
 The npm package, the CLI, its output, the config format, the artifact layout, and what your

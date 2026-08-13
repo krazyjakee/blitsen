@@ -12,7 +12,7 @@ npx blitsen . --width 800 --height 600 --title "My app"
 ```
 
 It resolves `index.html`, preflights local entrypoint assets, and opens the result
-in a native window. On the current platform, the Phase 1 architecture-proof exporter is:
+in a native window. Export with:
 
 ```sh
 npx blitsen build dist --out MyApp
@@ -20,9 +20,14 @@ npx blitsen build dist --out MyApp
 
 The build names each step as it finishes — `⓪ build`, `① ingest`, `② scan`, `③ collect`,
 `④ link`, `⑤ package` — with what it produced, and drops to exit code 1 with the offending file
-on stderr when it refuses. `--target` accepts only the host triple: this runtime is the host's
-compiled addon, so a cross-target request fails rather than quietly producing a host build under
-a foreign name ([#72](https://github.com/krazyjakee/blitsen/issues/72)).
+on stderr when it refuses. The executable is Blitsen's own runtime with your application appended
+to it, and it is the only file: the JavaScript engine is linked in rather than shipped beside it.
+An export links the older Bun host only when your application carries a `.node` addon, because
+Node-API is Bun's ([migration note](https://github.com/krazyjakee/blitsen/blob/main/docs/MIGRATION.md)).
+
+`--target` accepts any of the six platform triples and fetches that target's runtime package on
+demand, cached between builds ([#72](https://github.com/krazyjakee/blitsen/issues/72)). What it
+cannot do from another platform is sign or notarise.
 
 Point Blitsen at your existing build once, in `package.json`, and `npx blitsen build` needs no
 arguments at all:
@@ -46,7 +51,7 @@ import { defineConfig } from "blitsen";
 const config = defineConfig({ build: "vite build", output: "dist", name: "My App" });
 ```
 
-Check a bundler's static output against the published v0 profile before export:
+Check a bundler's static output against the published v1 profile before export:
 
 ```sh
 npx blitsen doctor dist
@@ -180,17 +185,19 @@ if (dialog.openFile) { … }
 ```
 
 Outside the Blitsen runtime — a browser, a plain Node script — every access throws instead, because
-that is a mistake rather than a missing capability. `blitsen/app` and `blitsen/clipboard` carry
-members today; the rest resolve and expose nothing yet, which is what makes the feature test above
-the way to ask.
+that is a mistake rather than a missing capability. `blitsen/app`, `blitsen/window`,
+`blitsen/dialog` and `blitsen/clipboard` carry members today, some of them platform-specific —
+`dialog.*` is Linux and the BSDs only — which is what makes the feature test above the way to ask.
 
-Phase 1 exports are not yet cleared for redistribution: the automated notice and JSC relinking
-gate is still outstanding. Follow development and read the feasibility results at
+Exports are architecture proofs and are not yet cleared for redistribution: the automated
+third-party notice and library-replaceability gate
+([#121](https://github.com/krazyjakee/blitsen/issues/121)) is still outstanding, and `blitsen build`
+says so on every build. Follow development and read the feasibility results at
 [github.com/krazyjakee/blitsen](https://github.com/krazyjakee/blitsen).
 
-On Linux, Bun remains the JavaScript event-loop owner. The CLI yields between
-non-blocking native window pumps, preserving Bun's timer and promise-microtask
-semantics while rAF, layout, paint, and present stay synchronous inside a pump.
+The runtime owns its own event loop: timers, promise jobs and I/O completions are drained at the
+frame turn, and rAF, layout, paint and present stay synchronous inside a pump. `blitsen run` uses
+Bun as the CLI and the development host; the executable a build produces contains neither.
 
 Repository contributors can run the M1 interactive acceptance app on Linux,
 macOS, or Windows with:

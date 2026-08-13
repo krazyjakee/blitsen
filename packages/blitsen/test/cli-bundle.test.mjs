@@ -135,8 +135,10 @@ describe("Phase 2 link step", () => {
   //
   // Both applications here are written out rather than taken from a fixture,
   // because what is under test is exactly the difference between them. The
-  // stubbed Phase 2 runtime cannot be executed, so the engine probe answers "not
-  // here" on any machine, which is what makes the module case deterministic.
+  // module case hands the exporter a runtime that answers `--engine-report` with
+  // the one report that is a "no" — an engine loaded at run time, from a library
+  // without the module entry point — so the decision is measured rather than
+  // inferred from a stub that could not be run (#122).
   const CLASSIC_APP = "<!doctype html><html><body><script>document.title='ok'</script></body></html>";
   const MODULE_APP = '<!doctype html><html><body><script type="module" src="./app.js"></script></body></html>';
 
@@ -161,18 +163,34 @@ describe("Phase 2 link step", () => {
     });
   }, 120_000);
 
-  test("links Bun when the engine here cannot evaluate the modules the app uses", async () => {
+  test.skipIf(process.platform === "win32")(
+    "links Bun when the engine here cannot evaluate the modules the app uses", async () => {
+      await withStubbedExport(async ({ directory, outfile, nativePath }) => {
+        const root = await staticApp(directory, MODULE_APP, { "app.js": "export const x = 1;\n" });
+        const events = [];
+        const built = await buildStandalone({
+          root, width: 800, height: 600, title: "Module", outfile,
+          progress: event => events.push(event),
+        }, nativePath);
+        expect(built.host).toBe("bun");
+        // Never a silent downgrade: the step says why, and what it cost.
+        expect(events.find(event => event.step === "collect").notes.join("\n"))
+          .toContain("cannot load them");
+      }, { engineReport: { loaded: true, engine: "JavaScriptCore", modules: false,
+        linkage: "dynamic" } });
+    }, 120_000);
+
+  // The counterpart, and the one that decides what most users get: the shipping
+  // runtime links its engine statically, so a module application takes the small
+  // host — including where the probe cannot run at all, which is every
+  // cross-target build.
+  test("links the small host for a module application on the shipping engine", async () => {
     await withStubbedExport(async ({ directory, outfile, nativePath }) => {
       const root = await staticApp(directory, MODULE_APP, { "app.js": "export const x = 1;\n" });
-      const events = [];
-      const built = await buildStandalone({
-        root, width: 800, height: 600, title: "Module", outfile,
-        progress: event => events.push(event),
-      }, nativePath);
-      expect(built.host).toBe("bun");
-      // Never a silent downgrade: the step says why, and what it cost.
-      expect(events.find(event => event.step === "collect").notes.join("\n"))
-        .toContain("cannot load them");
+      const built = await buildStandalone(
+        { root, width: 800, height: 600, title: "Module", outfile }, nativePath);
+      expect(built.host).toBe("blitsen");
+      expect(readBundle(await readFile(built.outfile))).not.toBeNull();
     });
   }, 120_000);
 

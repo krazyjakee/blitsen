@@ -13,10 +13,11 @@ const HELP = `Usage: blitsen [directory] [options]
 
 Open <directory>/index.html in a native Blitsen window, defaulting to the
 current directory.
-Build creates a Phase 1 single-file executable for the current platform. With no
-directory it reads the "blitsen" config in package.json, runs the configured
-build command, and ingests its output directory.
-Doctor checks built static output against the v0 compatibility profile.
+Build creates a single-file executable: Blitsen's own runtime with the
+application appended to it. With no directory it reads the "blitsen" config in
+package.json, runs the configured build command, and ingests its output
+directory.
+Doctor checks built static output against the v1 compatibility profile.
 
 Options:
   --width <pixels>   Initial logical width (default: 800)

@@ -110,7 +110,7 @@ export async function doctorApplication(root) {
   reported.sort((left, right) => left.file.localeCompare(right.file)
     || left.line - right.line || left.column - right.column || left.code.localeCompare(right.code));
   return {
-    profile: "v0-strict",
+    profile: "v1-strict",
     files: files.length,
     diagnostics: reported,
     errors: reported.filter(item => item.severity === "error").length,

@@ -458,29 +458,41 @@ async function needsModuleLoader(path, source) {
 }
 
 /**
- * Whether the JavaScriptCore a Phase 2 export would load can evaluate modules.
+ * Whether the engine a Phase 2 export would host can evaluate modules.
  *
- * Asked of the runtime itself — `--engine-report` loads the library the export
- * will load and says what it found — because the answer is a property of the
- * machine, not of this package. Unanswerable counts as no: a cross-target build
- * cannot run the target's runtime, and an unknown is not a yes when being wrong
- * means shipping an application that will not start.
+ * The shipped runtime links QuickJS-ng statically, so the answer is a property
+ * of the build rather than of the machine, and every published platform package
+ * carries such a build. That is why an unanswerable question — a cross-target
+ * build, which cannot run the target's executable — counts as **yes**: saying no
+ * there would silently link 95 MB of Bun into an export whose runtime loads
+ * modules perfectly well, which is the pitch turned off by accident (#122).
+ *
+ * The question is still asked wherever it can be answered, because a runtime
+ * built with the `javascriptcore` feature loads its engine at run time and the
+ * library it finds may lack the module entry point (docs/JSC.md). A report that
+ * says so is the one "no" this returns, and it is measured rather than assumed.
  */
 async function phase2LoadsModules(target) {
-  if (target !== hostTarget()) return false;
+  if (target !== hostTarget()) return true;
   const runtime = await resolvePhase2Runtime({ target }).catch(() => null);
-  if (runtime === null) return false;
+  if (runtime === null) return true;
   try {
     const report = Bun.spawnSync({
       cmd: [runtime.path, "--engine-report"], stdout: "pipe", stderr: "pipe",
     });
-    if (report.exitCode !== 0) return false;
+    if (report.exitCode !== 0) return true;
     const parsed = JSON.parse(report.stdout.toString());
+    // A statically linked engine is inside the executable and has no library to
+    // be missing; only a runtime that loads one at run time can come back with
+    // an engine that cannot link a module graph.
+    if (parsed.linkage === "static") return true;
     return parsed.loaded === true && parsed.modules === true;
   } catch {
-    // Not runnable, or it answered with something that is not the report: both
-    // are "this machine cannot tell us", which is not a yes.
-    return false;
+    // Not runnable, or it answered with something that is not the report. The
+    // export is about to link this runtime either way, and the failure that
+    // matters — a dynamic engine without the module entry point — reports
+    // itself rather than throwing.
+    return true;
   }
 }
 
@@ -588,10 +600,11 @@ export async function buildStandalone(
     //
     //   - A `.node` addon is Node-API, and `createRequire` is Bun's. The Phase 2
     //     host has no way to load one (TECH.md §12).
-    //   - A module script needs the loader entry point that Blitsen's pinned
-    //     JavaScriptCore adds (docs/JSC.md). Until that engine ships, an export
-    //     may be linked against a system library that lacks it, and the failure
-    //     lands on whoever runs the application rather than on whoever built it.
+    //   - A module script needs a module loader. The shipped runtime has one —
+    //     QuickJS-ng, statically linked — so this only bites a runtime built
+    //     with the `javascriptcore` feature against a library that lacks the
+    //     module entry point (docs/JSC.md), and it is measured on the machine
+    //     that can measure it rather than assumed anywhere else.
     //
     // Either way the export links Phase 1 and pays a copy of Bun for it, because
     // a smaller executable that cannot run the application is not smaller.

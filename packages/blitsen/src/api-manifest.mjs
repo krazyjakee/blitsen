@@ -304,7 +304,7 @@ const DIAGNOSTICS = {
     "Read the response with text(), json(), or arrayBuffer().", /\.body\s*\.\s*getReader\b/],
   WEB_FORM: ["warning", "Multipart form bodies and file objects are not implemented.",
     "Send a string, Blob, ArrayBuffer, or typed array body."],
-  WEB_CANVAS: ["warning", "Canvas is not in the v0 compatibility profile.",
+  WEB_CANVAS: ["warning", "Canvas is not in the v1 compatibility profile.",
     "Use DOM/CSS rendering or a native viewport until canvas support lands.", /\.getContext\s*\(/],
   WEB_GPU: ["warning", "WebGL and WebGPU are not implemented.",
     "Remove the GPU-web API path or replace it with a native addon/viewport."],
@@ -627,7 +627,7 @@ export function buildManifest(script) {
 
   return {
     generatedBy: `packages/blitsen/src/api-manifest.mjs from ${SOURCE_NAME}`,
-    profile: "v0-strict",
+    profile: "v1-strict",
     apis: [...apis, ...engineApis],
     native: nativeEntries(surface),
     diagnostics: Object.fromEntries(Object.entries(DIAGNOSTICS)

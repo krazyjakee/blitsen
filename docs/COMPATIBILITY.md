@@ -1,8 +1,16 @@
-# v0 compatibility profile
+# v1 compatibility profile
 
-Blitsen v0 accepts built static applications that stay within the surface below. The profile is
+Blitsen v1 accepts built static applications that stay within the surface below. The profile is
 deliberately narrower than “works in a browser”: it describes what the current runtime and Blitz
 renderer can support consistently enough to make an adoption claim.
+
+The tier this profile publishes is [PRODUCT.md §7](PRODUCT.md#7-scope-by-tier)'s v1 — the v0
+architecture surface plus `fetch`, `WebSocket`, images, web fonts, audio playback and the
+`blitsen/{app,window,dialog,clipboard}` modules. Three of its members are partial by design and
+say so where they are documented: `dialog.*` is Linux/BSD only, `app.requestSingleInstanceLock`
+is Unix-only, and `window.create` is absent. What is *not* v1 is stated as plainly:
+**`<canvas>` is a `doctor` error**, and text input, IME and accessibility are absent — see
+[What v1 is not](#what-v1-is-not).
 
 Run the check against build output, not source:
 
@@ -17,7 +25,7 @@ fallback paths through. The scan is static and conservative: it finds references
 executed paths, which is why [severity](#diagnostic-severity) is narrow. Every rule it applies to
 JavaScript comes from the [generated manifest](#capability-tiers) below.
 
-## Strict v0 surface
+## Strict v1 surface
 
 | Area | In profile |
 | --- | --- |
@@ -830,6 +838,23 @@ every one of them, on every build — at the severity a static reference is actu
 application uses one of these APIs on a path that runs, the warning is the notice that it will
 fail, and the render is what proves it either way.
 
+## What v1 is not
+
+The tier list is the thing the positioning rests on, so the line has to be drawn where the runtime
+actually draws it rather than where the pitch would prefer.
+
+| Not in v1 | What a build sees | Tracked as |
+| --- | --- | --- |
+| `<canvas>` 2D | `HTML_CANVAS`, an **error**: the element is in the shipped document and nothing paints inside it. Referencing `HTMLCanvasElement` or calling `.getContext()` from script is `WEB_CANVAS`, a warning, because a guarded reference selects a fallback | [#99](https://github.com/krazyjakee/blitsen/issues/99) |
+| Text input and IME | Form controls render and can be read and written from script; there is no caret the user can place with the keyboard, no composition, and no drag-selection | [#103](https://github.com/krazyjakee/blitsen/issues/103) |
+| Accessibility | No accessibility tree is exported to the platform, so a screen reader finds nothing | [#102](https://github.com/krazyjakee/blitsen/issues/102) |
+| WebGL, WebGPU, WebRTC | `WEB_GPU`, a warning. `<blitsen-view>` is the supported way to put GPU output on screen | — |
+
+"v1 makes real apps possible" and "`<canvas>` is an error" are both true, and they are in tension:
+an application that draws is the single most common thing this profile refuses, and refuses at the
+point of export rather than quietly at run time. If your UI is DOM and CSS, v1 is the whole of what
+you need; if it is a drawing surface, wait for #99 or put the pixels in a `<blitsen-view>`.
+
 ## Capability tiers
 
 **An unimplemented API is absent — the property does not exist — so feature detection works.**
@@ -898,7 +923,7 @@ determinism gate instead.
 | `WEB_XHR` | warning | XMLHttpRequest is not implemented. |
 | `WEB_STREAM` | warning | Streaming bodies are not implemented; a response is buffered whole. |
 | `WEB_FORM` | warning | Multipart form bodies and file objects are not implemented. |
-| `WEB_CANVAS` | warning | Canvas is not in the v0 compatibility profile. |
+| `WEB_CANVAS` | warning | Canvas is not in the v1 compatibility profile. |
 | `WEB_GPU` | warning | WebGL and WebGPU are not implemented. |
 | `WEB_MEDIA` | warning | This media API is not implemented; Web Audio and <audio> are. |
 | `WEB_DIALOG` | warning | Modal browser dialogs are not implemented. |

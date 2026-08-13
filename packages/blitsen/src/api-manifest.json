@@ -1,6 +1,6 @@
 {
   "generatedBy": "packages/blitsen/src/api-manifest.mjs from crates/blitsen-host/src/dom_bridge.rs",
-  "profile": "v0-strict",
+  "profile": "v1-strict",
   "apis": [
     {
       "api": "document",
@@ -3419,7 +3419,7 @@
     },
     "WEB_CANVAS": {
       "severity": "warning",
-      "message": "Canvas is not in the v0 compatibility profile.",
+      "message": "Canvas is not in the v1 compatibility profile.",
       "guidance": "Use DOM/CSS rendering or a native viewport until canvas support lands.",
       "extra": "\\.getContext\\s*\\("
     },

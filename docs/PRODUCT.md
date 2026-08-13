@@ -292,20 +292,38 @@ HTML + CSS + JS            HTML + CSS + JS
 
 Availability is incremental. A browser having an API does not oblige Blitsen to ship it.
 
-**v0 — proves the architecture**
+**v0 — proves the architecture** — *met*
 HTML · CSS · DOM · JS/TS execution · events · `requestAnimationFrame` · `setTimeout`/
 `setInterval` · mouse · keyboard · one native viewport element backed by the GPU.
 
-**v1 — makes real apps possible**
-`fetch` · `WebSocket` · images · web fonts · audio playback · the first `native:` modules
-(dialog, clipboard, window, app).
+**v1 — makes real apps possible** — *met, with three members partial*
+`fetch` · `WebSocket` · images · web fonts · audio playback · the first `blitsen/*` modules
+(dialog, clipboard, window, app). The published profile is
+[v1](COMPATIBILITY.md), generated from the runtime, and `doctor` checks against it.
 
-**v2 — makes real apps comfortable**
-`localStorage` · Workers · clipboard events · drag & drop (with real filesystem paths, not
-browser `File` abstractions) · gamepads · tray/menu · notifications.
+| Partial | Why |
+| --- | --- |
+| `dialog.*` | Linux and the BSDs only, by design: macOS and Windows require a file dialog on the main thread, which is the thread kept free to paint. Absent there rather than approximated. |
+| `app.requestSingleInstanceLock` | Unix only. The lock is a Unix domain socket that doubles as the channel a second invocation's `argv` arrives on; Windows wants a mutex plus a named pipe, which is a different design. |
+| `window.create` | Absent — a second window is #105, and the run opens one window. |
+
+**v2 — makes real apps comfortable** — *partly landed early*
+`localStorage`/`sessionStorage` (in memory, not persisted) · Workers (dedicated, with
+`MessageChannel`, `MessagePort` and `structuredClone`) have landed. Still open: clipboard events ·
+drag & drop (with real filesystem paths, not browser `File` abstractions) · gamepads · tray/menu ·
+notifications.
 
 **Later — as demand justifies**
 `<canvas>` 2D · WebGL / WebGPU · WebRTC · anything else earning its size.
+
+**Where the v1 line was drawn, stated plainly.** `<canvas>` (#99), text input and IME (#103) and
+accessibility (#102) are **not v1**. `<canvas>` in particular is a `doctor` **error** rather than a
+warning — the element ships in the document and nothing paints inside it, and unlike an image or a
+font it has no degraded appearance to fall back to. So "v1 makes real apps possible" and "canvas is
+an error" are true at the same time, and that is the one place the tiers can be read as more
+generous than the runtime is: a DOM-and-CSS application is inside v1 whole, and an application that
+draws is refused at export until #99. [COMPATIBILITY.md](COMPATIBILITY.md#what-v1-is-not) carries
+the same table.
 
 ### The compatibility boundary is the runtime, never the exporter
 

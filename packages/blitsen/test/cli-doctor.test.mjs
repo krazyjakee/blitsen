@@ -30,7 +30,7 @@ describe("directory CLI", () => {
   test("diagnoses output outside the strict compatibility profile", async () => {
     const fixtures = join(import.meta.dir, "fixtures/doctor");
     const compatible = await doctorApplication(join(fixtures, "compatible"));
-    expect(compatible).toMatchObject({ profile: "v0-strict", errors: 0, warnings: 0, files: 3 });
+    expect(compatible).toMatchObject({ profile: "v1-strict", errors: 0, warnings: 0, files: 3 });
 
     const { lines, output } = capture();
     expect(await main(["doctor", join(fixtures, "unsupported")], output)).toBe(1);

@@ -8,7 +8,6 @@ use std::ffi::c_void;
 use std::path::Path;
 use std::ptr;
 
-use base64::Engine as _;
 use blitsen_js::{
     ExternalId, JsEngine, JsError, JsType, LoopTurn, NativeCall, NativeCallback, NativeClass,
     TypedArray, TypedArrayKind,
@@ -609,12 +608,22 @@ impl JsEngine for NodeApiEngine {
             None => source.to_owned(),
         };
         let source = format!("{source}\n//# sourceURL={identifier}");
-        let encoded = base64::engine::general_purpose::STANDARD.encode(source);
-        let specifier = serde_json::to_string(&format!("data:text/javascript;base64,{encoded}"))
-            .map_err(|error| JsError::new(error.to_string()))?;
+        let source =
+            serde_json::to_string(&source).map_err(|error| JsError::new(error.to_string()))?;
+        // Bun accepts a short `data:` module through `createRequire`, but starts
+        // treating a production-sized one as a package path and asks the
+        // filesystem to resolve its entire base64 body. Linux then answers
+        // `NameTooLong` before a byte of the application runs. A Blob URL is
+        // still an engine-owned module with no temporary file, and import()
+        // returns the evaluation promise this method's callers already expect.
         self.evaluate_script(
             &format!(
-                "process.getBuiltinModule('module').createRequire({loader_base})({specifier})"
+                "(() => {{ \
+                   const NativeBlob = process.getBuiltinModule('buffer').Blob; \
+                   const url = URL.createObjectURL(new NativeBlob([{source}], \
+                     {{ type: 'text/javascript' }})); \
+                   return import(url).finally(() => URL.revokeObjectURL(url)); \
+                 }})()"
             ),
             identifier,
         )

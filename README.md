@@ -57,8 +57,10 @@ gate asserts on, so it cannot drift from what the tests verify.*
 
 Input, animation and restyle are proven together by [`examples/interactive`](examples/interactive),
 whose gate drives the document through the same coordinate hit test the native window uses
-([M2 evidence](docs/M2.md)). Phase 2 — replacing Bun with an embedded JavaScriptCore host — is
-underway. The [acquisition decision](docs/JSC.md) chose JavaScriptCore and was superseded by
+([M2 evidence](docs/M2.md)). Phase 2 — the runtime hosting its own JavaScript engine instead of
+running inside Bun — **is what a build produces now**, and Bun is linked only by an application
+carrying a `.node` addon ([migration note](docs/MIGRATION.md)). The
+[acquisition decision](docs/JSC.md) chose JavaScriptCore and was superseded by
 [`spikes/s8`](spikes/s8/README.md), which measured QuickJS-ng behind the same engine-neutral trait:
 120 golden frames pixel-identical, 59.6 fps windowed, MIT rather than LGPL, and statically linked.
 
