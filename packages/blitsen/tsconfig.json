@@ -1,0 +1,40 @@
+{
+  "//": [
+    "The recommended TypeScript settings for a Blitsen application, published as",
+    "`blitsen/tsconfig.json`. Extend it and keep your own paths and strictness:",
+    "",
+    "  { \"extends\": \"blitsen/tsconfig.json\", \"include\": [\"src\"] }",
+    "",
+    "Nothing here is Blitsen-specific machinery. It says the few things",
+    "TypeScript cannot work out on its own:",
+    "",
+    "lib/target — JavaScriptCore in a current Blitsen runs ES2023. The DOM",
+    "entries are what makes `document` and friends resolve. Blitsen implements a",
+    "subset of the DOM, and `blitsen doctor` is what checks a build against that",
+    "subset; types cannot express it, so they do not try to.",
+    "",
+    "module/moduleResolution — Blitsen runs the ES modules a bundler already",
+    "emitted, and resolves the `blitsen/*` subpaths through package exports,",
+    "which only `bundler` and `node16`/`nodenext` resolution consult.",
+    "",
+    "types — explicit rather than inferred: an application with @types/node",
+    "installed for its build tooling would otherwise get Node's globals in",
+    "application code, where most of them do not exist. `blitsen/dom` is what",
+    "adds `<blitsen-view>`."
+  ],
+  "compilerOptions": {
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "moduleDetection": "force",
+    "verbatimModuleSyntax": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "types": ["blitsen/dom"],
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "skipLibCheck": true,
+    "noEmit": true
+  }
+}

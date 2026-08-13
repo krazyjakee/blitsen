@@ -31,14 +31,16 @@
       "import": "./src/bundler.mjs"
     },
     "./config.schema.json": "./src/config.schema.json",
-    "./app": { "types": "./src/native/native.d.ts", "import": "./src/native/app.mjs" },
-    "./window": { "types": "./src/native/native.d.ts", "import": "./src/native/window.mjs" },
-    "./dialog": { "types": "./src/native/native.d.ts", "import": "./src/native/dialog.mjs" },
-    "./clipboard": { "types": "./src/native/native.d.ts", "import": "./src/native/clipboard.mjs" },
-    "./tray": { "types": "./src/native/native.d.ts", "import": "./src/native/tray.mjs" },
-    "./notify": { "types": "./src/native/native.d.ts", "import": "./src/native/notify.mjs" },
-    "./input": { "types": "./src/native/native.d.ts", "import": "./src/native/input.mjs" },
-    "./os": { "types": "./src/native/native.d.ts", "import": "./src/native/os.mjs" }
+    "./tsconfig.json": "./tsconfig.json",
+    "./dom": { "types": "./src/dom.d.ts" },
+    "./app": { "types": "./src/native/app.d.ts", "import": "./src/native/app.mjs" },
+    "./window": { "types": "./src/native/window.d.ts", "import": "./src/native/window.mjs" },
+    "./dialog": { "types": "./src/native/dialog.d.ts", "import": "./src/native/dialog.mjs" },
+    "./clipboard": { "types": "./src/native/clipboard.d.ts", "import": "./src/native/clipboard.mjs" },
+    "./tray": { "types": "./src/native/tray.d.ts", "import": "./src/native/tray.mjs" },
+    "./notify": { "types": "./src/native/notify.d.ts", "import": "./src/native/notify.mjs" },
+    "./input": { "types": "./src/native/input.d.ts", "import": "./src/native/input.mjs" },
+    "./os": { "types": "./src/native/os.d.ts", "import": "./src/native/os.mjs" }
   },
   "types": "./index.d.ts",
   "optionalDependencies": {
@@ -55,7 +57,8 @@
     "bin",
     "index.d.ts",
     "index.mjs",
-    "src"
+    "src",
+    "tsconfig.json"
   ],
   "scripts": {
     "api:sync": "bun src/api-manifest.mjs",
@@ -82,6 +85,7 @@
     "test:bundlers": "bun test/run-bundlers.mjs",
     "test:m3b": "bun test/run-m3b.mjs",
     "test:third-party": "bun test/run-third-party.mjs",
+    "test:types": "bun test/run-types.mjs",
     "test:standalone": "bun test/run-standalone.mjs"
   },
   "publishConfig": {

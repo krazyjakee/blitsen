@@ -567,6 +567,77 @@ export async function generateApiManifest() {
   return buildManifest(await readBootstrapScript());
 }
 
+// The published type definitions, checked against the manifest rather than
+// maintained beside it (issue #74).
+//
+// The failure this prevents is the one that costs a user the most: editor
+// completion offering `native:window.create`, the code compiling, and the call
+// returning `undefined` at run time. So the rule is exact in both directions —
+// a declared member the runtime does not install is a promise, and an installed
+// member left undeclared is completion the user does not get.
+//
+// Each `blitsen/<module>` subpath has its own declaration file. The interface
+// it names carries the members; a module with none names `NativeUnimplemented`,
+// which declares none, so the check reads an empty set for it and the two agree.
+const TYPE_DEFINITIONS = new URL("./native/native.d.ts", import.meta.url);
+const MODULE_INTERFACES = { app: "NativeApp", window: "NativeWindow",
+  dialog: "NativeDialog", clipboard: "NativeClipboard" };
+
+/** Reads the members each `Native*` interface declares, by module. */
+export function readDeclaredNativeMembers(definitions) {
+  const declared = new Map();
+  for (const [module, interfaceName] of Object.entries(MODULE_INTERFACES)) {
+    const opening = `export interface ${interfaceName} {\n`;
+    const start = definitions.indexOf(opening);
+    if (start < 0) throw new Error(`native.d.ts no longer declares ${interfaceName}`);
+    const end = definitions.indexOf("\n}", start);
+    if (end < 0) throw new Error(`${interfaceName} is not a closed interface`);
+    const body = definitions.slice(start + opening.length, end);
+    // Exactly two spaces: a member of this interface, rather than a field of an
+    // inline object type inside one of its signatures.
+    declared.set(module, new Set([...body.matchAll(/^ {2}(?:readonly )?([A-Za-z_$][\w$]*)\??[(:<]/gm)]
+      .map(([, member]) => member)));
+  }
+  return declared;
+}
+
+/**
+ * Refuses type definitions and a manifest that disagree.
+ *
+ * Returns the number of members checked, so a caller can tell a pass from a
+ * check that matched nothing because the reader stopped working.
+ */
+export function checkTypeDefinitions(manifest, definitions) {
+  const declared = readDeclaredNativeMembers(definitions);
+  const problems = [];
+  let checked = 0;
+  for (const [module, members] of declared) {
+    const implemented = new Set(manifest.native
+      .filter(entry => entry.module === module && entry.status === "implemented")
+      .map(entry => entry.member));
+    for (const member of members) {
+      checked += 1;
+      if (!implemented.has(member))
+        problems.push(`blitsen/${module} declares ${member}, which the runtime does not install`);
+    }
+    for (const member of implemented)
+      if (!members.has(member))
+        problems.push(`blitsen/${module} installs ${member}, which native.d.ts does not declare`);
+  }
+  // A module the definitions give no interface must have nothing installed:
+  // otherwise its subpath types as empty while the runtime answers.
+  for (const entry of manifest.native)
+    if (entry.status === "implemented" && !declared.has(entry.module))
+      problems.push(`blitsen/${entry.module} installs ${entry.member} and has no declared interface`);
+  if (problems.length > 0)
+    throw new Error(`the published types and the runtime disagree:\n  ${problems.join("\n  ")}`);
+  return checked;
+}
+
+export async function checkPublishedTypes(manifest) {
+  return checkTypeDefinitions(manifest, await readFile(TYPE_DEFINITIONS, "utf8"));
+}
+
 const names = entries => entries.map(entry => `\`${entry.api}\``).join(", ") || "—";
 
 // Renders the capability tiers documented in COMPATIBILITY.md.
@@ -627,7 +698,8 @@ if (import.meta.main) {
   await writeFile(COMPATIBILITY_DOC, await renderCompatibilityDoc(manifest));
   const absent = manifest.apis.filter(entry => entry.status === "absent").length;
   const nativeAbsent = manifest.native.filter(entry => entry.status === "absent").length;
+  const typed = await checkPublishedTypes(manifest);
   console.log(`api-manifest: ${manifest.apis.length - absent} implemented, ${absent} absent APIs `
     + `and ${manifest.native.length - nativeAbsent} implemented, ${nativeAbsent} absent native `
-    + `members read from ${SOURCE_NAME}`);
+    + `members read from ${SOURCE_NAME}; ${typed} declared members agree with them`);
 }

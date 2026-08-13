@@ -185,25 +185,36 @@ export interface NativeClipboard {
 }
 
 /**
- * A native module namespace.
+ * A `native:` module that installs nothing in this version.
+ *
+ * Not an error and not an empty object: the subpath resolves, and every member
+ * reads `undefined` inside the runtime, so `if (tray.create)` is the same
+ * feature detection it is on a module that does have members. What it must not
+ * do is name methods — a declared `create` that no runtime installs is exactly
+ * the drift these definitions are checked against.
+ */
+export interface NativeUnimplemented {
+  readonly [member: string]: undefined;
+}
+
+/**
+ * What a native module namespace is, whichever module it is.
  *
  * Members are whatever the running Blitsen version installed. A capability this
- * version does not implement is `undefined` — which is why every member above is
- * optional — so feature detection works:
+ * version does not implement is `undefined` — which is why every member of every
+ * interface above is optional — so feature detection works:
  *
- * ```js
+ * ```ts
  * import clipboard from "blitsen/clipboard";
  * if (clipboard.readImage) { … }
  * ```
  *
  * Outside the Blitsen runtime — a browser, a plain Node script — every access
- * throws, because that is a mistake rather than a missing capability.
+ * throws, because that is a mistake rather than a missing capability. The index
+ * signature is what an unlisted member is: `unknown`, so it must be narrowed
+ * before it can be called, rather than `any`.
  *
- * One declaration file backs every `blitsen/<module>` subpath, so the members of
- * the modules that have been implemented are declared together here. The index
- * signature is what the rest are: a module gains its own members with its own
- * implementation, rather than declaring an API that does not exist yet.
+ * Each `blitsen/<module>` subpath has its own declaration file naming its own
+ * interface, so importing `blitsen/app` does not offer the clipboard's methods.
  */
-declare const nativeModule: NativeApp & NativeWindow & NativeDialog & NativeClipboard
-  & Record<string, unknown>;
-export default nativeModule;
+export type NativeNamespace<Members> = Members & { readonly [member: string]: unknown };

@@ -648,6 +648,41 @@ if (app.requestSingleInstanceLock && !app.requestSingleInstanceLock("My App", re
 
 The tables are generated from the same runtime source as the tiers above, by the same reader.
 
+### TypeScript
+
+The `blitsen` package carries the definitions, so **editor completion works without the runtime
+being loadable in a browser context** — the types resolve from `node_modules`, not from a running
+application. Extend the published `tsconfig` fragment:
+
+```json
+{ "extends": "blitsen/tsconfig.json", "include": ["src"] }
+```
+
+It sets the language level the runtime actually runs, resolves the `blitsen/*` subpaths through
+package exports, and adds `blitsen/dom` — which is what declares `<blitsen-view>` and its surface,
+including the tag-name map and the JSX namespace, so `document.createElement("blitsen-view")` types
+as itself rather than as `HTMLElement`. If you would rather not extend it, reference the DOM types
+once anywhere in the project:
+
+```ts
+/// <reference types="blitsen/dom" />
+```
+
+Each `blitsen/<module>` subpath has **its own declaration file**, so importing `blitsen/app` offers
+the app module's members and not the clipboard's. Every member is optional, because a capability the
+running version does not implement is `undefined` — which means TypeScript will not let you call one
+without the feature detection above, and that is the point.
+
+**The definitions cannot promise an API that does not exist.** They are checked against the
+generated manifest in both directions: a declared member the runtime does not install, and an
+installed member the definitions do not declare, are each a build failure. `bun run test:types`
+typechecks a fixture against the package as it will be published — one file that must compile, one
+whose every line must be rejected.
+
+What types do *not* do is describe the absent half of the web surface. `lib.dom.d.ts` will still
+offer `IndexedDB` and `HTMLCanvasElement`, because a package cannot remove a global from an ambient
+lib. The capability tiers above are the list, and `blitsen doctor` is the check.
+
 <!-- generated: native-modules -->
 
 | Module | Implemented | Absent |
