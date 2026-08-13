@@ -14,9 +14,10 @@
   "cpu": ["arm64"],
   "exports": {
     "./package.json": "./package.json",
-    "./blitsen.node": "./blitsen.node"
+    "./blitsen.node": "./blitsen.node",
+    "./blitsen-runtime": "./blitsen-runtime"
   },
-  "files": ["blitsen.node"],
+  "files": ["blitsen.node", "blitsen-runtime"],
   "preferUnplugged": true,
   "publishConfig": {
     "access": "public"

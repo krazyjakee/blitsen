@@ -342,7 +342,7 @@ provide — so the answer for any given project is mechanical, not guesswork.
 
 | # | Requirement | Target | Notes |
 | --- | --- | --- | --- |
-| P1 | Bare exported app size | Numeric budget pending; measured Phase 2 on Linux x64 is 50.0 MB of executable plus a 32.0 MB replaceable engine library, against 144.7 MB for the same app on Phase 1 | S0 disproved the original ≤50 MB installed target. Five targets unmeasured, and no measured Electron or Tauri comparison yet; see §9. |
+| P1 | Bare exported app size | **38.1 MB, and that is the whole download** — measured on Linux x64, against 131.6 MB for the same app on Phase 1 | S0 disproved the original ≤50 MB target against a design that shipped an engine library alongside; statically linking QuickJS-ng put the shipped total back inside it. Five targets unmeasured, and no measured Electron or Tauri comparison yet; see §9. |
 | P2 | Cold start to first frame | < 500 ms on mid-range hardware | Should beat Electron decisively or the pitch weakens. |
 | P3 | Idle RAM, bare app | < 100 MB | |
 | P4 | Sustained frame rate | 60 fps for a moderate 2D scene | Measured with the Pong acceptance build. |
@@ -372,31 +372,49 @@ S0 Phase 2 floor, stripped + LTO (Linux x64)
   JSC + Blitz only              52,480,904 B  measured
   gzip -9                       24,076,701 B  measured
 
-Phase 2 bare app (Linux x64, 2026-08-13, `bun run --cwd packages/blitsen size:phase2`)
-  Phase 1 export, same app     144,726,144 B  measured
-  Phase 2 export                50,013,368 B  measured   2.89x smaller
-  gzip -9                       16,200,000 B  measured   (52.0 MB for Phase 1)
+Bare app on the shipping host (Linux x64, 2026-08-13, `bun run --cwd packages/blitsen size:phase2`)
+  Phase 1 export, same app     131,631,232 B  measured   (144,726,144 B before `strip`)
+  Blitsen runtime export        38,090,586 B  measured   3.46x smaller — and the default
+  gzip -9                       15,005,053 B  measured   (50.2 MB for Phase 1)
   ── of which ──────────────────────────────
-  runtime executable            50,013,368 B  Blitz, Vello, wgpu, winit, tokio, the bridge
-    debug symbols               13,078,232 B  removed by `strip`
-    .text                       25,235,319 B  largest section
-  appended application                 615 B  the bare app itself
-  JavaScriptCore, alongside     31,959,344 B  system libjavascriptcoregtk-6.0 on this machine
+  runtime executable            38,090,000 B  Blitz, Vello, wgpu, winit, tokio, the bridge,
+                                              and QuickJS-ng linked in (~1.5 MB of it)
+    .text                       26,100,000 B  largest section
+  appended application                 640 B  the bare app itself
+  engine library, alongside              0 B  there is not one — see LICENSING.md
   ─────────────────────────────────────────
-  shipped total                 81,972,712 B  executable + replaceable engine library
+  shipped total                 38,090,586 B  the executable, and that is all
+
+Adopted since the measurement above
+  strip = "symbols" on release  13,078,232 B  off both artifacts; it is in [profile.release], so a
+                                              checkout's own build weighs what a released one does
 
 Phase 3 levers, measured on the same build
-  release-min profile           20,777,184 B  fat LTO + one codegen unit + opt-level=z + strip
-                                              58.5% off the runtime executable
+  release-min profile           20,763,000 B  fat LTO + one codegen unit + opt-level=z + strip
+                                              43.8% off the stripped runtime executable
+  thin LTO, one CGU, opt-level 3
+                                32,631,976 B  11.7% off, without the size-first codegen — the
+                                              option that does not trade frame time for bytes
   panic = "abort"                   rejected  the native callback boundary turns a panic into a
                                               JavaScript exception; aborting takes the process down
 ```
 
-**Read the engine line carefully.** Production loads a *replaceable* JavaScriptCore shared library,
-which is what keeps closed-source distribution on the clean LGPL path (`LICENSING.md`). Its bytes
-ship beside the executable rather than inside it, so any Phase 2 total that omits them understates
-what a user downloads. The 32 MB above is this machine's system library; a release carries Blitsen's
-pinned build, which is a different artifact and has not been measured here.
+**Neither LTO lever is adopted.** Both cost build time, and `opt-level = "z"` buys its 16 MB with
+size-first codegen through Blitz's layout and paint — which is P4's budget, and has not been
+measured. Adopt either against a frame-time reading, not against this table.
+
+**The engine line is zero because the engine is inside the executable.** That is the whole of the
+QuickJS-ng decision ([`spikes/s8`](../spikes/s8/README.md)): MIT rather than LGPL, so it can be
+statically linked and dead-stripped instead of shipped beside the binary as a replaceable library.
+
+It is worth recording what the alternative cost, because the comparison is what justified the
+swap. JavaScriptCore's shipped total was **68.9 MB** on this machine — and that understated it,
+because the 32 MB system library carries no ICU: it links `libicudata` (30,795,392 B),
+`libicui18n` (3,455,304 B) and `libicuuc` (2,140,336 B) dynamically, plus GLib and GIO, none of
+which exist on a machine that has never had a GTK desktop. A self-contained JSC has to fold that
+in, and S0 measured it at **37,980,984 B** for the engine alone ([`spikes/s0`](../spikes/s0/README.md)).
+QuickJS-ng contributes about **1.5 MB** to the same total and brings no ICU at all — which is also
+why `Intl` is absent from the compatibility profile.
 
 **Still outstanding for P1.** Only Linux x64 is measured — the other five targets have no runner
 yet (TECH.md §14) — and no Electron or Tauri build has been measured on the same machine with the

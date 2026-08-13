@@ -29,6 +29,16 @@ A dry run is worth doing on its own. It builds all six runtimes, runs the packag
 each freshly built addon, packs every package and stops short of the registry — which is the only
 way the signing and staging steps get exercised before a real release depends on them.
 
+Each platform package carries two artifacts, built, signed and published together: `blitsen.node`,
+the addon `blitsen run` loads, and `blitsen-runtime` (`.exe` on Windows), the executable an export
+links into. A package with one and not the other installs cleanly and then fails at whichever
+command needs the missing half, so the staging step treats an absent file as an error rather than a
+warning.
+
+There is no third artifact. The JavaScript engine is statically linked into `blitsen-runtime`
+(`LICENSING.md`), so there is no engine library to build, pin, checksum, sign or ship — which is
+most of what the release process was expected to carry when `JSC.md` was written.
+
 ## What it does not do: notarisation
 
 macOS code **signing** is in the workflow, because it is local and fast. **Notarisation is not.**
@@ -76,10 +86,15 @@ matrix becomes correct the moment the repository is public.
 
 ## Why six native runners rather than cross-compilation
 
-Open question 11 asks whether the matrix can be cut down. The answer so far is no, and the reason is
+Open question 11 asks whether the matrix can be cut down. The answer *was* no, and the reason was
 recorded in JSC.md: the engine's artifacts are built and tested natively per OS, and WebKit
-publishes no cross-platform binary release. A runtime that was never executed on its own platform is
-not evidence that it works there.
+publishes no cross-platform binary release.
+
+**That reason is gone.** QuickJS-ng is portable C compiled by the ordinary Rust build, so the engine
+no longer forces native builders. What remains is Blitz and its platform layer, which is a different
+and unmeasured question — and the standing argument still holds on its own terms: a runtime that was
+never executed on its own platform is not evidence that it works there. Re-open the question with a
+measurement, not with the engine's old constraint.
 
 What the choice costs is **measured rather than argued**. Each build job records its own wall clock
 in the job summary:

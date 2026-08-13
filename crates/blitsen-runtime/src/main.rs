@@ -14,6 +14,7 @@
 //! An exported application is this binary with its files appended as a section
 //! (`blitsen_core::bundle`), read in place rather than unpacked.
 
+mod engine;
 mod loop_pacing;
 mod report;
 mod session;

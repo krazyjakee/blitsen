@@ -628,15 +628,28 @@ that, and duplicating it would make Blitsen a competitor to Vite instead of a ta
   is implemented for current-platform architecture proofs. Its output carries a full copy of
   the Bun runtime, which is the Phase 1 size cost (PRODUCT.md §9). Redistribution remains gated
   on the automated licensing checks in LICENSING.md.
-- **Phase 2** step ④ links our JSC-based runtime and appends the bundle as a binary section read
+- **Phase 2** step ④ links Blitsen's own runtime and appends the bundle as a binary section read
   at startup, implemented in `blitsen_core::bundle`. The section carries a version header, an
   index and the file data, followed by a trailer that locates and checksums it; startup reads the
   index and then reads files from their recorded offsets, never unpacking to disk. **Append first,
   then sign** — the signing hook in step ⑤ already runs last, which is what keeps a macOS or
   Authenticode signature valid, and the trailer is *found* rather than assumed to be the final
-  bytes because a signature legitimately follows it. Which host an export links into is selected by
-  `BLITSEN_HOST` and defaults to Phase 1; it is deliberately not a CLI flag or a config key, so the
-  npm surface is identical across the swap (§16.7).
+  bytes because a signature legitimately follows it. This is what an export links into now that the
+  platform packages carry the Phase 2 runtime, and it is why an ordinary export is 37 MB rather
+  than 145 MB (PRODUCT.md §9).
+
+  One thing sends an export back to Phase 1: a carried `.node` addon, because Node-API is Bun's to
+  provide and Blitsen's own runtime has none (§12). It is decided from what the export collected
+  and reported in step ③ along with what the copy of Bun costs, because an executable that is
+  smaller and does not start is not smaller.
+
+  The exporter also refuses to link the small host to an application whose module scripts the
+  engine cannot evaluate — established by asking the runtime, `--engine-report`, rather than by
+  assuming. Against the shipping engine that probe always answers yes, because QuickJS-ng loads
+  modules through its stock public API; it earns its keep against a JavaScriptCore build, where
+  the module entry point is a patch a stock library does not carry. `BLITSEN_HOST` overrides the
+  decision in either direction and refuses the combination that cannot work; it is deliberately
+  not a CLI flag or a config key, so the npm surface is identical across the swap (§16.7).
 
 Step ② keeps the compatibility promise honest. Blitsen will be handed output it cannot run; the
 failure must arrive at build time with a named API and file, not as a blank window at runtime.
@@ -861,6 +874,11 @@ note rather than as a surprise in a user's window.
 
 This packaging boundary is what makes the host-model change (§2) invisible to users. In Phase 1
 the platform package contains Bun-plus-addon; in Phase 2 it contains our own JSC-based runtime.
+It now contains both — `blitsen.node` for `blitsen run` and the Phase 1 export path, and
+`blitsen-runtime` for the ordinary export — built, signed and published together, because a package
+carrying one without the other fails at whichever command needs the missing half. Neither carries a
+JavaScript engine alongside it: `blitsen-runtime` links QuickJS-ng statically (`LICENSING.md`), so
+the platform package is two files and not three.
 That invisibility is now checked rather than intended: `bun run --cwd packages/blitsen test:hosts`
 builds one project on both runtimes and fails on any difference in CLI output, config handling,
 refusals, artifact layout or the exported application's own self-check, and replays the committed

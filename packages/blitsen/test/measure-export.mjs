@@ -5,6 +5,7 @@ import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildStandalone } from "../src/export.mjs";
+import { resolvePhase2Runtime } from "../src/runtime.mjs";
 import { buildAddon, repository } from "./build-addon.mjs";
 
 export { repository } from "./build-addon.mjs";
@@ -133,8 +134,14 @@ export async function measureExport({ runs = 5, windowed = false } = {}) {
     for (const asset of result.manifest) {
       applicationBytes += (await stat(join(root, ...asset.path.split("/")))).size;
     }
-    const bunRuntimeBytes = (await stat(floorExecutable)).size;
-    const nativeAddonBytes = (await stat(addon)).size;
+    // What the export actually links into, which is the largest component and
+    // is a different artifact per host: Blitsen's own runtime executable on
+    // Phase 2, a copy of Bun plus an embedded addon on Phase 1. Measured from
+    // the linked file rather than assumed, so the breakdown adds up either way.
+    const hostRuntimeBytes = result.host === "blitsen"
+      ? (await stat((await resolvePhase2Runtime()).path)).size
+      : (await stat(floorExecutable)).size;
+    const nativeAddonBytes = result.host === "blitsen" ? 0 : (await stat(addon)).size;
 
     const checkEnvironment = { BLITSEN_STANDALONE_CHECK: "1", BLITSEN_STANDALONE_CHECK_DELAY: "0", PATH: "" };
     const headless = timeSpawns([outfile], { cwd: directory, env: checkEnvironment }, runs);
@@ -177,14 +184,17 @@ export async function measureExport({ runs = 5, windowed = false } = {}) {
       windowed,
       bun: Bun.version,
       rustc: commandVersion(["rustc", "--version"]),
+      // Which host linked it: two hosts produce two different artifacts, and a
+      // delta across the swap is a migration rather than a regression.
+      host: result.host,
       size: {
         installedBytes: result.bytes,
         compressedBytes: await compressedBytes(outfile),
         components: {
-          bunRuntimeBytes,
+          hostRuntimeBytes,
           nativeAddonBytes,
           applicationBytes,
-          packagingBytes: result.bytes - bunRuntimeBytes - nativeAddonBytes - applicationBytes,
+          packagingBytes: result.bytes - hostRuntimeBytes - nativeAddonBytes - applicationBytes,
         },
       },
       startup: {

@@ -5,9 +5,28 @@ import { join } from "node:path";
 import { buildManifest, generateApiManifest, loadApiManifest, readBootstrapScript, renderCompatibilityDoc } from "../src/api-manifest.mjs";
 import { main } from "../src/cli.mjs";
 import { doctorApplication } from "../src/doctor.mjs";
+import { resolvePhase2Runtime } from "../src/runtime.mjs";
 import { capture } from "./cli-support.mjs";
 
 describe("directory CLI", () => {
+  // The profile's engine-level absences are declared rather than derived (see
+  // ENGINE_ABSENT in api-manifest.mjs), so this is what keeps the declaration
+  // from becoming fiction: the shipping runtime reports what it does not
+  // define, and the manifest has to agree exactly.
+  test("the engine agrees with what the profile says it does not implement", async () => {
+    const runtime = await resolvePhase2Runtime().catch(() => null);
+    if (!runtime || !(await Bun.file(runtime.path).exists())) return;
+    const reported = Bun.spawnSync({ cmd: [runtime.path, "--engine-report"], stdout: "pipe", stderr: "pipe" });
+    expect(reported.exitCode).toBe(0);
+    const report = JSON.parse(reported.stdout.toString());
+    const manifest = await loadApiManifest();
+    const declared = manifest.apis
+      .filter(entry => entry.origin === "engine" && entry.status === "absent")
+      .map(entry => entry.api)
+      .sort();
+    expect([...report.absentGlobals].sort()).toEqual(declared);
+  });
+
   test("diagnoses output outside the strict compatibility profile", async () => {
     const fixtures = join(import.meta.dir, "fixtures/doctor");
     const compatible = await doctorApplication(join(fixtures, "compatible"));

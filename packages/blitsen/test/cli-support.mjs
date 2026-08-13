@@ -110,18 +110,64 @@ export function nativeStub(target = `${process.platform}-${process.arch}`) {
   return header;
 }
 
-// Bun.build --compile refuses to start without the addon file, but never loads
-// it, so a placeholder is enough to exercise the whole export pipeline. It does
-// have to be a shared library for the host, because the exporter refuses to link
-// a runtime built for another target (#72) — a check that only means anything if
-// it is on for every build, including these.
+// The Phase 2 counterpart: a minimal *executable* for any of the six targets.
+//
+// The export links the target's own runtime by appending to it, so the artifact
+// a cross-target build produces is this file plus a payload — which is exactly
+// why the header has to be the target's. `file` reads no further than these
+// bytes to name the format, which is what the cross-target test asserts on.
+export function executableStub(target = `${process.platform}-${process.arch}`) {
+  const platform = target.slice(0, target.lastIndexOf("-"));
+  const architecture = target.slice(target.lastIndexOf("-") + 1);
+  const machine = NATIVE_STUB_MACHINES[platform]?.[architecture];
+  if (machine === undefined) throw new Error(`no executable stub for ${target}`);
+  if (platform === "linux") {
+    const header = elfHeader({ machine, type: 2 }); // ET_EXEC
+    header.writeUInt32LE(1, 20); // EV_CURRENT, so `file` reads it as version 1
+    return header;
+  }
+  if (platform === "darwin") {
+    const header = Buffer.alloc(64);
+    header.writeUInt32LE(0xfeedfacf, 0);
+    header.writeUInt32LE(machine, 4);
+    header.writeUInt32LE(2, 12); // MH_EXECUTE
+    return header;
+  }
+  const header = Buffer.alloc(0x100);
+  header.write("MZ", 0, "binary");
+  header.writeUInt32LE(0x80, 0x3c);
+  header.writeUInt32LE(0x00004550, 0x80); // "PE\0\0"
+  header.writeUInt16LE(machine, 0x84);
+  header.writeUInt16LE(0xf0, 0x80 + 20); // size of the optional header
+  header.writeUInt16LE(0x0002, 0x80 + 22); // IMAGE_FILE_EXECUTABLE_IMAGE
+  header.writeUInt16LE(0x20b, 0x80 + 24); // PE32+
+  return header;
+}
+
+/** What the Phase 2 executable is called inside `target`'s platform package. */
+export const phase2Name = target => `blitsen-runtime${target.startsWith("win32-") ? ".exe" : ""}`;
+
+// Neither host opens what it links: Bun.build --compile refuses to start
+// without the addon file but never loads it, and the Phase 2 link is an append
+// to the runtime executable. So a placeholder for each is enough to exercise
+// the whole export pipeline. The addon does have to be a shared library for the
+// host, because the exporter refuses to link a runtime built for another target
+// (#72) — a check that only means anything if it is on for every build,
+// including these. Stubbing the Phase 2 runtime rather than reaching for the
+// one this checkout built also keeps these tests off a 37 MB copy per export.
 export async function withStubbedExport(run) {
   const directory = await mkdtemp(join(tmpdir(), "blitsen-export-test-"));
   const nativePath = join(directory, "blitsen.node");
+  const runtimePath = join(directory, phase2Name(`${process.platform}-${process.arch}`));
   await writeFile(nativePath, nativeStub());
+  await writeFile(runtimePath, executableStub());
+  const previous = process.env.BLITSEN_RUNTIME_PATH;
+  process.env.BLITSEN_RUNTIME_PATH = runtimePath;
   try {
-    return await run({ directory, nativePath, outfile: join(directory, "App") });
+    return await run({ directory, nativePath, runtimePath, outfile: join(directory, "App") });
   } finally {
+    if (previous === undefined) delete process.env.BLITSEN_RUNTIME_PATH;
+    else process.env.BLITSEN_RUNTIME_PATH = previous;
     await rm(directory, { recursive: true, force: true });
   }
 }

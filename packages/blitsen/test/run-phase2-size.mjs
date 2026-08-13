@@ -97,12 +97,18 @@ async function componentBreakdown(runtimePath) {
 
 // The engine an exported application has to carry. On a development machine
 // this is the system library the loader found; a release carries Blitsen's
-// pinned build, which is a different and larger artifact (docs/JSC.md).
+// What the engine costs *beside* the executable, which since the QuickJS swap
+// is nothing: the engine is linked in. Asked of the runtime rather than assumed
+// — `--engine-report` says how it is linked — because this table asserting a
+// library that is not there is exactly the failure it exists to prevent.
 async function engineLibrary() {
   const runtime = await resolvePhase2Runtime();
   const { stdout } = await run(runtime.path, ["--engine-report"]);
   const report = JSON.parse(stdout);
   if (!report.loaded) return { loaded: false, error: report.error };
+  if (report.linkage === "static") {
+    return { loaded: true, linkage: "static", engine: report.engine, path: null, bytes: 0 };
+  }
   const candidates = [
     process.env.BLITSEN_JSC_LIBRARY,
     "/lib/x86_64-linux-gnu/libjavascriptcoregtk-6.0.so.1",
@@ -110,9 +116,11 @@ async function engineLibrary() {
   ].filter(Boolean);
   for (const path of candidates) {
     const size = await stat(path).then(entry => entry.size, () => null);
-    if (size !== null) return { loaded: true, path, bytes: size, modules: report.modules };
+    if (size !== null) {
+      return { loaded: true, linkage: "dynamic", engine: report.engine, path, bytes: size };
+    }
   }
-  return { loaded: true, path: null, bytes: null, modules: report.modules };
+  return { loaded: true, linkage: "dynamic", engine: report.engine, path: null, bytes: null };
 }
 
 const directory = await bareApp();
@@ -120,7 +128,7 @@ try {
   const addon = await buildAddon({ purpose: "Phase 2 size", release: true });
   const runtime = await resolvePhase2Runtime();
   const phase1 = await exportWith("bun", directory, addon);
-  const phase2 = await exportWith("jsc", directory, addon);
+  const phase2 = await exportWith("blitsen", directory, addon);
   assert.ok(phase2.bytes < phase1.bytes, "the Phase 2 export is not smaller");
 
   const minimised = join(repository, "target/release-min/blitsen-runtime");
@@ -140,6 +148,8 @@ try {
       appPayload: payload,
       engineLibrary: engine.bytes,
       engineLibraryPath: engine.path,
+      engineLinkage: engine.linkage,
+      engineName: engine.engine,
     },
     sections: breakdown.sections,
     // What Phase 3 has left, measured rather than estimated. `release-min` is
@@ -157,7 +167,7 @@ try {
 
   console.log(`Phase 2 bare app on ${measurements.platform}`);
   console.log(`  Phase 1 (Bun)            ${mb(phase1.bytes)}  (gzip ${mb(phase1.gzip)})`);
-  console.log(`  Phase 2 (embedded JSC)   ${mb(phase2.bytes)}  (gzip ${mb(phase2.gzip)})`);
+  console.log(`  Blitsen runtime          ${mb(phase2.bytes)}  (gzip ${mb(phase2.gzip)})`);
   console.log(`  ratio                    ${measurements.ratio}x smaller`);
   console.log("  components");
   console.log(`    runtime executable     ${mb(breakdown.bytes)}`);
@@ -166,13 +176,16 @@ try {
       + `(${mb(breakdown.bytes - breakdown.stripped)} of debug symbols)`);
   }
   console.log(`    appended application   ${mb(payload)}`);
-  if (engine.bytes !== null) {
-    console.log(`    JavaScriptCore         ${mb(engine.bytes)}  `
+  if (engine.linkage === "static") {
+    console.log(`    ${engine.engine.padEnd(22)} linked in, so nothing ships beside the executable`);
+    console.log(`    shipped total          ${mb(phase2.bytes)}  the executable, and that is all`);
+  } else if (engine.bytes !== null) {
+    console.log(`    ${engine.engine.padEnd(22)} ${mb(engine.bytes)}  `
       + `(${engine.path}; loaded dynamically, so beside the binary and not in it)`);
     console.log(`    shipped total          ${mb(phase2.bytes + engine.bytes)}  `
       + "executable + engine library");
   } else {
-    console.log("    JavaScriptCore         unmeasured on this machine");
+    console.log(`    ${engine.engine.padEnd(22)} unmeasured on this machine`);
   }
   if (measurements.phase3.releaseMin !== null) {
     const saved = breakdown.bytes - measurements.phase3.releaseMin;

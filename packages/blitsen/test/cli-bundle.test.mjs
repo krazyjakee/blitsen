@@ -1,11 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
 import { buildPayload, buildTrailer, linkBundle, readBundle, FORMAT_VERSION } from "../src/bundle.mjs";
+import { buildStandalone } from "../src/export.mjs";
+import { compileAddon, compiler, withStubbedExport } from "./cli-support.mjs";
 
 const run = promisify(execFile);
 const REPO = new URL("../../../", import.meta.url).pathname;
@@ -124,6 +126,88 @@ describe("Phase 2 link step", () => {
       await rm(directory, { recursive: true, force: true });
     }
   });
+
+  // Which host an export links into is a size decision everywhere except where
+  // it is a capability one, and those are the cases worth holding down: an
+  // export that took the small host and then could not load the addon it
+  // carries, or could not evaluate the module its document asks for, would be a
+  // smaller application that does not run.
+  //
+  // Both applications here are written out rather than taken from a fixture,
+  // because what is under test is exactly the difference between them. The
+  // stubbed Phase 2 runtime cannot be executed, so the engine probe answers "not
+  // here" on any machine, which is what makes the module case deterministic.
+  const CLASSIC_APP = "<!doctype html><html><body><script>document.title='ok'</script></body></html>";
+  const MODULE_APP = '<!doctype html><html><body><script type="module" src="./app.js"></script></body></html>';
+
+  async function staticApp(directory, html, extra = {}) {
+    const root = join(directory, "dist");
+    await mkdir(root, { recursive: true });
+    await writeFile(join(root, "index.html"), html);
+    for (const [name, contents] of Object.entries(extra)) {
+      await writeFile(join(root, name), contents);
+    }
+    return root;
+  }
+
+  test("links the small host for an application any engine can run", async () => {
+    await withStubbedExport(async ({ directory, outfile, nativePath }) => {
+      const root = await staticApp(directory, CLASSIC_APP);
+      const built = await buildStandalone(
+        { root, width: 800, height: 600, title: "Classic", outfile }, nativePath);
+      expect(built.host).toBe("blitsen");
+      // Linked by appending to the runtime, so the artifact carries the bundle.
+      expect(readBundle(await readFile(built.outfile))).not.toBeNull();
+    });
+  }, 120_000);
+
+  test("links Bun when the engine here cannot evaluate the modules the app uses", async () => {
+    await withStubbedExport(async ({ directory, outfile, nativePath }) => {
+      const root = await staticApp(directory, MODULE_APP, { "app.js": "export const x = 1;\n" });
+      const events = [];
+      const built = await buildStandalone({
+        root, width: 800, height: 600, title: "Module", outfile,
+        progress: event => events.push(event),
+      }, nativePath);
+      expect(built.host).toBe("bun");
+      // Never a silent downgrade: the step says why, and what it cost.
+      expect(events.find(event => event.step === "collect").notes.join("\n"))
+        .toContain("cannot load them");
+    });
+  }, 120_000);
+
+  test.skipIf(!compiler)("links Bun for an application carrying a Node-API addon", async () => {
+    await withStubbedExport(async ({ directory, outfile, nativePath }) => {
+      const root = await staticApp(directory, CLASSIC_APP);
+      const addon = compileAddon(directory);
+      const events = [];
+      const built = await buildStandalone({
+        root, width: 800, height: 600, title: "Addon", outfile, addons: [addon],
+        progress: event => events.push(event),
+      }, nativePath);
+      expect(built.host).toBe("bun");
+      expect(built.addons).toEqual(["greet.node"]);
+      expect(events.find(event => event.step === "collect").notes.join("\n"))
+        .toContain("95 MB larger");
+    });
+  }, 120_000);
+
+  test.skipIf(!compiler)("refuses a host that cannot load the addon it was asked to carry", async () => {
+    await withStubbedExport(async ({ directory, nativePath, outfile }) => {
+      const root = await staticApp(directory, CLASSIC_APP);
+      const addon = compileAddon(directory);
+      const previous = process.env.BLITSEN_HOST;
+      process.env.BLITSEN_HOST = "blitsen";
+      try {
+        await expect(buildStandalone(
+          { root, width: 800, height: 600, title: "Base", outfile, addons: [addon] }, nativePath))
+          .rejects.toThrow("BLITSEN_HOST=blitsen cannot load a carried native addon");
+      } finally {
+        if (previous === undefined) delete process.env.BLITSEN_HOST;
+        else process.env.BLITSEN_HOST = previous;
+      }
+    });
+  }, 120_000);
 
   test("a trailer is exactly the bytes the format specifies", () => {
     const payload = buildPayload(new Map([["a.js", Buffer.from("x")]]));

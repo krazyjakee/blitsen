@@ -1,0 +1,20 @@
+measurement	quickjs_ng	javascriptcore	unit	note
+engine_only_binary_stripped	1499832	37980984	B	QuickJS measured here; JSC from spikes/s0 results/linux-x64.tsv
+engine_only_binary_gzip9	718828	17933416	B	same pair
+engine_library_shipped_alongside	0	31959344	B	JSC figure is this machine's libjavascriptcoregtk-6.0, which excludes ICU
+context_init	83	763	us	median of 20, library already resident for JSC
+native_callback_crossing	101	556	ns	string argument converted in Rust
+javascript_work_unit	30.7	1.8	ns	arithmetic + property store
+pong_frame	1.9	3.5	us	examples/pong/game.js frame(), 4 native writes
+js_units_per_16_7ms_frame	544057	9306483	units	budget headroom
+breakeven_js_units_per_frame	63	63	units	below this QuickJS wins on the crossing cost
+golden_dom_frames_identical	120	120	frames	vs packages/blitsen/test/replay/pong-linux-x64.golden.json
+golden_layout_frames_identical	120	120	frames	same fingerprint, so layout and pixels are comparable
+golden_pixel_frames_identical	120	120	frames	same
+replay_steady_frame_mean	875	907	us	real pipeline, 110 steady frames
+replay_steady_frame_p95	984	1178	us	same
+replay_steady_frame_p99	1192	1605	us	same
+replay_frames_over_budget	0	0	frames	16.7 ms budget, 110 steady frames
+runtime_executable	38099624	36977256	B	QuickJS build carries its engine; JSC build does not
+shipped_total	38099624	68936600	B	executable plus any engine library beside it
+windowed_cadence_300_frames	59.6	59.4	fps	median of 3 windowed runs, 60 warmup frames, real display

@@ -13,9 +13,8 @@ use blitsen_host::app::AppFiles;
 use blitsen_host::modules::ModuleRegistry;
 use blitsen_host::runtime_services::RuntimeServices;
 use blitsen_host::{OpenDirectoryOptions, WindowSession, native_window};
-use blitsen_js::JsEngine;
-use blitsen_jsc::JavaScriptCore;
 
+use crate::engine;
 use crate::loop_pacing::Pacer;
 
 /// Window settings an application carries, written into the bundle at export.
@@ -30,6 +29,9 @@ struct Settings {
     title: String,
     /// How the export laid its assets out, echoed by the standalone check.
     layout: String,
+    /// The runtime this application was linked against (#73), as the exporter
+    /// recorded it. A directory run has no record and reports this executable.
+    runtime: String,
 }
 
 impl Default for Settings {
@@ -39,7 +41,22 @@ impl Default for Settings {
             height: 768,
             title: "Blitsen".to_owned(),
             layout: "embedded".to_owned(),
+            runtime: concat!("blitsen-runtime ", env!("CARGO_PKG_VERSION")).to_owned(),
         }
+    }
+}
+
+/// The recorded runtime, worded exactly as `describeRuntime` in the CLI words
+/// it — the same export prints the same line whichever host it was linked into.
+fn describe_runtime(record: &serde_json::Value) -> Option<String> {
+    let text = |key| record.get(key).and_then(serde_json::Value::as_str);
+    match (text("package"), text("version")) {
+        (Some(package), Some(version)) => Some(format!("{package}@{version}")),
+        _ => Some(format!(
+            "{} (unversioned, from {})",
+            text("target")?,
+            text("source")?
+        )),
     }
 }
 
@@ -60,6 +77,9 @@ impl Settings {
             }
             if let Some(layout) = config.get("layout").and_then(serde_json::Value::as_str) {
                 settings.layout = layout.to_owned();
+            }
+            if let Some(runtime) = config.get("runtime").and_then(describe_runtime) {
+                settings.runtime = runtime;
             }
         }
         let mut arguments = arguments.iter();
@@ -114,7 +134,7 @@ pub fn run_bundle(bundle: AppBundle, arguments: &[String]) -> Result<ExitCode, S
 
 fn run(files: AppFiles, arguments: &[String]) -> Result<ExitCode, String> {
     let settings = Settings::read(&files, arguments)?;
-    let mut engine = JavaScriptCore::load().map_err(|error| error.to_string())?;
+    let mut engine = engine::load()?;
 
     // Order matters. The services install the timers and the console the DOM
     // bootstrap captures as it loads, and the module loader has to be in place
@@ -124,7 +144,7 @@ fn run(files: AppFiles, arguments: &[String]) -> Result<ExitCode, String> {
     modules
         .install(&mut engine)
         .map_err(|error| error.to_string())?;
-    install_module_loader(&mut engine)?;
+    engine::install_module_loader(&mut engine)?;
 
     if blitsen_host::standalone::requested() {
         // Answering the check is the whole of this run: no window opens, and
@@ -138,7 +158,7 @@ fn run(files: AppFiles, arguments: &[String]) -> Result<ExitCode, String> {
                 height: settings.height,
                 assets: files.asset_count(),
                 layout: &settings.layout,
-                runtime: concat!("blitsen-runtime ", env!("CARGO_PKG_VERSION")),
+                runtime: &settings.runtime,
             },
         )
         .map_err(|error| error.to_string())?;
@@ -180,33 +200,3 @@ fn run(files: AppFiles, arguments: &[String]) -> Result<ExitCode, String> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// Points the engine's module loader at the resolver, when it can be pointed.
-///
-/// A build against a JavaScriptCore without the hook still runs an application
-/// whose scripts are classic, which is every acceptance fixture and most hand
-/// written pages. It refuses at the first `import` instead of silently
-/// rendering a blank window, and says which library to use.
-fn install_module_loader(engine: &mut JavaScriptCore) -> Result<(), String> {
-    if !engine.supports_modules() {
-        if std::env::var_os("BLITSEN_REQUIRE_MODULES").is_some() {
-            return Err(
-                "this JavaScriptCore library cannot link a module graph; use Blitsen's \
-                 pinned build (docs/JSC.md)"
-                    .to_owned(),
-            );
-        }
-        return Ok(());
-    }
-    let resolve = engine
-        .evaluate_script(
-            "globalThis.__blitsenModuleResolve",
-            "blitsen:module-resolve",
-        )
-        .map_err(|error| error.to_string())?;
-    let fetch = engine
-        .evaluate_script("globalThis.__blitsenModuleSource", "blitsen:module-source")
-        .map_err(|error| error.to_string())?;
-    engine
-        .set_module_loader(&resolve, &fetch)
-        .map_err(|error| error.to_string())
-}

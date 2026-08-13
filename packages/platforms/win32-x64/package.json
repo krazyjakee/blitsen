@@ -14,9 +14,10 @@
   "cpu": ["x64"],
   "exports": {
     "./package.json": "./package.json",
-    "./blitsen.node": "./blitsen.node"
+    "./blitsen.node": "./blitsen.node",
+    "./blitsen-runtime.exe": "./blitsen-runtime.exe"
   },
-  "files": ["blitsen.node"],
+  "files": ["blitsen.node", "blitsen-runtime.exe"],
   "preferUnplugged": true,
   "publishConfig": {
     "access": "public"

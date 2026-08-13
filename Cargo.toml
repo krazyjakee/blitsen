@@ -9,6 +9,7 @@ members = [
     "crates/blitsen-js",
     "crates/blitsen-node",
     "crates/blitsen-platform",
+    "crates/blitsen-quickjs",
     "crates/blitsen-runtime",
 ]
 exclude = ["spikes/*"]
@@ -30,6 +31,20 @@ all = { level = "warn", priority = -1 }
 
 [patch.crates-io]
 anyrender = { git = "https://github.com/DioxusLabs/anyrender", rev = "dcd219746ff13a5832beab552f3f7f494d1bd84d" }
+
+# Symbols are 13.1 MB of the 50.1 MB Phase 2 runtime and nothing that ships
+# reads them: the executable is what a user downloads, and a backtrace taken
+# from it names frames the reporter cannot map to a source line anyway. Dropped
+# here rather than in the release workflow so a checkout's own `blitsen build`
+# weighs what a released one does. Debugging a release build is
+# `--profile release-dbg`, which is this profile with its symbols back.
+[profile.release]
+strip = "symbols"
+
+[profile.release-dbg]
+inherits = "release"
+strip = "none"
+debug = "line-tables-only"
 
 # Phase 3 size work (issue #89). Measured, not adopted: `size:phase2` reports
 # what each lever is worth, and the release profile changes when the numbers

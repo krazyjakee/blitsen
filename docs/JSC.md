@@ -1,5 +1,15 @@
 # Phase 2 JavaScriptCore acquisition
 
+> **Superseded on 2026-08-13 by [`spikes/s8`](../spikes/s8/README.md).** Blitsen hosts QuickJS-ng,
+> statically linked, under the MIT licence. The reasoning below is kept because it is still the
+> record of *why* JavaScriptCore was chosen and what it cost — and because the constraint that
+> decided it, LGPL forcing a dynamically replaceable library, is exactly the constraint the
+> replacement removes. What is no longer true: the pinned WebKit revision, the six-target engine
+> build matrix, `BLITSEN_JSC_LIBRARY`, and the patched `JSLoadAndEvaluateModuleFromSource` that a
+> stock system JavaScriptCore does not have. The JavaScriptCore host still builds
+> (`cargo build -p blitsen-runtime --no-default-features --features javascriptcore`) because it is
+> the other half of the dual-host conformance suite, not because an export links it.
+
 **Decision date:** 2026-08-10
 **Decision:** build a pinned Bun WebKit revision in Blitsen's release matrix, own the small Rust
 ABI layer, and dynamically load the resulting JavaScriptCore library in production.

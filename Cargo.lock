@@ -509,6 +509,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "blitsen-quickjs"
+version = "0.0.0"
+dependencies = [
+ "blitsen-js",
+ "rquickjs-sys",
+]
+
+[[package]]
 name = "blitsen-runtime"
 version = "0.0.0"
 dependencies = [
@@ -516,6 +524,7 @@ dependencies = [
  "blitsen-host",
  "blitsen-js",
  "blitsen-jsc",
+ "blitsen-quickjs",
  "serde_json",
 ]
 
@@ -3563,6 +3572,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f1964b10c76125c36f8afe190065a4bf9a87bf324842c05701330bba9f1cacbb"
 dependencies = [
  "memchr",
+]
+
+[[package]]
+name = "rquickjs-sys"
+version = "0.12.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a13ac243b86a74120814ef7e9e30ad5a2c1199b7b9963b1cf7c84e4cdc1cad99"
+dependencies = [
+ "cc",
 ]
 
 [[package]]

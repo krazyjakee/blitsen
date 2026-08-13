@@ -169,14 +169,18 @@ const npmRun = async (cmd, cwd) => {
 };
 
 /**
- * Fetches a target's runtime into the cache, or returns the cached one.
+ * Fetches one of a target's binaries into the cache, or returns the cached one.
  *
  * Cached by package version as well as by target, because the runtime and the
- * CLI are one ABI (#73): two versions must not share a slot.
+ * CLI are one ABI (#73): two versions must not share a slot. `binary` names the
+ * file inside the platform package — the `.node` addon `blitsen run` loads, or
+ * the Phase 2 executable an export links into — and the two share a cache
+ * directory because they share a package, a version and a target.
  */
 export async function fetchRuntime({
   target,
   version,
+  binary = RUNTIME_BINARY,
   env = process.env,
   run = npmRun,
   cacheDir = runtimeCacheDir(env),
@@ -184,14 +188,14 @@ export async function fetchRuntime({
   if (!TARGETS.includes(target)) throw missingRuntime(target);
   const name = runtimePackage(target);
   const directory = join(cacheDir, "runtimes", version, target);
-  const cached = join(directory, RUNTIME_BINARY);
+  const cached = join(directory, binary);
   if (await readable(cached)) {
     return { path: cached, target, version, package: name, source: "cache" };
   }
   const tarball = await downloadRuntimePackage(name, version, run);
-  const addon = extractFromTarball(tarball, `package/${RUNTIME_BINARY}`);
+  const addon = extractFromTarball(tarball, `package/${binary}`);
   if (addon === null) {
-    throw new Error(`${name}@${version} carries no ${RUNTIME_BINARY}; `
+    throw new Error(`${name}@${version} carries no ${binary}; `
       + "it cannot be used to build for " + target);
   }
   await mkdir(directory, { recursive: true });
@@ -273,30 +277,53 @@ export async function resolveRuntime({
 // than into Bun's, so the platform package carries one more file. Which host an
 // export uses is deliberately *not* a CLI flag or a config key — structural
 // constraint 7 says the migration is a smaller binary and nothing else — so it
-// is selected by the environment and defaults to Phase 1 until the Phase 2
-// runtime ships in the platform packages.
+// is not selected by the user at all. The platform packages carry the Phase 2
+// runtime, so that is what an export links into, unless the application needs
+// something only Phase 1 can give it — see `buildStandalone`, which decides
+// from what the export collected. `BLITSEN_HOST` forces either host, for
+// measuring one against the other and for getting out of a regression.
 export const PHASE2_BINARY = "blitsen-runtime";
 
-/** Which host an export links into: `"bun"` (Phase 1) or `"jsc"` (Phase 2). */
-export function exportHost(env = process.env) {
+/** What the Phase 2 executable is called inside a target's platform package. */
+export const phase2Binary = (target = hostTarget()) =>
+  `${PHASE2_BINARY}${target.startsWith("win32-") ? ".exe" : ""}`;
+
+/**
+ * The host the environment asked for, or `null` for "whichever fits".
+ *
+ * Left unset — which is the ordinary case — the exporter chooses, because the
+ * choice is not free: the Phase 1 pair is the only one that can load a `.node`
+ * addon, and it costs a copy of Bun to say so.
+ */
+export function requestedHost(env = process.env) {
   const requested = env.BLITSEN_HOST;
-  if (requested === undefined || requested === "") return "bun";
-  if (requested !== "bun" && requested !== "jsc") {
-    throw new Error(`BLITSEN_HOST must be bun or jsc, got ${JSON.stringify(requested)}`);
+  if (requested === undefined || requested === "") return null;
+  if (requested !== "bun" && requested !== "blitsen") {
+    throw new Error(`BLITSEN_HOST must be bun or blitsen, got ${JSON.stringify(requested)}`);
   }
   return requested;
+}
+
+/** Which host an export links into: `"blitsen"` (the default) or `"bun"` (Phase 1). */
+export function exportHost(env = process.env) {
+  return requestedHost(env) ?? "blitsen";
 }
 
 /**
  * Finds the Phase 2 runtime executable for `target`.
  *
- * Same order as [`resolveRuntime`], and the same reasons: an explicit path,
- * the installed platform package, then this checkout's release build.
+ * Same order as [`resolveRuntime`], and the same reasons: an explicit path, the
+ * installed platform package, then this checkout's release build, then — for a
+ * cross-target build only — the registry.
  */
 export async function resolvePhase2Runtime({
   target = hostTarget(),
+  version,
   env = process.env,
   require: resolver = createRequire(import.meta.url),
+  fetch = false,
+  run,
+  cacheDir,
 } = {}) {
   const configured = env.BLITSEN_RUNTIME_PATH;
   if (configured) {
@@ -304,10 +331,10 @@ export async function resolvePhase2Runtime({
     return { path, target, version: null, package: null, source: "environment" };
   }
   const name = runtimePackage(target);
-  const suffix = target.startsWith("win32-") ? ".exe" : "";
+  const binary = phase2Binary(target);
   try {
     const manifestPath = resolver.resolve(`${name}/package.json`);
-    const path = join(dirname(manifestPath), `${PHASE2_BINARY}${suffix}`);
+    const path = join(dirname(manifestPath), binary);
     if (await readable(path)) {
       const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
       return { path, target, version: manifest.version, package: name, source: "package" };
@@ -315,14 +342,20 @@ export async function resolvePhase2Runtime({
   } catch {} // Not installed is the ordinary case for every non-host target.
   if (target === hostTarget()) {
     const root = new URL("../../../", import.meta.url);
-    const path = fileURLToPath(new URL(`target/release/${PHASE2_BINARY}${suffix}`, root));
+    const path = fileURLToPath(new URL(`target/release/${binary}`, root));
     if (await readable(path)) {
       return { path, target, version: null, package: null, source: "repository" };
     }
   }
-  throw new Error(`no Phase 2 Blitsen runtime for ${target}: no platform package carries `
-    + `${PHASE2_BINARY} yet. From a checkout, build one with `
-    + "`cargo build --release -p blitsen-runtime`, or set BLITSEN_RUNTIME_PATH.");
+  if (fetch) {
+    return fetchRuntime({
+      target, version: version ?? await packageVersion(), binary, env, run, cacheDir,
+    });
+  }
+  throw new Error(`no Phase 2 Blitsen runtime for ${target}: ${name} is not installed `
+    + `and this checkout has no target/release/${binary}. `
+    + "From a checkout, build one with `cargo build --release -p blitsen-runtime`, "
+    + "or set BLITSEN_RUNTIME_PATH.");
 }
 
 /** Loads a resolved addon and adapts the engine to the surface the CLI drives. */

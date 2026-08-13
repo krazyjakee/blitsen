@@ -10,7 +10,7 @@ use std::process::ExitCode;
 use blitsen_core::bundle::AppBundle;
 use blitsen_core::replay::InputTrace;
 use blitsen_host::runtime_services::RuntimeServices;
-use blitsen_jsc::JavaScriptCore;
+use crate::engine;
 use serde_json::json;
 
 /// Prints the bundle appended to this executable, as JSON.
@@ -42,15 +42,29 @@ pub fn print(bundle: Option<&AppBundle>, executable: &Path) {
     println!("{report}");
 }
 
+/// Language-level globals the compatibility profile makes a claim about.
+///
+/// These come from the engine rather than from the DOM bridge, so
+/// `api-manifest.json` cannot derive them the way it derives everything else
+/// and declares them instead. Reporting them here is what lets
+/// `cli-doctor.test.mjs` fail when the declaration and the engine disagree.
+const ENGINE_GLOBALS: &[&str] = &["Intl", "WebAssembly"];
+
 /// Prints which JavaScriptCore was loaded and what it supports.
 pub fn print_engine() {
-    let report = match JavaScriptCore::load() {
-        Ok(engine) => json!({
+    let report = match engine::load() {
+        Ok(mut loaded) => json!({
             "loaded": true,
-            "modules": engine.supports_modules(),
-            "libraryOverride": std::env::var(blitsen_jsc::LIBRARY_ENV).ok(),
+            "engine": engine::NAME,
+            "modules": engine::supports_modules(&loaded),
+            "absentGlobals": engine::absent_globals(&mut loaded, ENGINE_GLOBALS),
+            // Present only when the engine is one the process loads at run
+            // time. A statically linked engine has nothing to override, and
+            // omitting the key says that better than a permanent null.
+            "libraryOverride": engine::library_override(),
+            "linkage": engine::LINKAGE,
         }),
-        Err(error) => json!({ "loaded": false, "error": error.to_string() }),
+        Err(error) => json!({ "loaded": false, "engine": engine::NAME, "error": error }),
     };
     println!("{report}");
 }
@@ -66,7 +80,7 @@ pub fn replay(arguments: &[String]) -> Result<ExitCode, String> {
     let trace = std::fs::read_to_string(trace)
         .map_err(|error| format!("could not read {trace}: {error}"))?;
     let trace = InputTrace::from_json(&trace).map_err(|error| error.to_string())?;
-    let mut engine = JavaScriptCore::load().map_err(|error| error.to_string())?;
+    let mut engine = engine::load()?;
     // The replay runs its own fixed-timestep loop, but the document below it
     // still expects a host: a `setTimeout` inside it must resolve to something.
     let _services = RuntimeServices::install(&mut engine).map_err(|error| error.to_string())?;

@@ -17,7 +17,7 @@ import { main } from "../src/cli.mjs";
 import {
   extractFromTarball, fetchRuntime, resolveRuntime, runtimeCacheDir, TARGETS,
 } from "../src/runtime.mjs";
-import { capture, nativeStub } from "./cli-support.mjs";
+import { capture, executableStub, nativeStub, phase2Name } from "./cli-support.mjs";
 
 const VERSION = "9.9.9";
 const npm = Bun.which("npm");
@@ -31,11 +31,17 @@ const withWork = async run => {
   }
 };
 
-/** Seeds the cache the way a completed fetch leaves it. */
+/**
+ * Seeds the cache the way a completed fetch leaves it.
+ *
+ * Both halves of a platform package: the addon the export checks against its
+ * target, and the Phase 2 executable it links into.
+ */
 const seedCache = async (cacheDir, target, version = VERSION) => {
   const directory = join(cacheDir, "runtimes", version, target);
   await mkdir(directory, { recursive: true });
   await writeFile(join(directory, "blitsen.node"), nativeStub(target));
+  await writeFile(join(directory, phase2Name(target)), executableStub(target));
   return join(directory, "blitsen.node");
 };
 

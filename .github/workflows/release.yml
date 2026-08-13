@@ -56,21 +56,27 @@ jobs:
           - target: linux-x64
             runner: ubuntu-latest
             library: libblitsen_node.so
+            executable: blitsen-runtime
           - target: linux-arm64
             runner: ${{ vars.LINUX_ARM64_RUNNER || 'ubuntu-24.04-arm' }}
             library: libblitsen_node.so
+            executable: blitsen-runtime
           - target: darwin-x64
             runner: macos-13
             library: libblitsen_node.dylib
+            executable: blitsen-runtime
           - target: darwin-arm64
             runner: macos-latest
             library: libblitsen_node.dylib
+            executable: blitsen-runtime
           - target: win32-x64
             runner: windows-latest
             library: blitsen_node.dll
+            executable: blitsen-runtime.exe
           - target: win32-arm64
             runner: ${{ vars.WIN32_ARM64_RUNNER || 'windows-11-arm' }}
             library: blitsen_node.dll
+            executable: blitsen-runtime.exe
     steps:
       - uses: actions/checkout@v4
       - id: started
@@ -95,16 +101,24 @@ jobs:
             libx11-dev libxcursor-dev libxi-dev libxrandr-dev \
             libasound2-dev
 
+      # Two artifacts, one ABI: the addon `blitsen run` loads, and the Phase 2
+      # executable an export links into (#88). They are built together and
+      # published together because a package carrying one without the other
+      # fails at whichever command needs the missing half.
       - name: Build the runtime
-        run: cargo build --release -p blitsen-node
+        run: cargo build --release -p blitsen-node -p blitsen-runtime
 
-      # A platform package is its committed manifest plus exactly this artifact.
+      # A platform package is its committed manifest plus exactly these artifacts.
       - name: Stage the runtime
         shell: bash
-        run: cp "target/release/${{ matrix.library }}" "packages/platforms/${{ matrix.target }}/blitsen.node"
+        run: |
+          cp "target/release/${{ matrix.library }}" "packages/platforms/${{ matrix.target }}/blitsen.node"
+          cp "target/release/${{ matrix.executable }}" "packages/platforms/${{ matrix.target }}/${{ matrix.executable }}"
 
-      # The addon is the only native code Blitsen ships, so it is what gets
-      # signed. Both steps are no-ops without their secret, and say so.
+      # Both are native code Blitsen ships, so both get signed — and the Phase 2
+      # executable is the one a user's machine launches by name, which is
+      # exactly what an OS gatekeeper checks. Both steps are no-ops without
+      # their secret, and say so.
       - name: Sign (macOS)
         if: startsWith(matrix.runner, 'macos')
         env:
@@ -126,9 +140,11 @@ jobs:
             -P "$CERTIFICATE_PASSWORD" -T /usr/bin/codesign
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain"
           security list-keychain -d user -s "$keychain" login.keychain
-          codesign --force --timestamp --options runtime \
-            --sign "$IDENTITY" "packages/platforms/${{ matrix.target }}/blitsen.node"
-          codesign --verify --strict --verbose=2 "packages/platforms/${{ matrix.target }}/blitsen.node"
+          for artifact in blitsen.node "${{ matrix.executable }}"; do
+            codesign --force --timestamp --options runtime \
+              --sign "$IDENTITY" "packages/platforms/${{ matrix.target }}/$artifact"
+            codesign --verify --strict --verbose=2 "packages/platforms/${{ matrix.target }}/$artifact"
+          done
           rm -f "$RUNNER_TEMP/certificate.p12"
           security delete-keychain "$keychain"
 
@@ -146,10 +162,12 @@ jobs:
           echo "$CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/certificate.pfx"
           signtool=$(find "/c/Program Files (x86)/Windows Kits/10/bin" -name signtool.exe \
             -path '*x64*' | sort | tail -1)
-          "$signtool" sign -f "$RUNNER_TEMP/certificate.pfx" -p "$CERTIFICATE_PASSWORD" \
-            -fd SHA256 -tr http://timestamp.digicert.com -td SHA256 \
-            "packages/platforms/${{ matrix.target }}/blitsen.node"
-          "$signtool" verify -pa "packages/platforms/${{ matrix.target }}/blitsen.node"
+          for artifact in blitsen.node "${{ matrix.executable }}"; do
+            "$signtool" sign -f "$RUNNER_TEMP/certificate.pfx" -p "$CERTIFICATE_PASSWORD" \
+              -fd SHA256 -tr http://timestamp.digicert.com -td SHA256 \
+              "packages/platforms/${{ matrix.target }}/$artifact"
+            "$signtool" verify -pa "packages/platforms/${{ matrix.target }}/$artifact"
+          done
           rm -f "$RUNNER_TEMP/certificate.pfx"
 
       # The runtime and the CLI are one ABI, so the package tests run against
@@ -158,6 +176,7 @@ jobs:
       - run: bun test packages/blitsen
         env:
           BLITSEN_NATIVE_PATH: ${{ github.workspace }}/packages/platforms/${{ matrix.target }}/blitsen.node
+          BLITSEN_RUNTIME_PATH: ${{ github.workspace }}/packages/platforms/${{ matrix.target }}/${{ matrix.executable }}
 
       - name: Pack
         shell: bash
@@ -166,7 +185,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: runtime-${{ matrix.target }}
-          path: packages/platforms/${{ matrix.target }}/blitsen.node
+          path: |
+            packages/platforms/${{ matrix.target }}/blitsen.node
+            packages/platforms/${{ matrix.target }}/${{ matrix.executable }}
           if-no-files-found: error
           retention-days: 7
 
@@ -218,9 +239,12 @@ jobs:
         shell: bash
         run: |
           for target in darwin-arm64 darwin-x64 linux-arm64 linux-x64 win32-arm64 win32-x64; do
-            source="$RUNNER_TEMP/runtimes/runtime-$target/blitsen.node"
-            test -f "$source" || { echo "::error::missing runtime for $target"; exit 1; }
-            cp "$source" "packages/platforms/$target/blitsen.node"
+            case "$target" in win32-*) executable=blitsen-runtime.exe;; *) executable=blitsen-runtime;; esac
+            for artifact in blitsen.node "$executable"; do
+              source="$RUNNER_TEMP/runtimes/runtime-$target/$artifact"
+              test -f "$source" || { echo "::error::missing $artifact for $target"; exit 1; }
+              cp "$source" "packages/platforms/$target/$artifact"
+            done
           done
 
       # The version pin is the release's integrity: every platform package must

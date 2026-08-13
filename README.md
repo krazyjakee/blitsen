@@ -3,8 +3,8 @@
 > Write an app in HTML, CSS and TypeScript. Ship a native executable. No browser included.
 
 Blitsen is an experimental native runtime for applications built from static HTML, CSS and
-JavaScript output. It combines JavaScriptCore with [Blitz](https://github.com/DioxusLabs/blitz)'s
-native HTML/CSS renderer. It does not embed Chromium, and it does not use the operating system's
+JavaScript output. It hosts a JavaScript engine directly and pairs it with
+[Blitz](https://github.com/DioxusLabs/blitz)'s native HTML/CSS renderer. It does not embed Chromium, and it does not use the operating system's
 WebView.
 
 **The project is pre-alpha.** Linux x64 is the only supported target; Windows and macOS validation
@@ -58,21 +58,28 @@ gate asserts on, so it cannot drift from what the tests verify.*
 Input, animation and restyle are proven together by [`examples/interactive`](examples/interactive),
 whose gate drives the document through the same coordinate hit test the native window uses
 ([M2 evidence](docs/M2.md)). Phase 2 — replacing Bun with an embedded JavaScriptCore host — is
-underway; the [acquisition decision](docs/JSC.md) pins Bun's WebKit lineage while keeping the
-production engine dynamically replaceable behind Blitsen's own ABI.
+underway. The [acquisition decision](docs/JSC.md) chose JavaScriptCore and was superseded by
+[`spikes/s8`](spikes/s8/README.md), which measured QuickJS-ng behind the same engine-neutral trait:
+120 golden frames pixel-identical, 59.6 fps windowed, MIT rather than LGPL, and statically linked.
 
 ## Size
 
 Every size figure in this project comes from a measured build, never an estimate. The tracked
 baseline lives in
 [`packages/blitsen/test/metrics/size-baseline.json`](packages/blitsen/test/metrics/size-baseline.json)
-and CI fails on growth beyond 2%. The Phase 1 export carries the whole Bun runtime, which is most of
-it; Phase 2 is where that changes. The original 25–50 MB target was withdrawn when the
-[M0 measurement](docs/M0.md) showed it was unreachable — it is not quietly still being claimed.
+and CI fails on growth beyond 2%. An export links Blitsen's own runtime rather than a copy of Bun,
+which took the standalone Pong build from 144.7 MB to **38.1 MB** on Linux x64 — and that is the
+whole download, because the JavaScript engine is statically linked rather than shipped beside it.
+An application still links Bun when only Bun can run it, which now means one thing: it carries a
+`.node` addon ([migration note](docs/MIGRATION.md)). The original 25–50 MB target was withdrawn
+when the [M0 measurement](docs/M0.md) showed it was unreachable against a design that shipped an
+engine library alongside; the shipped total is now inside it, which is a result of the engine
+choice rather than a walk-back of the measurement.
 
-Phase 1 exports are architecture proofs and are **not yet cleared for redistribution**: the
-automated third-party notice and JSC relinking gate in [LICENSING.md](docs/LICENSING.md) is not
-implemented.
+Exports are architecture proofs and are **not yet cleared for redistribution**: the automated
+third-party notice gate in [LICENSING.md](docs/LICENSING.md) is not implemented. It is a much
+smaller gate than it was — statically linking an MIT engine removed the relinking flow entirely —
+but until it exists and passes, `blitsen build` says so on every run.
 
 ## Documentation
 
@@ -89,7 +96,7 @@ more. Rendering gaps found here are [reported upstream](docs/BLITZ-GAPS.md) with
 ## Licence
 
 Blitsen source is dual-licensed under Apache-2.0 or MIT. Exported applications also contain
-third-party components with their own terms. In particular, JavaScriptCore includes LGPL-family
-code: closed-source applications are supported, but exporters must preserve notices and source
-offers, and a recipient's ability to replace or relink JSC. Read
-[docs/LICENSING.md](docs/LICENSING.md) before distributing an application.
+third-party components with their own terms — the JavaScript engine is MIT, and the most demanding
+term in the tree is Stylo's file-level MPL-2.0. Closed-source applications are supported. An export
+that carries a `.node` addon links the Bun host instead and inherits LGPL obligations through it.
+Read [docs/LICENSING.md](docs/LICENSING.md) before distributing an application.

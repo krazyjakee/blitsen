@@ -204,6 +204,20 @@ const NATIVE_ABSENT = {
   "clipboard.writeMime": "The counterpart of `readMime`, absent for the same reason.",
 };
 
+// Globals the *engine* supplies rather than the bridge, so their status cannot
+// be read out of `dom_bridge.rs` like everything else here.
+//
+// Blitsen hosts QuickJS-ng (docs/JSC.md, superseded by spikes/s8), which ships
+// no `Intl` and no `WebAssembly`. Nothing in Blitsen deletes them — they were
+// never installed — so the bootstrap-deletion invariants below do not apply and
+// these are declared here instead. `cli-doctor.test.mjs` runs the built runtime
+// and fails if it disagrees, which is what keeps this list from drifting into
+// fiction the way an unverified declaration would.
+const ENGINE_ABSENT = {
+  WEB_INTL: ["Intl"],
+  WEB_WASM: ["WebAssembly"],
+};
+
 // What `doctor` says about a group whose APIs turn out to be absent, plus an
 // optional pattern for a usage that names no API at all.
 //
@@ -226,6 +240,12 @@ const NATIVE_ABSENT = {
 // declared per group: the day an absence is fatal however it is written, it is
 // graded here rather than around here.
 const DIAGNOSTICS = {
+  WEB_INTL: ["warning", "Intl is not implemented by the JavaScript engine Blitsen hosts.",
+    "Format in application code or ship a polyfill. The `toLocale*` methods still exist and "
+    + "still return a string, but they ignore the locale they are given — (1234.5)"
+    + ".toLocaleString('de-DE') is '1234.5' — so a missed one is wrong output, not an error."],
+  WEB_WASM: ["warning", "WebAssembly is not implemented by the JavaScript engine Blitsen hosts.",
+    "Ship a JavaScript build of the module, or keep the work in a native addon."],
   WEB_DOM: ["warning", "This DOM method is not implemented.",
     "Use the document-level lookups and node methods listed in COMPATIBILITY.md."],
   WEB_FORM_CONTROLS: ["warning", "This form-control API is not implemented.",
@@ -540,6 +560,12 @@ export function buildManifest(script) {
   const surface = extractRuntimeSurface(script);
   const apis = Object.entries(CATALOGUE)
     .flatMap(([code, names]) => names.map(api => apiEntry(surface, api, code)));
+  // Declared, not derived: see ENGINE_ABSENT. Appended after the invariants
+  // below have run against the bridge's own surface, so an engine absence
+  // cannot be mistaken for a bridge one.
+  const engineApis = Object.entries(ENGINE_ABSENT).flatMap(([code, names]) => names.map(api =>
+    ({ api, kind: "global", status: "absent", origin: "engine", code,
+      pattern: `(?<![.\\w$])${api}\\b` })));
 
   const described = new Set(apis.filter(entry => entry.kind === "global").map(entry => entry.api));
   const undescribed = surface.globals.filter(name => !described.has(name));
@@ -562,7 +588,7 @@ export function buildManifest(script) {
   return {
     generatedBy: `packages/blitsen/src/api-manifest.mjs from ${SOURCE_NAME}`,
     profile: "v0-strict",
-    apis,
+    apis: [...apis, ...engineApis],
     native: nativeEntries(surface),
     diagnostics: Object.fromEntries(Object.entries(DIAGNOSTICS)
       .map(([code, [severity, message, guidance, extra]]) =>

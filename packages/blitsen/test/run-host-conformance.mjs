@@ -19,7 +19,7 @@ import { resolvePhase2Runtime } from "../src/runtime.mjs";
 const CLI = join(repository, "packages/blitsen/bin/blitsen.mjs");
 const HOSTS = [
   { host: "bun", label: "Phase 1 (Bun)" },
-  { host: "jsc", label: "Phase 2 (embedded JSC)" },
+  { host: "blitsen", label: "Blitsen runtime (QuickJS-ng)" },
 ];
 
 // Everything in the CLI's output that is allowed to differ between two runs of

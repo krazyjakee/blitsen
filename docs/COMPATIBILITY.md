@@ -729,6 +729,8 @@ determinism gate instead.
 | WEB_OBSERVER | `ResizeObserver` | `IntersectionObserver`, `PerformanceObserver` |
 | WEB_STYLE | `getComputedStyle`, `matchMedia`, `MediaQueryList`, `MediaQueryListEvent`, `CSS`, `CSSStyleSheet`, `StyleSheetList`, `CSSRule`, `CSSRuleList`, `HTMLStyleElement`, `document.styleSheets`, `HTMLStyleElement.sheet`, `HTMLLinkElement.sheet`, `CSSStyleSheet.cssRules`, `CSSStyleSheet.insertRule`, `CSSStyleSheet.deleteRule`, `CSSStyleSheet.ownerNode`, `CSSStyleSheet.href`, `CSSStyleSheet.title`, `CSSRule.cssText`, `CSSRule.parentStyleSheet` | `CSSStyleRule`, `CSSKeyframesRule`, `CSSKeyframeRule`, `CSSMediaRule`, `document.adoptedStyleSheets`, `CSSStyleSheet.disabled`, `CSSStyleSheet.replaceSync`, `CSSStyleSheet.replace`, `CSSRule.style`, `CSSRule.selectorText`, `CSSRule.type` |
 | WEB_COMPONENTS | `DOMParser` | `customElements`, `ShadowRoot` |
+| WEB_INTL | — | `Intl` |
+| WEB_WASM | — | `WebAssembly` |
 
 | Diagnostic | Severity | Reported as |
 | --- | --- | --- |
@@ -755,6 +757,8 @@ determinism gate instead.
 | `WEB_OBSERVER` | warning | This observer is not implemented; only ResizeObserver is. |
 | `WEB_STYLE` | warning | This part of CSSOM is not implemented; a sheet's rules are its source text. |
 | `WEB_COMPONENTS` | warning | Custom elements and shadow DOM are not implemented; DOMParser is. |
+| `WEB_INTL` | warning | Intl is not implemented by the JavaScript engine Blitsen hosts. |
+| `WEB_WASM` | warning | WebAssembly is not implemented by the JavaScript engine Blitsen hosts. |
 | `CSS_TRANSITION` | warning | A property named by `transition` keeps its pre-stylesheet value (Blitz bug 689). |
 | `CSS_FIXED` | warning | Fixed and sticky boxes resolve against the root box, not the viewport (Blitz bug 690). |
 | `CSS_EFFECT` | warning | This paint effect is ignored rather than applied. |

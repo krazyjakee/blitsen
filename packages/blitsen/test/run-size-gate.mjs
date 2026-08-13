@@ -8,7 +8,7 @@ import { formatBytes, measureExport } from "./measure-export.mjs";
 
 const baselineFile = join(import.meta.dir, "metrics/size-baseline.json");
 const COMPONENTS = {
-  bunRuntimeBytes: "Bun runtime",
+  hostRuntimeBytes: "host runtime",
   nativeAddonBytes: "native addon",
   applicationBytes: "application assets",
   packagingBytes: "packaging",
@@ -29,6 +29,7 @@ if (update) {
     commit: record.commit,
     bun: record.bun,
     rustc: record.rustc,
+    host: record.host,
     installedBytes: record.size.installedBytes,
     compressedBytes: record.size.compressedBytes,
     components: record.size.components,
@@ -67,6 +68,11 @@ const notes = [];
 if (!previous) {
   notes.push(`No committed baseline for ${record.platform}: the gate is reporting only. `
     + "Record one with `bun test/run-size-gate.mjs --update` on that platform.");
+} else if (previous.host !== record.host) {
+  // A host swap is a different artifact, not a drift in this one: the gate is
+  // measuring two things and the delta between them means nothing.
+  notes.push(`Host changed since the baseline (${previous.host ?? "bun"} -> ${record.host}); `
+    + "this is a migration, not drift. Re-record the baseline on the new host.");
 } else if (previous.bun !== record.bun || previous.rustc !== record.rustc) {
   notes.push(`Toolchain moved since the baseline (bun ${previous.bun} -> ${record.bun}, `
     + `${previous.rustc} -> ${record.rustc}); part of the delta is not Blitsen's.`);

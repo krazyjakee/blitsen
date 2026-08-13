@@ -2,7 +2,7 @@ import { access, copyFile, mkdir, readFile, readdir, rm, stat, writeFile } from 
 import { basename, dirname, extname, isAbsolute, join, posix, relative, resolve, sep } from "node:path";
 import { linkBundle } from "./bundle.mjs";
 import { packageBuild, signArtifact } from "./packaging.mjs";
-import { describeRuntime, exportHost, hostTarget, resolvePhase2Runtime } from "./runtime.mjs";
+import { describeRuntime, hostTarget, requestedHost, resolvePhase2Runtime } from "./runtime.mjs";
 
 // Blitsen names a target the way Node does — `process.platform`-`process.arch` —
 // and Bun names its own compile targets differently. This is the whole of the
@@ -434,6 +434,56 @@ function summarize(paths, limit = 5) {
   return paths.length > limit ? `${shown}, and ${paths.length - limit} more` : shown;
 }
 
+const MODULE_SCRIPT = /<script\b[^>]*\btype\s*=\s*["']module["']/i;
+// What only a module can contain. `import(` is here because a classic script
+// that dynamically imports needs the same loader the static form does.
+const MODULE_SYNTAX = /^\s*(?:import|export)\s|[\s;}]import\s*[({"'`]|\bimport\.meta\b/m;
+
+/**
+ * Whether this file needs a JavaScript module loader to run.
+ *
+ * Deliberately generous: a false positive costs an export the bytes of the
+ * bigger host, a false negative ships an application that refuses to start in
+ * front of whoever runs it. `source` is the text, or a thunk for a file that
+ * has not been read — most assets are neither HTML nor script and are never
+ * opened for this.
+ */
+async function needsModuleLoader(path, source) {
+  const extension = extname(path).toLowerCase();
+  if (extension === ".mjs") return true;
+  const html = HTML_EXTENSIONS.includes(extension);
+  if (!html && !SCRIPT_EXTENSIONS.includes(extension)) return false;
+  const text = typeof source === "function" ? await source() : source;
+  return html ? MODULE_SCRIPT.test(text) : MODULE_SYNTAX.test(text);
+}
+
+/**
+ * Whether the JavaScriptCore a Phase 2 export would load can evaluate modules.
+ *
+ * Asked of the runtime itself — `--engine-report` loads the library the export
+ * will load and says what it found — because the answer is a property of the
+ * machine, not of this package. Unanswerable counts as no: a cross-target build
+ * cannot run the target's runtime, and an unknown is not a yes when being wrong
+ * means shipping an application that will not start.
+ */
+async function phase2LoadsModules(target) {
+  if (target !== hostTarget()) return false;
+  const runtime = await resolvePhase2Runtime({ target }).catch(() => null);
+  if (runtime === null) return false;
+  try {
+    const report = Bun.spawnSync({
+      cmd: [runtime.path, "--engine-report"], stdout: "pipe", stderr: "pipe",
+    });
+    if (report.exitCode !== 0) return false;
+    const parsed = JSON.parse(report.stdout.toString());
+    return parsed.loaded === true && parsed.modules === true;
+  } catch {
+    // Not runnable, or it answered with something that is not the report: both
+    // are "this machine cannot tell us", which is not a yes.
+    return false;
+  }
+}
+
 export async function buildStandalone(
   {
     root, width, height, title, outfile, force = false, include = [], addons = [],
@@ -453,11 +503,11 @@ export async function buildStandalone(
       + `but this build targets ${buildTarget}`);
   }
   const nativePath = linkedRuntime.path;
-  // Which host this export links into. Not a flag and not a config key: the
-  // npm surface is identical across the swap (TECH.md §16.7), so the choice
-  // comes from the environment and defaults to Phase 1.
-  const host = exportHost();
-  const phase2Runtime = host === "jsc" ? await resolvePhase2Runtime({ target: buildTarget }) : null;
+  // Which host this export links into is not a flag and not a config key: the
+  // npm surface is identical across the swap (TECH.md §16.7). Unset — the
+  // ordinary case — the exporter decides once it knows what the application
+  // carries, below; BLITSEN_HOST overrides that decision either way.
+  const requested = requestedHost();
   if (!["embedded", "side-loaded"].includes(assets)) {
     throw new Error(`unknown asset layout: ${assets} (expected embedded or side-loaded)`);
   }
@@ -509,6 +559,7 @@ export async function buildStandalone(
   await rm(staging, { recursive: true, force: true });
   try {
     const manifest = [];
+    let usesModules = false;
     for (const [path, absolute] of [...carried].sort(([left], [right]) => left.localeCompare(right))) {
       const staged = join(staging, "app", ...path.split("/"));
       await mkdir(dirname(staged), { recursive: true });
@@ -520,8 +571,10 @@ export async function buildStandalone(
           reference => resolutions?.get(reference) ?? null,
         );
         await writeFile(staged, source);
+        usesModules ||= await needsModuleLoader(path, source);
       } else {
         await copyFile(absolute, staged);
+        usesModules ||= await needsModuleLoader(path, () => readFile(absolute, "utf8"));
       }
       // Checked however it arrived: declared, reached from a script, or kept by
       // --include. A carried addon that cannot load is worse than an absent one.
@@ -530,6 +583,28 @@ export async function buildStandalone(
       manifest.push({ path, hash: await hashFile(staged), ...native ? { native: true } : {} });
     }
     const carriedAddons = manifest.filter(asset => asset.native).map(asset => asset.path);
+    // The host, now that the application is known. Small by default, and the two
+    // things that override that are capabilities rather than preferences:
+    //
+    //   - A `.node` addon is Node-API, and `createRequire` is Bun's. The Phase 2
+    //     host has no way to load one (TECH.md §12).
+    //   - A module script needs the loader entry point that Blitsen's pinned
+    //     JavaScriptCore adds (docs/JSC.md). Until that engine ships, an export
+    //     may be linked against a system library that lacks it, and the failure
+    //     lands on whoever runs the application rather than on whoever built it.
+    //
+    // Either way the export links Phase 1 and pays a copy of Bun for it, because
+    // a smaller executable that cannot run the application is not smaller.
+    const engineLoadsModules = requested !== null || carriedAddons.length > 0 || !usesModules
+      ? null
+      : await phase2LoadsModules(buildTarget);
+    const host = requested
+      ?? (carriedAddons.length > 0 || engineLoadsModules === false ? "bun" : "blitsen");
+    if (host === "blitsen" && carriedAddons.length > 0) {
+      throw new Error(`BLITSEN_HOST=blitsen cannot load a carried native addon `
+        + `(${summarize(carriedAddons)}): the Phase 2 host has no Node-API. `
+        + "Drop the addon, or leave BLITSEN_HOST unset and the export links the host that can.");
+    }
     progress({
       step: "collect",
       detail: `${manifest.length} ${assets} assets`,
@@ -542,10 +617,26 @@ export async function buildStandalone(
           `carried ${carriedAddons.length} native `
           + `${carriedAddons.length === 1 ? "addon" : "addons"}: ${summarize(carriedAddons)} `
           + "(load one from a module script with createRequire(import.meta.url))",
+          "linked the Bun host, which is the one that can load a Node-API addon: "
+          + "this export carries a copy of Bun and is roughly 95 MB larger than one without",
+        ],
+        ...engineLoadsModules !== false ? [] : [
+          "this application uses module scripts and the JavaScriptCore available here cannot "
+          + "load them, so the export linked the Bun host and is roughly 95 MB larger: "
+          + "point BLITSEN_JSC_LIBRARY at a build with JSLoadAndEvaluateModuleFromSource "
+          + "(docs/JSC.md) and it links the small one",
         ],
       ],
     });
-    if (host === "jsc") {
+    // After the checks above, deliberately: `fetch` is on the same terms as the
+    // addon's own resolution (#72) — a build for this host never reaches the
+    // network, and a cross-target one has no other way to obtain that target's
+    // runtime — and a build that is already going to be refused should be
+    // refused before it downloads anything.
+    const phase2Runtime = host === "blitsen"
+      ? await resolvePhase2Runtime({ target: buildTarget, fetch: buildTarget !== hostTarget() })
+      : null;
+    if (host === "blitsen") {
       // Phase 2 step ④: the application is appended to Blitsen's own runtime
       // as a binary section (TECH.md §10, issue #88). No launcher and no Bun —
       // the executable reads its own bundle at startup.
@@ -553,8 +644,14 @@ export async function buildStandalone(
       for (const entry of manifest) {
         files.set(entry.path, await readFile(join(staging, "app", ...entry.path.split("/"))));
       }
+      // Issue #73: an export names the runtime it was built against, in the
+      // binary and at run time — the same record the Phase 1 launcher carries,
+      // minus the linking path, which is machine-local. Written compactly so
+      // the record survives as a contiguous literal a shipped artifact can be
+      // searched for, exactly as it does on the other host.
+      const { path: _linkedPath, ...stamp } = linkedRuntime;
       files.set("blitsen.runtime.json", Buffer.from(
-        `${JSON.stringify({ width, height, title, layout: assets }, null, 2)}\n`));
+        `${JSON.stringify({ width, height, title, layout: assets, runtime: stamp })}\n`));
       await linkBundle({ runtime: phase2Runtime.path, output: destination, files });
     } else {
       await copyFile(nativePath, join(staging, "blitsen.node"));

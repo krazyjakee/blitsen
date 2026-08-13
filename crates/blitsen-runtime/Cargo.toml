@@ -12,11 +12,25 @@ publish.workspace = true
 name = "blitsen-runtime"
 path = "src/main.rs"
 
+# Which engine this runtime hosts. QuickJS-ng is the shipping one: statically
+# linked, MIT, and gated on the 120 golden frames in `spikes/s8`. The
+# JavaScriptCore build is kept because it is the other half of the conformance
+# suite and the way a regression gets bisected across engines — not because an
+# export ever links it. Both satisfy the same `JsEngine` trait, so only
+# `engine.rs` knows which is present.
+[features]
+default = ["quickjs"]
+quickjs = ["dep:blitsen-quickjs"]
+# The JavaScriptCore shim is only linked when it is the engine, so a QuickJS
+# build carries no dynamic-loading machinery it will never call.
+javascriptcore = ["dep:blitsen-jsc"]
+
 [dependencies]
 blitsen-core = { path = "../blitsen-core" }
 blitsen-host = { path = "../blitsen-host" }
-blitsen-jsc = { path = "../blitsen-jsc" }
+blitsen-jsc = { path = "../blitsen-jsc", optional = true }
 blitsen-js = { path = "../blitsen-js" }
+blitsen-quickjs = { path = "../blitsen-quickjs", optional = true }
 serde_json = "1"
 
 [lints]

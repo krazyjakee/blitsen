@@ -1,0 +1,16 @@
+[package]
+name = "blitsen-quickjs"
+description = "Statically linked QuickJS-ng support for the Phase 2 host"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+blitsen-js = { path = "../blitsen-js" }
+rquickjs-sys = "0.12.2"
+
+[lints]
+workspace = true

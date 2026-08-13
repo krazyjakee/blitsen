@@ -11,76 +11,70 @@ This document records the project's distribution design, not legal advice.
 Anyone shipping a commercial runtime should have the final packaging and notice
 flow reviewed by qualified counsel.
 
-## JavaScriptCore is the important exception
+## The engine is no longer the hard part
 
-WebKit is a per-file mixture of BSD-style and GNU Library/Lesser GPL code. The
-exact Bun WebKit revision used by S0 contains GNU Library GPL v2-or-later files
-inside JavaScriptCore and WTF, so the JSC archive must be treated as an
-LGPL-family library even though most files are BSD-licensed.
+Blitsen hosts **QuickJS-ng, statically linked, under the MIT licence**. That is
+a deliberate change from JavaScriptCore and the reason for it was mostly this
+document: the JSC path was viable but expensive, and the expense was legal
+machinery rather than engineering.
 
-This is also Bun's stated interpretation. Bun 1.3.14's `LICENSE.md` says that it
-statically links LGPL-2 JavaScriptCore and that static-link recipients must be
-given the material needed to modify JSC and relink Bun.
+What the swap removed:
 
-Authoritative references:
+| Under JavaScriptCore | Under QuickJS-ng |
+|---|---|
+| LGPL-family library (WebKit is a per-file BSD/LGPL mixture) | MIT |
+| Engine **must** be dynamically loaded and replaceable | Statically linked; nothing ships beside the executable |
+| Complete corresponding source and a durable offer | Copyright notice and permission text |
+| A reproducible relink flow the recipient can run | — |
+| Packaging must not defeat library replacement | — |
+| 32 MB library alongside every export | — |
 
-- [WebKit licensing](https://webkit.org/licensing-webkit/)
-- [WebKit licensing documentation](https://docs.webkit.org/Other/Licensing.html)
-- [GNU Library GPL 2.0, especially section 6](https://www.gnu.org/licenses/old-licenses/lgpl-2.0.html)
-- [Bun 1.3.14 licence and relinking instructions](https://github.com/oven-sh/bun/blob/bun-v1.3.14/LICENSE.md)
-- [the pinned Bun WebKit source](https://github.com/oven-sh/WebKit/tree/447082ab6897278727b44e1ba3c326ae6e1504c3)
+MIT requires that the copyright notice and permission notice travel with the
+software. That is a notice-embedding problem, which is tractable and automatable
+in a way that "ship a relinkable runtime and a build system" was not.
 
-The practical result is good but conditional: closed-source applications may
-use and distribute JSC without licensing the application under the LGPL, as
-long as the distributor satisfies the library notices, source, modification,
-reverse-engineering, and replacement/relinking conditions.
+The history is kept rather than deleted: [`JSC.md`](JSC.md) records the
+acquisition decision and why it was made, and [`spikes/s8`](../spikes/s8/README.md)
+records the measurements that superseded it.
 
-## Phase 1: Bun-hosted exports
+## What an export must carry
 
-Bun itself is MIT-licensed, but its binary statically contains JSC and other
-third-party libraries. A Phase 1 export therefore must embed and expose:
+Every dependency's terms still apply — the engine stopped being special, it did
+not stop existing. An export links Blitz, Stylo, Vello, wgpu, winit, Taffy,
+QuickJS-ng and their transitive dependencies, and the notices for all of them
+must travel with the artifact.
 
-- Bun's complete `LICENSE.md` and all required third-party notices;
-- the exact Bun and patched WebKit revisions used by the export;
-- a durable source/download offer and the build instructions needed to relink
-  Bun with a modified JSC; and
-- terms that do not prohibit modification or reverse engineering for debugging
-  such modifications.
+Two of those deserve naming:
 
-The application HTML/CSS/JS is an interpreted payload, not part of the native
-link. Blitsen's engineering position is that this keeps the application source
-outside the JSC relinking material, but that boundary must be included in the
-pre-release legal review. The exporter must make it possible to reattach the
-unchanged application payload to a compliant rebuilt runtime.
+- **Stylo is MPL-2.0**, file-level. Distributing it in binary form requires
+  making the covered source available. This is now the most demanding term in
+  the tree, which was not true while JSC was in it.
+- **QuickJS-ng is MIT**, requiring the copyright and permission notice.
 
-## Phase 2: dynamically replaceable JSC by default
+The application's own HTML, CSS and JavaScript is an interpreted payload read
+out of a bundle section at startup. It is not part of the native link and no
+dependency's terms reach it.
 
-Production Phase 2 exports will dynamically load JSC. The default JSC shared
-library may be carried beside the executable or extracted from a one-file
-wrapper, but the runtime must provide a documented way to load a user-supplied,
-ABI-compatible replacement. Packaging, signatures, or checksums must not make
-that replacement impossible.
+## Phase 1 exports still carry Bun's terms
 
-This is the clean closed-source path: the application can remain proprietary,
-while recipients can replace JSC without relinking or receiving application
-objects. Exports must still carry the LGPL text, copyright notices, exact JSC
-source and patch offer, and the replacement instructions.
+An application that carries a `.node` addon still links the Bun host, because
+Node-API is Bun's to provide (TECH.md §12). Bun itself is MIT, but its binary
+statically contains JSC, so a Phase 1 export inherits the whole LGPL flow this
+document used to be about: Bun's complete `LICENSE.md`, the exact Bun and
+WebKit revisions, a durable source offer, relink instructions, and terms that
+permit modification and reverse engineering for debugging.
 
-Static JSC linking remains useful for internal spikes such as S0. It is not the
-default export architecture. A future static export mode may ship only after it
-can automatically provide all of the following:
-
-- complete corresponding JSC source, including Blitsen/Bun patches and build
-  scripts;
-- relinkable Blitsen runtime object code or source;
-- a reproducible command that rebuilds with a modified JSC and reattaches the
-  unchanged application payload; and
-- the notices and permissions required by section 6, without LTO or signing
-  preventing the recipient's modified executable from running.
+This is now a second reason to want the `.node` escape hatch to be rare, beyond
+the 95 MB it costs. It is the only path that still needs the relinking flow.
 
 ## Exporter acceptance gate
 
 No `blitsen build` command may claim redistribution compliance until an
-automated test extracts the embedded notices/source offer, substitutes a
-compatible JSC library (or completes the static relink flow), and launches the
-result. Each platform package needs its own audited third-party manifest.
+automated test extracts the embedded notices from a built artifact and checks
+them against the dependency tree that produced it. Each platform package needs
+its own audited third-party manifest.
+
+That gate is unchanged in principle and much cheaper in practice: for a default
+export it is now "are the notices present and complete", with no substitution of
+an engine library and no relink flow to complete. Until it exists and passes,
+`blitsen build` says so on every run, and it is not implemented yet (#121).

@@ -2520,6 +2520,22 @@
       "status": "implemented",
       "code": "WEB_COMPONENTS",
       "pattern": "(?<![.\\w$])DOMParser\\b"
+    },
+    {
+      "api": "Intl",
+      "kind": "global",
+      "status": "absent",
+      "origin": "engine",
+      "code": "WEB_INTL",
+      "pattern": "(?<![.\\w$])Intl\\b"
+    },
+    {
+      "api": "WebAssembly",
+      "kind": "global",
+      "status": "absent",
+      "origin": "engine",
+      "code": "WEB_WASM",
+      "pattern": "(?<![.\\w$])WebAssembly\\b"
     }
   ],
   "native": [
@@ -2763,6 +2779,18 @@
     }
   ],
   "diagnostics": {
+    "WEB_INTL": {
+      "severity": "warning",
+      "message": "Intl is not implemented by the JavaScript engine Blitsen hosts.",
+      "guidance": "Format in application code or ship a polyfill. The `toLocale*` methods still exist and still return a string, but they ignore the locale they are given — (1234.5).toLocaleString('de-DE') is '1234.5' — so a missed one is wrong output, not an error.",
+      "extra": null
+    },
+    "WEB_WASM": {
+      "severity": "warning",
+      "message": "WebAssembly is not implemented by the JavaScript engine Blitsen hosts.",
+      "guidance": "Ship a JavaScript build of the module, or keep the work in a native addon.",
+      "extra": null
+    },
     "WEB_DOM": {
       "severity": "warning",
       "message": "This DOM method is not implemented.",
