@@ -1,7 +1,8 @@
 import { access, copyFile, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, join, posix, relative, resolve, sep } from "node:path";
+import { linkBundle } from "./bundle.mjs";
 import { packageBuild, signArtifact } from "./packaging.mjs";
-import { describeRuntime, hostTarget } from "./runtime.mjs";
+import { describeRuntime, exportHost, hostTarget, resolvePhase2Runtime } from "./runtime.mjs";
 
 // Blitsen names a target the way Node does — `process.platform`-`process.arch` —
 // and Bun names its own compile targets differently. This is the whole of the
@@ -452,6 +453,11 @@ export async function buildStandalone(
       + `but this build targets ${buildTarget}`);
   }
   const nativePath = linkedRuntime.path;
+  // Which host this export links into. Not a flag and not a config key: the
+  // npm surface is identical across the swap (TECH.md §16.7), so the choice
+  // comes from the environment and defaults to Phase 1.
+  const host = exportHost();
+  const phase2Runtime = host === "jsc" ? await resolvePhase2Runtime({ target: buildTarget }) : null;
   if (!["embedded", "side-loaded"].includes(assets)) {
     throw new Error(`unknown asset layout: ${assets} (expected embedded or side-loaded)`);
   }
@@ -539,21 +545,34 @@ export async function buildStandalone(
         ],
       ],
     });
-    await copyFile(nativePath, join(staging, "blitsen.node"));
-    const launcher = join(staging, "launcher.mjs");
-    await writeFile(launcher, launcherSource(manifest, {
-      width, height, title, layout: assets, assetDirectory, runtime: linkedRuntime,
-    }));
-    const result = await Bun.build({
-      entrypoints: [launcher],
-      // Bun downloads the target's own runtime to compile against, which is what
-      // makes a cross-target export possible at all: the launcher is bundled
-      // here and linked into that runtime rather than into this host's.
-      compile: { outfile: destination, target: BUN_TARGETS[buildTarget] },
-    });
-    if (!result.success) {
-      const detail = result.logs.map(log => String(log)).join("\n");
-      throw new Error(`standalone compilation failed${detail ? `:\n${detail}` : ""}`);
+    if (host === "jsc") {
+      // Phase 2 step ④: the application is appended to Blitsen's own runtime
+      // as a binary section (TECH.md §10, issue #88). No launcher and no Bun —
+      // the executable reads its own bundle at startup.
+      const files = new Map();
+      for (const entry of manifest) {
+        files.set(entry.path, await readFile(join(staging, "app", ...entry.path.split("/"))));
+      }
+      files.set("blitsen.runtime.json", Buffer.from(
+        `${JSON.stringify({ width, height, title, layout: assets }, null, 2)}\n`));
+      await linkBundle({ runtime: phase2Runtime.path, output: destination, files });
+    } else {
+      await copyFile(nativePath, join(staging, "blitsen.node"));
+      const launcher = join(staging, "launcher.mjs");
+      await writeFile(launcher, launcherSource(manifest, {
+        width, height, title, layout: assets, assetDirectory, runtime: linkedRuntime,
+      }));
+      const result = await Bun.build({
+        entrypoints: [launcher],
+        // Bun downloads the target's own runtime to compile against, which is what
+        // makes a cross-target export possible at all: the launcher is bundled
+        // here and linked into that runtime rather than into this host's.
+        compile: { outfile: destination, target: BUN_TARGETS[buildTarget] },
+      });
+      if (!result.success) {
+        const detail = result.logs.map(log => String(log)).join("\n");
+        throw new Error(`standalone compilation failed${detail ? `:\n${detail}` : ""}`);
+      }
     }
     if (assets === "side-loaded") {
       await rm(sideLoaded, { recursive: true, force: true });
@@ -597,6 +616,7 @@ export async function buildStandalone(
     });
     return {
       outfile: executable,
+      host,
       runtime: linkedRuntime,
       layout: assets,
       assets: manifest.length,

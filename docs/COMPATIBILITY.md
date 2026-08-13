@@ -639,7 +639,7 @@ Phase 1 Bun host supplies itself: they are deleted while the runtime installs, b
 that works today and vanishes at the Phase 2 engine swap is worse than one that was never there.
 
 The tables below are **generated from the runtime source**. The surface is installed by
-`crates/blitsen-node/src/dom_bridge.rs`, and `packages/blitsen/src/api-manifest.mjs` reads that
+`crates/blitsen-host/src/dom_bridge.rs`, and `packages/blitsen/src/api-manifest.mjs` reads that
 file: which globals it defines, what each class declares, and which globals it deletes. `blitsen
 doctor` reports from the same manifest, and the native harness asserts every absent entry is
 genuinely `undefined` in a real runtime — so the diagnostics, this document and the runtime
@@ -734,8 +734,8 @@ import app from "blitsen/app";
 import clipboard from "blitsen/clipboard";
 ```
 
-**`native:` is additive, never a superset** (TECH.md §9). Anything Node already names keeps its
-Node name — the command line is `process.argv`, the executable is `process.execPath`, stopping is
+**`native:` is additive, never a superset** (TECH.md §9). Under the Phase 1 host, anything Node
+already names keeps its Node name — the command line is `process.argv`, the executable is `process.execPath`, stopping is
 `process.exit`, CPU and platform facts are `node:os`, and files are `node:fs`. So there is no
 `app.argv` and no `app.quit`: a `native:` member exists only where neither Node nor the web has a
 word for the thing.
@@ -752,6 +752,34 @@ if (app.requestSingleInstanceLock && !app.requestSingleInstanceLock("My App", re
 ```
 
 The tables are generated from the same runtime source as the tiers above, by the same reader.
+
+### Node compatibility in the shipped runtime
+
+Phase 1 ran inside Bun, so `process`, `node:os` and `node:fs` came free with the host. **The Phase 2
+runtime implements none of them, and this is a decision rather than a gap** (issue #87).
+
+Blitsen hosts JavaScriptCore itself and supplies only what the DOM and the application actually
+rely on: timers, a microtask checkpoint, `performance`, `console`, `reportError`, `DOMException`,
+and the web surface in the tables above. Implementing Node's module surface on top of that would
+mean reimplementing a large, under-specified API with no conformance corpus, to serve applications
+whose input is by definition browser-targeted static output — and every megabyte of it would ship
+in every export, which is what Phase 2 exists to stop.
+
+What replaces it:
+
+| Phase 1 | Phase 2 |
+| --- | --- |
+| `process.argv` | `app.secondInstance` invocations, or the platform's own launch arguments |
+| `process.exit` | closing the window |
+| `node:os` facts | `blitsen/os` |
+| `node:fs` under the app directory | `blitsen/app` directories, and the application's own bundled files |
+| `import("node:anything")` | refused at resolution, naming the alternative |
+
+That refusal is the point of listing this here rather than in a release note: an import of a
+builtin fails with a message that says the runtime implements no `node:fs` and points at
+`blitsen/*`, so the absence is detectable and attributable rather than a blank window
+(structural constraint 4). The paragraph above about Node keeping its Node names describes the
+Phase 1 host; where Phase 2 has no Node name to keep, the `blitsen/*` module is the whole API.
 
 ### TypeScript
 

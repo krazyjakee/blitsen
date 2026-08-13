@@ -9,7 +9,6 @@ use std::path::Path;
 use std::ptr;
 
 use base64::Engine as _;
-use blitsen_dom::DomError;
 use blitsen_js::{
     ExternalId, JsEngine, JsError, JsType, LoopTurn, NativeCall, NativeCallback, NativeClass,
     TypedArray, TypedArrayKind,
@@ -20,21 +19,11 @@ use napi::{Env, JsValue, Status, ValueType, sys};
 #[cfg(target_os = "macos")]
 use winit::application::macos::ApplicationHandlerExtMacOS;
 
-pub(crate) fn callback_string(value: &Unknown<'static>) -> Result<String, JsError> {
-    let value = value.value();
-    // SAFETY: callback arguments are live handles in their originating env.
-    unsafe { String::from_napi_value(value.env, value.value) }.map_err(js_error)
-}
-
 pub(crate) fn js_error(error: napi::Error) -> JsError {
     JsError::new(error.reason)
 }
 
 pub(crate) fn napi_error(error: JsError) -> napi::Error {
-    napi::Error::new(Status::GenericFailure, error.to_string())
-}
-
-pub(crate) fn dom_error(error: DomError) -> napi::Error {
     napi::Error::new(Status::GenericFailure, error.to_string())
 }
 
@@ -137,6 +126,11 @@ unsafe extern "C" fn finalize_instance(_env: sys::napi_env, data: *mut c_void, _
 ///
 /// Values are scoped Node-API handles. Persistent bridge state must retain
 /// objects through [`NodeWeakRef`] or a JavaScript-owned property.
+///
+/// Cloning produces another view of the same environment. The environment
+/// pointer outlives every addon call, so a clone may be stored; the handles it
+/// produces may not.
+#[derive(Clone, Copy)]
 pub struct NodeApiEngine {
     env: Env,
 }
@@ -160,6 +154,12 @@ impl JsEngine for NodeApiEngine {
     type Value = Unknown<'static>;
     type WeakRef = NodeWeakRef;
     type Class = NodeClass;
+
+    fn from_value(value: &Self::Value) -> Self {
+        // Every Node-API handle records the environment that produced it, and a
+        // callback argument is by definition live in the current one.
+        Self::new(Env::from_raw(value.value().env))
+    }
 
     fn undefined(&mut self) -> Self::Value {
         let mut value = ptr::null_mut();

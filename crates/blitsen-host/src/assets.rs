@@ -6,7 +6,9 @@ use blitsen_blitz::BlitzDom;
 use blitsen_dom::DomBackend;
 use blitsen_js::JsError;
 
-pub(crate) fn validate_local_assets(
+/// Refuses a document whose subresources are remote or escape the application
+/// directory, before anything is rendered from it.
+pub fn validate_local_assets(
     document: &BlitzDom,
     root: &Path,
     entrypoint: &Path,

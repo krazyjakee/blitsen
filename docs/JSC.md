@@ -56,6 +56,33 @@ On Linux development machines, the loader also probes installed JavaScriptCoreGT
 libraries. Those fallbacks are for development only; exported applications carry the pinned
 Blitsen engine artifact.
 
+## Module loader contract
+
+The public JavaScriptCore C API has no module loader hook, and neither does the GLib API — checked
+against `libjavascriptcoregtk-6.0.so.1`, whose only evaluation entry points are `JSEvaluateScript`,
+`JSScriptEvaluate` and the three `jsc_context_evaluate*` functions. A bare context's dynamic
+`import()` rejects with "Could not import the module". Blitsen's pinned build therefore exports one
+additional symbol, and `crates/blitsen-jsc` loads it optionally:
+
+```c
+// Points the context's module loader at two ordinary JavaScript functions.
+//   resolve(referrerUrl, specifier) -> url
+//   fetch(url) -> source
+JS_EXPORT void JSGlobalContextSetModuleLoaderFunctions(
+    JSGlobalContextRef context, JSObjectRef resolve, JSObjectRef fetch);
+```
+
+JavaScript functions rather than C callbacks, deliberately: the loader already works in `JSValue`s,
+it keeps this side of the ABI to a single symbol, and it leaves every policy decision — what a
+specifier means, what the application is allowed to reach — on the host side, in
+[`MODULES.md`](MODULES.md). `JSLoadAndEvaluateModuleFromSource` supplies the entry point for the
+document's own `<script type="module">`.
+
+`JavaScriptCore::supports_modules` reports whether both symbols are present, and
+`blitsen-runtime --engine-report` prints it. Without them the runtime still runs an application
+whose scripts are classic and fails at the first `import` with a message naming the missing symbol,
+rather than opening a blank window.
+
 ## Embedded engine progress
 
 `crates/blitsen-jsc` now implements every method in the engine-neutral `JsEngine` trait over a
@@ -68,13 +95,21 @@ The audit found no Bun or Node-API access in `blitsen-core`, `blitsen-js`, `blit
 `blitsen-node`; Phase 2 needs an equivalent adapter, but that code has not escaped into either
 engine-neutral trait.
 
-Issue #85 remains open for two dependent acceptance boundaries:
+Both dependent boundaries are now closed on the host side.
 
-- Module evaluation uses Bun WebKit's `JSLoadAndEvaluateModuleFromSource` extension. The dynamic
-  loader detects it without making it a requirement for system-JSC conformance tests; the resolver
-  and shipped module graph are issue #86.
-- Bare JSC has no host event loop. Promise checkpoints work at C API boundaries, but timer/I/O turns
-  and the end-of-job boundary that makes weak targets collectible belong to issue #87.
+- **Runtime services (#87).** `blitsen-host::runtime_services` installs what a bare context lacks:
+  a timer queue the outer loop can ask for its next deadline, `queueMicrotask` over the engine's
+  own job queue, `performance`, `reportError`, `DOMException`, and a `console` — the last one
+  *replacing* JSC's, which belongs to the Web Inspector and silently discards every call when no
+  debugger is attached. I/O needed nothing new: `fetch`, `WebSocket` and audio decoding already run
+  on the shared tokio pool and rejoin the main thread at one point in the frame, on both hosts.
+- **Modules (#86).** Resolution, source and reload eviction are implemented and tested against both
+  a directory and an appended bundle. Linking needs the engine hook above.
+
+The audit of structural constraint 1 found one Bun assumption that had escaped the trait: the
+document-reload path cleared Bun's `require` cache through `process.getBuiltinModule("module")`
+unconditionally. It now clears whichever module cache the host has, and a host with none is not an
+error. Nothing else in `blitsen-host` names a JavaScript engine.
 
 The global context and its library intentionally remain process-lived. S0 found that releasing the
 pinned Bun context without Bun's host initialization asserts during atom-table teardown; unloading

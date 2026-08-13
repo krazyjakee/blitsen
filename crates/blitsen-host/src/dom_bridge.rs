@@ -1,16 +1,21 @@
-//! Native DOM object installation for the Bun host.
+//! Native DOM object installation, against whichever engine is hosting.
+//!
+//! Nothing here names a JavaScript host. Callbacks recover their engine from
+//! the value the engine handed them ([`JsEngine::from_value`]), which is the
+//! whole of what the Phase 1 addon previously used a captured `napi_env` for.
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
 use blitsen_core::{WindowState, WrapperTable};
 use blitsen_dom::DomBackend;
-use blitsen_js::{ExternalId, JsEngine, JsError, JsType, NativeClass, TypedArray, TypedArrayKind};
+use blitsen_js::{
+    ExternalId, JsEngine, JsError, JsType, NativeCall, NativeClass, TypedArray, TypedArrayKind,
+};
 use blitz::dom::NodeId;
-use napi::{Env, Unknown, sys};
 use serde_json::{Value, json};
 
-use super::{DomRuntime, NodeApiEngine, NodeWeakRef, callback_string, check, unknown};
+use crate::DomRuntime;
 
 mod audio;
 mod fetch;
@@ -18,7 +23,7 @@ mod native;
 mod ops;
 mod web_socket;
 mod web_url;
-pub(crate) mod window;
+pub mod window;
 mod worker;
 
 // The DOM runtime the application sees, evaluated into the context before any
@@ -46,9 +51,9 @@ const BOOTSTRAP: &str = concat!(
     "})();\n",
 );
 
-/// Installs the real DOM object graph into a Node-API JavaScript environment.
-pub(super) fn install(
-    engine: &mut NodeApiEngine,
+/// Installs the real DOM object graph into a JavaScript environment.
+pub fn install<E: JsEngine + 'static>(
+    engine: &mut E,
     runtime: DomRuntime,
     width: u32,
     height: u32,
@@ -56,8 +61,7 @@ pub(super) fn install(
     test_harness: bool,
 ) -> Result<Rc<RefCell<WindowState>>, JsError> {
     let class = Rc::new(engine.register_class(NativeClass::new("BlitsenNode"))?);
-    let table = Rc::new(WrapperTable::<NodeId, NodeWeakRef>::new());
-    let raw_env = engine.raw_env();
+    let table = Rc::new(WrapperTable::<NodeId, E::WeakRef>::new());
 
     let wrapper_runtime = runtime.clone();
     let wrapper_table = Rc::clone(&table);
@@ -65,10 +69,10 @@ pub(super) fn install(
     let wrap_function = engine.define_function(
         "__blitsenWrap",
         Box::new(move |call| {
-            let handle = argument(&call.arguments, 0, "node handle")?;
+            let mut engine = E::from_value(&call.this);
+            let handle = argument(&mut engine, &call, 0, "node handle")?;
             let node = wrapper_runtime.resolve_handle(&handle)?;
-            let mut callback_engine = NodeApiEngine::new(Env::from_raw(raw_env));
-            wrapper_table.get_or_create(&mut callback_engine, node, |engine, table_finalizer| {
+            wrapper_table.get_or_create(&mut engine, node, |engine, table_finalizer| {
                 wrapper_runtime.retain_handle(&handle)?;
                 let finalizer_runtime = wrapper_runtime.clone();
                 let finalizer_handle = handle.clone();
@@ -93,15 +97,11 @@ pub(super) fn install(
     let call_function = engine.define_function(
         "__blitsenDomCall",
         Box::new(move |call| {
-            let operation = argument(&call.arguments, 0, "operation")?;
-            let arguments = call
-                .arguments
-                .iter()
-                .skip(1)
-                .map(callback_string)
-                .collect::<Result<Vec<_>, _>>()?;
+            let mut engine = E::from_value(&call.this);
+            let operation = argument(&mut engine, &call, 0, "operation")?;
+            let arguments = string_arguments(&mut engine, &call, 1)?;
             let result = ops::dispatch(&dispatch_runtime, &operation, &arguments)?;
-            json_string(raw_env, &result)
+            json_value(&mut engine, &result)
         }),
     )?;
     engine.set_global("__blitsenDomCall", &call_function)?;
@@ -109,18 +109,17 @@ pub(super) fn install(
     let default_scroll_function = engine.define_function(
         "__blitsenScrollDefault",
         Box::new(move |call| {
-            let handle = argument(&call.arguments, 0, "scroll target")?;
-            let delta_x = argument(&call.arguments, 1, "horizontal scroll delta")?
+            let mut engine = E::from_value(&call.this);
+            let handle = argument(&mut engine, &call, 0, "scroll target")?;
+            let delta_x = argument(&mut engine, &call, 1, "horizontal scroll delta")?
                 .parse::<f64>()
                 .map_err(|_| JsError::new("invalid horizontal scroll delta"))?;
-            let delta_y = argument(&call.arguments, 2, "vertical scroll delta")?
+            let delta_y = argument(&mut engine, &call, 2, "vertical scroll delta")?
                 .parse::<f64>()
                 .map_err(|_| JsError::new("invalid vertical scroll delta"))?;
             let node = default_scroll_runtime.resolve_handle(&handle)?;
             let mut document = default_scroll_runtime.document.borrow_mut();
-            document
-                .flush_layout()
-                .map_err(|error| JsError::new(error.to_string()))?;
+            document.flush_layout().map_err(crate::dom_error)?;
             document
                 .document_mut()
                 .scroll_node_by(node, delta_x, delta_y, |_| {});
@@ -132,14 +131,14 @@ pub(super) fn install(
     let viewport_write_function = engine.define_function(
         "__blitsenViewportWrite",
         Box::new(move |call| {
-            let handle = argument(&call.arguments, 0, "viewport handle")?;
+            let mut engine = E::from_value(&call.this);
+            let handle = argument(&mut engine, &call, 0, "viewport handle")?;
             let node = viewport_runtime.resolve_handle(&handle)?;
             let pixels = call
                 .arguments
                 .get(1)
                 .ok_or_else(|| JsError::new("viewport surface contents are required"))?;
-            let mut callback_engine = NodeApiEngine::new(Env::from_raw(raw_env));
-            let pixels = callback_engine.to_typed_array(pixels)?;
+            let pixels = engine.to_typed_array(pixels)?;
             if !matches!(
                 pixels.kind,
                 TypedArrayKind::Uint8 | TypedArrayKind::Uint8Clamped
@@ -152,22 +151,22 @@ pub(super) fn install(
                 .document
                 .borrow_mut()
                 .write_native_viewport(node, &pixels.bytes)
-                .map_err(|error| JsError::new(error.to_string()))?;
+                .map_err(crate::dom_error)?;
             Ok(call.this)
         }),
     )?;
     engine.set_global("__blitsenViewportWrite", &viewport_write_function)?;
-    install_text_codec(engine, raw_env)?;
-    install_fetch(engine, raw_env)?;
-    install_audio(engine, raw_env)?;
-    install_web_socket(engine, raw_env)?;
-    native::install(engine, raw_env)?;
+    install_text_codec(engine)?;
+    install_fetch(engine)?;
+    install_audio(engine)?;
+    install_web_socket(engine)?;
+    native::install(engine)?;
     let dev_layout_warnings = std::env::var("BLITSEN_DEV_LAYOUT_WARNINGS").is_ok_and(|value| {
         !value.is_empty() && value != "0" && !value.eq_ignore_ascii_case("false")
     });
     let dev_layout_warnings = engine.boolean(dev_layout_warnings);
     engine.set_global("__blitsenDevLayoutWarnings", &dev_layout_warnings)?;
-    let navigator = json_string(raw_env, &navigator_state())?;
+    let navigator = json_value(engine, &navigator_state())?;
     engine.set_global("__blitsenNavigatorState", &navigator)?;
     let test_harness = engine.boolean(test_harness);
     engine.set_global("__blitsenTestHarness", &test_harness)?;
@@ -189,10 +188,11 @@ pub(super) fn install(
     let resize_function = engine.define_function(
         "__blitsenWindowResize",
         Box::new(move |call| {
-            let width = argument(&call.arguments, 0, "viewport width")?
+            let mut engine = E::from_value(&call.this);
+            let width = argument(&mut engine, &call, 0, "viewport width")?
                 .parse::<u32>()
                 .map_err(|_| JsError::new("invalid viewport width"))?;
-            let height = argument(&call.arguments, 1, "viewport height")?
+            let height = argument(&mut engine, &call, 1, "viewport height")?
                 .parse::<u32>()
                 .map_err(|_| JsError::new("invalid viewport height"))?;
             resize_state.borrow_mut().resize(width, height);
@@ -201,11 +201,9 @@ pub(super) fn install(
             viewport.window_size = (width, height);
             document.document_mut().set_viewport(viewport);
             drop(document);
-            let mut callback_engine = NodeApiEngine::new(Env::from_raw(raw_env));
-            let window =
-                callback_engine.evaluate_script("globalThis", "blitsen:window-resize-target")?;
-            resize_state.borrow().sync(&mut callback_engine, &window)?;
-            callback_engine.evaluate_script(
+            let window = engine.evaluate_script("globalThis", "blitsen:window-resize-target")?;
+            resize_state.borrow().sync(&mut engine, &window)?;
+            engine.evaluate_script(
                 "globalThis.__blitsenDispatchLifecycleEvent('resize')",
                 "blitsen:test-window-resize",
             )?;
@@ -253,20 +251,21 @@ fn navigator_state() -> Value {
 /// `TextEncoder` and `TextDecoder` are Web IDL, not ECMAScript: relying on the
 /// host's would make the request and response bodies change shape under the
 /// Phase 2 engine.
-fn install_text_codec(engine: &mut NodeApiEngine, raw_env: sys::napi_env) -> Result<(), JsError> {
+fn install_text_codec<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsError> {
     let encode = engine.define_function(
         "__blitsenUtf8Encode",
         Box::new(move |call| {
-            let text = argument(&call.arguments, 0, "text")?;
+            let mut engine = E::from_value(&call.this);
+            let text = argument(&mut engine, &call, 0, "text")?;
             let bytes = TypedArray::new(TypedArrayKind::Uint8, text.into_bytes())?;
-            NodeApiEngine::new(Env::from_raw(raw_env)).typed_array(&bytes)
+            engine.typed_array(&bytes)
         }),
     )?;
     engine.set_global("__blitsenUtf8Encode", &encode)?;
     let decode = engine.define_function(
         "__blitsenUtf8Decode",
         Box::new(move |call| {
-            let mut engine = NodeApiEngine::new(Env::from_raw(raw_env));
+            let mut engine = E::from_value(&call.this);
             let bytes = call
                 .arguments
                 .first()
@@ -284,7 +283,7 @@ fn install_text_codec(engine: &mut NodeApiEngine, raw_env: sys::napi_env) -> Res
 /// is not built until an application constructs an `AudioContext`.
 /// `BLITSEN_AUDIO_OFFLINE` makes that context an offline one, which is how the
 /// harness asserts on rendered samples rather than on the calls that were made.
-fn install_audio(engine: &mut NodeApiEngine, raw_env: sys::napi_env) -> Result<(), JsError> {
+fn install_audio<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsError> {
     let offline = std::env::var("BLITSEN_AUDIO_OFFLINE").is_ok_and(|value| value == "1");
     let host = Rc::new(audio::AudioHost::new(offline));
 
@@ -292,15 +291,11 @@ fn install_audio(engine: &mut NodeApiEngine, raw_env: sys::napi_env) -> Result<(
     let call = engine.define_function(
         "__blitsenAudioCall",
         Box::new(move |call| {
-            let operation = argument(&call.arguments, 0, "audio operation")?;
-            let arguments = call
-                .arguments
-                .iter()
-                .skip(1)
-                .map(callback_string)
-                .collect::<Result<Vec<_>, _>>()?;
+            let mut engine = E::from_value(&call.this);
+            let operation = argument(&mut engine, &call, 0, "audio operation")?;
+            let arguments = string_arguments(&mut engine, &call, 1)?;
             let result = call_host.dispatch(&operation, &arguments)?;
-            json_string(raw_env, &result)
+            json_value(&mut engine, &result)
         }),
     )?;
     engine.set_global("__blitsenAudioCall", &call)?;
@@ -309,7 +304,7 @@ fn install_audio(engine: &mut NodeApiEngine, raw_env: sys::napi_env) -> Result<(
     let decode = engine.define_function(
         "__blitsenAudioDecode",
         Box::new(move |call| {
-            let mut engine = NodeApiEngine::new(Env::from_raw(raw_env));
+            let mut engine = E::from_value(&call.this);
             let bytes = call
                 .arguments
                 .first()
@@ -325,9 +320,9 @@ fn install_audio(engine: &mut NodeApiEngine, raw_env: sys::napi_env) -> Result<(
     let load = engine.define_function(
         "__blitsenAudioLoad",
         Box::new(move |call| {
-            let url = argument(&call.arguments, 0, "audio source")?;
+            let mut engine = E::from_value(&call.this);
+            let url = argument(&mut engine, &call, 0, "audio source")?;
             let id = load_host.start_load(&url)?;
-            let mut engine = NodeApiEngine::new(Env::from_raw(raw_env));
             Ok(engine.number(id as f64))
         }),
     )?;
@@ -336,15 +331,18 @@ fn install_audio(engine: &mut NodeApiEngine, raw_env: sys::napi_env) -> Result<(
     let poll_host = Rc::clone(&host);
     let poll = engine.define_function(
         "__blitsenAudioPoll",
-        Box::new(move |_| json_string(raw_env, &poll_host.poll())),
+        Box::new(move |call| {
+            let mut engine = E::from_value(&call.this);
+            json_value(&mut engine, &poll_host.poll())
+        }),
     )?;
     engine.set_global("__blitsenAudioPoll", &poll)?;
 
     let pending_host = Rc::clone(&host);
     let pending = engine.define_function(
         "__blitsenAudioPending",
-        Box::new(move |_| {
-            let mut engine = NodeApiEngine::new(Env::from_raw(raw_env));
+        Box::new(move |call| {
+            let mut engine = E::from_value(&call.this);
             Ok(engine.boolean(pending_host.pending()))
         }),
     )?;
@@ -354,15 +352,18 @@ fn install_audio(engine: &mut NodeApiEngine, raw_env: sys::napi_env) -> Result<(
     let channel = engine.define_function(
         "__blitsenAudioChannel",
         Box::new(move |call| {
-            let buffer = argument(&call.arguments, 0, "audio buffer id")?
+            let mut engine = E::from_value(&call.this);
+            let buffer = argument(&mut engine, &call, 0, "audio buffer id")?
                 .parse::<u64>()
                 .map_err(|_| JsError::new("invalid audio buffer id"))?;
-            let index = argument(&call.arguments, 1, "channel index")?
+            let index = argument(&mut engine, &call, 1, "channel index")?
                 .parse::<usize>()
                 .map_err(|_| JsError::new("invalid channel index"))?;
             let samples = channel_host.channel_data(buffer, index)?;
-            let mut engine = NodeApiEngine::new(Env::from_raw(raw_env));
-            let bytes = samples.iter().flat_map(|sample| sample.to_le_bytes()).collect();
+            let bytes = samples
+                .iter()
+                .flat_map(|sample| sample.to_le_bytes())
+                .collect();
             engine.typed_array(&TypedArray::new(TypedArrayKind::Float32, bytes)?)
         }),
     )?;
@@ -379,17 +380,17 @@ fn install_audio(engine: &mut NodeApiEngine, raw_env: sys::napi_env) -> Result<(
 }
 
 /// Installs the transport the bootstrap's `fetch` classes call through.
-fn install_fetch(engine: &mut NodeApiEngine, raw_env: sys::napi_env) -> Result<(), JsError> {
+fn install_fetch<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsError> {
     let host = Rc::new(fetch::FetchHost::new()?);
 
     let start_host = Rc::clone(&host);
     let start = engine.define_function(
         "__blitsenFetchStart",
         Box::new(move |call| {
-            let spec = argument(&call.arguments, 0, "fetch request")?;
+            let mut engine = E::from_value(&call.this);
+            let spec = argument(&mut engine, &call, 0, "fetch request")?;
             let spec = serde_json::from_str(&spec)
                 .map_err(|error| JsError::new(format!("invalid fetch request: {error}")))?;
-            let mut engine = NodeApiEngine::new(Env::from_raw(raw_env));
             let body = match call.arguments.get(1) {
                 Some(value) if engine.value_type(value)? == JsType::TypedArray => {
                     Some(engine.to_typed_array(value)?.bytes)
@@ -405,7 +406,10 @@ fn install_fetch(engine: &mut NodeApiEngine, raw_env: sys::napi_env) -> Result<(
     let poll_host = Rc::clone(&host);
     let poll = engine.define_function(
         "__blitsenFetchPoll",
-        Box::new(move |_| json_string(raw_env, &poll_host.poll())),
+        Box::new(move |call| {
+            let mut engine = E::from_value(&call.this);
+            json_value(&mut engine, &poll_host.poll())
+        }),
     )?;
     engine.set_global("__blitsenFetchPoll", &poll)?;
 
@@ -413,10 +417,10 @@ fn install_fetch(engine: &mut NodeApiEngine, raw_env: sys::napi_env) -> Result<(
     let body = engine.define_function(
         "__blitsenFetchBody",
         Box::new(move |call| {
-            let id = fetch_id(&call.arguments)?;
-            let kind = argument(&call.arguments, 1, "body kind")?;
+            let mut engine = E::from_value(&call.this);
+            let id = fetch_id(&mut engine, &call)?;
+            let kind = argument(&mut engine, &call, 1, "body kind")?;
             let bytes = body_host.take_body(id)?;
-            let mut engine = NodeApiEngine::new(Env::from_raw(raw_env));
             match kind.as_str() {
                 "text" => engine.string(&String::from_utf8_lossy(&bytes)),
                 "bytes" => engine.typed_array(&TypedArray::new(TypedArrayKind::Uint8, bytes)?),
@@ -430,7 +434,8 @@ fn install_fetch(engine: &mut NodeApiEngine, raw_env: sys::napi_env) -> Result<(
     let cancel = engine.define_function(
         "__blitsenFetchCancel",
         Box::new(move |call| {
-            cancel_host.cancel(fetch_id(&call.arguments)?);
+            let mut engine = E::from_value(&call.this);
+            cancel_host.cancel(fetch_id(&mut engine, &call)?);
             Ok(call.this)
         }),
     )?;
@@ -446,26 +451,27 @@ fn install_fetch(engine: &mut NodeApiEngine, raw_env: sys::napi_env) -> Result<(
     engine.set_global("__blitsenFetchDispose", &dispose)
 }
 
-fn fetch_id(arguments: &[Unknown<'static>]) -> Result<u64, JsError> {
-    argument(arguments, 0, "request id")?
+fn fetch_id<E: JsEngine>(engine: &mut E, call: &NativeCall<E::Value>) -> Result<u64, JsError> {
+    argument(engine, call, 0, "request id")?
         .parse::<u64>()
         .map_err(|_| JsError::new("invalid fetch request id"))
 }
 
 /// Installs the transport the bootstrap's `WebSocket` class calls through.
-fn install_web_socket(engine: &mut NodeApiEngine, raw_env: sys::napi_env) -> Result<(), JsError> {
+fn install_web_socket<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsError> {
     let host = Rc::new(web_socket::WebSocketHost::new()?);
 
     let open_host = Rc::clone(&host);
     let open = engine.define_function(
         "__blitsenSocketOpen",
         Box::new(move |call| {
-            let url = argument(&call.arguments, 0, "WebSocket address")?;
-            let protocols = argument(&call.arguments, 1, "WebSocket subprotocols")?;
+            let mut engine = E::from_value(&call.this);
+            let url = argument(&mut engine, &call, 0, "WebSocket address")?;
+            let protocols = argument(&mut engine, &call, 1, "WebSocket subprotocols")?;
             let protocols: Vec<String> = serde_json::from_str(&protocols)
                 .map_err(|error| JsError::new(format!("invalid subprotocol list: {error}")))?;
             let id = open_host.open(&url, &protocols)?;
-            Ok(NodeApiEngine::new(Env::from_raw(raw_env)).number(id as f64))
+            Ok(engine.number(id as f64))
         }),
     )?;
     engine.set_global("__blitsenSocketOpen", &open)?;
@@ -474,8 +480,9 @@ fn install_web_socket(engine: &mut NodeApiEngine, raw_env: sys::napi_env) -> Res
     let send_text = engine.define_function(
         "__blitsenSocketSendText",
         Box::new(move |call| {
-            let id = socket_id(&call.arguments)?;
-            text_host.send_text(id, argument(&call.arguments, 1, "message text")?);
+            let mut engine = E::from_value(&call.this);
+            let id = socket_id(&mut engine, &call)?;
+            text_host.send_text(id, argument(&mut engine, &call, 1, "message text")?);
             Ok(call.this)
         }),
     )?;
@@ -485,12 +492,12 @@ fn install_web_socket(engine: &mut NodeApiEngine, raw_env: sys::napi_env) -> Res
     let send_binary = engine.define_function(
         "__blitsenSocketSendBinary",
         Box::new(move |call| {
-            let id = socket_id(&call.arguments)?;
+            let mut engine = E::from_value(&call.this);
+            let id = socket_id(&mut engine, &call)?;
             let payload = call
                 .arguments
                 .get(1)
                 .ok_or_else(|| JsError::new("missing message payload"))?;
-            let mut engine = NodeApiEngine::new(Env::from_raw(raw_env));
             binary_host.send_binary(id, engine.to_typed_array(payload)?.bytes);
             Ok(call.this)
         }),
@@ -501,8 +508,9 @@ fn install_web_socket(engine: &mut NodeApiEngine, raw_env: sys::napi_env) -> Res
     let buffered = engine.define_function(
         "__blitsenSocketBuffered",
         Box::new(move |call| {
-            let bytes = buffered_host.buffered(socket_id(&call.arguments)?);
-            Ok(NodeApiEngine::new(Env::from_raw(raw_env)).number(bytes as f64))
+            let mut engine = E::from_value(&call.this);
+            let bytes = buffered_host.buffered(socket_id(&mut engine, &call)?);
+            Ok(engine.number(bytes as f64))
         }),
     )?;
     engine.set_global("__blitsenSocketBuffered", &buffered)?;
@@ -511,10 +519,11 @@ fn install_web_socket(engine: &mut NodeApiEngine, raw_env: sys::napi_env) -> Res
     let close = engine.define_function(
         "__blitsenSocketClose",
         Box::new(move |call| {
-            let id = socket_id(&call.arguments)?;
+            let mut engine = E::from_value(&call.this);
+            let id = socket_id(&mut engine, &call)?;
             // An empty code is a close with no status, which is a different
             // frame from one carrying 1005.
-            let code = argument(&call.arguments, 1, "close code")?;
+            let code = argument(&mut engine, &call, 1, "close code")?;
             let code = match code.as_str() {
                 "" => None,
                 code => Some(
@@ -522,7 +531,7 @@ fn install_web_socket(engine: &mut NodeApiEngine, raw_env: sys::napi_env) -> Res
                         .map_err(|_| JsError::new("invalid WebSocket close code"))?,
                 ),
             };
-            close_host.close(id, code, &argument(&call.arguments, 2, "close reason")?);
+            close_host.close(id, code, &argument(&mut engine, &call, 2, "close reason")?);
             Ok(call.this)
         }),
     )?;
@@ -531,7 +540,10 @@ fn install_web_socket(engine: &mut NodeApiEngine, raw_env: sys::napi_env) -> Res
     let poll_host = Rc::clone(&host);
     let poll = engine.define_function(
         "__blitsenSocketPoll",
-        Box::new(move |_| json_string(raw_env, &poll_host.poll())),
+        Box::new(move |call| {
+            let mut engine = E::from_value(&call.this);
+            json_value(&mut engine, &poll_host.poll())
+        }),
     )?;
     engine.set_global("__blitsenSocketPoll", &poll)?;
 
@@ -539,12 +551,12 @@ fn install_web_socket(engine: &mut NodeApiEngine, raw_env: sys::napi_env) -> Res
     let payload = engine.define_function(
         "__blitsenSocketBinary",
         Box::new(move |call| {
-            let id = socket_id(&call.arguments)?;
-            let sequence = argument(&call.arguments, 1, "message sequence")?
+            let mut engine = E::from_value(&call.this);
+            let id = socket_id(&mut engine, &call)?;
+            let sequence = argument(&mut engine, &call, 1, "message sequence")?
                 .parse::<u64>()
                 .map_err(|_| JsError::new("invalid WebSocket message sequence"))?;
             let bytes = payload_host.take_binary(id, sequence)?;
-            let mut engine = NodeApiEngine::new(Env::from_raw(raw_env));
             engine.typed_array(&TypedArray::new(TypedArrayKind::Uint8, bytes)?)
         }),
     )?;
@@ -560,27 +572,46 @@ fn install_web_socket(engine: &mut NodeApiEngine, raw_env: sys::napi_env) -> Res
     engine.set_global("__blitsenSocketDispose", &dispose)
 }
 
-fn socket_id(arguments: &[Unknown<'static>]) -> Result<u64, JsError> {
-    argument(arguments, 0, "socket id")?
+fn socket_id<E: JsEngine>(engine: &mut E, call: &NativeCall<E::Value>) -> Result<u64, JsError> {
+    argument(engine, call, 0, "socket id")?
         .parse::<u64>()
         .map_err(|_| JsError::new("invalid WebSocket id"))
 }
 
-fn argument(arguments: &[Unknown<'static>], index: usize, name: &str) -> Result<String, JsError> {
-    arguments
-        .get(index)
-        .ok_or_else(|| JsError::new(format!("missing {name}")))
-        .and_then(callback_string)
+/// Reads a required string argument, refusing a value that is not one.
+///
+/// Deliberately not string coercion: the bootstrap is the only caller, it
+/// always passes strings, and a coercing read would turn a bridge bug into
+/// `"undefined"` reaching Blitz as an attribute value.
+pub(crate) fn argument<E: JsEngine>(
+    engine: &mut E,
+    call: &NativeCall<E::Value>,
+    index: usize,
+    name: &str,
+) -> Result<String, JsError> {
+    string_value(engine, call.argument(index, name)?)
 }
 
-fn json_string(env: sys::napi_env, value: &Value) -> Result<Unknown<'static>, JsError> {
+fn string_value<E: JsEngine>(engine: &mut E, value: &E::Value) -> Result<String, JsError> {
+    if engine.value_type(value)? != JsType::String {
+        return Err(JsError::new("bridge argument is not a string"));
+    }
+    engine.to_string(value)
+}
+
+fn string_arguments<E: JsEngine>(
+    engine: &mut E,
+    call: &NativeCall<E::Value>,
+    from: usize,
+) -> Result<Vec<String>, JsError> {
+    let mut arguments = Vec::with_capacity(call.arguments.len().saturating_sub(from));
+    for index in from..call.arguments.len() {
+        arguments.push(string_value(engine, &call.arguments[index])?);
+    }
+    Ok(arguments)
+}
+
+pub(crate) fn json_value<E: JsEngine>(engine: &mut E, value: &Value) -> Result<E::Value, JsError> {
     let value = serde_json::to_string(value).map_err(|error| JsError::new(error.to_string()))?;
-    let length = isize::try_from(value.len())
-        .map_err(|_| JsError::new("DOM bridge result exceeds Node-API string limits"))?;
-    let mut result = std::ptr::null_mut();
-    check(
-        unsafe { sys::napi_create_string_utf8(env, value.as_ptr().cast(), length, &mut result) },
-        "serialize DOM bridge result",
-    )?;
-    Ok(unknown(env, result))
+    engine.string(&value)
 }

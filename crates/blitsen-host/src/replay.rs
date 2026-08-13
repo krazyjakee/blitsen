@@ -14,13 +14,14 @@ use blitsen_blitz::BlitzDom;
 use blitsen_core::frame::{FRAME_BUCKET_EDGES_MS, FrameHistogram, FrameStage};
 use blitsen_core::replay::{FrameDigest, InputTrace};
 use blitsen_dom::{DomBackend, LayoutSnapshot};
+use blitsen_js::{JsEngine, JsError};
 use blitz::dom::{DocumentConfig, NodeId};
 use blitz::traits::shell::{ColorScheme, Viewport};
-use napi::{Env, Status};
 use serde::Serialize;
 
 use crate::alloc::{self, AllocationCounts};
-use crate::{dom_error, encode_png, frame_loop::FrameLoop, load_document_harness, render_document};
+use crate::harness::{encode_png, load_document_harness, render_document};
+use crate::{dom_error, frame_loop::FrameLoop};
 
 /// Digest domains. Bump the version when a digest's inputs change, so a stale
 /// golden fails loudly instead of comparing two different questions.
@@ -119,7 +120,7 @@ struct StageReport {
 /// Everything one replay observed.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct ReplayReport {
+pub struct ReplayReport {
     application: String,
     width: u32,
     height: u32,
@@ -170,7 +171,7 @@ fn stage_name(stage: FrameStage) -> &'static str {
 fn digest_document(
     document: &Rc<RefCell<BlitzDom>>,
     layout: LayoutSnapshot,
-) -> napi::Result<(String, String)> {
+) -> Result<(String, String), JsError> {
     let document = document.borrow();
     let mut dom = FrameDigest::new(DOM_DIGEST);
     let mut geometry = FrameDigest::new(LAYOUT_DIGEST);
@@ -178,9 +179,10 @@ fn digest_document(
         .query_selector_all(document.document(), "*")
         .map_err(dom_error)?;
     for id in ids {
-        let node = document.document_ref().get_node(id).ok_or_else(|| {
-            napi::Error::new(Status::GenericFailure, "Blitz returned a stale node")
-        })?;
+        let node = document
+            .document_ref()
+            .get_node(id)
+            .ok_or_else(|| JsError::new("Blitz returned a stale node"))?;
         let Some(element) = node.element_data() else {
             continue;
         };
@@ -211,7 +213,7 @@ fn digest_pixels(pixels: &[u8], width: u32, height: u32) -> String {
 }
 
 /// Digests a fixed fixture to identify this machine's text and raster output.
-pub(crate) fn fingerprint() -> String {
+pub fn fingerprint() -> String {
     let (width, height) = (256, 64);
     let document = Rc::new(RefCell::new(BlitzDom::from_html(
         FINGERPRINT_FIXTURE,
@@ -227,15 +229,15 @@ pub(crate) fn fingerprint() -> String {
 }
 
 /// Replays `trace` against `entrypoint` and reports digests and frame cost.
-pub(crate) fn replay(
-    env: Env,
+pub fn replay<E: JsEngine + Clone + 'static>(
+    engine: E,
     entrypoint: &Path,
     trace: InputTrace,
     record_into: Option<&Path>,
     record_frames: &[u32],
-) -> napi::Result<ReplayReport> {
+) -> Result<ReplayReport, JsError> {
     let (width, height) = (trace.width, trace.height);
-    let (engine, document) = load_document_harness(env, entrypoint, width, height, true)?;
+    let (engine, document) = load_document_harness(engine, entrypoint, width, height, true)?;
     let trace = Rc::new(trace);
     let mut frame_loop = FrameLoop::new(
         engine,
@@ -284,7 +286,7 @@ pub(crate) fn replay(
         let digest_started = std::time::Instant::now();
         let layout = frame_loop
             .layout()
-            .ok_or_else(|| napi::Error::new(Status::GenericFailure, "frame resolved no layout"))?;
+            .ok_or_else(|| JsError::new("frame resolved no layout"))?;
         let (dom, geometry) = digest_document(&document, layout)?;
         pixel_digests.push(digest_pixels(frame_loop.pixels(), width, height));
         dom_digests.push(dom);
@@ -296,12 +298,7 @@ pub(crate) fn replay(
         {
             let path = directory.join(format!("frame-{frame:05}.png"));
             std::fs::write(&path, encode_png(frame_loop.pixels(), width, height)?).map_err(
-                |error| {
-                    napi::Error::new(
-                        Status::GenericFailure,
-                        format!("could not record frame {frame}: {error}"),
-                    )
-                },
+                |error| JsError::new(format!("could not record frame {frame}: {error}")),
             )?;
             recorded.push(path.to_string_lossy().into_owned());
         }
@@ -318,7 +315,7 @@ pub(crate) fn replay(
         display_lists.push(frame_loop.display_list());
     }
 
-    let missing = || napi::Error::new(Status::GenericFailure, "replay measured no frames");
+    let missing = || JsError::new("replay measured no frames");
     let total: Duration = frame_times.iter().sum();
     let stages = report_stages(&stage_times, total, alloc::snapshot().is_some());
     Ok(ReplayReport {

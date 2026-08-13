@@ -1,5 +1,5 @@
 {
-  "generatedBy": "packages/blitsen/src/api-manifest.mjs from crates/blitsen-node/src/dom_bridge.rs",
+  "generatedBy": "packages/blitsen/src/api-manifest.mjs from crates/blitsen-host/src/dom_bridge.rs",
   "profile": "v0-strict",
   "apis": [
     {

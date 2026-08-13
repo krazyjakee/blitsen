@@ -110,6 +110,14 @@ or a future mode that emits complete relinking materials. See `LICENSING.md`.
 reaches for Bun-specific behaviour outside that trait, Phase 2 becomes a rewrite instead of a
 swap. This is the single most important structural constraint in the project.
 
+The constraint held. Everything between the DOM and the application lives in `blitsen-host`,
+generic over `JsEngine` and naming no engine at all; `blitsen-node` is the Node-API implementation
+plus the `#[napi]` surface, and `blitsen-runtime` is the Phase 2 executable. Native callbacks
+recover their engine through `JsEngine::from_value` rather than capturing a host environment
+pointer, which is what the Phase 1 bridge had been doing. One assumption had escaped: the
+document-reload path cleared Bun's `require` cache unconditionally, and now clears whichever module
+cache the host has.
+
 ---
 
 ## 3. Threading and event loop
@@ -621,7 +629,14 @@ that, and duplicating it would make Blitsen a competitor to Vite instead of a ta
   the Bun runtime, which is the Phase 1 size cost (PRODUCT.md §9). Redistribution remains gated
   on the automated licensing checks in LICENSING.md.
 - **Phase 2** step ④ links our JSC-based runtime and appends the bundle as a binary section read
-  at startup.
+  at startup, implemented in `blitsen_core::bundle`. The section carries a version header, an
+  index and the file data, followed by a trailer that locates and checksums it; startup reads the
+  index and then reads files from their recorded offsets, never unpacking to disk. **Append first,
+  then sign** — the signing hook in step ⑤ already runs last, which is what keeps a macOS or
+  Authenticode signature valid, and the trailer is *found* rather than assumed to be the final
+  bytes because a signature legitimately follows it. Which host an export links into is selected by
+  `BLITSEN_HOST` and defaults to Phase 1; it is deliberately not a CLI flag or a config key, so the
+  npm surface is identical across the swap (§16.7).
 
 Step ② keeps the compatibility promise honest. Blitsen will be handed output it cannot run; the
 failure must arrive at build time with a named API and file, not as a blank window at runtime.
@@ -846,6 +861,11 @@ note rather than as a surprise in a user's window.
 
 This packaging boundary is what makes the host-model change (§2) invisible to users. In Phase 1
 the platform package contains Bun-plus-addon; in Phase 2 it contains our own JSC-based runtime.
+That invisibility is now checked rather than intended: `bun run --cwd packages/blitsen test:hosts`
+builds one project on both runtimes and fails on any difference in CLI output, config handling,
+refusals, artifact layout or the exported application's own self-check, and replays the committed
+frame trace on the new runtime against the digests the old one recorded. The user-facing note is
+[`MIGRATION.md`](MIGRATION.md), and it says one thing.
 The npm package, the CLI, the config format and the user's `package.json` are identical across
 that change. The host transition is still expected to reduce size, but M0 disproved the original
 25–50 MB target; both installed executable and shipped dynamic-library size must be remeasured.
@@ -944,8 +964,11 @@ Rules that, if broken, cost a rewrite rather than a refactor:
    native release matrix, own the narrow Rust ABI layer, and dynamically load the replaceable
    production library. Existing Rust bindings do not cover the six targets or the required
    dynamic distribution model. See [`JSC.md`](JSC.md).
-2. **Module resolution in the shipped binary** — pre-bundled single graph (simplest), or a
-   runtime resolver against embedded files (supports dynamic `import()`)?
+2. **Module resolution in the shipped binary: decided.** A runtime resolver over the
+   application's own files, addressed by an internal `blitsen://app/` origin, with linking left to
+   the engine's module loader. A pre-bundled single graph was rejected because real framework
+   output is already split and every router in the audience documents `import()` as the way to code
+   split. See [`MODULES.md`](MODULES.md).
 3. **Multi-window JS contexts** — one shared context or one per window? Shared is simpler and
    matches the single-thread model; isolated is safer and matches the web.
 4. **DOM property access cost: decided — no wrapper-side cache.** Measured on the Phase 1 host

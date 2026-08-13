@@ -168,6 +168,15 @@ pub struct NativeCall<V> {
     pub external: Option<ExternalId>,
 }
 
+impl<V> NativeCall<V> {
+    /// Returns a positional argument, naming the missing one when it is absent.
+    pub fn argument(&self, index: usize, name: &str) -> Result<&V, JsError> {
+        self.arguments
+            .get(index)
+            .ok_or_else(|| JsError::new(format!("missing {name}")))
+    }
+}
+
 /// A host function callable by JavaScript.
 ///
 /// Returning [`JsError`] must throw a catchable JavaScript exception.
@@ -235,6 +244,18 @@ pub trait JsEngine {
     type WeakRef;
     /// Opaque registered native-class handle.
     type Class;
+
+    /// Re-enters the engine from a value it handed to a native callback.
+    ///
+    /// A native callback is owned by the engine, so it cannot also borrow it,
+    /// yet almost every callback needs to build its return value. Both hosts
+    /// carry the owning context inside the value handle itself, so the engine
+    /// is recoverable from any argument — including [`NativeCall::this`], which
+    /// is present even for a zero-argument call. Bridge code uses this instead
+    /// of capturing a host-specific environment pointer.
+    fn from_value(value: &Self::Value) -> Self
+    where
+        Self: Sized;
 
     /// Creates `undefined`.
     fn undefined(&mut self) -> Self::Value;

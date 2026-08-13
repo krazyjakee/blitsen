@@ -154,6 +154,11 @@ impl Runtime {
             callback_class,
         });
         let _ = OBJECT_GET_PRIVATE.set(runtime.functions.object_get_private);
+        // The pinned Bun JSC context cannot currently be released without an
+        // atom-table teardown assertion, and unloading the library under a live
+        // context would be invalid for the same reason. One strong reference is
+        // leaked here, once, so no arrangement of engine views can drop either.
+        std::mem::forget(Rc::clone(&runtime));
         Ok(runtime)
     }
 

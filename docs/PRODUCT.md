@@ -342,7 +342,7 @@ provide — so the answer for any given project is mechanical, not guesswork.
 
 | # | Requirement | Target | Notes |
 | --- | --- | --- | --- |
-| P1 | Bare exported app size | Numeric budget pending a production-shaped Linux host; materially below an equivalent Electron export | S0 disproved the original ≤50 MB installed target; see §9. |
+| P1 | Bare exported app size | Numeric budget pending; measured Phase 2 on Linux x64 is 50.0 MB of executable plus a 32.0 MB replaceable engine library, against 144.7 MB for the same app on Phase 1 | S0 disproved the original ≤50 MB installed target. Five targets unmeasured, and no measured Electron or Tauri comparison yet; see §9. |
 | P2 | Cold start to first frame | < 500 ms on mid-range hardware | Should beat Electron decisively or the pitch weakens. |
 | P3 | Idle RAM, bare app | < 100 MB | |
 | P4 | Sustained frame rate | 60 fps for a moderate 2D scene | Measured with the Pong acceptance build. |
@@ -371,16 +371,47 @@ M3 Phase 1 standalone Pong, optimized Rust host (Linux x64)
 S0 Phase 2 floor, stripped + LTO (Linux x64)
   JSC + Blitz only              52,480,904 B  measured
   gzip -9                       24,076,701 B  measured
-  host + bridge + loader + GPU           TBD
-  app + packaging                       TBD
+
+Phase 2 bare app (Linux x64, 2026-08-13, `bun run --cwd packages/blitsen size:phase2`)
+  Phase 1 export, same app     144,726,144 B  measured
+  Phase 2 export                50,013,368 B  measured   2.89x smaller
+  gzip -9                       16,200,000 B  measured   (52.0 MB for Phase 1)
+  ── of which ──────────────────────────────
+  runtime executable            50,013,368 B  Blitz, Vello, wgpu, winit, tokio, the bridge
+    debug symbols               13,078,232 B  removed by `strip`
+    .text                       25,235,319 B  largest section
+  appended application                 615 B  the bare app itself
+  JavaScriptCore, alongside     31,959,344 B  system libjavascriptcoregtk-6.0 on this machine
   ─────────────────────────────────────────
-  production bare app          budget pending
+  shipped total                 81,972,712 B  executable + replaceable engine library
+
+Phase 3 levers, measured on the same build
+  release-min profile           20,777,184 B  fat LTO + one codegen unit + opt-level=z + strip
+                                              58.5% off the runtime executable
+  panic = "abort"                   rejected  the native callback boundary turns a panic into a
+                                              JavaScript exception; aborting takes the process down
 ```
 
-The S0 floor already exceeds the old 25–50 MB installed estimate before production services or
-application code. That estimate and the derived 20–40 MB Phase 3 estimate are withdrawn. The
-fallback positioning is “still far below Electron”; a numeric target and public claim require a
-complete, measured host. Installed and compressed sizes are always reported separately.
+**Read the engine line carefully.** Production loads a *replaceable* JavaScriptCore shared library,
+which is what keeps closed-source distribution on the clean LGPL path (`LICENSING.md`). Its bytes
+ship beside the executable rather than inside it, so any Phase 2 total that omits them understates
+what a user downloads. The 32 MB above is this machine's system library; a release carries Blitsen's
+pinned build, which is a different artifact and has not been measured here.
+
+**Still outstanding for P1.** Only Linux x64 is measured — the other five targets have no runner
+yet (TECH.md §14) — and no Electron or Tauri build has been measured on the same machine with the
+same application, so the comparison remains a claim rather than a number. Both are what the
+remaining P1 work is.
+
+The S0 floor already exceeded the old 25–50 MB installed estimate before production services or
+application code, and that estimate, along with the derived 20–40 MB Phase 3 estimate, stays
+withdrawn. Installed and compressed sizes are always reported separately.
+
+What the numbers above do settle is that the phase reversal was worth making: the same bare
+application exports 2.89× smaller, and the 95 MB it drops is Bun's runtime. The Phase 3 profile
+takes another 29 MB off the executable and still renders the Pong replay to the same layout and
+pixel digests at 60 fps, so it is a measurement rather than a hope. A public numeric claim still
+waits on the two outstanding items.
 
 The key architectural consequence, which belongs in the product spec because it defines what
 the user installs: **Bun is the toolchain; JavaScriptCore is the runtime.** The exported app

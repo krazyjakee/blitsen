@@ -1,30 +1,47 @@
 # Blitz rendering gaps — standing list
 
-Blitsen renders through [Blitz](https://github.com/DioxusLabs/blitz), pinned by revision. This is
+Blitsen renders through [Blitz](https://github.com/DioxusLabs/blitz), pinned at `1efe22d`. This is
 the live list of rendering divergences we know about, with status. It supersedes the frozen
 catalogue in [`spikes/s6/README.md`](../spikes/s6/README.md), which was a dated snapshot from one
 run and is kept only as the evidence behind the initial triage.
 
-**Scope.** A gap belongs here when Blitz renders something differently from a browser, or not at
-all. Things Blitsen has simply not implemented — `fetch`, images, web fonts — are capability tiers,
-not Blitz gaps; those live in [`COMPATIBILITY.md`](COMPATIBILITY.md).
+**Scope.** A gap belongs here when the renderer draws something differently from a browser, or not
+at all. Things Blitsen has simply not implemented — `<canvas>`, `<video>`, navigation — are
+capability tiers, not gaps; those live in [`COMPATIBILITY.md`](COMPATIBILITY.md). (`fetch`, images
+and web fonts were in that sentence once and are implemented now.)
+
+**"Blitz" here is four layers, and a row has to say which one it sits in**, because that decides
+where it gets filed: stylo's cascade, `blitz-dom`'s layout and DOM, `blitz-paint`'s scene building,
+and the [anyrender](https://github.com/DioxusLabs/anyrender) backend that rasterises the scene —
+`anyrender_vello` for the window, `anyrender_vello_cpu` for headless renders and the tests. G9 is
+the first row that turned out to live in the backend rather than in Blitz, and it looked exactly
+like a Blitz gap until it was reduced.
 
 Status values: **open** (reproduced, unfiled), **filed** (upstream issue exists), **fixed**,
-**withdrawn** (turned out not to be a Blitz gap).
+**withdrawn** (turned out not to be a gap in the renderer).
 
 | # | Gap | Status | Evidence | Notes |
 | --- | --- | --- | --- | --- |
 | G1 | Digits absent from some text runs while letters and punctuation render | filed | `spikes/s6/results/blitz-snapshot/react.png` | [blitz#688](https://github.com/DioxusLabs/blitz/issues/688); see below |
-| G2 | A property named by `transition` keeps its pre-stylesheet value for good | filed | `crates/blitsen-blitz/tests/reductions/transition-stale-style.html` | [blitz#689](https://github.com/DioxusLabs/blitz/issues/689); the hidden overlays were a symptom |
+| G2 | A property named by `transition` keeps its pre-stylesheet value for good | filed | `crates/blitsen-blitz/tests/reductions/transition-stale-style.html` | [blitz#689](https://github.com/DioxusLabs/blitz/issues/689); the hidden overlays were a symptom. Now reachable through Blitsen, which it was not when this was written; see below |
 | G3 | `absolute`/`fixed` insets and auto margins resolve against the wrong box | filed | `crates/blitsen-blitz/tests/conformance/cases/defect-*.html` | [blitz#690](https://github.com/DioxusLabs/blitz/issues/690), [blitz#691](https://github.com/DioxusLabs/blitz/issues/691); gated as known-failing cases |
 | G4 | Form controls and anchors fall back to native/default styling | open | `spikes/s6/results/blitz-snapshot/{react,vue}.png` | `appearance`, inherited anchor colour, Tailwind 4 reset, control UA CSS |
-| G5 | SVG icons missing or geometrically wrong; chart fills incorrect | filed upstream | `spikes/s6/results/blitz-snapshot/react.png` | [blitz#448](https://github.com/DioxusLabs/blitz/issues/448) |
+| G5 | SVG paints nothing in Blitsen's build; wrong geometry in upstream's | filed upstream | `spikes/s6/results/blitz-snapshot/react.png` | [blitz#448](https://github.com/DioxusLabs/blitz/issues/448); which of the two you get depends on the `svg` feature, and Blitsen cannot enable it (G7). See below |
 | G6 | Accumulating line-height, antialiasing and vertical spacing differences | open, low priority | `spikes/s6/results/metrics.tsv` | Needs a tolerance corpus before it can be actioned |
 | G7 | `blitz-dom`'s `svg` feature does not compile at the pinned revision | filed | Build failure, reproducible | [blitz#687](https://github.com/DioxusLabs/blitz/issues/687); see below |
 | G8 | `@keyframes` animations never move | withdrawn | `crates/blitsen-blitz/src/lib.rs::tests::animations_stand_still_until_the_host_supplies_a_clock` | Not a Blitz gap: Blitz animates keyframes correctly. Blitsen was resolving every frame at time zero; see below |
+| G9 | `filter` and `backdrop-filter` paint nothing at all | open | `crates/blitsen-blitz/tests/conformance/cases/defect-filter-ignored.html` | Not Blitz: `blitz-paint` builds the filter layer and both anyrender backends drop it. `clip-path` and `mask-image` do work. See below |
+| G10 | Changing checkedness does not invalidate the cascade, so a `:checked` rule never repaints | open | `blitz-dom`'s `stylo.rs`, `document.rs` and `events/pointer.rs` at the pin; measured in pixels | Blitz's own click on its own checkbox has it too; see below |
+| G11 | A subresource whose handler never completes blocks painting for the life of the document | open | `crates/blitsen-blitz/tests/conformance/cases/unservable-subresource.html` | `NetProvider`'s only failure signal is dropping the handler, which is also the thing that blocks. Worked around in `resources.rs`; see below |
+| G12 | Blitz has no `[hidden]` user-agent rule | withdrawn | `docs/COMPATIBILITY.md`, "Rendered text, box reads and scrolling" | It has the rule. The probe that said otherwise put an author `display: block` on the element, which correctly wins the cascade |
 
 Broad Tailwind/renderer work has an upstream collection in
 [blitz#389](https://github.com/DioxusLabs/blitz/issues/389).
+
+**Where these surface for an application author.** Three of these rows are what the `doctor`
+diagnostics in [`COMPATIBILITY.md`](COMPATIBILITY.md#diagnostic-severity) are describing:
+`CSS_TRANSITION` is G2, `CSS_FIXED` is G3, `CSS_EFFECT` is G9. All three are warnings rather than
+errors, because a degraded page beats a refused build.
 
 ## G1 — the digits gap, corrected
 
@@ -74,8 +91,18 @@ paints that one. The same CSS inlined in a `<style>` element renders correctly, 
 transition covers.
 
 It reproduces in upstream Blitz's own `screenshot` example at the pinned revision, which is how the
-s6 images were made. It is **not** reachable through Blitsen's renderer today, because Blitsen has
-no net provider and its bundles inline their CSS; that is also why it cannot be a conformance case.
+s6 images were made.
+
+**The last paragraph of this entry used to say it was unreachable through Blitsen, because Blitsen
+had no net provider. That is no longer true.** The runtime installs `blitz::net::Provider`
+(`crates/blitsen-host/src/native_window.rs`), which loads a `<link>` stylesheet off the frame thread, and the
+dev server reloads linked sheets rather than inlining them. So the precondition — a sheet that
+lands *after* the first style resolution — is now something an ordinary application can hit. What
+has not been done is measuring whether it then reproduces: the renderer tests use
+`LocalResources`, which answers inside `fetch` and so hands the sheet over before the first
+resolution, which is why this is still a reduction and not a conformance case. **Next step:**
+resolve a document with a slow-arriving sheet through the runtime's provider. If it reproduces,
+this becomes a gated case; if it does not, the entry needs the reason why not.
 
 ## G3 — not stacking contexts: two containing-block defects
 
@@ -97,6 +124,25 @@ instead, and both are now gated as known-failing conformance cases (see
 Together they are why Wordle+'s modals sit at the left edge and stop short of the viewport. Both
 reproduce in upstream Blitz's `screenshot` example as well as in Blitsen's renderer, and the numbers
 in both cases were confirmed against Chromium at the same viewport.
+
+## G5 — what SVG does depends on a feature Blitsen cannot turn on
+
+The s6 catalogue describes icons that are missing or geometrically wrong, and chart fills that are
+the wrong colour. That was measured against upstream Blitz's `screenshot` example, which builds
+`blitz-paint` with its default features — and `blitz-paint`'s default feature *is* `svg`, which is
+what pulls in `anyrender_svg` and rasterises the element.
+
+Blitsen builds `blitz-paint` with default features off, because its `svg` feature turns on
+`blitz-dom/svg`, which does not compile at this pin (G7). So in Blitsen's own build the failure
+mode is different, and cleaner: an inline `<svg>` takes the box its `width`/`height` ask for and
+paints **nothing at all**. A 100×60 `<svg>` holding one full-bleed red `<rect>` lays out at exactly
+100×60 and every pixel inside it is the page background.
+
+That is worth keeping straight when reading either the s6 images or an upstream issue: wrong
+geometry is what upstream's build does, blank is what ours does, and neither is what a browser
+does. `doctor`'s `HTML_SVG` warning covers both. SVG *images* — `<img src="icon.svg">` and
+`background-image` — are out for the same reason and are listed as an absent capability tier in
+[`COMPATIBILITY.md`](COMPATIBILITY.md), not as a row here.
 
 ## G7 — `blitz-dom`'s `svg` feature does not compile
 
@@ -144,14 +190,114 @@ Reproduction, both halves, in `crates/blitsen-blitz/src/lib.rs`:
 `animations_stand_still_until_the_host_supplies_a_clock` and
 `an_inserted_keyframes_rule_animates_with_the_frame_clock`.
 
+## G9 — the filter gap is not Blitz's; it is the backend's
+
+`defect-filter-ignored.html` gates the observable half: `filter: invert(1)` over black paints
+black, so a page that needed the filter to be legible is not. The case calls it a Blitz defect,
+which is one layer off. Reduced, it lands somewhere else entirely.
+
+What is measured, at the pin, painted through `anyrender_vello_cpu` (the headless and test path;
+the window's `anyrender_vello` behaves the same by inspection):
+
+- `filter: opacity(0)` paints at full opacity, and `invert(1)` over black stays black.
+- `filter: blur(6px)` bleeds nothing outside the border box, and `drop-shadow` draws nothing.
+- `backdrop-filter: invert(1)` over a black box leaves it black.
+- `clip-path: inset(0 0 0 50%)` **works**: the left half is transparent, the right half painted.
+- `mask-image: linear-gradient(to right, transparent 0 50%, #000 50% 100%)` **works**: the left
+  half is masked away and the right half is opaque.
+
+So the four properties `doctor` groups under `CSS_EFFECT` are not one behaviour. Two of them
+render. **Narrowing that rule to `filter` and `backdrop-filter` is a follow-up**, and until it
+happens the diagnostic over-warns on `clip-path` and `mask`.
+
+`blitz-paint` is not where the effect is lost. It converts stylo's filter list and hands it to
+`Scene::push_layer` (`convert_filters`, `packages/blitz-paint/src/render.rs`) — the layer, the
+expansion rect and the backdrop filter are all built. It is the backend that drops it:
+
+- `anyrender_vello` 0.13 names both parameters `_filter` and `_backdrop_filter` in `push_layer`
+  and ignores them. There is no feature to turn on. That is the **window** renderer.
+- `anyrender_vello_cpu` 0.15 keeps `filter` only behind a `filters` feature that is not in its
+  defaults — so Blitsen, which takes the crate with defaults, compiles it out — and drops
+  `backdrop_filter` outright. Even with the feature on, the conversion is suppressed whenever
+  `multithreading` is enabled.
+
+Enabling `filters` locally does not fix it, and makes it worse: everything that converts —
+`blur`, `drop-shadow`, `grayscale`, `sepia`, `hue-rotate` — panics inside `vello_cpu` 0.0.9
+(`unreachable!()` in `fine/mod.rs`, a `PushZeroClip` command reaching fine rasterisation), and
+everything built as a component transfer stays ignored, because the backend converts that variant
+to `None` — `invert` and `opacity` measured, `brightness` and `contrast` by the same path. So there
+is no configuration of the pinned stack where a CSS filter paints. That was measured by enabling
+the feature, running the probes, and reverting; nothing in the tree carries it.
+
+**Next step:** file against anyrender rather than Blitz — `anyrender_vello` has no filter support
+at all, and `anyrender_vello_cpu`'s is gated off and panics when ungated — and correct the header
+of `defect-filter-ignored.html`, which attributes it to Blitz.
+
+## G10 — `:checked` matches; nothing tells the cascade it changed
+
+A component library that styles its own checkbox, radio or switch through `:checked` renders the
+unchecked state forever. The selector is not the problem — the invalidation is.
+
+Measured: a document giving `#flag` a black background, with a sibling rule
+`#box:checked ~ #flag` that makes it red. After `set_form_checked(box, true)` and a layout flush,
+the middle of `#flag` is still `#000000ff`. Touching an unrelated attribute on the same element
+afterwards — which does force a restyle — repaints it `#ff0000ff`. So stylo evaluates the rule
+correctly and matches the flag; it is simply never asked to re-evaluate it.
+
+The reason is in `blitz-dom` at the pin. Checkedness lives in
+`SpecialElementData::CheckboxInput(bool)`, and `:checked` matches straight off that
+(`NonTSPseudoClass::Checked` in `packages/blitz-dom/src/stylo.rs`). Every path that writes it
+flips the bool in place with no stylo snapshot and no restyle hint: `BaseDocument::toggle_checkbox`
+and `toggle_radio` in `document.rs`, and the click handler in `events/pointer.rs`. Attribute writes
+go through the mutator, which *does* snapshot — which is why the unrelated poke above worked, and
+why this looks like a scripting-only problem when it is not. **A real click on Blitz's own
+checkbox has the same gap.**
+
+Blitsen could force a restyle when it writes checkedness from JavaScript, the way an attribute
+write already does; that would cover the scripted path and not the clicked one, which is Blitz's
+own handler. Fixing it properly means snapshotting the element the way an attribute change does.
+
+**Next step:** a committed reduction — this is currently a measurement plus source, and the rules
+below ask for a test — and an upstream issue.
+
+## G11 — a subresource that never answers blocks the page forever
+
+Blitz holds a stylesheet as a pending critical resource until its `NetHandler` completes, and the
+only failure signal the trait has is *dropping* the handler — which never completes it. So a
+provider that stays silent about what it will not serve does not degrade the page, it blanks it,
+for the life of the document.
+
+That is a whole application, not a corner: shadcn-admin mounted 364 elements correctly and
+rendered 1,024,000 pixels of pure white, because its `<head>` links a Google Fonts stylesheet the
+local provider refuses. `unservable-subresource.html` gates it with two unservable links — one
+remote, one a local file that does not exist — and a box below them that has to paint anyway.
+
+Blitsen works around it in `crates/blitsen-blitz/src/resources.rs` by answering everything it will
+not serve with an empty body, which an empty stylesheet contributes nothing to and a broken image
+fails to decode from. `ResourceLog::stop` completes every abandoned handler for the same reason,
+so `window.stop()` cancels loading instead of blanking the document. The cost is that an empty
+body is now indistinguishable from a failure, which is why the tracker grades one as the other.
+
+**Next step:** file it. The fix upstream is a failure signal on the trait — a provider should be
+able to say "I will not serve this" without lying with an empty body, and a dropped handler should
+release the resource rather than pin it.
+
 ## Keeping this list honest
 
-- Every row needs evidence that can be re-examined — a committed image, a test, or a build failure
-  someone else can reproduce. "Looked wrong once" is not a row.
+- Every row needs evidence that can be re-examined — a committed image, a test, a build failure, or
+  a named source line at the pinned revision. "Looked wrong once" is not a row.
 - A row moves to **filed** only with an issue number, and to **withdrawn** with the reason.
 - A row with a reduction says what the reduction shows, not what the first screenshot suggested.
-  Three rows have now changed description under reduction — G1, G2 and G3 — and each time the
+  Four rows have now changed description under reduction — G1, G2, G3 and G5 — and each time the
   original wording would have sent a maintainer looking for a bug that does not exist.
+- **A row names the layer it lives in.** Three rows have now moved between layers: G8 was Blitsen's
+  clock, not Blitz's animations; G9 is the anyrender backend, not `blitz-paint`, which builds the
+  filter layer correctly; G12 was a probe that styled the element it was probing. Two more —
+  the hit-testing bug that walked DOM parents instead of layout parents, and `getClientRects` —
+  were Blitsen's own and never became rows. A row filed at the wrong layer is worse than no row.
+- Reduce until the property is isolated, not until the page looks wrong. `CSS_EFFECT` grouped four
+  properties on one screenshot; two of them render correctly, and only measuring each one alone
+  showed which.
 - Re-running the s6 corpus needs Chromium, ImageMagick, npm, Corepack, Python 3 and network
   access, so it is not a CI gate, and it stays manual. The gated corpus is the golden-image one
   in [CONFORMANCE.md](CONFORMANCE.md), which asks the other question: not whether Blitsen matches

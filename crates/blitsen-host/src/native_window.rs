@@ -2,35 +2,41 @@
 
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use blitsen_blitz::BlitzDom;
 use blitsen_core::WindowState;
-use blitsen_dom::DomBackend;
+use blitsen_dom::{DomBackend, DomName};
 use blitsen_js::{JsEngine, JsError};
 use blitz::dom::{DocGuard, DocGuardMut, Document as BlitzDocument, NodeId};
-use blitz::shell::BlitzApplication;
-use napi::{Env, sys};
+use blitz::shell::{BlitzApplication, BlitzShellProxy, WindowConfig, create_default_event_loop};
+use blitz::traits::net::NetProvider;
 use serde::Serialize;
 use winit::application::ApplicationHandler;
+use winit::dpi::LogicalSize;
 use winit::event::{
     ButtonSource, DeviceEvent, ElementState, MouseButton, MouseScrollDelta, PointerSource,
     StartCause, WindowEvent,
 };
+use winit::event_loop::pump_events::EventLoopExtPumpEvents;
 use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::keyboard::{Key, ModifiersState, PhysicalKey};
+use winit::window::WindowAttributes;
 use winit::window::WindowId;
 
 #[cfg(target_os = "macos")]
 use winit::application::macos::ApplicationHandlerExtMacOS;
 
-use crate::{DomRuntime, NodeApiEngine, OpenDirectoryOptions};
+use crate::app::AppFiles;
+use crate::{DomRuntime, OpenDirectoryOptions};
 
-pub(crate) struct WindowApplication<Rend: anyrender::WindowRenderer> {
+/// The winit application behind one window: input translation and dispatch.
+pub struct WindowApplication<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> {
     pub(crate) inner: BlitzApplication<Rend>,
-    pub(crate) env: sys::napi_env,
+    pub(crate) engine: E,
     pub(crate) state: Rc<RefCell<WindowState>>,
     pub(crate) error: Rc<RefCell<Option<JsError>>>,
     pub(crate) started_at: Instant,
@@ -108,12 +114,223 @@ pub(crate) struct KeyboardEventInit {
     meta_key: bool,
 }
 
-pub(crate) struct WindowSession {
-    pub(crate) runtime: tokio::runtime::Runtime,
-    pub(crate) event_loop: EventLoop,
-    pub(crate) application: WindowApplication<anyrender_vello::VelloWindowRenderer>,
-    pub(crate) error: Rc<RefCell<Option<JsError>>>,
-    pub(crate) options: OpenDirectoryOptions,
+/// One open native window, its document, and the I/O runtime behind them.
+///
+/// Both hosts drive a session the same way: [`open`](Self::open) once, then
+/// [`pump`](Self::pump) until it reports the window is gone. Phase 1 pumps from
+/// a task on Bun's loop (TECH.md §3, S1 option 1); Phase 2 pumps from its own
+/// outer loop. Nothing else about the session differs between them.
+pub struct WindowSession<E: JsEngine + Clone> {
+    /// I/O runtime entered around every winit turn.
+    pub runtime: tokio::runtime::Runtime,
+    /// The winit loop, advanced without blocking by [`pump`](Self::pump).
+    pub event_loop: EventLoop,
+    /// Window, document and input translation.
+    pub application: WindowApplication<anyrender_vello::VelloWindowRenderer, E>,
+    /// The first error raised inside a winit callback, surfaced by `pump`.
+    pub error: Rc<RefCell<Option<JsError>>>,
+    /// Where the application's files come from, retained for reload.
+    pub files: AppFiles,
+    /// What the session was opened with, retained for reload.
+    pub options: OpenDirectoryOptions,
+}
+
+impl<E: JsEngine + Clone + 'static> WindowSession<E> {
+    /// Parses the entrypoint, runs its scripts, and opens a native window.
+    pub fn open(
+        engine: &mut E,
+        files: AppFiles,
+        options: OpenDirectoryOptions,
+    ) -> Result<Self, JsError> {
+        let started_at = Instant::now();
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .map_err(|error| JsError::new(error.to_string()))?;
+        let guard = runtime.enter();
+        let event_loop = create_default_event_loop();
+        let (proxy, receiver) = BlitzShellProxy::new(event_loop.create_proxy());
+        let net_provider = files.net_provider().unwrap_or_else(|| {
+            Arc::new(blitz::net::Provider::new(Some(Arc::new(proxy.clone()))))
+                as Arc<dyn NetProvider>
+        });
+        let document = crate::app::load_document(
+            engine,
+            &files,
+            net_provider,
+            options.width,
+            options.height,
+            None,
+            false,
+        )?;
+        let renderer = anyrender_vello::VelloWindowRenderer::new();
+        let attributes = WindowAttributes::default()
+            .with_title(options.title.clone())
+            .with_surface_size(LogicalSize::new(options.width, options.height));
+        let window = WindowConfig::with_attributes(
+            Box::new(SharedBlitzDocument(Rc::clone(&document.document))),
+            renderer,
+            attributes,
+        );
+        let mut application = BlitzApplication::new(proxy, receiver);
+        application.add_window(window);
+        let error = Rc::new(RefCell::new(None));
+        let application = WindowApplication {
+            inner: application,
+            engine: engine.clone(),
+            state: document.window_state,
+            error: Rc::clone(&error),
+            started_at,
+            document: document.document,
+            pending_mouse_input: Vec::new(),
+            pending_keyboard_input: Vec::new(),
+            pointer_positions: HashMap::new(),
+            mouse_down_targets: HashMap::new(),
+            mouse_buttons: 0,
+            modifiers: ModifiersState::empty(),
+            load_dispatched: false,
+        };
+        drop(guard);
+        Ok(Self {
+            runtime,
+            event_loop,
+            application,
+            error,
+            files,
+            options,
+        })
+    }
+
+    /// Re-parses the entrypoint and replaces the document in the open window.
+    pub fn reload(&mut self, engine: &mut E) -> Result<(), JsError> {
+        let _guard = self.runtime.enter();
+        let window_id = self
+            .application
+            .inner
+            .windows
+            .keys()
+            .copied()
+            .next()
+            .ok_or_else(|| JsError::new("native window is not ready"))?;
+        let viewport = self.application.inner.windows[&window_id]
+            .doc
+            .inner()
+            .viewport()
+            .clone();
+        let scale = f64::from(viewport.hidpi_scale);
+        let logical = winit::dpi::PhysicalSize::new(viewport.window_size.0, viewport.window_size.1)
+            .to_logical::<u32>(scale);
+        let proxy = self.application.inner.proxy.clone();
+        let net_provider = self.files.net_provider().unwrap_or_else(|| {
+            Arc::new(blitz::net::Provider::new(Some(Arc::new(proxy)))) as Arc<dyn NetProvider>
+        });
+        let document = crate::app::load_document(
+            engine,
+            &self.files,
+            net_provider,
+            logical.width,
+            logical.height,
+            Some(viewport),
+            false,
+        )?;
+
+        let view = self
+            .application
+            .inner
+            .windows
+            .get_mut(&window_id)
+            .expect("window id was read from this map");
+        view.replace_document(
+            Box::new(SharedBlitzDocument(Rc::clone(&document.document))),
+            false,
+        );
+        let application = &mut self.application;
+        application.state = document.window_state;
+        application.document = document.document;
+        application.started_at = Instant::now();
+        application.pending_mouse_input.clear();
+        application.pending_keyboard_input.clear();
+        application.pointer_positions.clear();
+        application.mouse_down_targets.clear();
+        application.mouse_buttons = 0;
+        application.load_dispatched = false;
+        Ok(())
+    }
+
+    /// Reloads one linked stylesheet without rerunning JavaScript.
+    ///
+    /// Reports whether the file was actually linked by the document.
+    pub fn reload_css(&mut self, file: &str) -> Result<bool, JsError> {
+        let _guard = self.runtime.enter();
+        let root = Path::new(&self.options.root);
+        let changed = root
+            .join(file)
+            .canonicalize()
+            .map_err(|error| JsError::new(format!("could not reload CSS file {file}: {error}")))?;
+        if !changed.starts_with(root) {
+            return Err(JsError::new(format!(
+                "CSS reload escaped application directory: {file}"
+            )));
+        }
+        let href_name = DomName::attribute("href");
+        let rel_name = DomName::attribute("rel");
+        let hrefs = {
+            let document = self.application.document.borrow();
+            document
+                .query_selector_all(document.document(), "link[href]")
+                .map_err(crate::dom_error)?
+                .into_iter()
+                .filter_map(|node| {
+                    let rel = document.attribute(node, &rel_name).ok().flatten()?;
+                    if !rel
+                        .split_ascii_whitespace()
+                        .any(|value| value.eq_ignore_ascii_case("stylesheet"))
+                    {
+                        return None;
+                    }
+                    let href = document.attribute(node, &href_name).ok().flatten()?;
+                    let local = href.split(['?', '#']).next().unwrap_or_default();
+                    root.join(local)
+                        .canonicalize()
+                        .ok()
+                        .filter(|candidate| *candidate == changed)
+                        .map(|_| href)
+                })
+                .collect::<Vec<_>>()
+        };
+        for href in &hrefs {
+            self.application
+                .document
+                .borrow_mut()
+                .document_mut()
+                .reload_resource_by_href(href);
+        }
+        Ok(!hrefs.is_empty())
+    }
+
+    /// Advances winit once without blocking, reporting whether a window remains.
+    ///
+    /// The one place a windowed frame turns. An error raised inside a winit
+    /// callback cannot be returned from there, so it is parked and surfaces
+    /// here, at the first call after it happened.
+    pub fn pump(&mut self) -> Result<bool, JsError> {
+        let _guard = self.runtime.enter();
+        self.event_loop
+            .pump_app_events(Some(Duration::ZERO), &mut self.application);
+        if let Some(error) = self.error.borrow_mut().take() {
+            return Err(error);
+        }
+        Ok(!self.application.inner.windows.is_empty()
+            || !self.application.inner.pending_windows.is_empty())
+    }
+}
+
+/// Forgets the window the `native:window` module addresses.
+///
+/// Called when a session ends, so a later call reports "no window" instead of
+/// reaching a destroyed one.
+pub fn release_window() {
+    crate::dom_bridge::window::publish(None);
 }
 
 pub(crate) fn dom_mouse_button(button: MouseButton) -> u16 {
@@ -173,7 +390,7 @@ pub(crate) fn dom_key_code(key: PhysicalKey) -> String {
     }
 }
 
-impl<Rend: anyrender::WindowRenderer> WindowApplication<Rend> {
+impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Rend, E> {
     fn queue_mouse_input(&mut self, window_id: WindowId, event: &WindowEvent) -> bool {
         let input = match event {
             WindowEvent::PointerMoved {
@@ -252,7 +469,7 @@ impl<Rend: anyrender::WindowRenderer> WindowApplication<Rend> {
         let event_type =
             serde_json::to_string(event_type).map_err(|error| JsError::new(error.to_string()))?;
         let init = serde_json::to_string(init).map_err(|error| JsError::new(error.to_string()))?;
-        let mut engine = NodeApiEngine::new(Env::from_raw(self.env));
+        let mut engine = self.engine.clone();
         let result = engine.evaluate_script(
             &format!("globalThis.__blitsenDispatchKeyboardEvent({event_type}, {init})"),
             "blitsen:native-keyboard-event",
@@ -296,7 +513,7 @@ impl<Rend: anyrender::WindowRenderer> WindowApplication<Rend> {
                     },
                 ),
                 PendingKeyboardInput::WindowFocus(focused) => {
-                    let mut engine = NodeApiEngine::new(Env::from_raw(self.env));
+                    let mut engine = self.engine.clone();
                     engine
                         .evaluate_script(
                             &format!(
@@ -326,7 +543,7 @@ impl<Rend: anyrender::WindowRenderer> WindowApplication<Rend> {
         let target = serde_json::to_string(&DomRuntime::serialize_handle(target))
             .map_err(|error| JsError::new(error.to_string()))?;
         let init = serde_json::to_string(init).map_err(|error| JsError::new(error.to_string()))?;
-        let mut engine = NodeApiEngine::new(Env::from_raw(self.env));
+        let mut engine = self.engine.clone();
         let result = engine.evaluate_script(
             &format!("globalThis.__blitsenDispatchMouseEvent({event_type}, {target}, {init})"),
             "blitsen:native-mouse-event",
@@ -468,7 +685,7 @@ impl<Rend: anyrender::WindowRenderer> WindowApplication<Rend> {
             return false;
         }
         let result = (|| {
-            let mut engine = NodeApiEngine::new(Env::from_raw(self.env));
+            let mut engine = self.engine.clone();
             let pending = engine.evaluate_script(
                 "globalThis.__blitsenAnimationFramesPending()",
                 "blitsen:animation-frame-pending",
@@ -490,7 +707,7 @@ impl<Rend: anyrender::WindowRenderer> WindowApplication<Rend> {
         }
         let timestamp = self.started_at.elapsed().as_secs_f64() * 1_000.0;
         let result = (|| {
-            let mut engine = NodeApiEngine::new(Env::from_raw(self.env));
+            let mut engine = self.engine.clone();
             let pending = engine.evaluate_script(
                 &format!("globalThis.__blitsenAnimationFrameTick({timestamp})"),
                 "blitsen:animation-frame-tick",
@@ -513,7 +730,7 @@ impl<Rend: anyrender::WindowRenderer> WindowApplication<Rend> {
         }
         *self.state.borrow_mut() = WindowState::new(width, height, device_pixel_ratio);
         let result = (|| {
-            let mut engine = NodeApiEngine::new(Env::from_raw(self.env));
+            let mut engine = self.engine.clone();
             let window = engine.evaluate_script("globalThis", "blitsen:window-resize-target")?;
             self.state.borrow().sync(&mut engine, &window)
         })();
@@ -539,7 +756,7 @@ impl<Rend: anyrender::WindowRenderer> WindowApplication<Rend> {
     fn dispatch_window_event(&self, event_type: &str) -> Result<bool, JsError> {
         let event_type =
             serde_json::to_string(event_type).map_err(|error| JsError::new(error.to_string()))?;
-        let mut engine = NodeApiEngine::new(Env::from_raw(self.env));
+        let mut engine = self.engine.clone();
         let result = engine.evaluate_script(
             &format!("globalThis.__blitsenDispatchLifecycleEvent({event_type})"),
             "blitsen:native-window-event",
@@ -602,7 +819,8 @@ impl<Rend: anyrender::WindowRenderer> WindowApplication<Rend> {
     }
 }
 
-pub(crate) struct SharedBlitzDocument(pub(crate) Rc<RefCell<BlitzDom>>);
+/// Adapts Blitsen's shared document to the Blitz shell's document interface.
+pub struct SharedBlitzDocument(pub Rc<RefCell<BlitzDom>>);
 
 impl BlitzDocument for SharedBlitzDocument {
     fn inner(&self) -> DocGuard<'_> {
@@ -627,7 +845,9 @@ impl BlitzDocument for SharedBlitzDocument {
     }
 }
 
-impl<Rend: anyrender::WindowRenderer> ApplicationHandler for WindowApplication<Rend> {
+impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> ApplicationHandler
+    for WindowApplication<Rend, E>
+{
     fn new_events(&mut self, event_loop: &dyn ActiveEventLoop, cause: StartCause) {
         self.inner.new_events(event_loop, cause);
     }
@@ -730,7 +950,9 @@ impl<Rend: anyrender::WindowRenderer> ApplicationHandler for WindowApplication<R
 }
 
 #[cfg(target_os = "macos")]
-impl<Rend: anyrender::WindowRenderer> ApplicationHandlerExtMacOS for WindowApplication<Rend> {
+impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> ApplicationHandlerExtMacOS
+    for WindowApplication<Rend, E>
+{
     fn standard_key_binding(
         &mut self,
         event_loop: &dyn ActiveEventLoop,

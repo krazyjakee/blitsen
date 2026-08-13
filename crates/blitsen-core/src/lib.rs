@@ -2,6 +2,7 @@
 
 mod attributes;
 mod bridge;
+pub mod bundle;
 mod document;
 pub mod events;
 pub mod frame;

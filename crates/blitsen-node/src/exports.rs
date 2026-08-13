@@ -1,0 +1,473 @@
+//! The `#[napi]` surface: what the JavaScript test suite and CLI call.
+//!
+//! Each of these is a thin adapter — take an environment, hand `blitsen-host`
+//! an engine over it, and serialize the result. The assertions themselves are
+//! the host's, so Phase 2 runs the same ones without going through Node-API.
+
+use std::path::{Path, PathBuf};
+
+use base64::Engine as _;
+use blitsen_core::{WindowState, WrapperTable};
+use blitsen_dom::DomBackend;
+use blitsen_host::harness::{self, active_document_harness};
+use blitsen_host::{dom_error, replay};
+use blitsen_js::{
+    ExternalId, JsEngine, JsError, JsType, NativeClass, NativeMethod, TypedArray, TypedArrayKind,
+};
+use blitz::dom::NodeId;
+use napi::{Env, Status, sys};
+use napi_derive::napi;
+
+use crate::engine::{check, raw};
+use crate::{NodeApiEngine, NodeWeakRef, napi_error};
+
+fn engine(env: Env) -> NodeApiEngine {
+    NodeApiEngine::new(env)
+}
+
+/// Boots Blitz headlessly, runs JavaScript DOM mutations, and returns the Rust
+/// tree state as JSON for cross-platform CI assertions.
+#[napi]
+pub fn run_bridge_harness(
+    env: Env,
+    html: String,
+    script: String,
+    width: Option<u32>,
+    height: Option<u32>,
+) -> napi::Result<String> {
+    let (snapshot, _) = harness::execute_bridge_harness(engine(env), html, script, width, height)
+        .map_err(napi_error)?;
+    serde_json::to_string(&snapshot)
+        .map_err(|error| napi::Error::new(Status::GenericFailure, error.to_string()))
+}
+
+/// Advances a document through a deterministic sequence of animation frames.
+#[napi]
+pub fn run_animation_harness(
+    env: Env,
+    html: String,
+    script: String,
+    frames: Option<u32>,
+    width: Option<u32>,
+    height: Option<u32>,
+) -> napi::Result<String> {
+    let frames = frames.unwrap_or(3);
+    if frames > 10_000 {
+        return Err(napi::Error::new(
+            Status::InvalidArg,
+            "animation harness is limited to 10000 frames",
+        ));
+    }
+    let snapshots = harness::execute_animation_harness(
+        engine(env),
+        html,
+        script,
+        frames,
+        width.unwrap_or(800),
+        height.unwrap_or(600),
+    )
+    .map_err(napi_error)?;
+    serde_json::to_string(&snapshots)
+        .map_err(|error| napi::Error::new(Status::GenericFailure, error.to_string()))
+}
+
+/// Loads a real HTML entrypoint and executes its collected script elements.
+#[napi]
+pub fn run_document_scripts_harness(
+    env: Env,
+    entrypoint: String,
+    width: Option<u32>,
+    height: Option<u32>,
+) -> napi::Result<String> {
+    let snapshot = harness::execute_document_harness(
+        engine(env),
+        Path::new(&entrypoint),
+        width.unwrap_or(800),
+        height.unwrap_or(600),
+    )
+    .map_err(napi_error)?;
+    serde_json::to_string(&snapshot)
+        .map_err(|error| napi::Error::new(Status::GenericFailure, error.to_string()))
+}
+
+/// Evaluates a script against the most recently loaded document harness.
+#[napi]
+pub fn evaluate_document_harness(env: Env, script: String) -> napi::Result<()> {
+    if active_document_harness().is_none() {
+        return Err(napi::Error::new(
+            Status::GenericFailure,
+            "no document harness is active",
+        ));
+    }
+    NodeApiEngine::new(env)
+        .evaluate_script(&script, "document-harness-evaluation.js")
+        .map(|_| ())
+        .map_err(napi_error)
+}
+
+/// Snapshots the most recently loaded document after the host event loop has advanced.
+#[napi]
+pub fn snapshot_document_harness() -> napi::Result<String> {
+    let (document, width, height) = active_document_harness()
+        .ok_or_else(|| napi::Error::new(Status::GenericFailure, "no document harness is active"))?;
+    let snapshot = harness::snapshot_and_render(document, width, height)
+        .map(|(snapshot, _)| snapshot)
+        .map_err(napi_error)?;
+    serde_json::to_string(&snapshot)
+        .map_err(|error| napi::Error::new(Status::GenericFailure, error.to_string()))
+}
+
+/// Serializes the tree of the most recently loaded document harness.
+///
+/// Backs the layout conformance corpus, whose framework cases are the markup a
+/// real bundle actually built rather than a hand-written imitation of it. The
+/// serialization happens after the document's scripts have run, so what comes
+/// back is the rendered tree, not the near-empty root element the bundle ships.
+#[napi]
+pub fn capture_document_harness_html() -> napi::Result<String> {
+    let (document, _, _) = active_document_harness()
+        .ok_or_else(|| napi::Error::new(Status::GenericFailure, "no document harness is active"))?;
+    let document = document.borrow();
+    let root = document
+        .document_element()
+        .ok_or_else(|| napi::Error::new(Status::GenericFailure, "document has no root"))?;
+    document
+        .inner_html(root)
+        .map_err(|error| napi_error(dom_error(error)))
+}
+
+/// Loads a real HTML entrypoint and advances its animation loop at 60 Hz.
+#[napi]
+pub fn run_document_animation_harness(
+    env: Env,
+    entrypoint: String,
+    setup_script: String,
+    frames: Option<u32>,
+    width: Option<u32>,
+    height: Option<u32>,
+) -> napi::Result<String> {
+    let frames = frames.unwrap_or(60);
+    if frames > 10_000 {
+        return Err(napi::Error::new(
+            Status::InvalidArg,
+            "document animation harness is limited to 10000 frames",
+        ));
+    }
+    let snapshots = harness::execute_document_animation_harness(
+        engine(env),
+        Path::new(&entrypoint),
+        &setup_script,
+        frames,
+        width.unwrap_or(800),
+        height.unwrap_or(600),
+        None,
+    )
+    .map_err(napi_error)?;
+    serde_json::to_string(&snapshots)
+        .map_err(|error| napi::Error::new(Status::GenericFailure, error.to_string()))
+}
+
+/// Advances a document's animation loop and writes every rendered frame as a PNG.
+///
+/// Backs the recorded demos in the documentation. The frames are the same ones the
+/// acceptance harness asserts on, so a published recording cannot drift away from
+/// what the tests actually verify.
+#[napi]
+pub fn record_document_animation_harness(
+    env: Env,
+    entrypoint: String,
+    setup_script: String,
+    directory: String,
+    frames: Option<u32>,
+    width: Option<u32>,
+    height: Option<u32>,
+) -> napi::Result<u32> {
+    let frames = frames.unwrap_or(60);
+    if frames > 10_000 {
+        return Err(napi::Error::new(
+            Status::InvalidArg,
+            "document animation harness is limited to 10000 frames",
+        ));
+    }
+    let directory = PathBuf::from(directory);
+    std::fs::create_dir_all(&directory).map_err(|error| {
+        napi::Error::new(
+            Status::GenericFailure,
+            format!("could not create {}: {error}", directory.display()),
+        )
+    })?;
+    harness::execute_document_animation_harness(
+        engine(env),
+        Path::new(&entrypoint),
+        &setup_script,
+        frames,
+        width.unwrap_or(800),
+        height.unwrap_or(600),
+        Some(&directory),
+    )
+    .map_err(napi_error)?;
+    Ok(frames)
+}
+
+/// Replays a recorded input trace at a fixed timestep.
+///
+/// Deterministic by construction: JavaScript only ever sees timestamps derived
+/// from the trace, never the wall clock, while the wall clock measures what each
+/// frame actually cost. The returned report carries a digest sequence to compare
+/// against a golden and a frame-time histogram to record.
+#[napi]
+pub fn replay_document_frames(
+    env: Env,
+    entrypoint: String,
+    trace: String,
+    record_into: Option<String>,
+    record_frames: Option<Vec<u32>>,
+) -> napi::Result<String> {
+    let trace = blitsen_core::replay::InputTrace::from_json(&trace)
+        .map_err(|error| napi::Error::new(Status::InvalidArg, error.to_string()))?;
+    let directory = record_into.map(PathBuf::from);
+    if let Some(directory) = &directory {
+        std::fs::create_dir_all(directory).map_err(|error| {
+            napi::Error::new(
+                Status::GenericFailure,
+                format!("could not create {}: {error}", directory.display()),
+            )
+        })?;
+    }
+    let report = replay::replay(
+        engine(env),
+        Path::new(&entrypoint),
+        trace,
+        directory.as_deref(),
+        &record_frames.unwrap_or_default(),
+    )
+    .map_err(napi_error)?;
+    serde_json::to_string(&report)
+        .map_err(|error| napi::Error::new(Status::GenericFailure, error.to_string()))
+}
+
+/// Digests a fixed text-and-shape fixture to identify this machine's rasterizer.
+///
+/// Pixel-level goldens only mean anything between runs that agree on this, since
+/// installed fonts and CPU feature detection both change the bytes that come out.
+#[napi]
+pub fn render_environment_fingerprint() -> String {
+    replay::fingerprint()
+}
+
+/// Renders the post-JavaScript frame as a base64-encoded PNG.
+#[napi]
+pub fn render_bridge_harness_png(
+    env: Env,
+    html: String,
+    script: String,
+    width: Option<u32>,
+    height: Option<u32>,
+) -> napi::Result<String> {
+    let (_, png) = harness::execute_bridge_harness(engine(env), html, script, width, height)
+        .map_err(napi_error)?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(png))
+}
+
+/// Exercises the real Node-API weak-reference and finalizer identity path.
+#[napi]
+pub fn wrapper_identity_smoke(env: Env) -> napi::Result<bool> {
+    let mut engine = NodeApiEngine::new(env);
+    let class = engine
+        .register_class(NativeClass::new("IdentityNode"))
+        .map_err(napi_error)?;
+    let table = WrapperTable::<NodeId, NodeWeakRef>::new();
+    let raw_env = engine.raw_env();
+    let weak_map_works = Env::from_raw(raw_env).run_in_scope(|| {
+        let node = NodeId::from_u64(1);
+        let first = table
+            .get_or_create(&mut engine, node, |engine, finalizer| {
+                engine.instantiate(&class, ExternalId(node.as_u64()), Some(finalizer))
+            })
+            .map_err(napi_error)?;
+        let second = table
+            .get_or_create(&mut engine, node, |_, _| {
+                Err(JsError::new("identity table created a duplicate wrapper"))
+            })
+            .map_err(napi_error)?;
+        let mut strictly_equal = false;
+        check(
+            unsafe {
+                sys::napi_strict_equals(raw_env, raw(&first), raw(&second), &mut strictly_equal)
+            },
+            "compare wrapper identity",
+        )
+        .map_err(napi_error)?;
+        if !strictly_equal {
+            return Ok(false);
+        }
+        engine
+            .set_global("__blitsenIdentityFirst", &first)
+            .and_then(|_| engine.set_global("__blitsenIdentitySecond", &second))
+            .map_err(napi_error)?;
+        engine
+            .evaluate_script(
+                "(() => { const identityMap = new WeakMap([[__blitsenIdentityFirst, 42]]); return identityMap.get(__blitsenIdentitySecond) === 42; })()",
+                "blitsen:identity-weak-map",
+            )
+            .and_then(|value| engine.to_boolean(&value))
+            .map_err(napi_error)
+    })?;
+    if !weak_map_works {
+        return Ok(false);
+    }
+
+    for slot in 2..=100_001_u64 {
+        Env::from_raw(raw_env).run_in_scope(|| {
+            let node = NodeId::from_u64(slot);
+            table
+                .get_or_create(&mut engine, node, |engine, finalizer| {
+                    engine.instantiate(&class, ExternalId(node.as_u64()), Some(finalizer))
+                })
+                .map(|_| ())
+                .map_err(napi_error)
+        })?;
+    }
+    if table.len() != 100_001 {
+        return Ok(false);
+    }
+    engine
+        .evaluate_script(
+            "delete globalThis.__blitsenIdentityFirst; delete globalThis.__blitsenIdentitySecond; Bun.gc(true); Bun.gc(true)",
+            "blitsen:identity-gc",
+        )
+        .map_err(napi_error)?;
+    table.prune_collected(&mut engine).map_err(napi_error)?;
+    Ok(table.is_empty())
+}
+
+/// Runs the load-bearing Node-API subset used by the trait implementation.
+///
+/// This is exported for the Bun compatibility test and is not public package API.
+#[napi]
+pub fn node_api_smoke(env: Env) -> napi::Result<bool> {
+    let mut engine = NodeApiEngine::new(env);
+    let string = engine.string("42").map_err(napi_error)?;
+    if engine.to_number(&string).map_err(napi_error)? != 42.0 {
+        return Ok(false);
+    }
+    let one = engine.number(1.0);
+    let two = engine.number(2.0);
+    let array = engine.array(&[one, two]).map_err(napi_error)?;
+    if engine.to_array(&array).map_err(napi_error)?.len() != 2 {
+        return Ok(false);
+    }
+    let typed = TypedArray::new(TypedArrayKind::Uint8, vec![1, 2, 3]).map_err(napi_error)?;
+    let typed = engine.typed_array(&typed).map_err(napi_error)?;
+    if engine.to_typed_array(&typed).map_err(napi_error)?.bytes != [1, 2, 3] {
+        return Ok(false);
+    }
+    let result = engine
+        .evaluate_script("21 * 2", "smoke.js")
+        .and_then(|value| engine.to_number(&value))
+        .map_err(napi_error)?;
+    if result != 42.0 {
+        return Ok(false);
+    }
+
+    let identity = engine
+        .define_function("identity", Box::new(|call| Ok(call.arguments[0])))
+        .map_err(napi_error)?;
+    let argument = engine.string("callback").map_err(napi_error)?;
+    let result = engine
+        .call(&identity, None, &[argument])
+        .and_then(|value| engine.to_string(&value))
+        .map_err(napi_error)?;
+    if result != "callback" {
+        return Ok(false);
+    }
+
+    let class = engine
+        .register_class(NativeClass::new("SmokeNode").with_method(NativeMethod::new(
+            "identity",
+            Box::new(|call| Ok(call.this)),
+        )))
+        .map_err(napi_error)?;
+    let instance = engine
+        .instantiate(&class, ExternalId(42), None)
+        .map_err(napi_error)?;
+    if engine.external_id(&instance).map_err(napi_error)? != ExternalId(42) {
+        return Ok(false);
+    }
+    let method = engine
+        .get_property(&instance, "identity")
+        .map_err(napi_error)?;
+    engine
+        .call(&method, Some(&instance), &[])
+        .map_err(napi_error)?;
+    let weak = engine.downgrade(&instance).map_err(napi_error)?;
+    if engine.upgrade(&weak).map_err(napi_error)?.is_none() {
+        return Ok(false);
+    }
+
+    let global_value = engine.string("visible").map_err(napi_error)?;
+    engine
+        .set_global("__blitsenSmoke", &global_value)
+        .map_err(napi_error)?;
+    let global_result = engine
+        .evaluate_script("globalThis.__blitsenSmoke", "global-smoke.js")
+        .and_then(|value| engine.to_string(&value))
+        .map_err(napi_error)?;
+    if global_result != "visible" {
+        return Ok(false);
+    }
+
+    let document = engine.object().map_err(napi_error)?;
+    let mut window_state = WindowState::new(800, 600, 2.0);
+    let window = window_state
+        .install(&mut engine, &document)
+        .map_err(napi_error)?;
+    let window_check = engine
+        .evaluate_script(
+            "window === globalThis && window.document !== undefined && innerWidth === 800 && innerHeight === 600 && devicePixelRatio === 2 && !('location' in window) && !('history' in window) && !('navigator' in window) && !('localStorage' in window)",
+            "window-smoke.js",
+        )
+        .and_then(|value| engine.to_boolean(&value))
+        .map_err(napi_error)?;
+    if !window_check {
+        return Ok(false);
+    }
+    window_state.resize(1024, 768);
+    window_state
+        .sync(&mut engine, &window)
+        .map_err(napi_error)?;
+    let resized = engine
+        .evaluate_script(
+            "innerWidth === 1024 && innerHeight === 768",
+            "resize-smoke.js",
+        )
+        .and_then(|value| engine.to_boolean(&value))
+        .map_err(napi_error)?;
+    if !resized {
+        return Ok(false);
+    }
+
+    let throwing = engine
+        .define_function(
+            "throwing",
+            Box::new(|_| Err(JsError::new("native callback failed"))),
+        )
+        .map_err(napi_error)?;
+    let error = match engine.call(&throwing, None, &[]) {
+        Ok(_) => return Ok(false),
+        Err(error) => error,
+    };
+    if !error.message().contains("native callback failed") {
+        return Ok(false);
+    }
+
+    let module = engine
+        .evaluate_module("export const answer = 42", "smoke-module.js")
+        .map_err(napi_error)?;
+    if engine.value_type(&module).map_err(napi_error)? != JsType::Object {
+        return Ok(false);
+    }
+    engine.drain_microtasks().map_err(napi_error)?;
+    engine.pump_event_loop().map_err(napi_error)?;
+    Ok(true)
+}

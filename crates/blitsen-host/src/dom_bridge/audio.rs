@@ -198,7 +198,9 @@ impl AudioHost {
                 "offline": false,
             }),
             Backend::Offline(context) => {
-                let context = context.as_ref().expect("offline context is live until rendered");
+                let context = context
+                    .as_ref()
+                    .expect("offline context is live until rendered");
                 json!({
                     "sampleRate": context.sample_rate(),
                     "currentTime": context.current_time(),
@@ -219,7 +221,9 @@ impl AudioHost {
                 Some(Node::Source(Box::new(context.create_buffer_source())))
             }
             (Backend::Offline(context), kind) => {
-                let context = context.as_ref().expect("offline context is live until rendered");
+                let context = context
+                    .as_ref()
+                    .expect("offline context is live until rendered");
                 match kind {
                     "gain" => Some(Node::Gain(context.create_gain())),
                     "panner" => Some(Node::Panner(context.create_stereo_panner())),
@@ -259,7 +263,9 @@ impl AudioHost {
                     source.as_audio_node().connect(&context.destination());
                 }
                 Backend::Offline(context) => {
-                    let context = context.as_ref().expect("offline context is live until rendered");
+                    let context = context
+                        .as_ref()
+                        .expect("offline context is live until rendered");
                     source.as_audio_node().connect(&context.destination());
                 }
             });
@@ -308,9 +314,11 @@ impl AudioHost {
         for _ in &ended {
             // Saturating: a source can only end once, but a disposed host has
             // already zeroed the count and must not wrap under it.
-            let _ = self.playing.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |playing| {
-                Some(playing.saturating_sub(1))
-            });
+            let _ = self
+                .playing
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |playing| {
+                    Some(playing.saturating_sub(1))
+                });
         }
         // A source that has ended is finished with: it cannot be started again,
         // so nothing will reach it after this and holding it would be a leak
@@ -343,7 +351,9 @@ impl AudioHost {
     fn render(&self) -> Result<Value, JsError> {
         let mut slot = lock(&self.backend);
         let Some(Backend::Offline(context)) = slot.as_mut() else {
-            return Err(JsError::new("only an offline audio context can be rendered"));
+            return Err(JsError::new(
+                "only an offline audio context can be rendered",
+            ));
         };
         let mut context = context
             .take()
@@ -352,10 +362,15 @@ impl AudioHost {
         let channels = (0..rendered.number_of_channels())
             .map(|channel| {
                 let samples = rendered.get_channel_data(channel);
-                let peak = samples.iter().fold(0.0f32, |peak, sample| peak.max(sample.abs()));
+                let peak = samples
+                    .iter()
+                    .fold(0.0f32, |peak, sample| peak.max(sample.abs()));
                 // The sum of squares is what tells silence from a signal that
                 // merely never peaks, which a peak alone cannot.
-                let energy = samples.iter().map(|sample| f64::from(*sample) * f64::from(*sample)).sum::<f64>();
+                let energy = samples
+                    .iter()
+                    .map(|sample| f64::from(*sample) * f64::from(*sample))
+                    .sum::<f64>();
                 json!({ "peak": peak, "energy": energy })
             })
             .collect::<Vec<_>>();
@@ -428,14 +443,24 @@ impl AudioHost {
                 let value = number(3)? as f32;
                 let when = number(4)?;
                 match text(2)? {
-                    "setValueAtTime" => { param.set_value_at_time(value, when); }
-                    "linearRampToValueAtTime" => { param.linear_ramp_to_value_at_time(value, when); }
+                    "setValueAtTime" => {
+                        param.set_value_at_time(value, when);
+                    }
+                    "linearRampToValueAtTime" => {
+                        param.linear_ramp_to_value_at_time(value, when);
+                    }
                     "exponentialRampToValueAtTime" => {
                         param.exponential_ramp_to_value_at_time(value, when);
                     }
-                    "setTargetAtTime" => { param.set_target_at_time(value, when, number(5)?); }
-                    "cancelScheduledValues" => { param.cancel_scheduled_values(when); }
-                    other => return Err(JsError::new(format!("unknown parameter schedule: {other}"))),
+                    "setTargetAtTime" => {
+                        param.set_target_at_time(value, when, number(5)?);
+                    }
+                    "cancelScheduledValues" => {
+                        param.cancel_scheduled_values(when);
+                    }
+                    other => {
+                        return Err(JsError::new(format!("unknown parameter schedule: {other}")));
+                    }
                 }
                 Ok(Value::Null)
             })?,

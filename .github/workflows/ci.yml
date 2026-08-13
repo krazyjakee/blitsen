@@ -68,6 +68,14 @@ jobs:
       - run: bun run --cwd packages/blitsen test:m2
       - run: bun run --cwd packages/blitsen test:standalone
       - run: bun run --cwd packages/blitsen test:m3b
+      # Issue #90: one project, both runtimes, and the only difference allowed
+      # is size. Needs the Phase 2 runtime, which needs a JavaScriptCore to load.
+      - name: Install JavaScriptCore for the Phase 2 runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libjavascriptcoregtk-4.1-dev
+      - run: cargo build --release -p blitsen-runtime
+      - run: bun run --cwd packages/blitsen test:hosts
 
   # Frame determinism (issue #48). Replays one committed input trace twice, in
   # separate processes, and compares the digest sequences with each other and
@@ -184,6 +192,21 @@ jobs:
         run: bun run --cwd packages/blitsen size:gate --measurements ${{ github.workspace }}/measurements.json
       - name: Startup and idle RAM
         run: bun run --cwd packages/blitsen bench --measurements ${{ github.workspace }}/measurements.json
+      # Issue #89: recorded, never gated. The Phase 2 component breakdown moves
+      # with the dependency tree, and a gate on it would fail for reasons that
+      # are not regressions.
+      - name: Install JavaScriptCore for the Phase 2 runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libjavascriptcoregtk-4.1-dev
+      - run: cargo build --release -p blitsen-runtime
+      - name: Phase 2 size breakdown
+        run: bun run --cwd packages/blitsen size:phase2 --out ${{ github.workspace }}/phase2-size.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: phase2-size-${{ github.sha }}
+          path: ${{ github.workspace }}/phase2-size.json
       # The committed time series only grows from local runs: CI cannot push, so
       # it keeps its own per-commit copy here instead.
       - uses: actions/upload-artifact@v4

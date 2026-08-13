@@ -1,0 +1,55 @@
+[package]
+name = "blitsen-host"
+description = "Engine-neutral Blitsen host: DOM bridge, window session, frame loop and harness"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyrender = "0.12"
+anyrender_vello = "0.13"
+anyrender_vello_cpu = "0.15"
+base64 = "0.22"
+blitsen-blitz = { path = "../blitsen-blitz" }
+blitsen-core = { path = "../blitsen-core" }
+blitsen-dom = { path = "../blitsen-dom" }
+blitsen-js = { path = "../blitsen-js" }
+blitsen-platform = { path = "../blitsen-platform" }
+blitz = { git = "https://github.com/DioxusLabs/blitz", rev = "1efe22d2524d71ede5b94592204c21f0de644219" }
+# `<blitsen-view>` composites through the paint-side custom-widget seam. Defaults
+# are off because blitz-paint's `svg` default turns on blitz-dom/svg, which does
+# not compile at this pin.
+blitz-paint = { git = "https://github.com/DioxusLabs/blitz", rev = "1efe22d2524d71ede5b94592204c21f0de644219", default-features = false, features = ["custom-widget"] }
+data-url = "0.3.2"
+futures-util = { version = "0.3", default-features = false, features = ["std", "sink"] }
+peniko = "0.6"
+png = "0.18"
+# Blitsen's own `fetch`, so the Phase 2 host swap does not change what the
+# application sees. Same version Blitz's net provider already resolves to.
+reqwest = { version = "0.13", default-features = false, features = ["charset", "native-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1.42", features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
+# `WebSocket`, the crate TECH.md §8 names. `native-tls` rather than a bundled
+# root store because `reqwest` above already resolves to it: `wss:` then trusts
+# the same platform certificates `https:` does, and no second TLS stack is built.
+tokio-tungstenite = { version = "0.29", default-features = false, features = ["connect", "native-tls"] }
+url = "2"
+# Audio (#81). A pure-Rust implementation of the Web Audio API itself rather
+# than a playback library the graph would have to be rebuilt on top of; it sits
+# on `cpal` regardless, so this is the same backend with the spec-shaped layer
+# already written. Decoding is Symphonia. Note the tree carries two Symphonia
+# majors — 0.6 directly, and 0.5 through `creek`, which is not optional — and no
+# feature selection collapses them.
+web-audio-api = "1.7"
+winit = "=0.31.0-beta.2"
+
+[lints]
+workspace = true
+
+[features]
+# Wraps the global allocator to count per-frame allocations; see src/alloc.rs.
+alloc-audit = []

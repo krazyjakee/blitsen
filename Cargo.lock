@@ -431,11 +431,41 @@ dependencies = [
  "blitsen-js",
  "serde",
  "serde_json",
+ "sha2",
 ]
 
 [[package]]
 name = "blitsen-dom"
 version = "0.0.0"
+
+[[package]]
+name = "blitsen-host"
+version = "0.0.0"
+dependencies = [
+ "anyrender",
+ "anyrender_vello",
+ "anyrender_vello_cpu",
+ "base64",
+ "blitsen-blitz",
+ "blitsen-core",
+ "blitsen-dom",
+ "blitsen-js",
+ "blitsen-platform",
+ "blitz",
+ "blitz-paint",
+ "data-url",
+ "futures-util",
+ "peniko",
+ "png",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-tungstenite",
+ "url",
+ "web-audio-api",
+ "winit",
+]
 
 [[package]]
 name = "blitsen-js"
@@ -453,31 +483,17 @@ dependencies = [
 name = "blitsen-node"
 version = "0.0.0"
 dependencies = [
- "anyrender",
- "anyrender_vello",
- "anyrender_vello_cpu",
  "base64",
  "blitsen-blitz",
  "blitsen-core",
  "blitsen-dom",
+ "blitsen-host",
  "blitsen-js",
- "blitsen-platform",
  "blitz",
- "blitz-paint",
- "data-url",
- "futures-util",
  "napi",
  "napi-build",
  "napi-derive",
- "peniko",
- "png",
- "reqwest",
- "serde",
  "serde_json",
- "tokio",
- "tokio-tungstenite",
- "url",
- "web-audio-api",
  "winit",
 ]
 
@@ -489,6 +505,17 @@ dependencies = [
  "raw-window-handle",
  "rfd",
  "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "blitsen-runtime"
+version = "0.0.0"
+dependencies = [
+ "blitsen-core",
+ "blitsen-host",
+ "blitsen-js",
+ "blitsen-jsc",
  "serde_json",
 ]
 
@@ -3843,6 +3870,17 @@ name = "sha1"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a978451301f4db1d02937a4ab3ccce137717b81826e79b7d49ffe3244a13c3b8"
+dependencies = [
+ "cfg-if",
+ "cpufeatures 0.2.17",
+ "digest",
+]
+
+[[package]]
+name = "sha2"
+version = "0.10.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a7507d819769d01a365ab707794a4084392c824f54a7a6a7862f8c3d0892b283"
 dependencies = [
  "cfg-if",
  "cpufeatures 0.2.17",

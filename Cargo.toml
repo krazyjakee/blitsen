@@ -4,10 +4,12 @@ members = [
     "crates/blitsen-blitz",
     "crates/blitsen-core",
     "crates/blitsen-dom",
+    "crates/blitsen-host",
     "crates/blitsen-jsc",
     "crates/blitsen-js",
     "crates/blitsen-node",
     "crates/blitsen-platform",
+    "crates/blitsen-runtime",
 ]
 exclude = ["spikes/*"]
 resolver = "2"
@@ -28,3 +30,15 @@ all = { level = "warn", priority = -1 }
 
 [patch.crates-io]
 anyrender = { git = "https://github.com/DioxusLabs/anyrender", rev = "dcd219746ff13a5832beab552f3f7f494d1bd84d" }
+
+# Phase 3 size work (issue #89). Measured, not adopted: `size:phase2` reports
+# what each lever is worth, and the release profile changes when the numbers
+# justify the build time. `panic = "abort"` is deliberately absent — the native
+# callback boundary in `blitsen-jsc` turns a panic into a JavaScript exception
+# with `catch_unwind`, and aborting instead would take the process down.
+[profile.release-min]
+inherits = "release"
+lto = "fat"
+codegen-units = 1
+opt-level = "z"
+strip = "symbols"

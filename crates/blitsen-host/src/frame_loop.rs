@@ -24,12 +24,12 @@ use blitz::dom::util::Color;
 use blitz::paint::paint_scene;
 use peniko::{Fill, kurbo::Rect};
 
-use crate::{NodeApiEngine, dom_error, napi_error};
-use blitsen_js::JsEngine as _;
+use crate::dom_error;
+use blitsen_js::{JsEngine, JsError};
 
 /// One headless frame turn: input, callbacks, layout and rasterization.
-pub(crate) struct FrameLoopTurn {
-    engine: NodeApiEngine,
+pub(crate) struct FrameLoopTurn<E: JsEngine> {
+    engine: E,
     document: Rc<RefCell<BlitzDom>>,
     renderer: VelloCpuImageRenderer,
     pixels: Vec<u8>,
@@ -42,11 +42,11 @@ pub(crate) struct FrameLoopTurn {
     /// The animation-frame callback, resolved once instead of compiled every
     /// frame. Sound only because a loop never outlives the addon call that
     /// created it, so this handle stays inside its scope.
-    tick: Option<napi::bindgen_prelude::Unknown<'static>>,
+    tick: Option<E::Value>,
 }
 
-impl FrameTurn for FrameLoopTurn {
-    type Error = napi::Error;
+impl<E: JsEngine> FrameTurn for FrameLoopTurn<E> {
+    type Error = JsError;
 
     fn drain_input(&mut self) -> Result<(), Self::Error> {
         // Shared rather than borrowed: dispatching needs the engine mutably, and
@@ -75,28 +75,22 @@ impl FrameTurn for FrameLoopTurn {
     fn drain_microtasks(&mut self) -> Result<(), Self::Error> {
         // Also Bun's: Node-API exposes no nested microtask checkpoint, so the
         // queue drains when control returns from the addon.
-        self.engine.drain_microtasks().map_err(napi_error).map(drop)
+        self.engine.drain_microtasks().map(drop)
     }
 
     fn run_animation_frames(&mut self, time: FrameTime) -> Result<(), Self::Error> {
-        let tick = match self.tick {
-            Some(tick) => tick,
+        let tick = match &self.tick {
+            Some(tick) => tick.clone(),
             None => {
-                let tick = self
-                    .engine
-                    .evaluate_script(
-                        "globalThis.__blitsenAnimationFrameTick",
-                        "blitsen:frame-loop-tick",
-                    )
-                    .map_err(napi_error)?;
-                *self.tick.insert(tick)
+                let tick = self.engine.evaluate_script(
+                    "globalThis.__blitsenAnimationFrameTick",
+                    "blitsen:frame-loop-tick",
+                )?;
+                self.tick.insert(tick).clone()
             }
         };
         let timestamp = self.engine.number(time.timestamp.as_secs_f64() * 1_000.0);
-        self.engine
-            .call(&tick, None, &[timestamp])
-            .map_err(napi_error)
-            .map(drop)
+        self.engine.call(&tick, None, &[timestamp]).map(drop)
     }
 
     fn restyle(&mut self) -> Result<(), Self::Error> {
@@ -169,11 +163,10 @@ impl FrameTurn for FrameLoopTurn {
     }
 }
 
-impl FrameLoopTurn {
-    fn dispatch(&mut self, input: &TraceInput) -> Result<(), napi::Error> {
+impl<E: JsEngine> FrameLoopTurn<E> {
+    fn dispatch(&mut self, input: &TraceInput) -> Result<(), JsError> {
         let quote = |value: &str| {
-            serde_json::to_string(value)
-                .map_err(|error| napi::Error::new(napi::Status::GenericFailure, error.to_string()))
+            serde_json::to_string(value).map_err(|error| JsError::new(error.to_string()))
         };
         let script = match input {
             TraceInput::Key {
@@ -195,22 +188,21 @@ impl FrameLoopTurn {
         };
         self.engine
             .evaluate_script(&script, "blitsen:replay-input")
-            .map_err(napi_error)
             .map(drop)
     }
 }
 
 /// A document advancing at a fixed timestep through the frame pipeline.
-pub(crate) struct FrameLoop {
+pub struct FrameLoop<E: JsEngine> {
     pipeline: FramePipeline,
     started: Instant,
-    turn: FrameLoopTurn,
+    turn: FrameLoopTurn<E>,
 }
 
-impl FrameLoop {
+impl<E: JsEngine> FrameLoop<E> {
     /// Prepares a loop over an already-loaded document.
-    pub(crate) fn new(
-        engine: NodeApiEngine,
+    pub fn new(
+        engine: E,
         document: Rc<RefCell<BlitzDom>>,
         width: u32,
         height: u32,
@@ -240,24 +232,24 @@ impl FrameLoop {
     }
 
     /// Runs one turn for the one-based `frame` at `timestamp_ms` since start.
-    pub(crate) fn advance(&mut self, frame: u32, timestamp_ms: f64) -> napi::Result<FrameReport> {
+    pub fn advance(&mut self, frame: u32, timestamp_ms: f64) -> Result<FrameReport, JsError> {
         self.turn.frame = frame;
         let now = self.started + Duration::from_secs_f64(timestamp_ms / 1_000.0);
         self.pipeline.run(now, &mut self.turn)
     }
 
     /// Rasterized RGBA pixels of the most recent frame.
-    pub(crate) fn pixels(&self) -> &[u8] {
+    pub fn pixels(&self) -> &[u8] {
         &self.turn.pixels
     }
 
     /// Time spent building the display list in the most recent frame.
-    pub(crate) fn display_list(&self) -> Duration {
+    pub fn display_list(&self) -> Duration {
         self.turn.display_list
     }
 
     /// Layout snapshot resolved by the most recent frame.
-    pub(crate) fn layout(&self) -> Option<LayoutSnapshot> {
+    pub fn layout(&self) -> Option<LayoutSnapshot> {
         self.turn.layout
     }
 }

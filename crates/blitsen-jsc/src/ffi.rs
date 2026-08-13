@@ -101,6 +101,9 @@ macro_rules! api {
             pub(crate) load_and_evaluate_module_from_source: Option<unsafe extern "C" fn(
                 JsContextRef, JsStringRef, JsStringRef, c_int, *mut JsValueRef,
             )>,
+            pub(crate) set_module_loader_functions: Option<unsafe extern "C" fn(
+                JsGlobalContextRef, JsObjectRef, JsObjectRef,
+            )>,
         }
 
         impl Functions {
@@ -125,6 +128,19 @@ macro_rules! api {
                             .get::<unsafe extern "C" fn(
                                 JsContextRef, JsStringRef, JsStringRef, c_int, *mut JsValueRef,
                             )>(b"JSLoadAndEvaluateModuleFromSource\0")
+                            .ok()
+                            .map(|symbol| *symbol)
+                    },
+                    // The module loader hook Blitsen's pinned build adds. It
+                    // takes two ordinary JavaScript functions rather than C
+                    // callbacks, because the loader already works in JSValues
+                    // and because it keeps this side of the ABI to one symbol.
+                    // See docs/JSC.md, "Module loader contract".
+                    set_module_loader_functions: unsafe {
+                        library
+                            .get::<unsafe extern "C" fn(
+                                JsGlobalContextRef, JsObjectRef, JsObjectRef,
+                            )>(b"JSGlobalContextSetModuleLoaderFunctions\0")
                             .ok()
                             .map(|symbol| *symbol)
                     },

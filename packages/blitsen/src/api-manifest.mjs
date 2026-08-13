@@ -1,10 +1,10 @@
 import { readFile, writeFile } from "node:fs/promises";
 
-const RUNTIME_SOURCE_ROOT = "../../../crates/blitsen-node/src/";
+const RUNTIME_SOURCE_ROOT = "../../../crates/blitsen-host/src/";
 const RUNTIME_SOURCE = new URL(`${RUNTIME_SOURCE_ROOT}dom_bridge.rs`, import.meta.url);
 const MANIFEST_FILE = new URL("./api-manifest.json", import.meta.url);
 const COMPATIBILITY_DOC = new URL("../../../docs/COMPATIBILITY.md", import.meta.url);
-const SOURCE_NAME = "crates/blitsen-node/src/dom_bridge.rs";
+const SOURCE_NAME = "crates/blitsen-host/src/dom_bridge.rs";
 
 // The web surface Blitsen makes a claim about, grouped by the diagnostic that
 // describes it. Whether an entry is implemented is deliberately not written

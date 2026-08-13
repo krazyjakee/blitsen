@@ -255,6 +255,62 @@ export async function resolveRuntime({
   throw missingRuntime(target);
 }
 
+// Phase 2 (issue #88): the export links into Blitsen's own executable rather
+// than into Bun's, so the platform package carries one more file. Which host an
+// export uses is deliberately *not* a CLI flag or a config key — structural
+// constraint 7 says the migration is a smaller binary and nothing else — so it
+// is selected by the environment and defaults to Phase 1 until the Phase 2
+// runtime ships in the platform packages.
+export const PHASE2_BINARY = "blitsen-runtime";
+
+/** Which host an export links into: `"bun"` (Phase 1) or `"jsc"` (Phase 2). */
+export function exportHost(env = process.env) {
+  const requested = env.BLITSEN_HOST;
+  if (requested === undefined || requested === "") return "bun";
+  if (requested !== "bun" && requested !== "jsc") {
+    throw new Error(`BLITSEN_HOST must be bun or jsc, got ${JSON.stringify(requested)}`);
+  }
+  return requested;
+}
+
+/**
+ * Finds the Phase 2 runtime executable for `target`.
+ *
+ * Same order as [`resolveRuntime`], and the same reasons: an explicit path,
+ * the installed platform package, then this checkout's release build.
+ */
+export async function resolvePhase2Runtime({
+  target = hostTarget(),
+  env = process.env,
+  require: resolver = createRequire(import.meta.url),
+} = {}) {
+  const configured = env.BLITSEN_RUNTIME_PATH;
+  if (configured) {
+    const path = configured.startsWith("file:") ? fileURLToPath(configured) : configured;
+    return { path, target, version: null, package: null, source: "environment" };
+  }
+  const name = runtimePackage(target);
+  const suffix = target.startsWith("win32-") ? ".exe" : "";
+  try {
+    const manifestPath = resolver.resolve(`${name}/package.json`);
+    const path = join(dirname(manifestPath), `${PHASE2_BINARY}${suffix}`);
+    if (await readable(path)) {
+      const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+      return { path, target, version: manifest.version, package: name, source: "package" };
+    }
+  } catch {} // Not installed is the ordinary case for every non-host target.
+  if (target === hostTarget()) {
+    const root = new URL("../../../", import.meta.url);
+    const path = fileURLToPath(new URL(`target/release/${PHASE2_BINARY}${suffix}`, root));
+    if (await readable(path)) {
+      return { path, target, version: null, package: null, source: "repository" };
+    }
+  }
+  throw new Error(`no Phase 2 Blitsen runtime for ${target}: no platform package carries `
+    + `${PHASE2_BINARY} yet. From a checkout, build one with `
+    + "`cargo build --release -p blitsen-runtime`, or set BLITSEN_RUNTIME_PATH.");
+}
+
 /** Loads a resolved addon and adapts the engine to the surface the CLI drives. */
 export function openRuntime(resolved) {
   const native = createRequire(import.meta.url)(resolved.path);

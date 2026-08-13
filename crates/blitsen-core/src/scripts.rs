@@ -89,6 +89,33 @@ where
     execute_collected_document_scripts(scripts, engine, entrypoint)
 }
 
+/// Where a document's external scripts are read from.
+///
+/// The Phase 1 host and a directory being run take them off disk. An exported
+/// Phase 2 application takes them out of the section appended to its own
+/// executable, and never has a path to read.
+pub trait ScriptLoader {
+    /// Returns a `src` script's source and the identifier it evaluates under.
+    ///
+    /// The identifier is what appears in stack traces and, for a module, what
+    /// its own imports resolve against — so it is a URL or path the loader can
+    /// resolve again, not a display string.
+    fn load(&self, root: &Path, src: &str) -> Result<(String, String), JsError>;
+}
+
+/// Reads scripts from the filesystem, below the entrypoint's directory.
+pub struct LocalScripts;
+
+impl ScriptLoader for LocalScripts {
+    fn load(&self, root: &Path, src: &str) -> Result<(String, String), JsError> {
+        let path = resolve_local_script(root, src)?;
+        let source = std::fs::read_to_string(&path).map_err(|error| {
+            JsError::new(format!("could not read script {}: {error}", path.display()))
+        })?;
+        Ok((source, path.to_string_lossy().into_owned()))
+    }
+}
+
 /// Executes a previously collected document-order script list.
 ///
 /// Hosts with interior-mutable DOM storage use this form to release their tree
@@ -97,6 +124,19 @@ pub fn execute_collected_document_scripts<J>(
     scripts: Vec<DocumentScript>,
     engine: &mut J,
     entrypoint: &Path,
+) -> Result<Vec<J::Value>, JsError>
+where
+    J: ScriptEngine,
+{
+    execute_collected_document_scripts_from(scripts, engine, entrypoint, &LocalScripts)
+}
+
+/// Executes a collected script list, reading `src` scripts through `loader`.
+pub fn execute_collected_document_scripts_from<J>(
+    scripts: Vec<DocumentScript>,
+    engine: &mut J,
+    entrypoint: &Path,
+    loader: &dyn ScriptLoader,
 ) -> Result<Vec<J::Value>, JsError>
 where
     J: ScriptEngine,
@@ -127,11 +167,7 @@ where
                 eprintln!("blitsen: skipping remote script, which is not fetched: {src}");
                 continue;
             }
-            let path = resolve_local_script(root, &src)?;
-            let source = std::fs::read_to_string(&path).map_err(|error| {
-                JsError::new(format!("could not read script {}: {error}", path.display()))
-            })?;
-            (source, path.to_string_lossy().into_owned())
+            loader.load(root, &src)?
         } else {
             (
                 script.source,

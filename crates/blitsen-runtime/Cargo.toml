@@ -1,0 +1,23 @@
+[package]
+name = "blitsen-runtime"
+description = "Phase 2 Blitsen runtime: the executable an exported application is linked into"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "blitsen-runtime"
+path = "src/main.rs"
+
+[dependencies]
+blitsen-core = { path = "../blitsen-core" }
+blitsen-host = { path = "../blitsen-host" }
+blitsen-jsc = { path = "../blitsen-jsc" }
+blitsen-js = { path = "../blitsen-js" }
+serde_json = "1"
+
+[lints]
+workspace = true

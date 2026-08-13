@@ -57,17 +57,13 @@ impl Drop for JscClass {
 }
 
 /// Process-lived JavaScriptCore engine loaded from a replaceable shared library.
+///
+/// Cloning produces another view of the same context, not another context. The
+/// host keeps such a view wherever it must re-enter JavaScript from a callback
+/// it does not own, which is what the Phase 1 addon uses a raw `napi_env` for.
+#[derive(Clone)]
 pub struct JavaScriptCore {
     runtime: Rc<Runtime>,
-}
-
-impl Drop for JavaScriptCore {
-    fn drop(&mut self) {
-        // The pinned Bun JSC context cannot currently be released without an
-        // atom-table teardown assertion. Keep one strong runtime/library owner
-        // beside that deliberately process-lived context.
-        std::mem::forget(Rc::clone(&self.runtime));
-    }
 }
 
 impl JavaScriptCore {
@@ -80,6 +76,47 @@ impl JavaScriptCore {
         self.evaluate_script(source, "blitsen:acquisition-smoke")
             .and_then(|value| self.to_number(&value))
             .map_err(|error| Error::Evaluation(error.to_string()))
+    }
+
+    /// Whether this library can link a module graph supplied by the host.
+    ///
+    /// False for a system JavaScriptCore, whose public C API has no module
+    /// loader hook at all. Checked before an application is loaded so a build
+    /// against the wrong library fails by name rather than at the first
+    /// `import` inside the application.
+    pub fn supports_modules(&self) -> bool {
+        self.runtime
+            .functions
+            .load_and_evaluate_module_from_source
+            .is_some()
+            && self.runtime.functions.set_module_loader_functions.is_some()
+    }
+
+    /// Points the engine's module loader at the host's resolver and reader.
+    ///
+    /// `resolve(referrerUrl, specifier) -> url` and `fetch(url) -> source` are
+    /// ordinary JavaScript functions, installed by
+    /// [`blitsen_host::modules::ModuleRegistry`]. Giving the engine functions
+    /// rather than C callbacks keeps this to one symbol and keeps the policy —
+    /// what a specifier means, what the application may reach — in one place on
+    /// the host side. See `docs/JSC.md`.
+    pub fn set_module_loader(
+        &mut self,
+        resolve: &JscValue,
+        fetch: &JscValue,
+    ) -> Result<(), JsError> {
+        let Some(set_loader) = self.runtime.functions.set_module_loader_functions else {
+            return Err(JsError::new(
+                "this JavaScriptCore library exposes no module loader hook \
+                 (JSGlobalContextSetModuleLoaderFunctions); use Blitsen's pinned JSC build",
+            ));
+        };
+        let resolve = self.object_ref(resolve)?;
+        let fetch = self.object_ref(fetch)?;
+        // SAFETY: both handles are live objects in this context, and the
+        // context outlives the loader it is being given.
+        unsafe { set_loader(self.runtime.context, resolve, fetch) };
+        Ok(())
     }
 
     /// Requests a full collection. Intended for conformance tests and diagnostics.
@@ -104,6 +141,12 @@ impl JsEngine for JavaScriptCore {
     type Value = JscValue;
     type WeakRef = JscWeakRef;
     type Class = JscClass;
+
+    fn from_value(value: &Self::Value) -> Self {
+        Self {
+            runtime: Rc::clone(&value.runtime),
+        }
+    }
 
     fn undefined(&mut self) -> Self::Value {
         // SAFETY: context is live.

@@ -1,0 +1,356 @@
+//! Where a running application's files come from, and how the rest of the host
+//! stops caring which.
+//!
+//! Two shapes reach the same window session: a directory of built output being
+//! run, and the section appended to an exported executable (issue #88). The
+//! difference is confined to this module — everything downstream sees an
+//! entrypoint, a base URL, a subresource provider and a script loader.
+
+use std::cell::RefCell;
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
+use std::sync::Arc;
+
+use blitsen_blitz::BlitzDom;
+use blitsen_core::bundle::AppBundle;
+use blitsen_core::{ScriptDocument, ScriptLoader, WindowState};
+use blitsen_dom::DomBackend;
+use blitsen_js::{JsEngine, JsError};
+use blitz::dom::DocumentConfig;
+use blitz::traits::net::{Bytes, NetHandler, NetProvider, Request};
+use blitz::traits::shell::{ColorScheme, Viewport};
+
+use crate::modules::{APP_ORIGIN, AppSource, DirectorySource, path_of, url_of};
+
+/// The application's files, and which of the two shapes they came in.
+#[derive(Clone)]
+pub enum AppFiles {
+    /// A directory of built output, run in place.
+    Directory {
+        /// Canonical application root.
+        root: PathBuf,
+        /// Canonical entrypoint inside it.
+        entrypoint: PathBuf,
+    },
+    /// The section appended to this executable.
+    Bundle {
+        /// The opened bundle, shared with the subresource provider.
+        bundle: Arc<AppBundle>,
+        /// Application-relative entrypoint, conventionally `index.html`.
+        entrypoint: String,
+    },
+}
+
+impl AppFiles {
+    /// Opens a directory of built output at `entrypoint`.
+    pub fn directory(entrypoint: impl AsRef<Path>) -> Result<Self, JsError> {
+        let entrypoint = entrypoint.as_ref().canonicalize().map_err(|error| {
+            JsError::new(format!(
+                "could not resolve {}: {error}",
+                entrypoint.as_ref().display()
+            ))
+        })?;
+        let root = entrypoint
+            .parent()
+            .ok_or_else(|| JsError::new("the entrypoint has no directory"))?
+            .to_path_buf();
+        Ok(Self::Directory { root, entrypoint })
+    }
+
+    /// Runs the application appended to this executable.
+    pub fn bundle(bundle: AppBundle, entrypoint: &str) -> Result<Self, JsError> {
+        if !bundle.contains(entrypoint) {
+            return Err(JsError::new(format!(
+                "the application bundle has no {entrypoint}: it carries {} file(s), \
+                 and an application needs an HTML entrypoint",
+                bundle.len()
+            )));
+        }
+        Ok(Self::Bundle {
+            bundle: Arc::new(bundle),
+            entrypoint: entrypoint.to_owned(),
+        })
+    }
+
+    /// The entrypoint's source text.
+    pub fn entrypoint_source(&self) -> Result<String, JsError> {
+        match self {
+            Self::Directory { entrypoint, .. } => {
+                std::fs::read_to_string(entrypoint).map_err(|error| {
+                    JsError::new(format!("could not read {}: {error}", entrypoint.display()))
+                })
+            }
+            Self::Bundle { bundle, entrypoint } => bundle
+                .read_to_string(entrypoint)
+                .map_err(|error| JsError::new(error.to_string())),
+        }
+    }
+
+    /// What the entrypoint is called, for stack traces and script identifiers.
+    pub fn entrypoint_name(&self) -> String {
+        match self {
+            Self::Directory { entrypoint, .. } => entrypoint.to_string_lossy().into_owned(),
+            Self::Bundle { entrypoint, .. } => url_of(entrypoint),
+        }
+    }
+
+    /// The document's base URL, which relative subresources resolve against.
+    pub fn base_url(&self) -> String {
+        match self {
+            // Percent-encoding is limited to the space, which is the character
+            // a real application directory actually contains.
+            Self::Directory { root, .. } => {
+                format!("file://{}/", root.to_string_lossy().replace(' ', "%20"))
+            }
+            Self::Bundle { .. } => APP_ORIGIN.to_owned(),
+        }
+    }
+
+    /// How many of the application's own files this carries.
+    ///
+    /// The number the standalone check reports, so it counts what the export
+    /// collected and not what the runtime added: `blitsen.runtime.json` is the
+    /// CLI's own record of the window settings, not one of the app's assets.
+    pub fn asset_count(&self) -> usize {
+        match self {
+            Self::Directory { root, .. } => count_files(root),
+            Self::Bundle { bundle, .. } => bundle
+                .paths()
+                .filter(|path| *path != RUNTIME_CONFIG)
+                .count(),
+        }
+    }
+
+    /// The files, as the module resolver sees them.
+    pub fn source(&self) -> Arc<dyn AppSource> {
+        match self {
+            Self::Directory { root, .. } => Arc::new(DirectorySource::new(root.clone())),
+            Self::Bundle { bundle, .. } => Arc::clone(bundle) as Arc<dyn AppSource>,
+        }
+    }
+
+    /// How the document's `<script src>` elements are read.
+    pub fn script_loader(&self) -> Box<dyn ScriptLoader> {
+        match self {
+            Self::Directory { .. } => Box::new(blitsen_core::LocalScripts),
+            Self::Bundle { bundle, .. } => Box::new(BundleScripts {
+                bundle: Arc::clone(bundle),
+            }),
+        }
+    }
+
+    /// The subresource provider for images, stylesheets and fonts, or `None`
+    /// when the ordinary Blitz provider should be used.
+    ///
+    /// A bundle needs its own: no other provider can read a file that exists
+    /// only as a byte range inside the running executable.
+    pub fn net_provider(&self) -> Option<Arc<dyn NetProvider>> {
+        match self {
+            Self::Directory { .. } => None,
+            Self::Bundle { bundle, .. } => Some(Arc::new(BundleResources {
+                bundle: Arc::clone(bundle),
+            }) as Arc<dyn NetProvider>),
+        }
+    }
+}
+
+/// A parsed document with its scripts already run.
+pub struct LoadedDocument {
+    /// The authoritative Blitz tree.
+    pub document: Rc<RefCell<BlitzDom>>,
+    /// The `window` object's observable state.
+    pub window_state: Rc<RefCell<WindowState>>,
+}
+
+/// Parses the entrypoint, validates its assets and runs its scripts.
+///
+/// The one place a document is built, whichever host is doing it and whether or
+/// not a window is involved, so opening a window, reloading one, and the
+/// headless standalone check cannot drift apart in what they install or in what
+/// order.
+#[allow(clippy::too_many_arguments)]
+pub fn load_document<E: JsEngine + Clone + 'static>(
+    engine: &mut E,
+    files: &AppFiles,
+    net_provider: Arc<dyn NetProvider>,
+    width: u32,
+    height: u32,
+    viewport: Option<Viewport>,
+    test_harness: bool,
+) -> Result<LoadedDocument, JsError> {
+    let source = files.entrypoint_source()?;
+    let dom_runtime = crate::DomRuntime::new(BlitzDom::from_html(
+        &source,
+        DocumentConfig {
+            base_url: Some(files.base_url()),
+            net_provider: Some(net_provider),
+            viewport: Some(
+                viewport.unwrap_or_else(|| Viewport::new(width, height, 1.0, ColorScheme::Light)),
+            ),
+            ..Default::default()
+        },
+    ));
+    let document = dom_runtime.document();
+    if let AppFiles::Directory { root, entrypoint } = files {
+        // Only a directory can carry a reference outside itself; a bundle's
+        // paths were checked when its index was read.
+        crate::validate_local_assets(&document.borrow(), root, entrypoint)?;
+    }
+    let scripts = document
+        .borrow()
+        .document_scripts()
+        .map_err(crate::dom_error)?;
+    let window_state = crate::harness::execute_window_scripts_from(
+        engine,
+        dom_runtime,
+        scripts,
+        &files.entrypoint_name(),
+        width,
+        height,
+        test_harness,
+        files.script_loader().as_ref(),
+    )?;
+    document
+        .borrow_mut()
+        .flush_layout()
+        .map_err(crate::dom_error)?;
+    Ok(LoadedDocument {
+        document,
+        window_state,
+    })
+}
+
+/// The window settings the CLI writes beside an exported application.
+pub const RUNTIME_CONFIG: &str = "blitsen.runtime.json";
+
+fn count_files(root: &Path) -> usize {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return 0;
+    };
+    entries
+        .flatten()
+        .map(|entry| match entry.file_type() {
+            Ok(kind) if kind.is_dir() => count_files(&entry.path()),
+            Ok(kind) if kind.is_file() => 1,
+            _ => 0,
+        })
+        .sum()
+}
+
+/// Reads `<script src>` out of the appended section.
+struct BundleScripts {
+    bundle: Arc<AppBundle>,
+}
+
+impl ScriptLoader for BundleScripts {
+    fn load(&self, _root: &Path, src: &str) -> Result<(String, String), JsError> {
+        // The entrypoint is at the application root, so a script's `src` is
+        // resolved against the root itself. `resolve` refuses anything that
+        // would leave the application.
+        let url = crate::modules::resolve(&url_of("index.html"), &relative(src))?;
+        let path = path_of(&url).expect("resolve returns application URLs");
+        let source = self
+            .bundle
+            .read_to_string(path)
+            .map_err(|error| JsError::new(error.to_string()))?;
+        Ok((source, url))
+    }
+}
+
+/// Serves a document's subresources out of the appended section.
+struct BundleResources {
+    bundle: Arc<AppBundle>,
+}
+
+impl NetProvider for BundleResources {
+    fn fetch(&self, doc_id: usize, request: Request, handler: Box<dyn NetHandler>) {
+        let url = request.url.as_str().to_owned();
+        if let Some(path) = path_of(&url) {
+            // Blitz holds a stylesheet as a pending critical resource until its
+            // handler completes, so a missing file is answered with no bytes
+            // rather than left hanging — the same contract `LocalResources`
+            // keeps, and the reason a broken `<img>` reaches its errored state.
+            let bytes = self.bundle.read(path).unwrap_or_default();
+            handler.bytes(url, Bytes::from(bytes));
+            return;
+        }
+        // `data:` subresources, and anything else the ordinary local provider
+        // understands, still work inside a bundle.
+        blitsen_blitz::resources::LocalResources.fetch(doc_id, request, handler);
+    }
+}
+
+/// Turns a document-relative `src` into a specifier the resolver accepts.
+fn relative(src: &str) -> String {
+    if src.starts_with('/') || src.starts_with("./") || src.starts_with("../") {
+        src.to_owned()
+    } else {
+        format!("./{src}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_bundle_addresses_its_files_by_the_application_origin() {
+        let root = std::env::temp_dir().join(format!("blitsen-app-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let runtime = root.join("runtime");
+        std::fs::write(&runtime, vec![0_u8; 512]).unwrap();
+        let linked = root.join("app");
+        blitsen_core::bundle::write_bundle(
+            &runtime,
+            &linked,
+            &[
+                ("index.html".to_owned(), b"<p>hi".to_vec()),
+                ("assets/app.js".to_owned(), b"globalThis.ran = 1".to_vec()),
+            ],
+        )
+        .unwrap();
+
+        let bundle = AppBundle::open(&linked).unwrap().unwrap();
+        let files = AppFiles::bundle(bundle, "index.html").unwrap();
+        assert_eq!(files.entrypoint_source().unwrap(), "<p>hi");
+        assert_eq!(files.base_url(), APP_ORIGIN);
+        assert_eq!(files.entrypoint_name(), "blitsen://app/index.html");
+        assert_eq!(
+            files
+                .script_loader()
+                .load(Path::new("."), "assets/app.js")
+                .unwrap(),
+            (
+                "globalThis.ran = 1".to_owned(),
+                "blitsen://app/assets/app.js".to_owned()
+            )
+        );
+        assert!(files.net_provider().is_some());
+        assert_eq!(
+            files.source().read("assets/app.js").unwrap(),
+            b"globalThis.ran = 1"
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn a_bundle_without_an_entrypoint_says_so_rather_than_opening_a_blank_window() {
+        let root = std::env::temp_dir().join(format!("blitsen-app-empty-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let runtime = root.join("runtime");
+        std::fs::write(&runtime, vec![0_u8; 512]).unwrap();
+        let linked = root.join("app");
+        blitsen_core::bundle::write_bundle(
+            &runtime,
+            &linked,
+            &[("readme.txt".to_owned(), b"x".to_vec())],
+        )
+        .unwrap();
+        let bundle = AppBundle::open(&linked).unwrap().unwrap();
+        let error = AppFiles::bundle(bundle, "index.html")
+            .err()
+            .expect("no entrypoint");
+        assert!(error.message().contains("no index.html"));
+        std::fs::remove_dir_all(&root).ok();
+    }
+}
