@@ -153,8 +153,19 @@ function buildOutfile(options) {
 async function applyConfiguration(options, output) {
   const { path, root, config } = await loadConfig();
   if (!config) {
+    // A directory of static output is already an application: there is no build
+    // command to configure, and `blitsen` opens this same directory with no
+    // argument. Only when there is nothing here to build does the config matter,
+    // and then the message is about the config rather than about the entrypoint
+    // — a bundler project whose config is missing must not quietly export its
+    // source directory instead.
+    const here = join(process.cwd(), "index.html");
+    if (await access(here, constants.R_OK).then(() => true, () => false)) {
+      options.directory = process.cwd();
+      return;
+    }
     const location = path ?? join(process.cwd(), "package.json");
-    throw new Error("missing application directory: pass one, "
+    throw new Error("missing application directory: pass one, or add an index.html here, "
       + `or add a "blitsen" config to ${location}`);
   }
   if (config.build) {
@@ -316,7 +327,10 @@ export async function main(args, output = console, runtime = null) {
       // announces the artifact names it too.
       if (result.runtime) output.log(`Runtime: ${describeRuntime(result.runtime)}`);
       if (result.assetDirectory) output.log(`Side-loaded assets: ${result.assetDirectory}`);
-      output.log("Phase 1 exports are architecture proofs and are not yet cleared for redistribution.");
+      // Not "Phase 1 exports": a Phase 2 export printed the same line and named
+      // the wrong host. What is true of both is the part that matters — the
+      // redistribution gate in LICENSING.md is not implemented (#121).
+      output.log("Exports are architecture proofs and are not yet cleared for redistribution.");
       return 0;
     }
     active ??= await hostRuntime();

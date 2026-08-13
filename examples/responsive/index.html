@@ -1,0 +1,63 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Blitsen Responsive</title>
+    <link rel="stylesheet" href="./style.css">
+  </head>
+  <body>
+    <main class="page">
+      <header>
+        <p class="eyebrow">RESPONSIVE</p>
+        <h1>Resize the window.</h1>
+        <p class="intro">Every number below is read back from the layout the renderer settled on,
+          not from anything this page decided. Drag an edge and watch the breakpoint, the column
+          count and the observed box change together on the same frame.</p>
+      </header>
+
+      <!-- Three columns, then two, then one. The grid is the whole layout: no
+           element here is positioned, so what reflows is what the cascade says
+           reflows. -->
+      <section class="grid">
+        <article class="card"><h2>Ingest</h2><p>Static output in, nothing rewritten.</p></article>
+        <article class="card"><h2>Layout</h2><p>Stylo cascades it, Taffy places it.</p></article>
+        <article class="card"><h2>Paint</h2><p>One frame, no browser engine.</p></article>
+        <article class="card"><h2>Export</h2><p>A single native executable out.</p></article>
+        <article class="card"><h2>Input</h2><p>The same hit test the window uses.</p></article>
+        <article class="card"><h2>Audio</h2><p>Web Audio over a real device.</p></article>
+      </section>
+
+      <section class="readout">
+        <div class="row">
+          <span class="label">VIEWPORT</span>
+          <strong id="viewport">—</strong>
+        </div>
+        <div class="row">
+          <span class="label">BREAKPOINT</span>
+          <strong id="breakpoint">—</strong>
+        </div>
+        <div class="row">
+          <span class="label">ORIENTATION</span>
+          <strong id="orientation">—</strong>
+        </div>
+        <div class="row">
+          <!-- Read from getComputedStyle, so it is the grid the cascade
+               resolved rather than the one this file expected. -->
+          <span class="label">COLUMNS</span>
+          <strong id="columns">—</strong>
+        </div>
+        <div class="row">
+          <!-- ResizeObserver on the first card. Its content box is measured by
+               the renderer and delivered at the start of the frame turn. -->
+          <span class="label">OBSERVED CARD</span>
+          <strong id="observed">—</strong>
+        </div>
+        <div class="row">
+          <span class="label">CHANGES</span>
+          <strong id="changes">0 resizes · 0 query flips</strong>
+        </div>
+      </section>
+    </main>
+    <script src="./app.js"></script>
+  </body>
+</html>

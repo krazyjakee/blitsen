@@ -1,0 +1,71 @@
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  padding: 32px;
+  background: #09111f;
+  color: #e8f0ff;
+  font: 16px sans-serif;
+}
+.page {
+  /* No auto margins: an absolutely positioned box centred that way resolves
+     against its declared width rather than its used one in this renderer
+     (docs/BLITZ-GAPS.md), and a demo about layout should not lean on a defect.
+     A max-width on a static block is the ordinary spelling anyway. */
+  max-width: 1080px;
+}
+.eyebrow, .label {
+  color: #67e8f9;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 2px;
+}
+h1 { margin: 8px 0 12px; font-size: 38px; line-height: 1.1; }
+.intro { margin: 0 0 28px; max-width: 60ch; color: #a9bbd3; line-height: 1.55; }
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  margin-bottom: 24px;
+}
+.card {
+  padding: 20px;
+  border: 1px solid #294466;
+  border-radius: 16px;
+  background: #101d30;
+}
+.card h2 { margin: 0 0 6px; font-size: 18px; }
+.card p { margin: 0; color: #a9bbd3; font-size: 14px; line-height: 1.5; }
+
+.readout {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px 24px;
+  padding: 22px;
+  border-radius: 18px;
+  background: #0a1526;
+}
+.row { display: flex; flex-direction: column; gap: 4px; }
+.row strong { font-size: 18px; font-weight: 700; }
+
+/* The breakpoints. `matchMedia` in app.js evaluates these same queries through
+   the same parser the cascade uses, so the readout cannot disagree with the
+   layout it is describing. */
+@media (max-width: 900px) {
+  .grid { grid-template-columns: repeat(2, 1fr); }
+  h1 { font-size: 32px; }
+}
+
+@media (max-width: 620px) {
+  .grid { grid-template-columns: 1fr; }
+  .readout { grid-template-columns: 1fr; }
+  body { padding: 20px; }
+  h1 { font-size: 26px; }
+}
+
+/* A window wider than it is tall gets its cards a little roomier. Orientation is
+   one of the features the style engine implements, so this is a real query
+   rather than a decorative one. */
+@media (orientation: landscape) {
+  .card { padding: 24px; }
+}

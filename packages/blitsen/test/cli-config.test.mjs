@@ -96,15 +96,26 @@ describe("directory CLI", () => {
     }
   });
 
-  test("asks for a directory or a config when neither is there", async () => {
+  test("asks for a directory or a config when there is nothing here to build", async () => {
     const directory = await mkdtemp(join(tmpdir(), "blitsen-unconfigured-"));
     const cwd = process.cwd();
     try {
       process.chdir(directory);
       const { lines, output } = capture();
       expect(await main(["build"], output, { build: async () => ({}) })).toBe(1);
-      expect(lines[0][1]).toContain('pass one, or add a "blitsen" config to');
-      expect(lines[0][1]).toContain("package.json");
+      expect(lines[0][1]).toContain("pass one, or add an index.html here");
+      expect(lines[0][1]).toContain('add a "blitsen" config to');
+
+      // A directory of static output is already an application — there is no
+      // build command to configure, and `blitsen` opens this same directory
+      // with no argument, so `blitsen build` exports it with no argument too.
+      await writeFile(join(directory, "index.html"), "<p>hi");
+      const exported = capture();
+      const built = [];
+      expect(await main(["build"], exported.output, {
+        build: async options => { built.push(options); return { outfile: "app", assets: 1, bytes: 2 }; },
+      })).toBe(0);
+      expect(built[0].root).toBe(await realpath(directory));
     } finally {
       process.chdir(cwd);
       await rm(directory, { recursive: true, force: true });
