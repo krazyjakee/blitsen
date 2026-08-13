@@ -58,18 +58,12 @@ fn a_server_root_source_is_read_from_the_application_root() {
     assert!(engine.evaluations[0].2.ends_with("src/math.js"));
     assert!(!engine.evaluations[0].1.is_empty());
 
-    // What it is not is a licence to read the disk.
-    let error = execute_document_scripts(
-        &script("/assets/app.js"),
-        &mut RecordingScriptEngine::default(),
-        &fixture,
-    )
-    .unwrap_err();
-    assert!(
-        error.message().contains("could not resolve script"),
-        "{}",
-        error.message()
-    );
+    // What it is not is a licence to read the disk. A path the application does
+    // not ship is skipped, for the reason a remote one is: one source that does
+    // not arrive must not stop every other script on the page.
+    let mut engine = RecordingScriptEngine::default();
+    execute_document_scripts(&script("/assets/app.js"), &mut engine, &fixture).unwrap();
+    assert!(engine.evaluations.is_empty());
 }
 
 /// A remote script is skipped rather than fatal, so the rest of the document

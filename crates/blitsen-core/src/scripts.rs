@@ -167,7 +167,18 @@ where
                 eprintln!("blitsen: skipping remote script, which is not fetched: {src}");
                 continue;
             }
-            loader.load(root, &src)?
+            // A script the application does not ship is skipped for the same
+            // reason a remote one is, and it is the same reason a browser has:
+            // one source that does not arrive must not stop every other script
+            // on the page. The preflight has already reported it as a
+            // subresource the document renders without.
+            match loader.load(root, &src) {
+                Ok(loaded) => loaded,
+                Err(error) => {
+                    eprintln!("blitsen: skipping a script that will not load: {}", error.message());
+                    continue;
+                }
+            }
         } else {
             (
                 script.source,

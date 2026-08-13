@@ -51,6 +51,11 @@ Running a directory resolves them the same way rather than rewriting anything, s
 and `blitsen build dist` accept the same output. They used to disagree, and the directory the
 export accepted was the default `vite build` one.
 
+A subresource the directory does not carry — a missing file, a remote URL — is named on stderr and
+the document renders without it, which is what the export already does with it. Only a reference
+that leaves the application directory is refused, because an export can serve nothing outside what
+it collected and a directory being run is held to the same files.
+
 | You wrote | Blitsen does |
 | --- | --- |
 | `href="./assets/app.css"` | Nothing; relative URLs already work. |

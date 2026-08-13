@@ -273,8 +273,13 @@ pub fn load_document<E: JsEngine + Clone + 'static>(
     let document = dom_runtime.document();
     if let AppFiles::Directory { root, entrypoint } = files {
         // Only a directory can carry a reference outside itself; a bundle's
-        // paths were checked when its index was read.
-        crate::validate_local_assets(&document.borrow(), root, entrypoint)?;
+        // paths were checked when its index was read. What it cannot serve is
+        // reported rather than refused — the renderer degrades it, and so does
+        // an export, so refusing here would mean a document that runs once
+        // exported and will not open from the directory it was exported from.
+        for note in crate::validate_local_assets(&document.borrow(), root, entrypoint)? {
+            eprintln!("blitsen: {note}");
+        }
     }
     let scripts = document
         .borrow()
