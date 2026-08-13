@@ -84,6 +84,37 @@ not embed icon or version-info resources into the PE image, and the build says s
 pretending otherwise. `--sign` runs your command with the artifact path as its only argument — the
 `.app` bundle on macOS, the executable elsewhere — and a non-zero exit fails the build. Blitsen
 never handles certificates.
+
+### Building for another platform
+
+```sh
+npx blitsen build dist --target win32-x64   # from Linux
+```
+
+`--target` takes any of the six triples. The target's runtime is fetched **on demand** rather than
+installed six times over on every machine, and cached between builds — under `XDG_CACHE_HOME`,
+`~/Library/Caches` or `%LOCALAPPDATA%`, keyed by version as well as by target, because the runtime
+and the CLI are one ABI. `BLITSEN_CACHE_DIR` moves it. The launcher is compiled for that target's
+own Bun, so the artifact is a real PE, Mach-O or ELF executable for the platform you asked for —
+and a runtime that does not match the target is refused rather than linked into an executable that
+would fail at `dlopen` in front of a user.
+
+**What a cross-target build cannot do is sign.** Signing and notarisation need the target
+platform's own toolchain and its keychain:
+
+| Step | Cross-building |
+| --- | --- |
+| macOS `.app` bundle, icon, `Info.plist` | yes — file generation only |
+| macOS signing (`codesign`) and notarisation (`notarytool`) | **no** — needs a macOS host, Developer ID and Apple ID |
+| Windows `.ico` and manifest beside the executable | yes — file generation only |
+| Windows code signing (`signtool`) | **no** — needs a Windows host or a signing service |
+| Linux `.desktop` entry and icon | yes — file generation only |
+
+So a cross-built artifact is unsigned by construction. Ship it through a signing step on a host of
+that platform; `--sign` is that seam, and it takes the same command you would run there. A
+cross-built macOS app that is never signed and notarised is refused by Gatekeeper on any machine
+that did not build it.
+
 ## The native runtime
 
 This package is thin JavaScript — CLI, config, types. The runtime is one prebuilt binary per

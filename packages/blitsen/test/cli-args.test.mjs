@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { main, packageVersion, parseArgs, resolveApplication } from "../src/cli.mjs";
+import { TARGETS } from "../src/runtime.mjs";
 import { icon, capture } from "./cli-support.mjs";
 
 describe("directory CLI", () => {
@@ -48,15 +49,21 @@ describe("directory CLI", () => {
     expect(() => parseArgs(["app", "--name", "My App"])).toThrow("only valid with build");
   });
 
-  test("refuses cross-target export instead of quietly building for the host", () => {
+  // Cross-target export is accepted now (#72): the target's runtime is fetched
+  // on demand and the launcher is compiled for that target's Bun. What is still
+  // refused is a triple Blitsen has no runtime for at all, and that refusal has
+  // to name the six so the reader does not have to guess the spelling.
+  test("accepts every supported target and refuses anything else", () => {
     const host = `${process.platform}-${process.arch}`;
     const other = host === "linux-x64" ? "darwin-arm64" : "linux-x64";
     expect(parseArgs(["build", "dist", "--target", host]).target).toBe(host);
-    expect(() => parseArgs(["build", "dist", "--target", other]))
-      .toThrow("is not supported yet");
-    expect(() => parseArgs(["build", "dist", "--target", other])).toThrow("see issue #72");
+    expect(parseArgs(["build", "dist", "--target", other]).target).toBe(other);
+    for (const target of TARGETS) {
+      expect(parseArgs(["build", "dist", "--target", target]).target).toBe(target);
+    }
     expect(() => parseArgs(["build", "dist", "--target", "sunos-x64"]))
       .toThrow("unknown --target sunos-x64");
+    expect(() => parseArgs(["build", "dist", "--target", "sunos-x64"])).toThrow("linux-x64");
   });
 
   test("requires a directory for every command except a configured build", () => {

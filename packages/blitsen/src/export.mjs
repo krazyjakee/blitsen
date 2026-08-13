@@ -3,6 +3,16 @@ import { basename, dirname, extname, isAbsolute, join, posix, relative, resolve,
 import { packageBuild, signArtifact } from "./packaging.mjs";
 import { describeRuntime, hostTarget } from "./runtime.mjs";
 
+// Blitsen names a target the way Node does — `process.platform`-`process.arch` —
+// and Bun names its own compile targets differently. This is the whole of the
+// translation, and it is a closed set: `TARGETS` and this map must stay the same
+// six, which `cli-runtime.test.mjs` checks.
+const BUN_TARGETS = {
+  "darwin-arm64": "bun-darwin-arm64", "darwin-x64": "bun-darwin-x64",
+  "linux-arm64": "bun-linux-arm64", "linux-x64": "bun-linux-x64",
+  "win32-arm64": "bun-windows-arm64", "win32-x64": "bun-windows-x64",
+};
+
 const HTML_EXTENSIONS = [".html", ".htm"];
 const SCRIPT_EXTENSIONS = [".js", ".mjs", ".cjs"];
 const REWRITTEN_EXTENSIONS = [...HTML_EXTENSIONS, ".css"];
@@ -241,20 +251,24 @@ export function describeNativeBinary(bytes) {
 }
 
 // Every other asset in an export is portable bytes; a .node is a host shared
-// library, and is the one thing that can be architecturally wrong. --target
-// refuses a cross-target export for exactly this reason, so an addon is checked
-// here rather than discovered at dlopen in front of a user.
-async function inspectAddon(staged, path) {
+// library, and is the one thing that can be architecturally wrong. Checked
+// against the target being built for rather than the host, because those differ
+// under `--target` (#72) — and checked here rather than discovered at dlopen in
+// front of a user.
+async function inspectAddon(staged, path, target) {
   const bytes = await readFile(staged);
   const binary = describeNativeBinary(bytes);
   if (!binary) {
     throw new Error(`${path} is not a native addon: a .node file must be an ELF, Mach-O or PE `
       + "shared library");
   }
-  if (binary.platform !== process.platform || !binary.architectures.includes(process.arch)) {
+  const [platform, architecture] = [target.slice(0, target.lastIndexOf("-")),
+    target.slice(target.lastIndexOf("-") + 1)];
+  if (binary.platform !== platform || !binary.architectures.includes(architecture)) {
     throw new Error(`native addon ${path} is built for `
       + `${binary.platform}-${binary.architectures.join("/")} (${binary.format}), `
-      + `but this export runs on ${hostTarget()}`);
+      + `but this export runs on ${target}`
+      + (target === hostTarget() ? "" : " (--target)"));
   }
   // Bun loads Node-API addons only. A V8/NAN addon is a valid shared library for
   // this host and would pass every check above, then fail at require.
@@ -423,11 +437,20 @@ export async function buildStandalone(
   {
     root, width, height, title, outfile, force = false, include = [], addons = [],
     assets = "embedded", icon = null, bundleId = null, appVersion = null, sign = null,
-    platform = process.platform, progress = () => {},
+    target = null, platform, progress = () => {},
   },
   runtime,
 ) {
   const linkedRuntime = runtimeRecord(runtime);
+  // The target being built for, and the platform that follows from it. Taken
+  // from the runtime that was actually linked when no `--target` was given, so
+  // the executable and the addon inside it can never disagree.
+  const buildTarget = target ?? linkedRuntime.target ?? hostTarget();
+  const buildPlatform = platform ?? buildTarget.slice(0, buildTarget.lastIndexOf("-"));
+  if (linkedRuntime.target !== buildTarget) {
+    throw new Error(`the linked runtime is for ${linkedRuntime.target}, `
+      + `but this build targets ${buildTarget}`);
+  }
   const nativePath = linkedRuntime.path;
   if (!["embedded", "side-loaded"].includes(assets)) {
     throw new Error(`unknown asset layout: ${assets} (expected embedded or side-loaded)`);
@@ -435,6 +458,23 @@ export async function buildStandalone(
   await access(nativePath).catch(() => {
     throw new Error(`native addon is unavailable: ${nativePath}`);
   });
+  // The runtime is the one thing in the export that must match the target and
+  // cannot be checked once it is inside the executable. It matters most under
+  // `--target`, where BLITSEN_NATIVE_PATH or a stale cache entry could otherwise
+  // put this host's addon inside an executable for another platform — which
+  // links, ships, and then fails at `dlopen` in front of whoever runs it.
+  const runtimeBinary = describeNativeBinary(await readFile(nativePath));
+  const targetPlatform = buildTarget.slice(0, buildTarget.lastIndexOf("-"));
+  const targetArchitecture = buildTarget.slice(buildTarget.lastIndexOf("-") + 1);
+  if (!runtimeBinary) {
+    throw new Error(`the linked runtime is not a shared library: ${nativePath}`);
+  }
+  if (runtimeBinary.platform !== targetPlatform
+    || !runtimeBinary.architectures.includes(targetArchitecture)) {
+    throw new Error(`the linked runtime is built for `
+      + `${runtimeBinary.platform}-${runtimeBinary.architectures.join("/")} `
+      + `(${runtimeBinary.format}), but this build targets ${buildTarget}: ${nativePath}`);
+  }
   const destination = resolve(outfile ?? defaultOutfile(root));
   const assetDirectory = `${basename(destination)}.assets`;
   const sideLoaded = join(dirname(destination), assetDirectory);
@@ -480,7 +520,7 @@ export async function buildStandalone(
       // Checked however it arrived: declared, reached from a script, or kept by
       // --include. A carried addon that cannot load is worse than an absent one.
       const native = extname(path).toLowerCase() === ADDON_EXTENSION;
-      if (native) await inspectAddon(staged, path);
+      if (native) await inspectAddon(staged, path, buildTarget);
       manifest.push({ path, hash: await hashFile(staged), ...native ? { native: true } : {} });
     }
     const carriedAddons = manifest.filter(asset => asset.native).map(asset => asset.path);
@@ -506,7 +546,10 @@ export async function buildStandalone(
     }));
     const result = await Bun.build({
       entrypoints: [launcher],
-      compile: { outfile: destination },
+      // Bun downloads the target's own runtime to compile against, which is what
+      // makes a cross-target export possible at all: the launcher is bundled
+      // here and linked into that runtime rather than into this host's.
+      compile: { outfile: destination, target: BUN_TARGETS[buildTarget] },
     });
     if (!result.success) {
       const detail = result.logs.map(log => String(log)).join("\n");
@@ -526,7 +569,7 @@ export async function buildStandalone(
     progress({ step: "link", detail: linked });
     const packaged = icon || bundleId || appVersion
       ? await packageBuild({
-        platform,
+        platform: buildPlatform,
         executable: linked,
         title,
         icon,
@@ -540,7 +583,7 @@ export async function buildStandalone(
     // The signing hook runs last, over the bundle on macOS and the executable
     // elsewhere, so it sees exactly what ships.
     const signed = sign
-      ? await signArtifact({ platform, command: sign, artifact: packaged?.bundle ?? executable })
+      ? await signArtifact({ platform: buildPlatform, command: sign, artifact: packaged?.bundle ?? executable })
       : null;
     progress({
       step: "package",

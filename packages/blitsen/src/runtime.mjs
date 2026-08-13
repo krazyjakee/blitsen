@@ -1,5 +1,7 @@
-import { access, readFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { gunzipSync } from "node:zlib";
 import { createRequire } from "node:module";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -57,6 +59,145 @@ function missingRuntime(target) {
     + "`cargo build --release -p blitsen-node`, or set BLITSEN_NATIVE_PATH to an addon.");
 }
 
+// Issue #72: a target's runtime is fetched when it is asked for, not installed
+// six times over on every machine that only ever builds for one of them.
+//
+// The download is `npm pack`, not `npm install`: a platform package declares its
+// `os` and `cpu`, so installing a foreign one is refused by npm as EBADPLATFORM
+// — which is right for a dependency and wrong for a build input. `npm pack` has
+// no such opinion, and still goes through the user's registry, credentials and
+// integrity checking rather than around them.
+
+/**
+ * Where fetched runtimes are kept, honouring the platform's cache convention.
+ *
+ * A cache, not state: everything here can be re-downloaded, so it belongs
+ * somewhere the system is allowed to clear.
+ */
+export function runtimeCacheDir(env = process.env, platform = process.platform) {
+  if (env.BLITSEN_CACHE_DIR) return env.BLITSEN_CACHE_DIR;
+  if (platform === "win32") {
+    return join(env.LOCALAPPDATA || join(homedir(), "AppData", "Local"), "blitsen", "Cache");
+  }
+  if (platform === "darwin") return join(homedir(), "Library", "Caches", "blitsen");
+  return join(env.XDG_CACHE_HOME || join(homedir(), ".cache"), "blitsen");
+}
+
+/**
+ * Reads one file out of a gzipped tar, by the name npm gives it.
+ *
+ * Implemented here rather than shelled out to `tar` because a build tool that
+ * cross-compiles ought not to depend on which tar the host happens to have —
+ * and because one regular file out of a flat npm tarball is a small enough
+ * problem to do exactly. Only what that needs is handled: the ustar name and
+ * size fields, the 512-byte record padding, and the long-name extension GNU tar
+ * writes for paths past 100 bytes. Anything else is skipped rather than guessed.
+ */
+export function extractFromTarball(archive, wanted) {
+  const bytes = new Uint8Array(gunzipSync(archive));
+  const text = (offset, length) => {
+    const raw = new TextDecoder().decode(bytes.subarray(offset, offset + length));
+    const end = raw.indexOf("\0");
+    return end < 0 ? raw : raw.slice(0, end);
+  };
+  let longName = null;
+  for (let offset = 0; offset + 512 <= bytes.length; ) {
+    const name = longName ?? text(offset, 100);
+    const sizeField = text(offset + 124, 12).trim();
+    // A zero-filled record is the end-of-archive marker, not a member.
+    if (name === "" && sizeField === "") break;
+    const size = Number.parseInt(sizeField, 8) || 0;
+    const type = String.fromCharCode(bytes[offset + 156]);
+    const body = offset + 512;
+    const next = body + Math.ceil(size / 512) * 512;
+    if (type === "L") {
+      // GNU long name: the next header's real name is this record's body.
+      longName = new TextDecoder().decode(bytes.subarray(body, body + size)).replace(/\0+$/, "");
+      offset = next;
+      continue;
+    }
+    longName = null;
+    if (name === wanted && (type === "0" || type === "\0")) return bytes.slice(body, body + size);
+    offset = next;
+  }
+  return null;
+}
+
+/** Runs `npm pack` for one package version and returns the tarball's bytes. */
+async function downloadRuntimePackage(name, version, run) {
+  const scratch = await mkdtemp(join(tmpdir(), "blitsen-runtime-"));
+  try {
+    const packed = await run(
+      ["npm", "pack", `${name}@${version}`, "--pack-destination", scratch, "--silent"],
+      scratch);
+    if (packed.code !== 0) {
+      const reported = (packed.stderr || packed.stdout).trim().split("\n")
+        .filter(line => line.trim()).at(-1) ?? `npm pack exited ${packed.code}`;
+      // The target being unpublished is the ordinary failure here and reads
+      // nothing like a network error, so it is answered separately: the reader
+      // needs to know it is not their machine, and what they can do instead.
+      const missing = /E404|not found|is not in this registry/i.test(reported);
+      throw new Error(missing
+        ? `${name}@${version} is not published, so ${name.slice("@blitsen/".length)} `
+          + "cannot be built for from here.\n"
+          + `  Build it on a ${name.slice("@blitsen/".length)} host with 'blitsen build',\n`
+          + "  or point this build at an addon you already have with "
+          + "BLITSEN_NATIVE_PATH=/path/to/blitsen.node.\n"
+          + `  npm said: ${reported}`
+        : `could not download ${name}@${version}: ${reported}`);
+    }
+    // npm prints the file it wrote, but --silent suppresses it on some versions,
+    // so the directory is the answer: it was empty a moment ago.
+    const files = (await readdir(scratch)).filter(file => file.endsWith(".tgz"));
+    if (files.length !== 1) {
+      throw new Error(`npm pack produced ${files.length} tarballs for ${name}@${version}`);
+    }
+    return await readFile(join(scratch, files[0]));
+  } finally {
+    await rm(scratch, { recursive: true, force: true });
+  }
+}
+
+const npmRun = async (cmd, cwd) => {
+  const spawned = Bun.spawnSync({ cmd, cwd, stdout: "pipe", stderr: "pipe" });
+  return {
+    code: spawned.exitCode,
+    stdout: spawned.stdout.toString(),
+    stderr: spawned.stderr.toString(),
+  };
+};
+
+/**
+ * Fetches a target's runtime into the cache, or returns the cached one.
+ *
+ * Cached by package version as well as by target, because the runtime and the
+ * CLI are one ABI (#73): two versions must not share a slot.
+ */
+export async function fetchRuntime({
+  target,
+  version,
+  env = process.env,
+  run = npmRun,
+  cacheDir = runtimeCacheDir(env),
+} = {}) {
+  if (!TARGETS.includes(target)) throw missingRuntime(target);
+  const name = runtimePackage(target);
+  const directory = join(cacheDir, "runtimes", version, target);
+  const cached = join(directory, RUNTIME_BINARY);
+  if (await readable(cached)) {
+    return { path: cached, target, version, package: name, source: "cache" };
+  }
+  const tarball = await downloadRuntimePackage(name, version, run);
+  const addon = extractFromTarball(tarball, `package/${RUNTIME_BINARY}`);
+  if (addon === null) {
+    throw new Error(`${name}@${version} carries no ${RUNTIME_BINARY}; `
+      + "it cannot be used to build for " + target);
+  }
+  await mkdir(directory, { recursive: true });
+  await writeFile(cached, addon);
+  return { path: cached, target, version, package: name, source: "fetched" };
+}
+
 async function repositoryRuntime(target) {
   if (target !== hostTarget()) return null;
   const root = new URL("../../../", import.meta.url);
@@ -79,6 +220,12 @@ export async function resolveRuntime({
   version,
   env = process.env,
   require: resolver = createRequire(import.meta.url),
+  // Issue #72: only a cross-target build reaches for the network, and only
+  // after every local answer has been tried. A host build must never start
+  // downloading because a checkout happened to be missing its own addon.
+  fetch = false,
+  run,
+  cacheDir,
 } = {}) {
   const configured = env.BLITSEN_NATIVE_PATH;
   if (configured) {
@@ -104,6 +251,7 @@ export async function resolveRuntime({
   }
   const built = await repositoryRuntime(target);
   if (built !== null) return { path: built, target, version: null, package: null, source: "repository" };
+  if (fetch) return fetchRuntime({ target, version: version ?? await packageVersion(), env, run, cacheDir });
   throw missingRuntime(target);
 }
 

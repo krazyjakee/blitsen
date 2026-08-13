@@ -74,12 +74,51 @@ export function elfHeader({ machine = 0xb7, type = 3 } = {}) {
   return header;
 }
 
+
+// A minimal shared library for any of the six targets.
+//
+// `describeNativeBinary` reads only the container header, so a synthetic one is
+// enough to stand in for an addon built somewhere this test cannot build for —
+// which is what makes the cross-target export path (#72) testable at all
+// without six toolchains. It is deliberately not loadable: nothing in these
+// tests requires it, and `bun build --compile` never opens the addon it embeds.
+const NATIVE_STUB_MACHINES = {
+  linux: { x64: 0x3e, arm64: 0xb7 },
+  darwin: { x64: 0x01000007, arm64: 0x0100000c },
+  win32: { x64: 0x8664, arm64: 0xaa64 },
+};
+
+export function nativeStub(target = `${process.platform}-${process.arch}`) {
+  const platform = target.slice(0, target.lastIndexOf("-"));
+  const architecture = target.slice(target.lastIndexOf("-") + 1);
+  const machine = NATIVE_STUB_MACHINES[platform]?.[architecture];
+  if (machine === undefined) throw new Error(`no native stub for ${target}`);
+  if (platform === "linux") return elfHeader({ machine });
+  if (platform === "darwin") {
+    const header = Buffer.alloc(64);
+    header.writeUInt32LE(0xfeedfacf, 0);
+    header.writeUInt32LE(machine, 4);
+    header.writeUInt32LE(6, 12); // MH_DYLIB
+    return header;
+  }
+  const header = Buffer.alloc(0x100);
+  header.write("MZ", 0, "binary");
+  header.writeUInt32LE(0x80, 0x3c);
+  header.writeUInt32LE(0x00004550, 0x80); // "PE\0\0"
+  header.writeUInt16LE(machine, 0x84);
+  header.writeUInt16LE(0x2000, 0x80 + 22); // IMAGE_FILE_DLL
+  return header;
+}
+
 // Bun.build --compile refuses to start without the addon file, but never loads
-// it, so a placeholder is enough to exercise the whole export pipeline.
+// it, so a placeholder is enough to exercise the whole export pipeline. It does
+// have to be a shared library for the host, because the exporter refuses to link
+// a runtime built for another target (#72) — a check that only means anything if
+// it is on for every build, including these.
 export async function withStubbedExport(run) {
   const directory = await mkdtemp(join(tmpdir(), "blitsen-export-test-"));
   const nativePath = join(directory, "blitsen.node");
-  await writeFile(nativePath, "// placeholder addon\n");
+  await writeFile(nativePath, nativeStub());
   try {
     return await run({ directory, nativePath, outfile: join(directory, "App") });
   } finally {

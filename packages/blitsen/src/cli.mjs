@@ -24,7 +24,7 @@ Options:
   --name <text>      Application name: window title and default output name
   --out <path>       Build output path (default: the application name)
   --outfile <path>   Alias of --out
-  --target <triple>  Build target; only the host target is supported (see #72)
+  --target <triple>  Build for another platform; its runtime is fetched and cached
   --include <glob>   Keep an unreferenced output file (repeatable)
   --addon <path>     Carry a .node addon into the export (repeatable)
   --accept-errors    Export despite compatibility errors, accepting what they cost
@@ -48,16 +48,13 @@ const BUILD_OPTIONS = ["--out", "--outfile", "--name", "--target", "--include", 
 const VALUE_OPTIONS = ["--width", "--height", "--title", ...BUILD_OPTIONS];
 // A build-only switch: doctor's own exit code must keep meaning what it says.
 const BUILD_FLAGS = ["--accept-errors"];
-// TECH.md §11: one binary package per target (src/runtime.mjs). Phase 1 links the
-// host's addon, so every other target is refused rather than silently built for the host.
+// TECH.md §11: one binary package per target (src/runtime.mjs). A cross-target
+// build links that target's runtime, fetched on demand (#72), and compiles the
+// launcher for that target's Bun. What it cannot do is sign or notarise for a
+// platform it is not running on — see the note in the build path.
 function checkTarget(value) {
   if (!TARGETS.includes(value)) {
     throw new Error(`unknown --target ${value} (expected one of: ${TARGETS.join(", ")})`);
-  }
-  if (value !== hostTarget()) {
-    throw new Error(`--target ${value} is not supported yet: this runtime is compiled for `
-      + `${hostTarget()} and there are no per-target runtime packages to link against; `
-      + "see issue #72 for cross-target export");
   }
 }
 
@@ -237,6 +234,16 @@ async function hostRuntime() {
   return { ...openRuntime(resolved), build: options => buildStandalone(options, resolved) };
 }
 
+// A build for another target links that target's runtime, so it resolves its own
+// rather than reusing the host's — and it is never opened, because it cannot run
+// here. `fetch` is on for exactly this path: a cross-target build is the only
+// one allowed to reach the network for a runtime it does not have.
+async function targetRuntime(target) {
+  if (target === undefined || target === hostTarget()) return hostRuntime();
+  const resolved = await resolveRuntime({ target, fetch: true });
+  return { build: options => buildStandalone(options, resolved) };
+}
+
 export async function main(args, output = console, runtime = null) {
   try {
     let active = runtime;
@@ -251,8 +258,10 @@ export async function main(args, output = console, runtime = null) {
     }
     if (options.command === "build") {
       // Checked before anything runs: the user's build command must not be spent
-      // on an export that cannot link.
-      active ??= await hostRuntime();
+      // on an export that cannot link. For a cross-target build that includes
+      // fetching the target's runtime, so a target that cannot be built for
+      // fails before the build command rather than after it.
+      active ??= await targetRuntime(options.target);
       if (!active?.build) {
         throw new Error("native build runtime is unavailable; reinstall blitsen for this platform");
       }
