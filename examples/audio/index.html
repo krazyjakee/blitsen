@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Blitsen audio</title>
+<style>
+  :root { color-scheme: light }
+  body {
+    margin: 0; padding: 32px; font: 15px/1.5 system-ui, sans-serif;
+    background: #f6f7f9; color: #16181d;
+  }
+  h1 { font-size: 20px; margin: 0 0 4px }
+  p.lede { margin: 0 0 24px; color: #5b6472 }
+  section { background: #fff; border: 1px solid #dfe3e9; border-radius: 10px; padding: 20px; margin-bottom: 16px }
+  h2 { font-size: 14px; text-transform: uppercase; letter-spacing: .06em; color: #5b6472; margin: 0 0 12px }
+  button {
+    font: inherit; padding: 8px 14px; margin: 0 8px 8px 0; cursor: pointer;
+    background: #16181d; color: #fff; border: 0; border-radius: 6px;
+  }
+  button:disabled { background: #b9bfc9 }
+  label { display: block; margin: 12px 0 4px; font-size: 13px; color: #5b6472 }
+  input[type=range] { width: 260px }
+  #log {
+    font: 12px/1.6 ui-monospace, monospace; background: #16181d; color: #d7dbe2;
+    border-radius: 8px; padding: 12px; height: 150px; overflow: auto; white-space: pre-wrap;
+  }
+</style>
+</head>
+<body>
+<h1>Blitsen audio</h1>
+<p class="lede">Web Audio and the <code>Audio</code> element, running natively. Every sound below
+is decoded once and played through the same graph.</p>
+
+<section>
+  <h2>One-shot playback</h2>
+  <button id="blip">Blip (880 Hz)</button>
+  <button id="thud">Thud (220 Hz)</button>
+  <button id="volley">Ten at once</button>
+  <label>Gain <span id="gain-value">0.80</span></label>
+  <input id="gain" type="range" min="0" max="1" step="0.01" value="0.8">
+  <label>Pan <span id="pan-value">0.00</span></label>
+  <input id="pan" type="range" min="-1" max="1" step="0.01" value="0">
+</section>
+
+<section>
+  <h2>The Audio element</h2>
+  <button id="play">Play</button>
+  <button id="pause">Pause</button>
+  <button id="loop">Loop: off</button>
+  <label>Volume <span id="element-volume-value">1.00</span></label>
+  <input id="element-volume" type="range" min="0" max="1" step="0.01" value="1">
+  <p id="clock">–</p>
+</section>
+
+<section>
+  <h2>Log</h2>
+  <div id="log"></div>
+</section>
+
+<script type="module">
+const log = document.getElementById("log");
+const say = message => {
+  log.textContent += `${message}\n`;
+  log.scrollTop = log.scrollHeight;
+};
+
+// One context for the whole application, built on the first interaction rather
+// than at load: nothing should open the sound card until it is needed.
+let context = null;
+let master = null;
+let panner = null;
+const buffers = new Map();
+
+const ready = async () => {
+  if (context) return context;
+  context = new AudioContext();
+  master = context.createGain();
+  panner = context.createStereoPanner();
+  master.gain.value = Number(document.getElementById("gain").value);
+  panner.pan.value = Number(document.getElementById("pan").value);
+  master.connect(panner).connect(context.destination);
+  say(`context: ${context.sampleRate} Hz, ${context.state}`);
+  return context;
+};
+
+// Decoded once and kept. A one-shot is then a new source over the same buffer,
+// which is what makes overlapping playback cheap.
+const load = async name => {
+  if (buffers.has(name)) return buffers.get(name);
+  await ready();
+  const response = await fetch(new URL(`./${name}.wav`, import.meta.url).href);
+  const buffer = await context.decodeAudioData(await response.arrayBuffer());
+  buffers.set(name, buffer);
+  say(`decoded ${name}.wav — ${buffer.duration.toFixed(3)}s, `
+    + `${buffer.numberOfChannels}ch @ ${buffer.sampleRate} Hz`);
+  return buffer;
+};
+
+const play = async (name, { when = 0, detune = 0 } = {}) => {
+  const buffer = await load(name);
+  const source = context.createBufferSource();
+  source.buffer = buffer;
+  if (detune) source.detune.value = detune;
+  source.connect(master);
+  source.start(when ? context.currentTime + when : 0);
+  return source;
+};
+
+document.getElementById("blip").addEventListener("click", () => play("blip"));
+document.getElementById("thud").addEventListener("click", () => play("thud"));
+
+// Ten overlapping sources over one buffer, each a semitone up and slightly
+// later — the case a game has, and the reason a source is one-shot.
+document.getElementById("volley").addEventListener("click", async () => {
+  await load("blip");
+  for (let step = 0; step < 10; step += 1) {
+    play("blip", { when: step * 0.07, detune: step * 100 });
+  }
+  say("scheduled ten sources over one buffer");
+});
+
+const gain = document.getElementById("gain");
+gain.addEventListener("input", async () => {
+  document.getElementById("gain-value").textContent = Number(gain.value).toFixed(2);
+  if (master) master.gain.value = Number(gain.value);
+});
+const pan = document.getElementById("pan");
+pan.addEventListener("input", () => {
+  document.getElementById("pan-value").textContent = Number(pan.value).toFixed(2);
+  if (panner) panner.pan.value = Number(pan.value);
+});
+
+// The element half. It rides the same device, but owns its own playback state.
+const track = new Audio(new URL("./thud.wav", import.meta.url).href);
+track.addEventListener("play", () => say("element: play"));
+track.addEventListener("pause", () => say("element: pause"));
+track.addEventListener("ended", () => say("element: ended"));
+track.addEventListener("error", () => say("element: error"));
+
+document.getElementById("play").addEventListener("click", () => {
+  track.play().catch(error => say(`element: ${error.message}`));
+});
+document.getElementById("pause").addEventListener("click", () => track.pause());
+const loopButton = document.getElementById("loop");
+loopButton.addEventListener("click", () => {
+  track.loop = !track.loop;
+  loopButton.textContent = `Loop: ${track.loop ? "on" : "off"}`;
+});
+const elementVolume = document.getElementById("element-volume");
+elementVolume.addEventListener("input", () => {
+  track.volume = Number(elementVolume.value);
+  document.getElementById("element-volume-value").textContent = track.volume.toFixed(2);
+});
+
+const clock = document.getElementById("clock");
+const tick = () => {
+  clock.textContent = track.paused && track.currentTime === 0
+    ? "–"
+    : `${track.currentTime.toFixed(2)}s of ${
+        Number.isFinite(track.duration) ? track.duration.toFixed(2) : "?"}s`
+      + (track.paused ? " (paused)" : "");
+  requestAnimationFrame(tick);
+};
+requestAnimationFrame(tick);
+
+say("ready — press a button to open the audio device");
+</script>
+</body>
+</html>

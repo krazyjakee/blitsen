@@ -197,3 +197,71 @@ assert.equal(globalThis.__blitsenBadAudio.outcome, "EncodingError",
   "bytes that are not audio are refused, not silently decoded to silence");
 assert.match(globalThis.__blitsenBadAudio.message, /could not decode/);
 delete globalThis.__blitsenBadAudio;
+
+// The path an application actually takes: a `<audio src>` naming a file the
+// export shipped, loaded from disk.
+//
+// This is not a variation on the tests above — it is a different loader. `fetch`
+// is http(s) only and refuses a local file, so an element whose source is a
+// bundled asset would have been dead on arrival if it went through `fetch`, and
+// it did until this was checked. That is why the document below is a real one
+// on disk rather than a bridge-harness string: only a document loaded from a
+// directory has a base for a relative source to resolve against.
+{
+  const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+
+  const directory = await mkdtemp(join(tmpdir(), "blitsen-audio-"));
+  try {
+    await writeFile(join(directory, "cue.wav"), wav(0.5, 6_000));
+    await writeFile(join(directory, "index.html"), `<!DOCTYPE html><html><body>
+      <div id="probe"></div>
+      <script type="module">
+        globalThis.__blitsenMedia = { events: [] };
+        const results = globalThis.__blitsenMedia;
+        const element = new Audio("cue.wav");
+        for (const type of ["loadedmetadata", "canplaythrough", "play", "error"])
+          element.addEventListener(type, () => results.events.push(type));
+        element.volume = 0.4;
+        element.play().then(() => {
+          results.duration = element.duration;
+          results.paused = element.paused;
+          results.currentTimeMoved = element.currentTime >= 0;
+          element.pause();
+          results.pausedAfter = element.paused;
+          results.done = true;
+        }, error => { results.error = error.name + ": " + error.message; results.done = true; });
+
+        // A source that is not there must fail, not hang: an application waiting
+        // forever on a missing cue is worse than one told it is missing.
+        const missing = new Audio("absent.wav");
+        missing.play().then(() => { results.missing = "resolved"; },
+          error => { results.missing = error.name; });
+      </script></body></html>`);
+
+    native.runDocumentScriptsHarness(join(directory, "index.html"), 320, 180);
+    for (let turn = 0; turn < 600 && !globalThis.__blitsenMedia?.done; turn++) {
+      globalThis.__blitsenAnimationFrameTick(0);
+      await Bun.sleep(5);
+    }
+    const media = globalThis.__blitsenMedia;
+    assert.equal(media.error, undefined, `the element failed to load: ${media.error}`);
+    assert.ok(Math.abs(media.duration - 0.125) < 0.01,
+      `6000 frames at 48 kHz is an eighth of a second (got ${media.duration})`);
+    assert.equal(media.paused, false, "the element is playing once play() resolves");
+    assert.equal(media.pausedAfter, true, "and paused once it is paused");
+    assert.deepEqual(media.events, ["loadedmetadata", "canplaythrough", "play"],
+      "the element reports what it did, in order");
+
+    for (let turn = 0; turn < 600 && !media.missing; turn++) {
+      globalThis.__blitsenAnimationFrameTick(0);
+      await Bun.sleep(5);
+    }
+    assert.equal(media.missing, "EncodingError",
+      "a source that is not there rejects rather than hanging");
+    delete globalThis.__blitsenMedia;
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+}

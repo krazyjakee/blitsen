@@ -61,6 +61,7 @@ pub struct BlitzDom {
     resources: ResourceLog,
     form_state: HashMap<NodeId, FormState>,
     animation_time: f64,
+    base_url: Option<String>,
 }
 
 impl BlitzDom {
@@ -73,9 +74,20 @@ impl BlitzDom {
         config.html_parser_provider = Some(Arc::new(HtmlProvider));
         let (provider, log) = resources::track(config.net_provider.take());
         config.net_provider = Some(provider);
+        // Kept because Blitz's own resolver is crate-private, and anything
+        // outside the renderer that has to turn a document-relative URL into a
+        // real one — audio loading, for instance — needs the same base the
+        // cascade and the subresource loader are using.
+        let base_url = config.base_url.clone();
         let mut dom = Self::new(HtmlDocument::from_html(html, config));
         dom.resources = log;
+        dom.base_url = base_url;
         dom
+    }
+
+    /// The address subresource URLs resolve against, when the host supplied one.
+    pub fn base_url(&self) -> Option<&str> {
+        self.base_url.as_deref()
     }
 
     /// Wraps an existing Blitz document and installs the fragment parser.
@@ -99,6 +111,7 @@ impl BlitzDom {
             resources: ResourceLog::default(),
             form_state: HashMap::new(),
             animation_time: 0.0,
+            base_url: None,
         }
     }
 

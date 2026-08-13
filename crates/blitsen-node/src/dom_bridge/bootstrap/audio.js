@@ -286,21 +286,37 @@
     return state.gain;
   };
 
+  // Where a media source actually resolves against.
+  //
+  // Not `location.href`: JavaScript sees `blitsen://app/`, while the files the
+  // application shipped sit in the directory the document was loaded from —
+  // which is the base the renderer already resolves images and fonts against.
+  // A source is loaded by the runtime rather than by `fetch` for the same
+  // reason: `fetch` is http(s) only and says so, and an application's sounds
+  // are files it shipped.
+  const mediaSourceUrl = source => {
+    const base = call("documentBase");
+    if (!base) return resolveAgainstDocument(source).href;
+    return call("resolveUrl", base, String(source)).href;
+  };
+
   // Loads and decodes the element's source once, and hands back the same
   // promise for every later play of the same address.
   const loadMedia = element => {
     const state = mediaElementState(element);
     const source = element.getAttribute("src");
-    if (!source) return Promise.reject(new DOMException("no source", "NotSupportedError"));
-    const resolved = resolveAgainstDocument(source).href;
+    if (!source) {
+      return Promise.reject(new DOMException("the element has no source", "NotSupportedError"));
+    }
+    const resolved = mediaSourceUrl(source);
     if (state.loading && state.loaded === resolved) return state.loading;
     state.loaded = resolved;
-    state.loading = fetch(resolved)
-      .then(response => {
-        if (!response.ok) throw new Error(`${response.status} for ${resolved}`);
-        return response.arrayBuffer();
-      })
-      .then(bytes => mediaContext().decodeAudioData(bytes))
+    state.loading = new Promise((resolve, reject) => {
+      let id;
+      try { id = __blitsenAudioLoad(resolved); }
+      catch (error) { reject(error); return; }
+      decodeJobs.set(id, { resolve, reject });
+    })
       .then(buffer => {
         state.buffer = buffer;
         element.dispatchEvent(new Event("loadedmetadata"));

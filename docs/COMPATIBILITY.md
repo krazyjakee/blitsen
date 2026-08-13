@@ -32,6 +32,7 @@ JavaScript comes from the [generated manifest](#capability-tiers) below.
 | Parsing | `innerHTML`, `outerHTML`, `insertAdjacentHTML`, `insertAdjacentElement`, and `DOMParser` for `text/html` into a fragment |
 | Scheduling | `requestAnimationFrame`, timers and microtasks |
 | Networking | `fetch`, `Headers`, `Request`, `Response`, `Blob`, `AbortController` over `http`/`https`, with buffered bodies |
+| Audio | Web Audio — a context, gain, stereo panning and buffer sources over decoded files — and `<audio>`/`new Audio()` for whole-file playback |
 | Routing | In-memory `history` and `location`, `popstate` and `hashchange` |
 | CSS | Static block, flex and grid layout; bounded absolute positioning; spacing, borders, backgrounds, colors and system typography |
 | Subresources | `<img>` and CSS `background-image` (PNG, JPEG, GIF, WebP), and `@font-face` web fonts (WOFF2, WOFF, TTF, OTF), loaded from local files; SVG images and `<video>` are not. Audio is loaded and decoded by Web Audio rather than as a renderer subresource — see [Audio](#audio). A subresource the export cannot serve — a remote URL, or a local file that is missing — is answered with an empty body, so the document paints without it rather than waiting on it |
@@ -54,7 +55,7 @@ copy — your `dist` directory is never modified.**
 | `url("/assets/hero.png")` in CSS, and `@import` | Same rewrite, applied transitively. |
 | `<a href="/settings">` | Nothing; anchors are navigation, not subresources. |
 | `href="https://cdn…"` or `//cdn…` on a subresource | Warns. The request is answered with nothing, so the page renders without that stylesheet, font or image. |
-| `<script src="https://cdn…">` | Fails the build. The loader refuses the src and then no script on the page runs at all. |
+| `<script src="https://cdn…">` | Warns. The loader skips that one script and says so on stderr; every other script on the page still runs. |
 
 **Only HTML and CSS are rewritten.** JavaScript is left byte-identical, because a path assembled
 at runtime cannot be safely edited by a regular expression. In practice:
@@ -255,9 +256,8 @@ Three differences from a browser are worth knowing:
   is what the specification says it was all along.
 
 A comment's data is fixed when it is created, and data that would close the comment early
-(`-->`) is refused rather than silently truncated. `attachShadow` and `scrollIntoView` remain
-absent, as does `document.currentScript`: nothing in the bridge is told which script element is
-executing.
+(`-->`) is refused rather than silently truncated. `attachShadow` remains absent, as does
+`document.currentScript`: nothing in the bridge is told which script element is executing.
 
 `setAttributeNS`, `getAttributeNS` and `removeAttributeNS` key an attribute by namespace and
 local name, which is the pair they ask for — so `xlink:href` round-trips and `getAttribute`
@@ -585,9 +585,15 @@ be able to see that the construct is unconditional — a guarded one is not one 
 
 | Error | Why the page does not come back from it |
 | --- | --- |
-| `ASSET_REMOTE_SCRIPT` | The script loader refuses a remote `src` outright and the document then runs no script at all — not the remote one, not the local ones. It is markup: there is no guard around it and no fallback for it to select. |
 | `WEB_FETCH` | A literal server-root URL at a `fetch` call site is not a capability test, so nothing selects a fallback. The data never arrives, and what renders from it never renders. |
 | `HTML_CANVAS` | `<canvas>` is in the document the export ships, and the renderer paints nothing inside it. Unlike an image or a font, the element has no degraded appearance to fall back to. |
+
+`ASSET_REMOTE_SCRIPT` used to be the third, on the reading that the loader refusing one remote
+`src` left the document running no script at all — which is what stopped wordle-plus loading. The
+loader now skips that one script, names it on stderr and runs every other script on the page, so
+the reason for the severity is gone and grading it an error only blocks a build that works. What
+keeps an exported application from phoning home is the runtime refusing to fetch the script, not
+the severity of the rule that noticed it.
 
 **Everything the scanner finds by naming an absent API is a warning**, including `WEB_XHR`,
 `WEB_COOKIE`, `WEB_COMPONENTS`, `WEB_CANVAS`, `WEB_NAVIGATION`, `WEB_WORKER`, `WEB_GPU`,

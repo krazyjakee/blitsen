@@ -261,10 +261,7 @@ impl AudioHost {
         let shared = Arc::clone(&self.shared);
         self.pending.fetch_add(1, Ordering::Relaxed);
         worker_runtime()?.spawn_blocking(move || {
-            let decoder = OfflineAudioContext::new(1, 1, sample_rate);
-            let result = decoder
-                .decode_audio_data_sync(Cursor::new(bytes))
-                .map_err(|error| error.to_string());
+            let result = decode_bytes(bytes, sample_rate);
             lock(&shared.decoded).push(Decoded { id, result });
         });
         Ok(id)
@@ -477,15 +474,71 @@ impl AudioHost {
         }
     }
 
-    /// Registers decoded bytes, used by the harness and by `createBuffer`.
-    pub(super) fn start_decode(&self, bytes: Vec<u8>) -> Result<u64, JsError> {
-        let rate = self.with_backend(|backend| match backend {
+    /// Loads a URL and decodes it, both on the worker pool.
+    ///
+    /// This exists because `fetch` cannot read a local file — it is http(s) only
+    /// and says so — and a desktop application's sounds are files it shipped.
+    /// The renderer already reads subresources off disk for images and fonts;
+    /// this is the same capability for audio, reached the same way: a URL
+    /// already resolved against the document's real base.
+    pub(super) fn start_load(&self, url: &str) -> Result<u64, JsError> {
+        let parsed = url::Url::parse(url)
+            .map_err(|error| JsError::new(format!("invalid audio source {url}: {error}")))?;
+        let id = self.id();
+        let shared = Arc::clone(&self.shared);
+        let sample_rate = self.sample_rate()?;
+        self.pending.fetch_add(1, Ordering::Relaxed);
+        let runtime = worker_runtime()?;
+        match parsed.scheme() {
+            "file" => {
+                let path = parsed
+                    .to_file_path()
+                    .map_err(|()| JsError::new(format!("{url} is not a readable path")))?;
+                runtime.spawn_blocking(move || {
+                    let result = std::fs::read(&path)
+                        .map_err(|error| format!("{}: {error}", path.display()))
+                        .and_then(|bytes| decode_bytes(bytes, sample_rate));
+                    lock(&shared.decoded).push(Decoded { id, result });
+                });
+            }
+            "http" | "https" => {
+                runtime.spawn(async move {
+                    let result = match reqwest::get(parsed).await {
+                        Err(error) => Err(error.to_string()),
+                        Ok(response) if !response.status().is_success() => {
+                            Err(format!("{} for the audio source", response.status()))
+                        }
+                        Ok(response) => match response.bytes().await {
+                            Err(error) => Err(error.to_string()),
+                            Ok(bytes) => decode_bytes(bytes.to_vec(), sample_rate),
+                        },
+                    };
+                    lock(&shared.decoded).push(Decoded { id, result });
+                });
+            }
+            other => {
+                self.pending.fetch_sub(1, Ordering::Relaxed);
+                return Err(JsError::new(format!(
+                    "an audio source is a file, http or https URL, not {other}:"
+                )));
+            }
+        }
+        Ok(id)
+    }
+
+    fn sample_rate(&self) -> Result<f32, JsError> {
+        self.with_backend(|backend| match backend {
             Backend::Live(context) => context.sample_rate(),
             Backend::Offline(context) => context
                 .as_ref()
                 .expect("offline context is live until rendered")
                 .sample_rate(),
-        })?;
+        })
+    }
+
+    /// Registers decoded bytes, used by the harness and by `createBuffer`.
+    pub(super) fn start_decode(&self, bytes: Vec<u8>) -> Result<u64, JsError> {
+        let rate = self.sample_rate()?;
         self.decode(bytes, rate)
     }
 
@@ -497,6 +550,17 @@ impl AudioHost {
         }
         Ok(buffer.get_channel_data(channel).to_vec())
     }
+}
+
+/// Decodes encoded audio to a buffer at `sample_rate`.
+///
+/// On a throwaway offline context, which has neither a device nor a thread of
+/// its own: a decoded buffer is plain sample data and plays on any context at
+/// the same rate, so nothing needs the live one.
+fn decode_bytes(bytes: Vec<u8>, sample_rate: f32) -> Result<AudioBuffer, String> {
+    OfflineAudioContext::new(1, 1, sample_rate)
+        .decode_audio_data_sync(Cursor::new(bytes))
+        .map_err(|error| error.to_string())
 }
 
 fn buffer_record(id: u64, buffer: &AudioBuffer) -> Value {

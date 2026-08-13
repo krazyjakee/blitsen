@@ -16,6 +16,14 @@ pub(super) fn dispatch(
         // nobody is going to answer.
         "stopLoading" => Ok(json!(dom.stop_loading())),
         "documentUrl" => Ok(Value::String(web_url::DOCUMENT_URL.into())),
+        // The *real* base, which is not `documentUrl`: JavaScript sees
+        // `blitsen://app/`, while subresources resolve against the directory the
+        // document was loaded from. Anything that has to read a file the
+        // application shipped needs the second one.
+        "documentBase" => Ok(dom
+            .base_url()
+            .map(|base| Value::String(base.to_owned()))
+            .unwrap_or(Value::Null)),
         "urlParts" => web_url::components(bridge_arg(arguments, 0, "URL")?).map_err(JsError::new),
         "resolveUrl" => web_url::resolve(
             bridge_arg(arguments, 0, "base URL")?,

@@ -321,6 +321,18 @@ fn install_audio(engine: &mut NodeApiEngine, raw_env: sys::napi_env) -> Result<(
     )?;
     engine.set_global("__blitsenAudioDecode", &decode)?;
 
+    let load_host = Rc::clone(&host);
+    let load = engine.define_function(
+        "__blitsenAudioLoad",
+        Box::new(move |call| {
+            let url = argument(&call.arguments, 0, "audio source")?;
+            let id = load_host.start_load(&url)?;
+            let mut engine = NodeApiEngine::new(Env::from_raw(raw_env));
+            Ok(engine.number(id as f64))
+        }),
+    )?;
+    engine.set_global("__blitsenAudioLoad", &load)?;
+
     let poll_host = Rc::clone(&host);
     let poll = engine.define_function(
         "__blitsenAudioPoll",
