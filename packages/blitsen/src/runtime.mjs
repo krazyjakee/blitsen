@@ -1,4 +1,5 @@
-import { access, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { access, copyFile, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile }
+  from "node:fs/promises";
 import { gunzipSync } from "node:zlib";
 import { createRequire } from "node:module";
 import { homedir, tmpdir } from "node:os";
@@ -198,15 +199,28 @@ export async function fetchRuntime({
   return { path: cached, target, version, package: name, source: "fetched" };
 }
 
+const modified = async path => (await stat(path).catch(() => null))?.mtimeMs ?? -Infinity;
+
+/**
+ * The addon a checkout built for itself, made loadable.
+ *
+ * `require` decides a native addon by extension and cargo names its output per
+ * platform, so what cargo left behind is copied to `blitsen.node` rather than
+ * loaded where it sits — returning the `.so` directly hands `require` a file it
+ * tries to parse as JavaScript. The copy is refreshed whenever cargo's is newer,
+ * so a rebuild is picked up instead of being shadowed by the last run's copy.
+ */
 async function repositoryRuntime(target) {
   if (target !== hostTarget()) return null;
-  const root = new URL("../../../", import.meta.url);
-  for (const name of [CARGO_LIBRARIES[process.platform], RUNTIME_BINARY]) {
-    if (!name) continue;
-    const path = fileURLToPath(new URL(`target/release/${name}`, root));
-    if (await readable(path)) return path;
+  const directory = fileURLToPath(new URL("../../../target/release/", import.meta.url));
+  const addon = join(directory, RUNTIME_BINARY);
+  const name = CARGO_LIBRARIES[process.platform];
+  const library = name ? join(directory, name) : null;
+  if (library !== null && await readable(library)) {
+    if (await modified(library) > await modified(addon)) await copyFile(library, addon);
+    return addon;
   }
-  return null;
+  return await readable(addon) ? addon : null;
 }
 
 /**

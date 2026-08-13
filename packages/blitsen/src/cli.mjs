@@ -7,11 +7,12 @@ import { buildStandalone } from "./export.mjs";
 import { describeRuntime, hostTarget, openRuntime, packageVersion, resolveRuntime, TARGETS }
   from "./runtime.mjs";
 
-const HELP = `Usage: blitsen <directory> [options]
+const HELP = `Usage: blitsen [directory] [options]
        blitsen build [directory] [options]
        blitsen doctor <directory> [--json]
 
-Open <directory>/index.html in a native Blitsen window.
+Open <directory>/index.html in a native Blitsen window, defaulting to the
+current directory.
 Build creates a Phase 1 single-file executable for the current platform. With no
 directory it reads the "blitsen" config in package.json, runs the configured
 build command, and ingests its output directory.
@@ -59,7 +60,7 @@ function checkTarget(value) {
 }
 
 export function parseArgs(args) {
-  if (args.length === 0 || args.includes("--help") || args.includes("-h")) {
+  if (args.includes("--help") || args.includes("-h")) {
     return { help: true };
   }
   if (args.includes("--version") || args.includes("-v")) {
@@ -116,9 +117,13 @@ export function parseArgs(args) {
       throw new Error(`unexpected argument: ${argument}`);
     }
   }
-  // A build with no directory is the configured one; anything else needs a target
-  // directory, because the input to Blitsen is a directory of static web output.
-  if (options.directory === null && options.command !== "build") {
+  // A build with no directory is the configured one, and a run with no directory
+  // is the one you are standing in — the input to Blitsen is a directory of
+  // static web output, and the working directory is a fair guess at which.
+  // Doctor is pointed rather than guessed: it grades build output, and defaulting
+  // it to wherever the shell happens to be would grade the wrong tree in silence.
+  if (options.directory === null && options.command === "run") options.directory = ".";
+  if (options.directory === null && options.command === "doctor") {
     throw new Error("missing application directory");
   }
   applyName(options);

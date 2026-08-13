@@ -8,7 +8,7 @@ describe("directory CLI", () => {
   test("prints help", async () => {
     const { lines, output } = capture();
     expect(await main(["--help"], output)).toBe(0);
-    expect(lines[0][1]).toContain("Usage: blitsen <directory>");
+    expect(lines[0][1]).toContain("Usage: blitsen [directory]");
   });
 
   test("parses native window flags", () => {
@@ -66,11 +66,14 @@ describe("directory CLI", () => {
     expect(() => parseArgs(["build", "dist", "--target", "sunos-x64"])).toThrow("linux-x64");
   });
 
-  test("requires a directory for every command except a configured build", () => {
+  test("takes the directory from where you are standing, except for doctor", () => {
     expect(parseArgs(["build"]))
       .toEqual({ command: "build", directory: null, width: 800, height: 600, title: "Blitsen" });
+    expect(parseArgs([]))
+      .toEqual({ command: "run", directory: ".", width: 800, height: 600, title: "Blitsen" });
+    expect(parseArgs(["--width", "1024"]).directory).toBe(".");
+    expect(parseArgs(["dist"]).directory).toBe("dist");
     expect(() => parseArgs(["doctor"])).toThrow("missing application directory");
-    expect(() => parseArgs(["--width", "800"])).toThrow("missing application directory");
   });
 
   test("resolves an index", async () => {
