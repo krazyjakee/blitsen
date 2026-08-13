@@ -175,3 +175,58 @@ fn hit_testing_returns_paint_order_transforms_clipping_and_the_dom_path() {
         "a child cannot escape its ancestor's lower stacking context"
     );
 }
+
+/// An inline element beside block siblings is laid out inside an anonymous
+/// block box, and its offset is relative to that box rather than to the element
+/// it is written inside. Hit testing walked DOM parents, so the anonymous box's
+/// offset was never subtracted and the inline element answered for points at
+/// its containing block's origin — putting a control near the bottom of a
+/// document in front of everything at the top of it.
+///
+/// `<div>…</div><p>…</p><input>` is enough to reproduce, which is ordinary
+/// markup: this mis-routed real clicks, not only `elementFromPoint`.
+#[test]
+fn hit_testing_subtracts_the_offsets_of_anonymous_block_boxes() {
+    let mut dom = BlitzDom::from_html(
+        r#"
+            <style>
+              html, body { margin: 0; width: 320px; height: 400px }
+              #top { display: block; width: 200px; height: 200px }
+              #inline { width: 300px; height: 30px }
+            </style>
+            <body>
+              <div id="top"></div>
+              <p id="middle">text</p>
+              <span id="inline" style="display: inline-block"></span>
+            </body>
+            "#,
+        DocumentConfig {
+            viewport: Some(Viewport::new(320, 400, 1.0, ColorScheme::Light)),
+            ..Default::default()
+        },
+    );
+    let snapshot = dom.flush_layout().unwrap();
+    let top = dom.get_element_by_id("top").unwrap().unwrap();
+    let inline = dom.get_element_by_id("inline").unwrap().unwrap();
+
+    // The span is well below #top, so a point inside #top is #top's.
+    assert_eq!(
+        dom.hit_test(10.0, 10.0, snapshot).unwrap().unwrap().target,
+        top,
+        "an inline element in an anonymous block must not answer for its containing block's origin"
+    );
+
+    // And the span still answers for points that really are inside it. Read its
+    // own laid-out box rather than assuming where the blocks above it ended.
+    let box_of_inline = dom.layout_metrics(inline, snapshot).unwrap().rect;
+    let hit = dom
+        .hit_test(box_of_inline.x + 5.0, box_of_inline.y + 5.0, snapshot)
+        .unwrap()
+        .unwrap();
+    assert_eq!(hit.target, inline, "the inline element is still hit-testable");
+    assert_eq!(
+        hit.path.last(),
+        Some(&inline),
+        "the reported path ends at the DOM element, not at the anonymous box"
+    );
+}

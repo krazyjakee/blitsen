@@ -297,10 +297,7 @@ ancestor. Two nodes in different trees report `DISCONNECTED | PRECEDING |
 IMPLEMENTATION_SPECIFIC`, as a browser does.
 
 **`document.elementFromPoint`/`elementsFromPoint`** are the hit test the native window already runs
-for every click, asked the other way round. There is a live renderer defect behind them: a form
-control anywhere in the document answers for points outside its own box, so a hit test in a
-document containing an `<input>` may return that input instead of the box actually under the
-point. The same defect affects clicks, and is filed separately.
+for every click, asked the other way round.
 
 **Scrolling.** `window.scrollTo`, `scrollBy` and `scroll` move the document — `document.scrollingElement`,
 the root element — and `scrollX`, `scrollY`, `pageXOffset` and `pageYOffset` read the offset back
@@ -308,10 +305,9 @@ live. `element.scrollIntoView` scrolls each scrolling ancestor and then the docu
 element's border box is inside each one, honouring `block` and `inline` including `nearest`.
 `behavior` is accepted and ignored on both: there is no animation to run, so the scroll lands.
 
-**`hidden` reflects the attribute and nothing more.** `element.hidden = true` writes the content
-attribute, as the DOM property is defined to, but Blitz has no user-agent rule mapping `[hidden]`
-to `display: none`, so the element stays visible. Hide with a class or an inline `display: none`
-until that rule lands.
+**`hidden`** reflects the content attribute, and the user-agent rule mapping `[hidden]` to
+`display: none` applies as it does in a browser — including being overridden by an author rule that
+sets `display` on the same element, which is ordinary cascade order rather than a Blitsen quirk.
 
 `CSS.escape` and `CSS.supports` are present. `supports` answers from the cascade's own parser, by
 round-tripping the declaration through an inline style, so it reports what *this* runtime accepts;

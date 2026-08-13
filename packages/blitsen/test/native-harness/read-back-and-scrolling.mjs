@@ -120,16 +120,21 @@ const reads = JSON.parse(native.runBridgeHarness(DOCUMENT,
   320, 400));
 assert.equal(reads.nodes.find(node => node.tag === "body").attributes["data-reads"], "ok");
 
-// Hit testing, asked the other way round, in a document of its own. It is kept
-// apart from the reads above because the hit test is Blitz's and is sensitive to
-// what else is in the tree: a form control added anywhere in the document
-// answers for points outside its own box, which is why the document below has
-// none. That is a renderer defect rather than a bridge one — these two only
-// forward the coordinates and wrap what comes back — and it is filed separately.
+// Hit testing, asked the other way round, in a document of its own so the
+// coordinates stay readable.
+//
+// The trailing `<input>` is load-bearing rather than decoration: mixing an
+// inline child in among block ones is what makes the renderer wrap the inline
+// run in an anonymous block box, and hit testing used to walk DOM parents and
+// miss that box's offset — so the input answered for points at the top of the
+// document, in front of everything actually there. That mis-routed real clicks,
+// not just `elementFromPoint`. Fixed in `hit_test.rs`; this keeps it fixed from
+// the bridge's side, and `hit_testing_subtracts_the_offsets_of_anonymous_block_boxes`
+// does from the renderer's.
 const hits = JSON.parse(native.runBridgeHarness(
   `<style>body{margin:0}#outer{display:block;width:200px;height:100px;background:#eee}
      #inner{display:block;width:50px;height:50px;background:#ccc}</style>
-   <div id="outer"><div id="inner"></div></div>`,
+   <div id="outer"><div id="inner"></div></div><input id="late">`,
   `{ const expect = (actual, wanted, what) => {
        if (JSON.stringify(actual) !== JSON.stringify(wanted))
          throw new Error(what + ": " + JSON.stringify(actual) + " is not " + JSON.stringify(wanted));
@@ -143,6 +148,13 @@ const hits = JSON.parse(native.runBridgeHarness(
      expect(document.elementsFromPoint(10, 10).includes(outer), true,
        "elementsFromPoint reports what the hit walked through");
      expect(document.elementFromPoint(-1, -1), null, "a point outside the viewport hits nothing");
+     // The inline element in the anonymous block answers for its own box only.
+     const late = document.getElementById("late");
+     expect(document.elementFromPoint(10, 10) === late, false,
+       "an inline element in an anonymous block does not answer for the document's origin");
+     const box = late.getBoundingClientRect();
+     expect(document.elementFromPoint(box.left + 5, box.top + 5) === late, true,
+       "and is still hit-testable where it actually is");
      outer.setAttribute("data-hits", "ok"); }`,
   320, 180));
 assert.equal(hits.nodes.find(node => node.attributes.id === "outer").attributes["data-hits"], "ok");

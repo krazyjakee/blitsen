@@ -63,6 +63,19 @@ impl BlitzDom {
         self.document.get_node(node).ok_or(DomError::StaleNode)
     }
 
+    /// The box that laid this one out, which is not always the DOM parent.
+    ///
+    /// Blitz sets `layout_parent` while it builds boxes, so it names the
+    /// anonymous block an inline run was wrapped in as well as the ordinary
+    /// containers. Anything reading `final_layout().location` — an offset
+    /// relative to that box — has to walk this chain rather than the DOM one.
+    /// Before boxes have been built it is unset, and the DOM parent is the only
+    /// answer available.
+    pub(crate) fn layout_parent(&self, node: NodeId) -> Result<Option<NodeId>, DomError> {
+        let node = self.node(node)?;
+        Ok(node.layout_parent.get().or(node.parent))
+    }
+
     pub(crate) fn ensure_element(&self, node: NodeId) -> Result<(), DomError> {
         if self.node(node)?.element_data().is_some() {
             Ok(())

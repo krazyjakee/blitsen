@@ -2,7 +2,7 @@
 
 use std::cmp::Ordering;
 
-use blitsen_dom::{DomBackend, DomError};
+use blitsen_dom::DomError;
 use blitz::dom::NodeId;
 use kurbo::Point;
 use style::computed_values::pointer_events::T as PointerEvents;
@@ -34,8 +34,22 @@ impl BlitzDom {
         viewport_x: f32,
         viewport_y: f32,
     ) -> Result<Option<HitCandidate>, DomError> {
+        // Up the *layout* tree, not the DOM tree.
+        //
+        // A box's `final_layout().location` is relative to the box that laid it
+        // out, and that is not always its DOM parent: a block container with
+        // both block and inline children wraps the inline runs in anonymous
+        // block boxes, and an inline element's offset is then relative to the
+        // anonymous box rather than to the element it is written inside.
+        // Walking DOM parents skipped that box, so its offset was never
+        // subtracted and every inline element inside one hit-tested as though
+        // it sat at the anonymous box's origin — which put a control near the
+        // bottom of a document in front of everything at the top of it.
+        // `<div>…</div><p>…</p><input>` is enough to reproduce, and that is
+        // ordinary markup, so this mis-routed real clicks and not just
+        // `elementFromPoint`.
         let mut chain = vec![target];
-        while let Some(parent) = self.parent(*chain.last().expect("target starts chain"))? {
+        while let Some(parent) = self.layout_parent(*chain.last().expect("target starts chain"))? {
             chain.push(parent);
         }
         chain.reverse();
