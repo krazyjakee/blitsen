@@ -99,6 +99,27 @@ struct Decoded {
 #[derive(Default)]
 struct Shared {
     decoded: Mutex<Vec<Decoded>>,
+    /// Sources that have finished playing, waiting for the frame turn.
+    ///
+    /// The crate calls back from the render thread, so this is the only place
+    /// the two threads meet: nothing is dispatched from there, it is queued and
+    /// delivered where every other off-thread result is.
+    ended: Mutex<Vec<u64>>,
+}
+
+/// Which context the host will open when something first asks for one.
+///
+/// Three, because they answer different questions. `Device` is what an
+/// application gets. `Silent` is a real context with a real clock and no output
+/// device — the only one in which a sound can actually *finish*, so it is the
+/// only one `ended` can be tested in. `Offline` renders to sample buffers on
+/// demand and has no clock at all, which is what makes it the one that can be
+/// asserted on.
+#[derive(Clone, Copy, PartialEq)]
+enum Mode {
+    Device,
+    Silent,
+    Offline,
 }
 
 pub(super) struct AudioHost {
@@ -107,8 +128,11 @@ pub(super) struct AudioHost {
     buffers: Mutex<HashMap<u64, AudioBuffer>>,
     next_id: AtomicU64,
     pending: AtomicU64,
+    /// Sources started and not yet ended, so the host keeps turning while
+    /// something is actually playing and stops when nothing is.
+    playing: AtomicU64,
     shared: Arc<Shared>,
-    offline: bool,
+    mode: Mutex<Mode>,
 }
 
 /// The offline render's shape, which only the harness asks for.
@@ -118,14 +142,16 @@ const OFFLINE_FRAMES: usize = 48_000;
 
 impl AudioHost {
     pub(super) fn new(offline: bool) -> Self {
+        let mode = if offline { Mode::Offline } else { Mode::Device };
         Self {
             backend: Mutex::new(None),
             nodes: Mutex::new(HashMap::new()),
             buffers: Mutex::new(HashMap::new()),
             next_id: AtomicU64::new(1),
             pending: AtomicU64::new(0),
+            playing: AtomicU64::new(0),
             shared: Arc::new(Shared::default()),
-            offline,
+            mode: Mutex::new(mode),
         }
     }
 
@@ -141,28 +167,23 @@ impl AudioHost {
     fn with_backend<T>(&self, run: impl FnOnce(&Backend) -> T) -> Result<T, JsError> {
         let mut slot = lock(&self.backend);
         if slot.is_none() {
-            *slot = Some(if self.offline {
-                Backend::Offline(Some(Box::new(OfflineAudioContext::new(
+            *slot = Some(match *lock(&self.mode) {
+                Mode::Offline => Backend::Offline(Some(Box::new(OfflineAudioContext::new(
                     OFFLINE_CHANNELS,
                     OFFLINE_FRAMES,
                     OFFLINE_SAMPLE_RATE,
-                ))))
-            } else {
-                match AudioContext::try_new(AudioContextOptions::default()) {
+                )))),
+                Mode::Silent => Backend::Live(silent_context()?),
+                Mode::Device => match AudioContext::try_new(AudioContextOptions::default()) {
                     Ok(context) => Backend::Live(context),
                     Err(error) => {
                         eprintln!(
                             "blitsen: no audio output device ({error}); \
                              audio will run silently"
                         );
-                        Backend::Live(AudioContext::try_new(AudioContextOptions {
-                            sink_id: "none".into(),
-                            ..AudioContextOptions::default()
-                        }).map_err(|error| {
-                            JsError::new(format!("could not start an audio context: {error}"))
-                        })?)
+                        Backend::Live(silent_context()?)
                     }
-                }
+                },
             });
         }
         Ok(run(slot.as_ref().expect("context was just opened")))
@@ -267,7 +288,7 @@ impl AudioHost {
         Ok(id)
     }
 
-    /// Drains finished decodes, registering the buffers they produced.
+    /// Drains finished decodes and finished sources.
     pub(super) fn poll(&self) -> Value {
         let finished = std::mem::take(&mut *lock(&self.shared.decoded));
         let mut delivered = Vec::with_capacity(finished.len());
@@ -283,12 +304,29 @@ impl AudioHost {
                 Err(message) => json!({ "id": entry.id, "error": message }),
             });
         }
-        Value::Array(delivered)
+        let ended = std::mem::take(&mut *lock(&self.shared.ended));
+        for _ in &ended {
+            // Saturating: a source can only end once, but a disposed host has
+            // already zeroed the count and must not wrap under it.
+            let _ = self.playing.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |playing| {
+                Some(playing.saturating_sub(1))
+            });
+        }
+        // A source that has ended is finished with: it cannot be started again,
+        // so nothing will reach it after this and holding it would be a leak
+        // for an application firing one-shots.
+        {
+            let mut nodes = lock(&self.nodes);
+            for node in &ended {
+                nodes.remove(node);
+            }
+        }
+        json!({ "decoded": delivered, "ended": ended })
     }
 
     /// Whether anything is owed, so the host keeps turning until it lands.
     pub(super) fn pending(&self) -> bool {
-        self.pending.load(Ordering::Relaxed) > 0
+        self.pending.load(Ordering::Relaxed) > 0 || self.playing.load(Ordering::Relaxed) > 0
     }
 
     fn buffer(&self, id: u64) -> Result<AudioBuffer, JsError> {
@@ -332,7 +370,9 @@ impl AudioHost {
         lock(&self.nodes).clear();
         lock(&self.buffers).clear();
         lock(&self.shared.decoded).clear();
+        lock(&self.shared.ended).clear();
         self.pending.store(0, Ordering::Relaxed);
+        self.playing.store(0, Ordering::Relaxed);
         if let Some(Backend::Live(context)) = lock(&self.backend).take() {
             context.close_sync();
         }
@@ -428,12 +468,19 @@ impl AudioHost {
             // that has been started cannot be started again — which is also what
             // the specification says about an `AudioBufferSourceNode`.
             "sourceStart" => {
+                let node = id(0)?;
+                let shared = Arc::clone(&self.shared);
                 let mut nodes = lock(&self.nodes);
-                match nodes.get_mut(&id(0)?) {
+                match nodes.get_mut(&node) {
                     Some(Node::Source(source)) => {
                         let when = number(1)?;
                         let offset = number(2)?;
+                        // Registered before the start, so a source short enough
+                        // to finish immediately cannot end before anything is
+                        // listening for it.
+                        source.set_onended(move |_| lock(&shared.ended).push(node));
                         source.start_at_with_offset(when, offset);
+                        self.playing.fetch_add(1, Ordering::Relaxed);
                         Ok(Value::Null)
                     }
                     _ => Err(JsError::new("only a buffer source can be started")),
@@ -470,6 +517,21 @@ impl AudioHost {
                 self.context_state()
             }
             "render" => self.render(),
+            // Harness only, and refused once a context exists: the mode decides
+            // what gets opened, so changing it afterwards would describe
+            // something other than what is playing.
+            "mode" => {
+                if lock(&self.backend).is_some() {
+                    return Err(JsError::new("the audio context is already open"));
+                }
+                *lock(&self.mode) = match text(0)? {
+                    "offline" => Mode::Offline,
+                    "silent" => Mode::Silent,
+                    "device" => Mode::Device,
+                    other => return Err(JsError::new(format!("unknown audio mode: {other}"))),
+                };
+                Ok(Value::Null)
+            }
             other => Err(JsError::new(format!("unknown audio operation: {other}"))),
         }
     }
@@ -571,6 +633,15 @@ fn buffer_record(id: u64, buffer: &AudioBuffer) -> Value {
         "sampleRate": buffer.sample_rate(),
         "duration": buffer.duration(),
     })
+}
+
+/// A real context with a real clock and no output device.
+fn silent_context() -> Result<AudioContext, JsError> {
+    AudioContext::try_new(AudioContextOptions {
+        sink_id: "none".into(),
+        ..AudioContextOptions::default()
+    })
+    .map_err(|error| JsError::new(format!("could not start an audio context: {error}")))
 }
 
 fn state_name(state: AudioContextState) -> &'static str {

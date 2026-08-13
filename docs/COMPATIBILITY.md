@@ -194,6 +194,12 @@ implemented at all.
 
 **`webkitAudioContext`** is absent: it is a prefix for a browser this is not.
 
+A source announces when it finishes: `ended` fires on the node, and on an `<audio>` element that
+leaves it `paused`, `ended` and rewound, so the same element can be played again. The announcement
+comes off the render thread and is delivered at the frame turn like everything else, and a sound
+that is still playing keeps the host turning — so a loop that never ends is a host that never
+idles, which is correct but worth knowing.
+
 ### Testing audio
 
 `BLITSEN_AUDIO_OFFLINE=1` makes the context an offline one that renders to sample buffers with no
@@ -201,6 +207,17 @@ device at all. That is how Blitsen's own harness asserts on audio — reading th
 out, the same way the renderer's tests read painted pixels — rather than on the calls that were
 made. A graph built correctly that rendered silence would pass any check that only read properties
 back.
+
+An offline context has **no clock**: it renders when it is asked to and not before, so nothing in
+it can be observed to *finish*. Anything about the end of a sound is therefore tested against a
+real context with a real clock and no output device, which the harness selects for itself. The
+three modes answer different questions, and only the first is what an application gets:
+
+| Mode | Clock | Output | Answers |
+| --- | --- | --- | --- |
+| device | real time | the sound card | what an application does |
+| silent | real time | none | when a sound started and finished |
+| offline | on demand | sample buffers | what the samples actually are |
 
 ## Routing
 

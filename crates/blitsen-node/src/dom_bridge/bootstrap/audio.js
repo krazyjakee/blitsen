@@ -140,6 +140,7 @@
         throw new DOMException("this source has already been started", "InvalidStateError");
       }
       state.started = true;
+      liveSources.set(state.id, this);
       audio("sourceStart", state.id,
         audioNumber(when, "a start time"), audioNumber(offset, "an offset"));
     }
@@ -162,6 +163,11 @@
   }
 
   const decodeJobs = new Map();
+  // Started sources, by the id the runtime knows them under, so an `ended`
+  // arriving from the render thread can find the wrapper it belongs to. An
+  // entry is dropped when it ends: a source plays once, so nothing reaches it
+  // afterwards and keeping it would leak for an application firing one-shots.
+  const liveSources = new Map();
 
   class AudioContext {
     constructor(options = {}) {
@@ -233,10 +239,14 @@
     close() { return Promise.resolve(audio("close")).then(() => undefined); }
   }
 
-  // The one handoff point for audio work, beside the network's.
+  // The one handoff point for audio work, beside the network's. A source that
+  // finished playing is announced from the render thread and dispatched here,
+  // so an `ended` handler runs where every other off-thread result does rather
+  // than on a thread that does not own the DOM.
   const settleAudio = () => {
-    if (decodeJobs.size === 0) return;
-    for (const record of JSON.parse(__blitsenAudioPoll())) {
+    if (decodeJobs.size === 0 && liveSources.size === 0) return;
+    const polled = JSON.parse(__blitsenAudioPoll());
+    for (const record of polled.decoded) {
       const job = decodeJobs.get(record.id);
       if (!job) continue;
       decodeJobs.delete(record.id);
@@ -245,7 +255,17 @@
           "EncodingError"));
       } else job.resolve(audioBuffer(record.buffer));
     }
+    for (const id of polled.ended) {
+      const source = liveSources.get(id);
+      if (!source) continue;
+      liveSources.delete(id);
+      source.dispatchEvent(new Event("ended"));
+    }
   };
+  // The runtime counts what is playing, not this map: a source is only in the
+  // map so an `ended` can find its wrapper, and a context that has been
+  // replaced must not go on asking for frames on behalf of sounds nothing can
+  // hear any more.
   const audioPending = () => decodeJobs.size > 0 || __blitsenAudioPending();
 
   // `Audio` and `<audio>`: the element surface, built on the graph above rather

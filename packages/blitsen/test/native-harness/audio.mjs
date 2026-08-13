@@ -218,11 +218,26 @@ delete globalThis.__blitsenBadAudio;
     await writeFile(join(directory, "index.html"), `<!DOCTYPE html><html><body>
       <div id="probe"></div>
       <script type="module">
+        // A real context with a real clock and no output device. The harness
+        // renders offline everywhere else, and an offline context has no clock
+        // at all — so it is the one place a sound cannot actually finish, and the
+        // end of one could not be observed in it.
+        __blitsenAudioCall("mode", "silent");
         globalThis.__blitsenMedia = { events: [] };
         const results = globalThis.__blitsenMedia;
         const element = new Audio("cue.wav");
-        for (const type of ["loadedmetadata", "canplaythrough", "play", "error"])
+        for (const type of ["loadedmetadata", "canplaythrough", "play", "error", "ended"])
           element.addEventListener(type, () => results.events.push(type));
+        // What the element looks like once the sound has finished, which is the
+        // half that was missing: the end is announced from the render thread,
+        // and without it an element stays "playing" forever and refuses to be
+        // played again.
+        element.addEventListener("ended", () => {
+          results.afterEnd = { paused: element.paused, ended: element.ended,
+            currentTime: element.currentTime };
+          if (!results.replayed) element.play().then(() => { results.replayed = true; });
+          else { element.pause(); results.quiet = true; }
+        });
         element.volume = 0.4;
         element.play().then(() => {
           results.duration = element.duration;
@@ -231,6 +246,9 @@ delete globalThis.__blitsenBadAudio;
           element.pause();
           results.pausedAfter = element.paused;
           results.done = true;
+          // Play it through to the end, so there is an ending to announce.
+          element.currentTime = 0;
+          element.play();
         }, error => { results.error = error.name + ": " + error.message; results.done = true; });
 
         // A source that is not there must fail, not hang: an application waiting
@@ -251,8 +269,31 @@ delete globalThis.__blitsenBadAudio;
       `6000 frames at 48 kHz is an eighth of a second (got ${media.duration})`);
     assert.equal(media.paused, false, "the element is playing once play() resolves");
     assert.equal(media.pausedAfter, true, "and paused once it is paused");
-    assert.deepEqual(media.events, ["loadedmetadata", "canplaythrough", "play"],
+    assert.deepEqual(media.events.slice(0, 3), ["loadedmetadata", "canplaythrough", "play"],
       "the element reports what it did, in order");
+
+    // A source plays once and says so. Nothing dispatched `ended` at first —
+    // the render thread announces it and the frame turn delivers it — so an
+    // element stayed "playing" forever and would not play a second time.
+    for (let turn = 0; turn < 600 && !media.replayed; turn++) {
+      globalThis.__blitsenAnimationFrameTick(0);
+      await Bun.sleep(5);
+    }
+    assert.ok(media.events.includes("ended"), "a sound that finished says so");
+    assert.deepEqual(media.afterEnd, { paused: true, ended: true, currentTime: 0 },
+      "and leaves the element paused, ended and rewound");
+    assert.equal(media.replayed, true, "so the same element can be played again");
+
+    // Leave nothing playing. The harness is one linear pass over one realm, and
+    // a sound still going is a host that never stops asking for frames — which
+    // the next section reads as its own work outstanding.
+    globalThis.__blitsenMedia.stop = true;
+    for (let turn = 0; turn < 600 && globalThis.__blitsenAudioPending(); turn++) {
+      globalThis.__blitsenAnimationFrameTick(0);
+      await Bun.sleep(5);
+    }
+    assert.equal(globalThis.__blitsenAudioPending(), false,
+      "a finished sound stops asking for frames");
 
     for (let turn = 0; turn < 600 && !media.missing; turn++) {
       globalThis.__blitsenAnimationFrameTick(0);
