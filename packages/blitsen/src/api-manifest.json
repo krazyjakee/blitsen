@@ -1833,16 +1833,162 @@
     {
       "api": "Audio",
       "kind": "global",
-      "status": "absent",
+      "status": "implemented",
       "code": "WEB_MEDIA",
       "pattern": "\\bnew Audio\\s*\\("
     },
     {
       "api": "AudioContext",
       "kind": "global",
-      "status": "absent",
+      "status": "implemented",
       "code": "WEB_MEDIA",
       "pattern": "(?<![.\\w$])AudioContext\\b"
+    },
+    {
+      "api": "AudioNode",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_MEDIA",
+      "pattern": "(?<![.\\w$])AudioNode\\b"
+    },
+    {
+      "api": "AudioParam",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_MEDIA",
+      "pattern": "(?<![.\\w$])AudioParam\\b"
+    },
+    {
+      "api": "AudioBuffer",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_MEDIA",
+      "pattern": "(?<![.\\w$])AudioBuffer\\b"
+    },
+    {
+      "api": "AudioBufferSourceNode",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_MEDIA",
+      "pattern": "(?<![.\\w$])AudioBufferSourceNode\\b"
+    },
+    {
+      "api": "AudioDestinationNode",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_MEDIA",
+      "pattern": "(?<![.\\w$])AudioDestinationNode\\b"
+    },
+    {
+      "api": "GainNode",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_MEDIA",
+      "pattern": "(?<![.\\w$])GainNode\\b"
+    },
+    {
+      "api": "StereoPannerNode",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_MEDIA",
+      "pattern": "(?<![.\\w$])StereoPannerNode\\b"
+    },
+    {
+      "api": "HTMLAudioElement",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_MEDIA",
+      "pattern": "(?<![.\\w$])HTMLAudioElement\\b"
+    },
+    {
+      "api": "AudioContext.decodeAudioData",
+      "kind": "member",
+      "owner": "AudioContext.prototype",
+      "member": "decodeAudioData",
+      "status": "implemented",
+      "code": "WEB_MEDIA",
+      "pattern": null
+    },
+    {
+      "api": "AudioContext.createGain",
+      "kind": "member",
+      "owner": "AudioContext.prototype",
+      "member": "createGain",
+      "status": "implemented",
+      "code": "WEB_MEDIA",
+      "pattern": null
+    },
+    {
+      "api": "AudioContext.createStereoPanner",
+      "kind": "member",
+      "owner": "AudioContext.prototype",
+      "member": "createStereoPanner",
+      "status": "implemented",
+      "code": "WEB_MEDIA",
+      "pattern": null
+    },
+    {
+      "api": "AudioContext.createBufferSource",
+      "kind": "member",
+      "owner": "AudioContext.prototype",
+      "member": "createBufferSource",
+      "status": "implemented",
+      "code": "WEB_MEDIA",
+      "pattern": null
+    },
+    {
+      "api": "AudioContext.destination",
+      "kind": "member",
+      "owner": "AudioContext.prototype",
+      "member": "destination",
+      "status": "implemented",
+      "code": "WEB_MEDIA",
+      "pattern": null
+    },
+    {
+      "api": "AudioContext.currentTime",
+      "kind": "member",
+      "owner": "AudioContext.prototype",
+      "member": "currentTime",
+      "status": "implemented",
+      "code": "WEB_MEDIA",
+      "pattern": null
+    },
+    {
+      "api": "AudioContext.sampleRate",
+      "kind": "member",
+      "owner": "AudioContext.prototype",
+      "member": "sampleRate",
+      "status": "implemented",
+      "code": "WEB_MEDIA",
+      "pattern": null
+    },
+    {
+      "api": "AudioContext.resume",
+      "kind": "member",
+      "owner": "AudioContext.prototype",
+      "member": "resume",
+      "status": "implemented",
+      "code": "WEB_MEDIA",
+      "pattern": null
+    },
+    {
+      "api": "AudioContext.suspend",
+      "kind": "member",
+      "owner": "AudioContext.prototype",
+      "member": "suspend",
+      "status": "implemented",
+      "code": "WEB_MEDIA",
+      "pattern": null
+    },
+    {
+      "api": "AudioContext.close",
+      "kind": "member",
+      "owner": "AudioContext.prototype",
+      "member": "close",
+      "status": "implemented",
+      "code": "WEB_MEDIA",
+      "pattern": null
     },
     {
       "api": "webkitAudioContext",
@@ -2691,8 +2837,8 @@
     },
     "WEB_MEDIA": {
       "severity": "warning",
-      "message": "Audio and the media element constructors are not implemented.",
-      "guidance": "Use <img> and CSS assets, or feature-detect the media path.",
+      "message": "This media API is not implemented; Web Audio and <audio> are.",
+      "guidance": "Decode with AudioContext.decodeAudioData and play through a buffer source, or feature-detect the media path.",
       "extra": null
     },
     "WEB_DIALOG": {
@@ -2797,9 +2943,9 @@
       "kind": "html",
       "code": "HTML_MEDIA",
       "severity": "warning",
-      "pattern": "<(?:audio|video|track)\\b",
-      "message": "Audio and video elements are not implemented.",
-      "guidance": "Ship the experience as DOM, images and CSS, or feature-detect the media path."
+      "pattern": "<(?:video|track)\\b",
+      "message": "Video and text tracks are not implemented; <audio> is.",
+      "guidance": "Ship moving pictures as DOM, images and CSS, or feature-detect the media path."
     },
     {
       "kind": "html",

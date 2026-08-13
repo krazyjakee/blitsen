@@ -34,7 +34,7 @@ JavaScript comes from the [generated manifest](#capability-tiers) below.
 | Networking | `fetch`, `Headers`, `Request`, `Response`, `Blob`, `AbortController` over `http`/`https`, with buffered bodies |
 | Routing | In-memory `history` and `location`, `popstate` and `hashchange` |
 | CSS | Static block, flex and grid layout; bounded absolute positioning; spacing, borders, backgrounds, colors and system typography |
-| Subresources | `<img>` and CSS `background-image` (PNG, JPEG, GIF, WebP), and `@font-face` web fonts (WOFF2, WOFF, TTF, OTF), loaded from local files; SVG images, `<audio>` and `<video>` are not. A subresource the export cannot serve — a remote URL, or a local file that is missing — is answered with an empty body, so the document paints without it rather than waiting on it |
+| Subresources | `<img>` and CSS `background-image` (PNG, JPEG, GIF, WebP), and `@font-face` web fonts (WOFF2, WOFF, TTF, OTF), loaded from local files; SVG images and `<video>` are not. Audio is loaded and decoded by Web Audio rather than as a renderer subresource — see [Audio](#audio). A subresource the export cannot serve — a remote URL, or a local file that is missing — is answered with an empty body, so the document paints without it rather than waiting on it |
 
 The M3b acceptance app intentionally uses the normal Vite default output, including
 root-relative `/assets/...` references and Vite's module-preload bootstrap. It contains no
@@ -136,6 +136,70 @@ reason an in-flight request does: its landing point is that turn, so a loop that
 deliver. A non-`ws:`/`wss:` address is refused with a `SyntaxError` at construction.
 
 `EventSource` is absent. Feature-detect it, or hold the stream open over a socket instead.
+
+## Audio
+
+Backed by [`web-audio-api`](https://crates.io/crates/web-audio-api), which is a Rust
+implementation of the Web Audio API itself rather than a playback library with a graph rebuilt on
+top of it — so what an application schedules is what the specification says it scheduled. Decoding
+is Symphonia; output is `cpal` (WASAPI, CoreAudio, ALSA).
+
+**Nothing opens the sound card until an application asks it to.** The context is created on the
+first `new AudioContext()`, so an application that never plays a sound never touches the device.
+
+**A machine with no output device still runs.** If the device cannot be opened the context falls
+back to a silent sink and says so once on stderr. An application then behaves exactly as it would
+for a user who has muted their speakers, which is the same thing as far as its own code can tell —
+rather than throwing from a constructor and taking down every page that plays a click.
+
+### What is implemented
+
+| | |
+| --- | --- |
+| Context | `AudioContext`, `sampleRate`, `currentTime`, `state`, `destination`, `resume`, `suspend`, `close` |
+| Nodes | `GainNode`, `StereoPannerNode`, `AudioBufferSourceNode`, `AudioDestinationNode` |
+| Parameters | `AudioParam` — `value`, `setValueAtTime`, `linearRampToValueAtTime`, `exponentialRampToValueAtTime`, `setTargetAtTime`, `cancelScheduledValues` |
+| Buffers | `decodeAudioData` (promise and callback forms), `AudioBuffer`, `getChannelData` |
+| Element | `Audio`, `<audio>`, `HTMLAudioElement` — `play`, `pause`, `currentTime`, `duration`, `volume`, `muted`, `loop`, `paused`, `ended`, `canPlayType` |
+
+**Formats are whatever Symphonia decodes**, which is not selectable: AAC, ADPCM, ALAC, FLAC,
+MP1/MP2/MP3, PCM and Vorbis, in AIFF, CAF, ISO/MP4, MKV/WebM, Ogg, WAV and raw containers.
+`canPlayType` answers `"probably"` or `""` and never `"maybe"`, because a maybe tells a caller
+nothing.
+
+**Decoding runs on the worker pool** and lands at the same point in the frame turn `fetch` results
+do. A decode in flight keeps the host turning, so its result cannot be stranded.
+
+A source plays **once** — the specification says so, and starting one twice throws
+`InvalidStateError`. Overlapping playback of one sound is several sources over one decoded buffer,
+which is also what makes it cheap: the decode is paid for once.
+
+### What is absent, and why
+
+**The rest of the Web Audio graph.** `BiquadFilterNode`, `OscillatorNode`, `AnalyserNode`,
+`ConvolverNode`, `DelayNode`, `DynamicsCompressorNode`, `WaveShaperNode`, `PannerNode` and its HRTF
+spatialisation, `ChannelSplitterNode`/`ChannelMergerNode`, `AudioWorklet`, `OfflineAudioContext`
+and `AudioListener` are all things the backing crate implements and this bridge does not name.
+That is deliberate: every API named here is a published claim that `doctor` and the capability
+tiers make on Blitsen's behalf, and the surface above is what an application asking for sound
+effects, cues and a background loop actually uses. They are cheap to add when something measured
+asks for one.
+
+**`<audio>` is not a streaming media element.** The source is fetched whole and decoded whole
+before playback starts, which is right for the sounds a desktop application has and wrong for an
+hour of audio. `buffered`, `seekable`, `readyState`, `networkState`, `preload`, `played` and
+`HTMLMediaElement` itself are absent rather than answered with a fiction. `<video>` is not
+implemented at all.
+
+**`webkitAudioContext`** is absent: it is a prefix for a browser this is not.
+
+### Testing audio
+
+`BLITSEN_AUDIO_OFFLINE=1` makes the context an offline one that renders to sample buffers with no
+device at all. That is how Blitsen's own harness asserts on audio — reading the samples that came
+out, the same way the renderer's tests read painted pixels — rather than on the calls that were
+made. A graph built correctly that rendered silence would pass any check that only read properties
+back.
 
 ## Routing
 
@@ -586,7 +650,7 @@ determinism gate instead.
 | WEB_FORM | — | `FormData`, `File`, `FileReader` |
 | WEB_CANVAS | — | `HTMLCanvasElement`, `CanvasRenderingContext2D`, `OffscreenCanvas`, `ImageData`, `Path2D` |
 | WEB_GPU | — | `WebGLRenderingContext`, `WebGL2RenderingContext`, `GPUCanvasContext` |
-| WEB_MEDIA | — | `Audio`, `AudioContext`, `webkitAudioContext`, `HTMLMediaElement` |
+| WEB_MEDIA | `Audio`, `AudioContext`, `AudioNode`, `AudioParam`, `AudioBuffer`, `AudioBufferSourceNode`, `AudioDestinationNode`, `GainNode`, `StereoPannerNode`, `HTMLAudioElement`, `AudioContext.decodeAudioData`, `AudioContext.createGain`, `AudioContext.createStereoPanner`, `AudioContext.createBufferSource`, `AudioContext.destination`, `AudioContext.currentTime`, `AudioContext.sampleRate`, `AudioContext.resume`, `AudioContext.suspend`, `AudioContext.close` | `webkitAudioContext`, `HTMLMediaElement` |
 | WEB_DIALOG | — | `alert`, `confirm`, `prompt`, `print` |
 | WEB_NAVIGATION | `stop` | `open`, `close`, `navigation`, `document.write`, `document.writeln`, `document.open`, `document.close`, `location.assign`, `location.replace`, `location.reload`, `location.ancestorOrigins` |
 | WEB_COOKIE | — | `document.cookie`, `cookieStore`, `Headers.getSetCookie` |
@@ -612,7 +676,7 @@ determinism gate instead.
 | `WEB_FORM` | warning | Multipart form bodies and file objects are not implemented. |
 | `WEB_CANVAS` | warning | Canvas is not in the v0 compatibility profile. |
 | `WEB_GPU` | warning | WebGL and WebGPU are not implemented. |
-| `WEB_MEDIA` | warning | Audio and the media element constructors are not implemented. |
+| `WEB_MEDIA` | warning | This media API is not implemented; Web Audio and <audio> are. |
 | `WEB_DIALOG` | warning | Modal browser dialogs are not implemented. |
 | `WEB_NAVIGATION` | warning | Document navigation is deliberately absent; there is no page to leave. |
 | `WEB_COOKIE` | warning | There is no origin and no cookie jar behind an exported application. |
@@ -624,7 +688,7 @@ determinism gate instead.
 | `CSS_FIXED` | warning | Fixed and sticky boxes resolve against the root box, not the viewport (Blitz bug 690). |
 | `CSS_EFFECT` | warning | This paint effect is ignored rather than applied. |
 | `HTML_CANVAS` | error | <canvas> is not implemented. |
-| `HTML_MEDIA` | warning | Audio and video elements are not implemented. |
+| `HTML_MEDIA` | warning | Video and text tracks are not implemented; <audio> is. |
 | `HTML_SVG` | warning | SVG rendering is currently limited and not in the strict profile. |
 | `ASSET_REMOTE_SCRIPT` | warning | A remote <script src> is not fetched; it is skipped and the rest of the page runs. |
 | `ASSET_REMOTE` | warning | A remote asset is not part of a self-contained export; the request is answered with nothing. |

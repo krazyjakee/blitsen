@@ -104,8 +104,19 @@ const CATALOGUE = {
   WEB_CANVAS: ["HTMLCanvasElement", "CanvasRenderingContext2D", "OffscreenCanvas", "ImageData",
     "Path2D"],
   WEB_GPU: ["WebGLRenderingContext", "WebGL2RenderingContext", "GPUCanvasContext"],
-  WEB_MEDIA: [["Audio", "\\bnew Audio\\s*\\("], "AudioContext", "webkitAudioContext",
-    "HTMLMediaElement"],
+  // Audio, at the size the issue asked for: a context, gain, stereo panning and
+  // buffer sources, plus the element built on them. The rest of Web Audio —
+  // filters, oscillators, analysers, convolution, worklets, the HRTF panner —
+  // is absent rather than half-built, and is not listed here because listing an
+  // API means making a claim about it. COMPATIBILITY.md names what is missing.
+  WEB_MEDIA: [["Audio", "\\bnew Audio\\s*\\("], "AudioContext", "AudioNode", "AudioParam",
+    "AudioBuffer", "AudioBufferSourceNode", "AudioDestinationNode", "GainNode",
+    "StereoPannerNode", "HTMLAudioElement",
+    "AudioContext.decodeAudioData", "AudioContext.createGain", "AudioContext.createStereoPanner",
+    "AudioContext.createBufferSource", "AudioContext.destination", "AudioContext.currentTime",
+    "AudioContext.sampleRate", "AudioContext.resume", "AudioContext.suspend",
+    "AudioContext.close",
+    "webkitAudioContext", "HTMLMediaElement"],
   WEB_DIALOG: [["alert", "\\balert\\s*\\("], ["confirm", "\\bconfirm\\s*\\("],
     ["prompt", "\\bprompt\\s*\\("], ["print", "\\bwindow\\.print\\s*\\("]],
   // `stop` belongs here rather than with the network APIs: the spec defines it
@@ -239,8 +250,9 @@ const DIAGNOSTICS = {
     "Use DOM/CSS rendering or a native viewport until canvas support lands.", /\.getContext\s*\(/],
   WEB_GPU: ["warning", "WebGL and WebGPU are not implemented.",
     "Remove the GPU-web API path or replace it with a native addon/viewport."],
-  WEB_MEDIA: ["warning", "Audio and the media element constructors are not implemented.",
-    "Use <img> and CSS assets, or feature-detect the media path."],
+  WEB_MEDIA: ["warning", "This media API is not implemented; Web Audio and <audio> are.",
+    "Decode with AudioContext.decodeAudioData and play through a buffer source, or "
+    + "feature-detect the media path."],
   WEB_DIALOG: ["warning", "Modal browser dialogs are not implemented.",
     "Use the native dialog module, or render the prompt as DOM."],
   WEB_NAVIGATION: ["warning",
@@ -335,9 +347,9 @@ const RENDERER_RULES = [
     "Check the element is still legible without it; use borders and backgrounds where it is not."],
   ["html", "HTML_CANVAS", "error", "<canvas\\b",
     "<canvas> is not implemented.", "Use ordinary DOM/CSS elements or a native viewport."],
-  ["html", "HTML_MEDIA", "warning", "<(?:audio|video|track)\\b",
-    "Audio and video elements are not implemented.",
-    "Ship the experience as DOM, images and CSS, or feature-detect the media path."],
+  ["html", "HTML_MEDIA", "warning", "<(?:video|track)\\b",
+    "Video and text tracks are not implemented; <audio> is.",
+    "Ship moving pictures as DOM, images and CSS, or feature-detect the media path."],
   ["html", "HTML_SVG", "warning", "<svg\\b",
     "SVG rendering is currently limited and not in the strict profile.",
     "Verify this asset visually or replace it with profiled HTML/CSS."],

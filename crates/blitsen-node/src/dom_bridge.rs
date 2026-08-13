@@ -12,6 +12,7 @@ use serde_json::{Value, json};
 
 use super::{DomRuntime, NodeApiEngine, NodeWeakRef, callback_string, check, unknown};
 
+mod audio;
 mod fetch;
 mod native;
 mod ops;
@@ -37,6 +38,7 @@ const BOOTSTRAP: &str = concat!(
     include_str!("dom_bridge/bootstrap/document.js"),
     include_str!("dom_bridge/bootstrap/fetch.js"),
     include_str!("dom_bridge/bootstrap/web_socket.js"),
+    include_str!("dom_bridge/bootstrap/audio.js"),
     include_str!("dom_bridge/bootstrap/history.js"),
     include_str!("dom_bridge/bootstrap/storage.js"),
     include_str!("dom_bridge/bootstrap/native.js"),
@@ -157,6 +159,7 @@ pub(super) fn install(
     engine.set_global("__blitsenViewportWrite", &viewport_write_function)?;
     install_text_codec(engine, raw_env)?;
     install_fetch(engine, raw_env)?;
+    install_audio(engine, raw_env)?;
     install_web_socket(engine, raw_env)?;
     native::install(engine, raw_env)?;
     let dev_layout_warnings = std::env::var("BLITSEN_DEV_LAYOUT_WARNINGS").is_ok_and(|value| {
@@ -273,6 +276,94 @@ fn install_text_codec(engine: &mut NodeApiEngine, raw_env: sys::napi_env) -> Res
         }),
     )?;
     engine.set_global("__blitsenUtf8Decode", &decode)
+}
+
+/// Installs the audio graph the bootstrap's Web Audio classes call through.
+///
+/// Nothing here opens a device: the host is created, and the context inside it
+/// is not built until an application constructs an `AudioContext`.
+/// `BLITSEN_AUDIO_OFFLINE` makes that context an offline one, which is how the
+/// harness asserts on rendered samples rather than on the calls that were made.
+fn install_audio(engine: &mut NodeApiEngine, raw_env: sys::napi_env) -> Result<(), JsError> {
+    let offline = std::env::var("BLITSEN_AUDIO_OFFLINE").is_ok_and(|value| value == "1");
+    let host = Rc::new(audio::AudioHost::new(offline));
+
+    let call_host = Rc::clone(&host);
+    let call = engine.define_function(
+        "__blitsenAudioCall",
+        Box::new(move |call| {
+            let operation = argument(&call.arguments, 0, "audio operation")?;
+            let arguments = call
+                .arguments
+                .iter()
+                .skip(1)
+                .map(callback_string)
+                .collect::<Result<Vec<_>, _>>()?;
+            let result = call_host.dispatch(&operation, &arguments)?;
+            json_string(raw_env, &result)
+        }),
+    )?;
+    engine.set_global("__blitsenAudioCall", &call)?;
+
+    let decode_host = Rc::clone(&host);
+    let decode = engine.define_function(
+        "__blitsenAudioDecode",
+        Box::new(move |call| {
+            let mut engine = NodeApiEngine::new(Env::from_raw(raw_env));
+            let bytes = call
+                .arguments
+                .first()
+                .ok_or_else(|| JsError::new("missing encoded audio"))
+                .and_then(|value| engine.to_typed_array(value))?;
+            let id = decode_host.start_decode(bytes.bytes)?;
+            Ok(engine.number(id as f64))
+        }),
+    )?;
+    engine.set_global("__blitsenAudioDecode", &decode)?;
+
+    let poll_host = Rc::clone(&host);
+    let poll = engine.define_function(
+        "__blitsenAudioPoll",
+        Box::new(move |_| json_string(raw_env, &poll_host.poll())),
+    )?;
+    engine.set_global("__blitsenAudioPoll", &poll)?;
+
+    let pending_host = Rc::clone(&host);
+    let pending = engine.define_function(
+        "__blitsenAudioPending",
+        Box::new(move |_| {
+            let mut engine = NodeApiEngine::new(Env::from_raw(raw_env));
+            Ok(engine.boolean(pending_host.pending()))
+        }),
+    )?;
+    engine.set_global("__blitsenAudioPending", &pending)?;
+
+    let channel_host = Rc::clone(&host);
+    let channel = engine.define_function(
+        "__blitsenAudioChannel",
+        Box::new(move |call| {
+            let buffer = argument(&call.arguments, 0, "audio buffer id")?
+                .parse::<u64>()
+                .map_err(|_| JsError::new("invalid audio buffer id"))?;
+            let index = argument(&call.arguments, 1, "channel index")?
+                .parse::<usize>()
+                .map_err(|_| JsError::new("invalid channel index"))?;
+            let samples = channel_host.channel_data(buffer, index)?;
+            let mut engine = NodeApiEngine::new(Env::from_raw(raw_env));
+            let bytes = samples.iter().flat_map(|sample| sample.to_le_bytes()).collect();
+            engine.typed_array(&TypedArray::new(TypedArrayKind::Float32, bytes)?)
+        }),
+    )?;
+    engine.set_global("__blitsenAudioChannel", &channel)?;
+
+    let dispose = engine.define_function(
+        "__blitsenAudioDispose",
+        Box::new(move |call| {
+            host.dispose();
+            Ok(call.this)
+        }),
+    )?;
+    engine.set_global("__blitsenAudioDispose", &dispose)
 }
 
 /// Installs the transport the bootstrap's `fetch` classes call through.

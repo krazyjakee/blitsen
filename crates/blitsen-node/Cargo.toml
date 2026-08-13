@@ -42,6 +42,13 @@ tokio = { version = "1.42", features = ["macros", "net", "rt-multi-thread", "syn
 # the same platform certificates `https:` does, and no second TLS stack is built.
 tokio-tungstenite = { version = "0.29", default-features = false, features = ["connect", "native-tls"] }
 url = "2"
+# Audio (#81). A pure-Rust implementation of the Web Audio API itself rather
+# than a playback library the graph would have to be rebuilt on top of; it sits
+# on `cpal` regardless, so this is the same backend with the spec-shaped layer
+# already written. Decoding is Symphonia. Note the tree carries two Symphonia
+# majors — 0.6 directly, and 0.5 through `creek`, which is not optional — and no
+# feature selection collapses them.
+web-audio-api = "1.7"
 winit = "=0.31.0-beta.2"
 data-url = "0.3.2"
 

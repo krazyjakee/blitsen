@@ -41,13 +41,15 @@
     CSS, DOMParser,
     scrollTo, scrollBy, scroll: scrollTo,
     Headers, Request, Response, Blob, AbortController, AbortSignal, fetch, stop, WebSocket,
+    AudioContext, AudioNode, AudioParam, AudioBuffer, AudioBufferSourceNode, AudioDestinationNode,
+    GainNode, StereoPannerNode, Audio, HTMLAudioElement,
     Location, History,
     requestAnimationFrame, cancelAnimationFrame,
     setTimeout, clearTimeout, setInterval, clearInterval,
     __blitsenAnimationFrameTick: animationFrameTick,
     __blitsenAnimationFramesPending: () =>
       animationFrames.size > 0 || inflightFetches.size > 0 || liveSockets.size > 0
-      || pendingResizeObservations() > 0
+      || pendingResizeObservations() > 0 || audioPending()
       || waitingImages() > 0 || nativePending() || nativeDialogPending() || call("isAnimating"),
     __blitsenForcedLayoutsThisFrame: () => forcedLayoutsThisFrame,
     __blitsenEventInternals: eventInternals,
@@ -72,6 +74,7 @@
       secondInstanceHandler = null;
       __blitsenFetchDispose();
       __blitsenSocketDispose();
+      __blitsenAudioDispose();
       historyEntries = [{ url: documentUrl, state: null }];
       historyIndex = 0;
       refreshLocation();
@@ -132,7 +135,7 @@
     "FormData", "File", "FileReader",
     "HTMLCanvasElement", "CanvasRenderingContext2D", "OffscreenCanvas", "ImageData", "Path2D",
     "WebGLRenderingContext", "WebGL2RenderingContext", "GPUCanvasContext",
-    "Audio", "AudioContext", "webkitAudioContext", "HTMLMediaElement",
+    "webkitAudioContext", "HTMLMediaElement",
     "alert", "confirm", "prompt", "print",
     "open", "close", "navigation",
     "cookieStore", "screen", "Notification", "caches",

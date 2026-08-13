@@ -63,6 +63,7 @@
     notifyMediaQueries();
     settleFetches();
     settleSockets();
+    settleAudio();
     settleImages();
     deliverSecondInstances();
     settleDialogs();
@@ -87,7 +88,7 @@
     // window has to go on painting behind it rather than freeze until it is
     // dismissed.
     return animationFrames.size + inflightFetches.size + liveSockets.size
-      + pendingResizeObservations() + waitingImages()
+      + pendingResizeObservations() + waitingImages() + (audioPending() ? 1 : 0)
       + (call("isAnimating") ? 1 : 0) + (nativeDialogPending() ? 1 : 0);
   };
 
