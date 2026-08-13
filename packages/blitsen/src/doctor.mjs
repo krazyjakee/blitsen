@@ -39,11 +39,39 @@ function scanRules(source, file, rules) {
     expression.lastIndex = 0;
     let match;
     while ((match = expression.exec(source))) {
-      diagnostics.push({ file, ...position(source, match.index), severity, code, message, guidance });
+      // A rule that captures is asking a question the regex cannot finish
+      // answering; `target` carries what it captured to whoever can.
+      const target = match[1];
+      diagnostics.push({ file, ...position(source, match.index), severity, code, message, guidance,
+        ...(target === undefined ? {} : { target }) });
       if (match[0].length === 0) expression.lastIndex += 1;
     }
   }
   return diagnostics;
+}
+
+/// Every file the output ships, as document-relative paths.
+///
+/// Not the scannable subset: what `fetch` names is usually data or media, and
+/// the question here is whether the export carries it, not whether it is code.
+async function collectShippedPaths(root, directory = root, paths = new Set()) {
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    if (entry.isSymbolicLink()) continue;
+    const absolute = join(directory, entry.name);
+    if (entry.isDirectory()) await collectShippedPaths(root, absolute, paths);
+    else paths.add(relative(root, absolute).split(sep).join("/"));
+  }
+  return paths;
+}
+
+// A fetch URL resolves against the document, which sits at the output root —
+// so `./data.json` and `/data.json` name the same file, and both are answered
+// from the export when it carries one. Query and fragment are not part of the
+// file's name, exactly as a server would drop them before opening it.
+function namesAShippedFile(target, shipped) {
+  if (target === undefined) return false;
+  const path = target.split(/[?#]/)[0].replace(/^\.?\//, "");
+  return path !== "" && shipped.has(path);
 }
 
 async function collectScannableFiles(root, directory = root) {
@@ -61,6 +89,7 @@ async function collectScannableFiles(root, directory = root) {
 
 export async function doctorApplication(root) {
   const files = await collectScannableFiles(root);
+  const shipped = await collectShippedPaths(root);
   const { javascript, css, html } = await compatibility();
   const diagnostics = [];
   for (const file of files) {
@@ -74,14 +103,18 @@ export async function doctorApplication(root) {
       diagnostics.push(...scanRules(source, file.relative, javascript));
     }
   }
-  diagnostics.sort((left, right) => left.file.localeCompare(right.file)
+  // Reported only for what the export does not carry: reading a file the
+  // application shipped is what `fetch` is for now, not a finding (issue #125).
+  const reported = diagnostics.filter(diagnostic =>
+    diagnostic.code !== "WEB_FETCH" || !namesAShippedFile(diagnostic.target, shipped));
+  reported.sort((left, right) => left.file.localeCompare(right.file)
     || left.line - right.line || left.column - right.column || left.code.localeCompare(right.code));
   return {
     profile: "v0-strict",
     files: files.length,
-    diagnostics,
-    errors: diagnostics.filter(item => item.severity === "error").length,
-    warnings: diagnostics.filter(item => item.severity === "warning").length,
+    diagnostics: reported,
+    errors: reported.filter(item => item.severity === "error").length,
+    warnings: reported.filter(item => item.severity === "warning").length,
   };
 }
 

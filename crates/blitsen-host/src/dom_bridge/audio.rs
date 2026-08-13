@@ -133,6 +133,9 @@ pub(super) struct AudioHost {
     playing: AtomicU64,
     shared: Arc<Shared>,
     mode: Mutex<Mode>,
+    /// How a source that names a file the application shipped is read
+    /// (issue #125). Absent in the bare harness, which has no application.
+    reader: Option<crate::app::AppReader>,
 }
 
 /// The offline render's shape, which only the harness asks for.
@@ -141,9 +144,10 @@ const OFFLINE_SAMPLE_RATE: f32 = 48_000.0;
 const OFFLINE_FRAMES: usize = 48_000;
 
 impl AudioHost {
-    pub(super) fn new(offline: bool) -> Self {
+    pub(super) fn new(offline: bool, reader: Option<crate::app::AppReader>) -> Self {
         let mode = if offline { Mode::Offline } else { Mode::Device };
         Self {
+            reader,
             backend: Mutex::new(None),
             nodes: Mutex::new(HashMap::new()),
             buffers: Mutex::new(HashMap::new()),
@@ -599,6 +603,28 @@ impl AudioHost {
                             Err(error) => Err(error.to_string()),
                             Ok(bytes) => decode_bytes(bytes.to_vec(), sample_rate),
                         },
+                    };
+                    lock(&shared.decoded).push(Decoded { id, result });
+                });
+            }
+            // An exported application's own sounds are addressed by the
+            // application origin rather than by a path, because inside a shipped
+            // executable there is no directory to name (issue #125). Without this
+            // arm `<audio src="thud.wav">` worked while a directory was being run
+            // and stopped working the moment it was exported, which is the one
+            // divergence between the two shapes that must not exist.
+            _ if self.reader.is_some() => {
+                let reader = self.reader.clone().expect("checked");
+                runtime.spawn_blocking(move || {
+                    let result = match reader.read_url(&parsed) {
+                        Ok(bytes) => decode_bytes(bytes, sample_rate),
+                        Err(crate::app::NotRead::Missing(path)) => {
+                            Err(format!("the application ships no {path}"))
+                        }
+                        Err(crate::app::NotRead::Outside) => Err(format!(
+                            "an audio source is a file this application shipped, \
+                             or an http or https URL, not {parsed}"
+                        )),
                     };
                     lock(&shared.decoded).push(Decoded { id, result });
                 });

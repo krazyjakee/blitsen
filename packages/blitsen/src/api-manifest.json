@@ -2894,9 +2894,9 @@
     {
       "code": "WEB_FETCH",
       "severity": "error",
-      "pattern": "\\bfetch\\s*\\(\\s*[\"'`](?!https?:\\/\\/)",
-      "message": "fetch resolves this URL against an address with no server behind it.",
-      "guidance": "Bundle the data into the export, or request an absolute http(s) URL."
+      "pattern": "\\bfetch\\s*\\(\\s*[\"'`](?!https?:\\/\\/)([^\"'`]*)[\"'`]",
+      "message": "fetch names a path this application does not ship, and there is no server behind it.",
+      "guidance": "Ship the file in the output, or request an absolute http(s) URL."
     },
     {
       "code": "WEB_STORAGE_MEMORY",

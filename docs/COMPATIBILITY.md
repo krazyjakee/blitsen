@@ -62,11 +62,16 @@ at runtime cannot be safely edited by a regular expression. In practice:
 
 - `new URL('./x.png', import.meta.url)` and a relative `import()` **work** — the export preserves
   your directory layout, so relative resolution lands on the same file it did on a server.
-- `new URL('/assets/x.png', …)` and any specifier built from a variable or template literal **do
-  not work**, and are not diagnosed. Configure your bundler with a relative base (Vite:
-  `base: './'`) if your application computes asset URLs from a server root.
-- `fetch('/data.json')` does not work either — see [Networking](#networking) — but a literal URL
-  is diagnosed as an error.
+- `fetch('./data.json')` and `fetch('/data.json')` **work**, and read the file the export ships —
+  see [Networking](#networking). A literal path that names nothing in the output is diagnosed as
+  an error at build time.
+- `new URL('/assets/x.png', import.meta.url)` and any specifier built from a variable or template
+  literal are **not diagnosed**, and the server-root form is the one place the two shapes do not
+  yet agree: inside an export it resolves against the application origin and finds the file, while
+  a directory being run resolves it against the document's `file:` URL and lands outside the
+  application, where nothing is readable. Configure your bundler with a relative base (Vite:
+  `base: './'`) if your application computes asset URLs from a server root, and the question does
+  not arise.
 
 ## Networking
 
@@ -87,6 +92,36 @@ defined point in the frame turn** — the start of the animation-frame stage, be
 one. The promise reactions themselves run at the microtask checkpoint that ends the turn, which
 means a handler that mutates the DOM is painted by the following frame.
 
+**`fetch` reads the files the application shipped.** A URL that resolves to a file inside the
+application is answered from that file, out of the same source the renderer already reads images
+and fonts from and the module resolver already reads scripts from — the export directory while one
+is being run, and the section appended to the executable once it is exported. It is what makes the
+idiomatic spelling work:
+
+```js
+const response = await fetch(new URL("./sounds/blip.wav", import.meta.url).href);
+const buffer = await context.decodeAudioData(await response.arrayBuffer());
+```
+
+Without it an application could not read a file it shipped **at all**: `fetch` was http(s) only,
+the shipped runtime implements no `node:fs`, and `blitsen/app` answers with directories rather than
+contents. `decodeAudioData` therefore had no reachable source, and neither did a bundled `.json`
+or `.wasm`.
+
+Three consequences worth stating:
+
+- **A path the application does not ship is a 404**, with a readable empty body — the web's own
+  answer, so a caller that checks `response.ok` and falls back keeps working. Catching a typo is
+  `doctor`'s job, and it does it at build time: a literal path at a `fetch` call site is resolved
+  against the output, and reported as an error only when nothing there answers it. A URL assembled
+  at runtime has no literal to resolve and is not diagnosed.
+- **A URL outside the application is refused**, `file:` included. An application reading its own
+  files is a different thing from one reading the disk; the second is what the `blitsen/*` modules
+  and a native addon are for, and it is deliberately not what a web API does.
+- **Both spellings of the same file agree.** `file:///…/blip.wav` while a directory is being run
+  and `blitsen://app/blip.wav` inside an export name the same bytes, which is the property that
+  keeps the two shapes from diverging.
+
 **Streaming bodies are not implemented, and will not be in v1.** `fetch` buffers a whole
 response. `Response.prototype.body`, `ReadableStream` and `Response.clone` are *absent*, not
 null-valued, so `if (response.body)` selects a buffered fallback correctly. The reason is
@@ -99,7 +134,8 @@ needs a download progress bar or a long-lived response, not before.
 | You wrote | What happens |
 | --- | --- |
 | `fetch("https://api…")` | Runs off-thread; resolves at the next frame turn. |
-| `fetch("/api/data")` | Fails. There is no server behind the document address; `doctor` reports it as an error. |
+| `fetch("./data.json")`, `fetch("/data.json")` | Reads the file the application shipped. See below. |
+| `fetch("/api/data")` | Fails: the export ships no `api/data` and there is no server behind the document address. `doctor` reports it as an error at build time. |
 | `new Request(…)`, `new Headers(…)`, `new Response(…)` | Full subset above, including `AbortSignal`. |
 | `response.text/json/arrayBuffer/blob()` | Supported; a body is readable once. |
 | `response.body`, `response.clone()`, `FormData` bodies | Absent. |
@@ -167,6 +203,9 @@ rather than throwing from a constructor and taking down every page that plays a 
 MP1/MP2/MP3, PCM and Vorbis, in AIFF, CAF, ISO/MP4, MKV/WebM, Ogg, WAV and raw containers.
 `canPlayType` answers `"probably"` or `""` and never `"maybe"`, because a maybe tells a caller
 nothing.
+
+A media element's source is read the same way, so `<audio src="blip.wav">` reads the shipped file
+whether the application is a directory being run or an exported executable.
 
 **Decoding runs on the worker pool** and lands at the same point in the frame turn `fetch` results
 do. A decode in flight keeps the host turning, so its result cannot be stranded.
@@ -684,7 +723,7 @@ determinism gate instead.
 
 | Diagnostic | Severity | Reported as |
 | --- | --- | --- |
-| `WEB_FETCH` | error | fetch resolves this URL against an address with no server behind it. |
+| `WEB_FETCH` | error | fetch names a path this application does not ship, and there is no server behind it. |
 | `WEB_STORAGE_MEMORY` | warning | localStorage is in memory only: what it stores is gone when the application exits. |
 | `WEB_DOM` | warning | This DOM method is not implemented. |
 | `WEB_FORM_CONTROLS` | warning | This form-control API is not implemented. |

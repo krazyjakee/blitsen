@@ -65,7 +65,7 @@ try {
          blob.text().then(text => ["blob-text", text]),
          new Response(new Uint8Array([104, 105])).arrayBuffer().then(buffer => ["bytes", buffer.byteLength]),
          Response.json({ n: 7 }).json().then(value => ["json", value.n]),
-         fetch("/local.json").then(() => "resolved", error => ["no-server", String(error.message).includes("no server behind it")]),
+         fetch("/local.json").then(() => "resolved", error => ["no-server", String(error.message).includes("is none of them")]),
          fetch("${probeOrigin}/missing").then(async result => ["missing", result.status, result.ok, await result.text()]),
          fetch("${probeOrigin}/echo", { method: "PUT", headers: { "x-probe": "yes" }, body: "payload" })
            .then(async result => ["echo", result.status, result.headers.get("x-probe"), result.url,
@@ -103,8 +103,11 @@ try {
   assert.deepEqual(settled.get("blob-text"), ["blob-text", "chunk-one"]);
   assert.deepEqual(settled.get("bytes"), ["bytes", 2]);
   assert.deepEqual(settled.get("json"), ["json", 7]);
+  // The bare harness has no application behind it, so nothing addresses one:
+  // reading a shipped file is the window session's behaviour (issue #125), and
+  // what is left here is the refusal that names what fetch does reach.
   assert.deepEqual(settled.get("no-server"), ["no-server", true],
-    "a document-relative URL has no server behind it and says so");
+    "with no application to read from, a document-relative URL says what fetch does reach");
   assert.deepEqual(settled.get("missing"), ["missing", 404, false, "gone"]);
   assert.deepEqual(settled.get("echo"),
     ["echo", 200, "kept", `${probeOrigin}/echo`, false, { method: "PUT", sent: "payload", probe: "yes" }]);

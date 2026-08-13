@@ -277,9 +277,13 @@ const DIAGNOSTICS = {
 // Diagnostics that are not an absence: an implemented API used in a way an
 // exported application cannot honour.
 const USAGE_RULES = [
-  ["WEB_FETCH", "error", "\\bfetch\\s*\\(\\s*[\"'`](?!https?:\\/\\/)",
-    "fetch resolves this URL against an address with no server behind it.",
-    "Bundle the data into the export, or request an absolute http(s) URL."],
+  // fetch reads the files the application shipped (issue #125), so a literal
+  // that names one is not a finding at all — `doctor` resolves it against the
+  // output and only reports what is not there. The capture group is what it
+  // resolves; a URL assembled at runtime has none, and is undiagnosable here.
+  ["WEB_FETCH", "error", "\\bfetch\\s*\\(\\s*[\"'`](?!https?:\\/\\/)([^\"'`]*)[\"'`]",
+    "fetch names a path this application does not ship, and there is no server behind it.",
+    "Ship the file in the output, or request an absolute http(s) URL."],
   // Storage exists and works; what it cannot do is outlive the process, and a
   // write is the only thing that has something to lose by that.
   ["WEB_STORAGE_MEMORY", "warning", "\\blocalStorage\\s*\\.\\s*setItem\\b",

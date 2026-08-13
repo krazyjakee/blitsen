@@ -127,6 +127,7 @@ pub fn execute_window_scripts<E: JsEngine + 'static>(
         height,
         test_harness,
         &blitsen_core::LocalScripts,
+        None,
     )
 }
 
@@ -145,6 +146,7 @@ pub fn execute_window_scripts_from<E: JsEngine + 'static>(
     height: u32,
     test_harness: bool,
     loader: &dyn blitsen_core::ScriptLoader,
+    reader: Option<crate::app::AppReader>,
 ) -> Result<Rc<RefCell<WindowState>>, JsError> {
     let module_root = Path::new(entrypoint)
         .parent()
@@ -175,7 +177,8 @@ pub fn execute_window_scripts_from<E: JsEngine + 'static>(
             })()"#
     .replace("__BLITSEN_RELOAD_ROOT__", &module_root);
     engine.evaluate_script(&cleanup, "blitsen:dispose-document-context")?;
-    let window_state = dom_bridge::install(engine, runtime, width, height, 1.0, test_harness)?;
+    let window_state =
+        dom_bridge::install(engine, runtime, width, height, 1.0, test_harness, reader)?;
     engine.evaluate_script(
         r#"(() => {
               if (!globalThis.__blitsenRuntimeBaseline) {
@@ -215,7 +218,7 @@ fn boot_harness_document<E: JsEngine + 'static>(
     ));
     let document = runtime.document();
     document.borrow_mut().flush_layout().map_err(dom_error)?;
-    let _window_state = dom_bridge::install(&mut engine, runtime, width, height, 1.0, true)?;
+    let _window_state = dom_bridge::install(&mut engine, runtime, width, height, 1.0, true, None)?;
     engine.evaluate_script(script, identifier)?;
     Ok((document, engine))
 }

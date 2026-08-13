@@ -59,6 +59,10 @@ pub fn install<E: JsEngine + 'static>(
     height: u32,
     device_pixel_ratio: f64,
     test_harness: bool,
+    // Issue #125: how `fetch` and a media source read a file the application
+    // shipped. `None` is the bare bridge harness, which has no application
+    // behind it — and is why `fetch` still refuses a `file:` URL there.
+    reader: Option<crate::app::AppReader>,
 ) -> Result<Rc<RefCell<WindowState>>, JsError> {
     let class = Rc::new(engine.register_class(NativeClass::new("BlitsenNode"))?);
     let table = Rc::new(WrapperTable::<NodeId, E::WeakRef>::new());
@@ -157,8 +161,8 @@ pub fn install<E: JsEngine + 'static>(
     )?;
     engine.set_global("__blitsenViewportWrite", &viewport_write_function)?;
     install_text_codec(engine)?;
-    install_fetch(engine)?;
-    install_audio(engine)?;
+    install_fetch(engine, reader.clone())?;
+    install_audio(engine, reader)?;
     install_web_socket(engine)?;
     native::install(engine)?;
     let dev_layout_warnings = std::env::var("BLITSEN_DEV_LAYOUT_WARNINGS").is_ok_and(|value| {
@@ -283,9 +287,12 @@ fn install_text_codec<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsErr
 /// is not built until an application constructs an `AudioContext`.
 /// `BLITSEN_AUDIO_OFFLINE` makes that context an offline one, which is how the
 /// harness asserts on rendered samples rather than on the calls that were made.
-fn install_audio<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsError> {
+fn install_audio<E: JsEngine + 'static>(
+    engine: &mut E,
+    reader: Option<crate::app::AppReader>,
+) -> Result<(), JsError> {
     let offline = std::env::var("BLITSEN_AUDIO_OFFLINE").is_ok_and(|value| value == "1");
-    let host = Rc::new(audio::AudioHost::new(offline));
+    let host = Rc::new(audio::AudioHost::new(offline, reader));
 
     let call_host = Rc::clone(&host);
     let call = engine.define_function(
@@ -380,8 +387,11 @@ fn install_audio<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsError> {
 }
 
 /// Installs the transport the bootstrap's `fetch` classes call through.
-fn install_fetch<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsError> {
-    let host = Rc::new(fetch::FetchHost::new()?);
+fn install_fetch<E: JsEngine + 'static>(
+    engine: &mut E,
+    reader: Option<crate::app::AppReader>,
+) -> Result<(), JsError> {
+    let host = Rc::new(fetch::FetchHost::new(reader)?);
 
     let start_host = Rc::clone(&host);
     let start = engine.define_function(

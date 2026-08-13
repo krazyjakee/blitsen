@@ -574,6 +574,26 @@ impl JsEngine for NodeApiEngine {
                 "blitsen:external-module-loader",
             );
         }
+        // An inline module's `import.meta.url` is the document's URL, exactly as
+        // it is in a browser — not the `data:` URL Bun evaluates it under, which
+        // `new URL('./sound.wav', import.meta.url)` resolves against and lands
+        // nowhere useful. That was what stopped an application loading its own
+        // files from an inline script (issue #125).
+        //
+        // Assigned in the module body rather than arranged through the loader,
+        // because Bun chooses the specifier and the specifier is what it derives
+        // `import.meta.url` from. `import.meta` is an ordinary extensible object
+        // whose `url` the HTML specification defines as writable, so the
+        // assignment is the whole of it; it is guarded anyway, because an engine
+        // that disagreed should not take the document down with it.
+        let source = match document_url(identifier) {
+            Some(url) => {
+                let url = serde_json::to_string(&url)
+                    .map_err(|error| JsError::new(error.to_string()))?;
+                format!("try {{ import.meta.url = {url}; }} catch {{}}\n{source}")
+            }
+            None => source.to_owned(),
+        };
         let source = format!("{source}\n//# sourceURL={identifier}");
         let encoded = base64::engine::general_purpose::STANDARD.encode(source);
         let specifier = serde_json::to_string(&format!("data:text/javascript;base64,{encoded}"))
@@ -597,6 +617,29 @@ impl JsEngine for NodeApiEngine {
         // next turn; attempting to call uv_run from Bun aborts.
         Ok(LoopTurn::Idle)
     }
+}
+
+/// The document URL an inline script's identifier names.
+///
+/// Identifiers arrive as `<entrypoint>#script-<n>`, and the entrypoint is a
+/// path while a directory is being run and an application URL inside a shipped
+/// executable. Both answer the same question — which document is this — so both
+/// are turned into the URL a browser would have reported, and neither carries
+/// the fragment, because `import.meta.url` is the document's address rather than
+/// this script's place in it.
+fn document_url(identifier: &str) -> Option<String> {
+    let entrypoint = identifier.split('#').next().unwrap_or_default();
+    if entrypoint.is_empty() {
+        return None;
+    }
+    if entrypoint.contains("://") {
+        return Some(entrypoint.to_owned());
+    }
+    let path = Path::new(entrypoint);
+    path.is_absolute()
+        // The same escaping the document's own base URL uses, so a relative
+        // resolution from a script and one from the document agree.
+        .then(|| format!("file://{}", entrypoint.replace(' ', "%20")))
 }
 
 pub(crate) fn external_from_raw(
@@ -650,5 +693,37 @@ pub(crate) fn from_typed_array_type(
         other => Err(JsError::new(format!(
             "unknown Node-API typed-array kind {other}"
         ))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::document_url;
+
+    /// Issue #125: an inline module's `import.meta.url` is the document's URL,
+    /// as it is in a browser, so `new URL('./x', import.meta.url)` names a file
+    /// the application shipped rather than resolving against a `data:` URL.
+    #[test]
+    fn an_inline_scripts_identifier_names_the_document_it_came_from() {
+        assert_eq!(
+            document_url("/tmp/app/index.html#script-1").as_deref(),
+            Some("file:///tmp/app/index.html")
+        );
+        // A shipped executable addresses its own files by the application
+        // origin, and that is already a URL.
+        assert_eq!(
+            document_url("blitsen://app/index.html#script-2").as_deref(),
+            Some("blitsen://app/index.html")
+        );
+        // The same escaping the document's base URL uses, so a relative
+        // resolution from a script and one from the document agree.
+        assert_eq!(
+            document_url("/tmp/my app/index.html#script-1").as_deref(),
+            Some("file:///tmp/my%20app/index.html")
+        );
+        // Nothing to name, rather than a guess: the harness evaluates modules
+        // under identifiers that address no document at all.
+        assert_eq!(document_url("blitsen:inline"), None);
+        assert_eq!(document_url(""), None);
     }
 }

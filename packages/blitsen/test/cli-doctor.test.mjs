@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildManifest, generateApiManifest, loadApiManifest, readBootstrapScript, renderCompatibilityDoc } from "../src/api-manifest.mjs";
@@ -88,6 +88,32 @@ describe("directory CLI", () => {
       const codes = (await doctorApplication(directory)).diagnostics
         .map(diagnostic => `${diagnostic.severity}:${diagnostic.code}`);
       expect(codes).toEqual(["error:WEB_FETCH", "warning:WEB_NAVIGATION", "warning:WEB_STREAM"]);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  // Issue #125: fetch reads the files the application shipped, so the question
+  // a literal path raises is whether the export carries it — not whether it
+  // starts with a slash.
+  test("reports a fetched path the output does not ship, and nothing for one it does", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "blitsen-doctor-fetch-"));
+    try {
+      await writeFile(join(directory, "data.json"), `{"ok":true}`);
+      await mkdir(join(directory, "assets"), { recursive: true });
+      await writeFile(join(directory, "assets", "blip.wav"), "RIFF");
+      await writeFile(join(directory, "app.js"), [
+        `fetch("./data.json");`,
+        `fetch("/data.json");`,
+        `fetch("/assets/blip.wav?v=2");`,
+      ].join("\n"));
+      expect(await doctorApplication(directory)).toMatchObject({ errors: 0, warnings: 0 });
+
+      await writeFile(join(directory, "app.js"), `fetch("/api/reports");`);
+      const report = await doctorApplication(directory);
+      expect(report.errors).toBe(1);
+      expect(report.diagnostics[0].code).toBe("WEB_FETCH");
+      expect(report.diagnostics[0].message).toContain("does not ship");
     } finally {
       await rm(directory, { recursive: true, force: true });
     }

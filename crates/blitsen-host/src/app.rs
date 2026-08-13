@@ -19,6 +19,7 @@ use blitsen_js::{JsEngine, JsError};
 use blitz::dom::DocumentConfig;
 use blitz::traits::net::{Bytes, NetHandler, NetProvider, Request};
 use blitz::traits::shell::{ColorScheme, Viewport};
+use url::Url;
 
 use crate::modules::{APP_ORIGIN, AppSource, DirectorySource, path_of, url_of};
 
@@ -121,6 +122,17 @@ impl AppFiles {
         }
     }
 
+    /// The files, as JavaScript asks for them by URL.
+    pub fn reader(&self) -> AppReader {
+        AppReader {
+            source: self.source(),
+            root: match self {
+                Self::Directory { root, .. } => Some(root.clone()),
+                Self::Bundle { .. } => None,
+            },
+        }
+    }
+
     /// The files, as the module resolver sees them.
     pub fn source(&self) -> Arc<dyn AppSource> {
         match self {
@@ -151,6 +163,71 @@ impl AppFiles {
                 bundle: Arc::clone(bundle),
             }) as Arc<dyn NetProvider>),
         }
+    }
+}
+
+/// Reads the files an application shipped, addressed the way JavaScript sees
+/// them (issue #125).
+///
+/// The renderer already reads images and fonts out of the application, and the
+/// module resolver already reads its scripts. What had no reader was the case
+/// where the application asks by URL — `fetch`, and a media element's source —
+/// and the consequence was that an application could not read a file it shipped
+/// at all: `fetch` is http(s) only and says so, the shipped runtime implements
+/// no `node:fs`, and `blitsen/app` answers with directories rather than
+/// contents. `decodeAudioData` had no reachable source, and neither did a
+/// bundled `.json` or `.wasm`.
+///
+/// Confined to the application on purpose. `fetch` is a web API, and an
+/// application reading its own files is a different thing from one reading the
+/// disk — that is `blitsen/*` territory, and it is not this.
+#[derive(Clone)]
+pub struct AppReader {
+    source: Arc<dyn AppSource>,
+    /// A directory being run is the one shape whose files are also addressed by
+    /// `file:` URLs, because that is what its document's base URL is.
+    root: Option<PathBuf>,
+}
+
+/// Why a URL named no readable application file.
+pub enum NotRead {
+    /// The URL does not address this application at all.
+    Outside,
+    /// It does, and the application shipped no such file.
+    Missing(String),
+}
+
+impl AppReader {
+    /// Reads what `url` names inside the application.
+    pub fn read_url(&self, url: &Url) -> Result<Vec<u8>, NotRead> {
+        let path = self.path_of_url(url).ok_or(NotRead::Outside)?;
+        self.source
+            .read(&path)
+            .ok_or(NotRead::Missing(path))
+    }
+
+    /// The application-relative path `url` addresses, if any.
+    fn path_of_url(&self, url: &Url) -> Option<String> {
+        if url.scheme() == "blitsen" && url.host_str() == Some("app") {
+            // Left percent-encoded exactly as `url_of` leaves it, so a path the
+            // module resolver would read and one `fetch` reads are the same
+            // string rather than two spellings that agree on most inputs.
+            return Some(url.path().trim_start_matches('/').to_owned());
+        }
+        if url.scheme() != "file" {
+            return None;
+        }
+        let root = self.root.as_ref()?.canonicalize().ok()?;
+        let target = url.to_file_path().ok()?;
+        // Canonicalised when it can be, so a symlink out of the directory is
+        // still out of it. A path that does not exist cannot be, and must not be
+        // rejected for it: a file the application does not ship is a 404, and
+        // reporting it as "not this application's" would send the reader looking
+        // for the wrong mistake. `Url` has already resolved any `..` segments,
+        // and `AppSource` re-canonicalises and re-checks on the way in.
+        let target = target.canonicalize().unwrap_or(target);
+        let relative = target.strip_prefix(&root).ok()?;
+        Some(relative.to_string_lossy().replace('\\', "/"))
     }
 }
 
@@ -209,6 +286,7 @@ pub fn load_document<E: JsEngine + Clone + 'static>(
         height,
         test_harness,
         files.script_loader().as_ref(),
+        Some(files.reader()),
     )?;
     document
         .borrow_mut()
