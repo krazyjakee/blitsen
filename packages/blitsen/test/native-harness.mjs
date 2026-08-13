@@ -18,6 +18,7 @@ const { styled } = await import("./native-harness/style.mjs");
 await import("./native-harness/layout-and-images.mjs");
 await import("./native-harness/runtime-surface.mjs");
 await import("./native-harness/network.mjs");
+await import("./native-harness/web-socket.mjs");
 const { displayed } = await import("./native-harness/native-modules.mjs");
 
 console.log("native modules passed", `clipboard=${displayed ? "round-tripped" : "skipped"}`);

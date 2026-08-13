@@ -115,6 +115,28 @@ normally, because `stop()` ends the load in progress rather than the document's 
 With nothing in flight it does nothing observable, which is not the same as being a function that
 does nothing: both halves run and find nothing to abort.
 
+### WebSocket
+
+`WebSocket` is Blitsen's own, backed by `tokio-tungstenite`, and is the streaming path this
+runtime does have. The constructor, `url`, `readyState` and its four constants, `protocol`,
+`extensions`, `bufferedAmount`, `binaryType`, `send` and `close` are all present, as are the
+`open`, `message`, `error` and `close` events; a close carries its code, reason and `wasClean`.
+
+Text and binary frames both work. `binaryType` is `"blob"` by default and `"arraybuffer"` when
+asked, and the choice is made once at the boundary rather than by converting afterwards. `send`
+accepts a string, a `Blob`, an `ArrayBuffer` or a typed array, and throws `InvalidStateError`
+before the socket is open — which is the one thing about a socket that is not a queued no-op.
+
+`wss://` uses the platform certificate store, through the same `native-tls` backend `fetch`
+resolves to, so a certificate the desktop trusts is one the socket trusts.
+
+The connection runs off the thread that owns the DOM, and **frames land at the same defined point
+in the frame turn that `fetch` results do**. An open socket keeps the host turning, for the same
+reason an in-flight request does: its landing point is that turn, so a loop that idled would never
+deliver. A non-`ws:`/`wss:` address is refused with a `SyntaxError` at construction.
+
+`EventSource` is absent. Feature-detect it, or hold the stream open over a socket instead.
+
 ## Routing
 
 `history` and `location` exist and are **in memory only**. There is no navigation, no network and
