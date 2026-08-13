@@ -68,7 +68,7 @@ pub(crate) fn validate_local_asset(
             && characters
                 .all(|character| character.is_ascii_alphanumeric() || "+-.".contains(character))
     });
-    if specifier.starts_with('/') || has_scheme {
+    if has_scheme {
         return Err(JsError::new(format!(
             "asset URL must be relative to index.html: {specifier}"
         )));
@@ -77,8 +77,16 @@ pub(crate) fn validate_local_asset(
     if local.is_empty() {
         return Ok(());
     }
-    let asset = from
-        .join(local)
+    // A server-root URL names a file at the application root, which is what
+    // `blitsen build` rewrites it to at ingest and what the application origin
+    // already means inside a shipped executable. Refusing it here was the one
+    // place the three disagreed, and it refused the default `vite build` output:
+    // `blitsen build dist` exported the directory that `blitsen dist` would not
+    // open.
+    let asset = match local.strip_prefix('/') {
+        Some(from_root) => root.join(from_root),
+        None => from.join(local),
+    }
         .canonicalize()
         .map_err(|_| JsError::new(format!("unreadable asset from index.html: {specifier}")))?;
     if !asset.starts_with(root) {
@@ -122,9 +130,17 @@ mod tests {
         );
         validate_local_assets(&valid, &root, &entrypoint).unwrap();
 
+        // A server-root URL names a file at the application root: the same
+        // meaning `blitsen build` rewrites it to and the application origin
+        // already carries inside an export. Refusing it here is what made
+        // `blitsen dist` reject the default `vite build` output that
+        // `blitsen build dist` exports without complaint.
+        let from_root = document("<script src='/dependency.js'></script><img src='/module.js'>");
+        validate_local_assets(&from_root, &root, &entrypoint).unwrap();
+
         for (source, expected) in [
             ("<img src='./missing.png'>", "unreadable asset"),
-            ("<script src='/app.js'></script>", "must be relative"),
+            ("<script src='/nowhere.js'></script>", "unreadable asset"),
             ("<img src='https://example.com/a.png'>", "must be relative"),
             (
                 "<img src='../../../../../Cargo.toml'>",

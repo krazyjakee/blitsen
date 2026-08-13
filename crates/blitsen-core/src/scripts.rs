@@ -198,7 +198,7 @@ fn is_remote_script(src: &str) -> bool {
 }
 
 fn resolve_local_script(root: &Path, src: &str) -> Result<PathBuf, JsError> {
-    if src.starts_with('/') || src.contains("://") {
+    if src.contains("://") {
         return Err(JsError::new(format!(
             "script src must be relative to the entrypoint: {src}"
         )));
@@ -206,8 +206,13 @@ fn resolve_local_script(root: &Path, src: &str) -> Result<PathBuf, JsError> {
     let root = root
         .canonicalize()
         .map_err(|error| JsError::new(format!("could not resolve {}: {error}", root.display())))?;
+    // A leading slash is the application root, not the filesystem's — the same
+    // meaning the module resolver gives it inside a shipped executable, and the
+    // one `blitsen build` rewrites it to. `root.join("/assets/x.js")` would
+    // otherwise replace the root entirely, which is how a stock `vite build`
+    // ended up looking for its bundle at the top of the disk.
     let path = root
-        .join(src)
+        .join(src.trim_start_matches('/'))
         .canonicalize()
         .map_err(|error| JsError::new(format!("could not resolve script {src}: {error}")))?;
     if !path.starts_with(&root) {

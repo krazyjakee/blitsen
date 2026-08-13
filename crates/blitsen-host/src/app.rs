@@ -158,7 +158,10 @@ impl AppFiles {
     /// only as a byte range inside the running executable.
     pub fn net_provider(&self) -> Option<Arc<dyn NetProvider>> {
         match self {
-            Self::Directory { .. } => None,
+            Self::Directory { root, .. } => Some(Arc::new(DirectoryResources {
+                source: Arc::new(DirectorySource::new(root.clone())),
+                root: root.clone(),
+            }) as Arc<dyn NetProvider>),
             Self::Bundle { bundle, .. } => Some(Arc::new(BundleResources {
                 bundle: Arc::clone(bundle),
             }) as Arc<dyn NetProvider>),
@@ -335,6 +338,45 @@ impl ScriptLoader for BundleScripts {
     }
 }
 
+/// Serves a directory's subresources, with a server-root URL meaning the
+/// application root.
+///
+/// Blitz resolves `href="/assets/app.css"` against the document's `file:` base
+/// and arrives at `file:///assets/app.css` — the top of the disk, where nothing
+/// is. The application root is what the URL meant: it is what `blitsen build`
+/// rewrites it to at ingest, and what the application origin already means
+/// inside a shipped executable. Without this the default `vite build` output
+/// exported fine and would not open, which is a difference between two commands
+/// pointed at one directory.
+///
+/// The retry goes through [`AppSource`], so it is confined to the application by
+/// the same check every other read of it uses.
+struct DirectoryResources {
+    source: Arc<dyn AppSource>,
+    root: PathBuf,
+}
+
+impl NetProvider for DirectoryResources {
+    fn fetch(&self, doc_id: usize, request: Request, handler: Box<dyn NetHandler>) {
+        // Only a path that landed outside the application is reinterpreted. One
+        // already inside it is an ordinary relative reference and is read where
+        // it points, so a directory that happens to sit at the filesystem root
+        // cannot change what a relative URL means.
+        let outside = request
+            .url
+            .to_file_path()
+            .is_ok_and(|path| !path.starts_with(&self.root));
+        if request.url.scheme() == "file" && outside {
+            let relative = request.url.path().trim_start_matches('/');
+            if let Some(bytes) = self.source.read(relative) {
+                handler.bytes(request.url.as_str().to_owned(), Bytes::from(bytes));
+                return;
+            }
+        }
+        blitsen_blitz::resources::LocalResources.fetch(doc_id, request, handler);
+    }
+}
+
 /// Serves a document's subresources out of the appended section.
 struct BundleResources {
     bundle: Arc<AppBundle>,
@@ -408,6 +450,49 @@ mod tests {
             files.source().read("assets/app.js").unwrap(),
             b"globalThis.ran = 1"
         );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// A stock `vite build` writes `/assets/index-<hash>.js`, and Blitz resolves
+    /// that against the document's `file:` base to the top of the disk. The
+    /// application root is what it meant.
+    #[test]
+    fn a_directory_serves_a_server_root_subresource_from_the_application_root() {
+        use blitz::traits::net::Request;
+        use std::sync::Mutex;
+
+        #[derive(Clone, Default)]
+        struct Collector(Arc<Mutex<Vec<(String, usize)>>>);
+        impl NetHandler for Collector {
+            fn bytes(self: Box<Self>, resolved_url: String, bytes: Bytes) {
+                self.0.lock().unwrap().push((resolved_url, bytes.len()));
+            }
+        }
+
+        let root = std::env::temp_dir().join(format!("blitsen-dir-net-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("assets")).unwrap();
+        std::fs::write(root.join("index.html"), b"<p>hi").unwrap();
+        std::fs::write(root.join("assets/app.css"), b"body{margin:0}").unwrap();
+        let files = AppFiles::directory(root.join("index.html")).unwrap();
+        let provider = files.net_provider().expect("a directory serves its own files");
+
+        let collector = Collector::default();
+        let served = |url: &str| {
+            provider.fetch(
+                0,
+                Request::get(Url::parse(url).unwrap()),
+                Box::new(collector.clone()),
+            );
+            collector.0.lock().unwrap().last().unwrap().1
+        };
+        // What Blitz asks for after resolving `href="/assets/app.css"`.
+        assert_eq!(served("file:///assets/app.css"), 14);
+        // An ordinary relative reference still reads where it points.
+        let inside = format!("file://{}/assets/app.css", root.to_string_lossy());
+        assert_eq!(served(&inside), 14);
+        // And a server-root path the application does not ship stays empty, so
+        // the document paints without it rather than waiting on it.
+        assert_eq!(served("file:///assets/nothing.css"), 0);
         std::fs::remove_dir_all(&root).ok();
     }
 

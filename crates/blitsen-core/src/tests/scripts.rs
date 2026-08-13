@@ -39,19 +39,37 @@ fn document_scripts_run_in_order_with_local_module_identity() {
 }
 
 #[test]
-fn document_scripts_reject_a_server_root_source() {
-    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixture/index.html");
-    let document = MockScripts(vec![DocumentScript {
-        source: String::new(),
-        src: Some("/assets/app.js".into()),
-        script_type: None,
-        async_attribute: false,
-        defer_attribute: false,
-    }]);
-    let error =
-        execute_document_scripts(&document, &mut RecordingScriptEngine::default(), &fixture)
-            .unwrap_err();
-    assert!(error.message().contains("must be relative"));
+fn a_server_root_source_is_read_from_the_application_root() {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../spikes/s7/fixture/index.html");
+    let script = |src: &str| {
+        MockScripts(vec![DocumentScript {
+            source: String::new(),
+            src: Some(src.into()),
+            script_type: Some("module".into()),
+            async_attribute: false,
+            defer_attribute: false,
+        }])
+    };
+    // The leading slash is the application's root, not the filesystem's — the
+    // meaning `blitsen build` rewrites it to and the application origin already
+    // carries inside an export. A stock `vite build` emits nothing else.
+    let mut engine = RecordingScriptEngine::default();
+    execute_document_scripts(&script("/src/math.js"), &mut engine, &fixture).unwrap();
+    assert!(engine.evaluations[0].2.ends_with("src/math.js"));
+    assert!(!engine.evaluations[0].1.is_empty());
+
+    // What it is not is a licence to read the disk.
+    let error = execute_document_scripts(
+        &script("/assets/app.js"),
+        &mut RecordingScriptEngine::default(),
+        &fixture,
+    )
+    .unwrap_err();
+    assert!(
+        error.message().contains("could not resolve script"),
+        "{}",
+        error.message()
+    );
 }
 
 /// A remote script is skipped rather than fatal, so the rest of the document

@@ -44,8 +44,12 @@ Blitsen imports or runtime branches.
 ## Asset URLs
 
 There is no web server behind an exported application, so a URL that assumes a server root has to
-be resolved at build time. **Blitsen rewrites server-root URLs while ingesting, in its own staging
-copy — your `dist` directory is never modified.**
+be resolved against the application instead. **Blitsen rewrites server-root URLs while ingesting,
+in its own staging copy — your `dist` directory is never modified.**
+
+Running a directory resolves them the same way rather than rewriting anything, so `blitsen dist`
+and `blitsen build dist` accept the same output. They used to disagree, and the directory the
+export accepted was the default `vite build` one.
 
 | You wrote | Blitsen does |
 | --- | --- |
