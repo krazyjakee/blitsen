@@ -1,53 +1,279 @@
-name: Release (inert)
+name: Release
 
-# This workflow publishes nothing and never runs on its own.
+# Builds, signs and publishes the six platform runtimes and the `blitsen` package.
 #
-# It exists to show — and to keep working — the one mechanical step between the
-# committed platform manifests (packages/platforms/) and a publishable package:
-# staging the compiled addon as blitsen.node. It stops at `npm publish --dry-run`,
-# there is no registry token in this repository, and only linux-x64 can be built
-# at all; the other five targets have no runner yet (issue #70).
+# Defaults to a dry run. Publishing takes a deliberate `publish: true` on a
+# manual dispatch, because `npm publish` cannot be undone: a version is burned
+# the moment it lands, and unpublishing is a 72-hour window and a bad look.
 #
-# Turning it on means adding those runners, an NPM_TOKEN secret and dropping
-# --dry-run, in a commit that says so. Platform packages publish before `blitsen`,
-# because its optionalDependencies have to resolve.
+# What this workflow does NOT do is notarise. Notarisation is a submission to
+# Apple that takes minutes to hours and needs an App Store Connect key; it is a
+# separate step against the artifacts this produces, and pretending to do it
+# inline would make the release time unpredictable for no benefit. macOS code
+# *signing* is here, because it is local and fast. See docs/RELEASING.md.
+#
+# Every signing step is skipped, loudly, when its secret is absent — so the
+# workflow is runnable end to end on a fork with no credentials at all, which is
+# the only way any of it gets tested before a real release.
+
 on:
   workflow_dispatch:
+    inputs:
+      publish:
+        description: "Publish to npm (otherwise pack and dry-run only)"
+        type: boolean
+        default: false
+      tag:
+        description: "npm dist-tag to publish under"
+        type: string
+        default: latest
+
+env:
+  CARGO_TERM_COLOR: always
+  BUN_VERSION: 1.3.14
 
 jobs:
-  pack:
-    name: Pack blitsen and @blitsen/linux-x64
-    runs-on: ubuntu-latest
+  # One native runner per target. Cross-compilation is deliberately not used
+  # here: #84 settled that the engine's artifacts are built and tested natively
+  # per OS, and a runtime that was never executed on its own platform is not
+  # evidence of anything. What that choice costs is measured per target in the
+  # job summary rather than assumed (open question 11).
+  #
+  # The two arm64 labels are overridable, because GitHub's free arm64 runners
+  # are **public repositories only**. This repository is private today, so
+  # `ubuntu-24.04-arm` and `windows-11-arm` will not schedule for it: set the
+  # repository variables LINUX_ARM64_RUNNER and WIN32_ARM64_RUNNER to larger or
+  # self-hosted labels, or make the repository public. Left as the free labels
+  # by default so that becomes true the moment either happens.
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-x64
+            runner: ubuntu-latest
+            library: libblitsen_node.so
+          - target: linux-arm64
+            runner: ${{ vars.LINUX_ARM64_RUNNER || 'ubuntu-24.04-arm' }}
+            library: libblitsen_node.so
+          - target: darwin-x64
+            runner: macos-13
+            library: libblitsen_node.dylib
+          - target: darwin-arm64
+            runner: macos-latest
+            library: libblitsen_node.dylib
+          - target: win32-x64
+            runner: windows-latest
+            library: blitsen_node.dll
+          - target: win32-arm64
+            runner: ${{ vars.WIN32_ARM64_RUNNER || 'windows-11-arm' }}
+            library: blitsen_node.dll
     steps:
       - uses: actions/checkout@v4
+      - id: started
+        shell: bash
+        run: echo "at=$(date +%s)" >> "$GITHUB_OUTPUT"
+
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.3.14
+          bun-version: ${{ env.BUN_VERSION }}
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      # Blitz links these directly on Linux; macOS and Windows carry their own.
       - name: Install Blitz system dependencies
+        if: startsWith(matrix.runner, 'ubuntu')
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             libfontconfig1-dev libxkbcommon-dev libwayland-dev \
             libx11-dev libxcursor-dev libxi-dev libxrandr-dev
-      - run: cargo build --release -p blitsen-node
+
+      - name: Build the runtime
+        run: cargo build --release -p blitsen-node
+
       # A platform package is its committed manifest plus exactly this artifact.
       - name: Stage the runtime
-        run: cp target/release/libblitsen_node.so packages/platforms/linux-x64/blitsen.node
-      - run: bun install --frozen-lockfile
-      # Includes the manifest conformance test: every platform package declares its
-      # os/cpu pair and is pinned to blitsen's version exactly.
-      - run: bun test packages/blitsen
-      - name: Pack
+        shell: bash
+        run: cp "target/release/${{ matrix.library }}" "packages/platforms/${{ matrix.target }}/blitsen.node"
+
+      # The addon is the only native code Blitsen ships, so it is what gets
+      # signed. Both steps are no-ops without their secret, and say so.
+      - name: Sign (macOS)
+        if: startsWith(matrix.runner, 'macos')
+        env:
+          CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE_P12 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         run: |
-          npm pack --pack-destination "$RUNNER_TEMP" ./packages/platforms/linux-x64
-          npm pack --pack-destination "$RUNNER_TEMP" ./packages/blitsen
+          if [ -z "$CERTIFICATE" ] || [ -z "$IDENTITY" ]; then
+            echo "::warning::APPLE_CERTIFICATE_P12/APPLE_SIGNING_IDENTITY absent — shipping an unsigned ${{ matrix.target }} runtime"
+            exit 0
+          fi
+          keychain="$RUNNER_TEMP/build.keychain"
+          password="$(openssl rand -hex 32)"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 3600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          echo "$CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+          security import "$RUNNER_TEMP/certificate.p12" -k "$keychain" \
+            -P "$CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain"
+          security list-keychain -d user -s "$keychain" login.keychain
+          codesign --force --timestamp --options runtime \
+            --sign "$IDENTITY" "packages/platforms/${{ matrix.target }}/blitsen.node"
+          codesign --verify --strict --verbose=2 "packages/platforms/${{ matrix.target }}/blitsen.node"
+          rm -f "$RUNNER_TEMP/certificate.p12"
+          security delete-keychain "$keychain"
+
+      - name: Sign (Windows)
+        if: startsWith(matrix.runner, 'windows')
+        shell: bash
+        env:
+          CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE_PFX }}
+          CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          if [ -z "$CERTIFICATE" ]; then
+            echo "::warning::WINDOWS_CERTIFICATE_PFX absent — shipping an unsigned ${{ matrix.target }} runtime"
+            exit 0
+          fi
+          echo "$CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/certificate.pfx"
+          signtool=$(find "/c/Program Files (x86)/Windows Kits/10/bin" -name signtool.exe \
+            -path '*x64*' | sort | tail -1)
+          "$signtool" sign -f "$RUNNER_TEMP/certificate.pfx" -p "$CERTIFICATE_PASSWORD" \
+            -fd SHA256 -tr http://timestamp.digicert.com -td SHA256 \
+            "packages/platforms/${{ matrix.target }}/blitsen.node"
+          "$signtool" verify -pa "packages/platforms/${{ matrix.target }}/blitsen.node"
+          rm -f "$RUNNER_TEMP/certificate.pfx"
+
+      # The runtime and the CLI are one ABI, so the package tests run against
+      # the artifact this job just built rather than against a stale one.
+      - run: bun install --frozen-lockfile
+      - run: bun test packages/blitsen
+        env:
+          BLITSEN_NATIVE_PATH: ${{ github.workspace }}/packages/platforms/${{ matrix.target }}/blitsen.node
+
+      - name: Pack
+        shell: bash
+        run: npm pack --pack-destination "$RUNNER_TEMP" "./packages/platforms/${{ matrix.target }}"
+
       - uses: actions/upload-artifact@v4
         with:
-          name: packages-${{ github.sha }}
-          path: ${{ runner.temp }}/*.tgz
-      - name: Publish (dry run)
+          name: runtime-${{ matrix.target }}
+          path: packages/platforms/${{ matrix.target }}/blitsen.node
+          if-no-files-found: error
+          retention-days: 7
+
+      # Open question 11: what the six-runner matrix actually costs, recorded
+      # per target so the cross-compilation question can be argued from numbers.
+      - name: Record cost
+        if: always()
+        shell: bash
         run: |
-          npm publish --dry-run ./packages/platforms/linux-x64
-          npm publish --dry-run ./packages/blitsen
+          elapsed=$(( $(date +%s) - ${{ steps.started.outputs.at }} ))
+          # A job summary is per job, so each carries its own header rather than
+          # rows that would render as loose text on their own.
+          {
+            echo "| Target | Runner | Wall clock |"
+            echo "| --- | --- | --- |"
+            echo "| \`${{ matrix.target }}\` | \`${{ matrix.runner }}\` | ${elapsed}s |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # Publishing is one job, after every target has built, because the six
+  # platform packages and `blitsen` are one release: `blitsen`'s
+  # optionalDependencies name exact versions, so a half-published set resolves
+  # to nothing installable. npm has no transaction, so the ordering is the
+  # guarantee — every platform package first, `blitsen` last, and its own
+  # publish is what makes the release visible to a user at all.
+  publish:
+    name: Publish
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write # npm provenance
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: runtime-*
+          path: ${{ runner.temp }}/runtimes
+
+      - name: Stage every runtime into its package
+        shell: bash
+        run: |
+          for target in darwin-arm64 darwin-x64 linux-arm64 linux-x64 win32-arm64 win32-x64; do
+            source="$RUNNER_TEMP/runtimes/runtime-$target/blitsen.node"
+            test -f "$source" || { echo "::error::missing runtime for $target"; exit 1; }
+            cp "$source" "packages/platforms/$target/blitsen.node"
+          done
+
+      # The version pin is the release's integrity: every platform package must
+      # be exactly `blitsen`'s version, and `blitsen` must ask for exactly that.
+      # The package tests assert this, and it is cheap to assert again here
+      # because publishing a mismatched set cannot be taken back.
+      - run: bun install --frozen-lockfile
+      - run: bun test packages/blitsen
+
+      - name: Check the version is not already published
+        shell: bash
+        run: |
+          version=$(node -p "require('./packages/blitsen/package.json').version")
+          echo "version=$version" >> "$GITHUB_ENV"
+          if npm view "blitsen@$version" version >/dev/null 2>&1; then
+            echo "::error::blitsen@$version is already published; bump the version"
+            exit 1
+          fi
+          echo "Releasing $version"
+
+      - name: Publish
+        shell: bash
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          PUBLISH: ${{ inputs.publish }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          if [ "$PUBLISH" != "true" ]; then
+            echo "::notice::Dry run — pass publish: true to release"
+            # Provenance is an attestation signed against a real publish, so it
+            # is not requested for a run that is not going to make one.
+            flags="--dry-run"
+          elif [ -z "$NODE_AUTH_TOKEN" ]; then
+            echo "::error::publish: true but NPM_TOKEN is not set"
+            exit 1
+          else
+            flags="--provenance"
+          fi
+          # Platform packages first: blitsen's optionalDependencies have to
+          # resolve the moment it lands.
+          for target in darwin-arm64 darwin-x64 linux-arm64 linux-x64 win32-arm64 win32-x64; do
+            npm publish $flags --access public --tag "$TAG" "./packages/platforms/$target"
+          done
+          npm publish $flags --access public --tag "$TAG" ./packages/blitsen
+
+      - name: Summarise
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## Release ${{ env.version }}"
+            echo
+            echo "Published: ${{ inputs.publish }} (tag \`${{ inputs.tag }}\`)"
+            echo
+            echo "Notarisation is **not** part of this workflow. Submit the macOS artifacts"
+            echo "separately with \`notarytool\`; see docs/RELEASING.md."
+          } >> "$GITHUB_STEP_SUMMARY"

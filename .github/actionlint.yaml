@@ -1,0 +1,8 @@
+# actionlint's bundled label list predates GitHub's arm64 runners, so the two
+# this repository's release matrix uses are declared here rather than silenced
+# at the call site. Both are real GitHub-hosted labels (generally available for
+# public repositories since 2025-08-07); see .github/workflows/release.yml for
+# why they are overridable.
+self-hosted-runner:
+  labels:
+    - windows-11-arm
