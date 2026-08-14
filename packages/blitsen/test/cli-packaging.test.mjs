@@ -3,9 +3,9 @@ import { copyFile, cp, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } 
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { buildStandalone, describeNativeBinary } from "../src/export.mjs";
+import { buildStandalone, describeExecutableBinary, describeNativeBinary } from "../src/export.mjs";
 import { packageBuild, signArgv, signArtifact } from "../src/packaging.mjs";
-import { viteBase, addonFixtures, icon, signHook, compiler, engineAddon, engineBuilt, compileAddon, elfHeader, withStubbedExport, withArtifact } from "./cli-support.mjs";
+import { viteBase, addonFixtures, icon, signHook, compiler, engineAddon, engineBuilt, compileAddon, elfHeader, executableStub, nativeStub, withStubbedExport, withArtifact } from "./cli-support.mjs";
 
 describe("directory CLI", () => {
   test("reads the container header a .node must have to load on this host", () => {
@@ -18,15 +18,38 @@ describe("directory CLI", () => {
     expect(describeNativeBinary(Buffer.from("// placeholder addon\n"))).toBeNull();
   });
 
+  test("reads an executable's header as an executable, not as a library", () => {
+    // The Phase 2 runtime is the other question the same headers answer, and the
+    // two must not be interchangeable: an addon where the runtime belongs would
+    // link into an artifact that cannot start.
+    for (const target of ["linux-x64", "darwin-arm64", "win32-x64"]) {
+      const platform = target.slice(0, target.lastIndexOf("-"));
+      const architecture = target.slice(target.lastIndexOf("-") + 1);
+      expect(describeExecutableBinary(executableStub(target)))
+        .toMatchObject({ platform, architectures: [architecture] });
+      // A shared library is not an executable — except on ELF, where a
+      // position-independent executable is the same type as one.
+      expect(describeNativeBinary(executableStub(target))).toBeNull();
+      if (platform !== "linux") expect(describeExecutableBinary(nativeStub(target))).toBeNull();
+    }
+  });
+
   test("refuses a .node it cannot load instead of exporting a launch crash", async () => {
     await withStubbedExport(async ({ directory, nativePath, outfile }) => {
       const build = addons => buildStandalone({
         root: viteBase, width: 800, height: 600, title: "Base", outfile, force: true, addons,
       }, nativePath);
       const foreign = join(directory, "foreign.node");
-      await writeFile(foreign, elfHeader({ machine: 0xb7 }));
+      // Foreign to *this* host: 0xb7 is aarch64 and 0x3e is x86-64, so an arm64
+      // runner gets the x86-64 fixture and the addon is refused there too. It
+      // was fixed at aarch64, which made this a pass on x64 and a silent
+      // no-op-turned-failure on the arm64 targets a release publishes (#133).
+      const [machine, foreignTarget] = process.arch === "arm64"
+        ? [0x3e, "linux-x64"]
+        : [0xb7, "linux-arm64"];
+      await writeFile(foreign, elfHeader({ machine }));
       await expect(build([foreign])).rejects.toThrow("native addon foreign.node is built for "
-        + `linux-arm64 (ELF), but this export runs on ${process.platform}-${process.arch}`);
+        + `${foreignTarget} (ELF), but this export runs on ${process.platform}-${process.arch}`);
       const text = join(directory, "notes.node");
       await writeFile(text, "not a library\n");
       await expect(build([text]))

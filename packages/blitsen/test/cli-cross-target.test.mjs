@@ -150,10 +150,16 @@ describe("cross-target export", () => {
       const cache = join(work, "cache");
       const previousCache = process.env.BLITSEN_CACHE_DIR;
       const previousNative = process.env.BLITSEN_NATIVE_PATH;
+      const previousRuntime = process.env.BLITSEN_RUNTIME_PATH;
       process.env.BLITSEN_CACHE_DIR = cache;
       // An addon named in the environment outranks everything, which would
-      // quietly make all three builds link this host's runtime.
+      // quietly make all three builds link this host's runtime. So does a Phase
+      // 2 runtime named there — the half that was missed, and the half that
+      // decides what the artifact *is*: with BLITSEN_RUNTIME_PATH set, this
+      // test asked for win32-x64 and got an ELF, and only said so on a runner
+      // whose ELF was the wrong architecture as well (#134).
       delete process.env.BLITSEN_NATIVE_PATH;
+      delete process.env.BLITSEN_RUNTIME_PATH;
 
       const formats = {
         "win32-x64": /PE32\+ executable.*x86-64/,
@@ -177,6 +183,7 @@ describe("cross-target export", () => {
       if (previousCache === undefined) delete process.env.BLITSEN_CACHE_DIR;
       else process.env.BLITSEN_CACHE_DIR = previousCache;
       if (previousNative !== undefined) process.env.BLITSEN_NATIVE_PATH = previousNative;
+      if (previousRuntime !== undefined) process.env.BLITSEN_RUNTIME_PATH = previousRuntime;
     }, 240_000);
   }, 240_000);
 
@@ -201,6 +208,50 @@ describe("cross-target export", () => {
       } finally {
         if (previous === undefined) delete process.env.BLITSEN_NATIVE_PATH;
         else process.env.BLITSEN_NATIVE_PATH = previous;
+      }
+    });
+  });
+
+  // The other half of the same refusal, and the one that decides what the
+  // artifact is rather than what it loads: a Phase 2 export *is* the runtime
+  // executable with the application appended. `BLITSEN_RUNTIME_PATH` outranks
+  // the target's own runtime, so without this check a build that named another
+  // platform produced this host's executable under that platform's file name —
+  // a `.exe` that is an ELF, reported as a success (#134).
+  test("refuses a Phase 2 runtime built for a platform other than the target", async () => {
+    await withWork(async work => {
+      const application = join(work, "dist");
+      await mkdir(application, { recursive: true });
+      await writeFile(join(application, "index.html"), "<!doctype html><html><body>x</body></html>");
+      const cache = join(work, "cache");
+      const addon = join(work, "win32.node");
+      const runtime = join(work, "host-runtime");
+      await writeFile(addon, nativeStub("win32-x64"));
+      await writeFile(runtime, executableStub("linux-x64"));
+      const { output, lines } = capture();
+      const previous = {
+        native: process.env.BLITSEN_NATIVE_PATH,
+        runtime: process.env.BLITSEN_RUNTIME_PATH,
+        cache: process.env.BLITSEN_CACHE_DIR,
+      };
+      // The addon matches the target, so the only thing wrong is the executable
+      // underneath it — which is what this is about.
+      process.env.BLITSEN_NATIVE_PATH = addon;
+      process.env.BLITSEN_RUNTIME_PATH = runtime;
+      process.env.BLITSEN_CACHE_DIR = cache;
+      try {
+        const code = await main(
+          ["build", application, "--target", "win32-x64", "--outfile", join(work, "App")], output);
+        expect(code).toBe(1);
+        const said = lines.map(([, line]) => line).join("\n");
+        expect(said).toContain("the linked Phase 2 runtime is built for linux-x64");
+        expect(said).toContain("BLITSEN_RUNTIME_PATH");
+      } finally {
+        for (const [name, value] of [["BLITSEN_NATIVE_PATH", previous.native],
+          ["BLITSEN_RUNTIME_PATH", previous.runtime], ["BLITSEN_CACHE_DIR", previous.cache]]) {
+          if (value === undefined) delete process.env[name];
+          else process.env[name] = value;
+        }
       }
     });
   });

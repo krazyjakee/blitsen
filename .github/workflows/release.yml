@@ -346,6 +346,27 @@ jobs:
           done
           exit $missing
 
+      # Issue #131: the `@blitsen` scope has to exist and be owned by whoever
+      # this token belongs to, and npm answers that question in a second. Asked
+      # before the first publish rather than discovered at it, because the six
+      # platform packages go out before `blitsen` does — a scope that refuses
+      # them leaves a release stopped halfway with a version burned.
+      - name: Check the registry will take this
+        if: inputs.publish
+        shell: bash
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          who=$(npm whoami 2>&1) || {
+            echo "::error::NPM_TOKEN does not authenticate: $who"
+            exit 1
+          }
+          echo "Publishing as $who"
+          if ! npm access list packages @blitsen >/dev/null 2>&1; then
+            echo "::error::the @blitsen scope is not readable by this token — create the organisation and give the token write access to it (#131)"
+            exit 1
+          fi
+
       - name: Check the version is not already published
         shell: bash
         run: |

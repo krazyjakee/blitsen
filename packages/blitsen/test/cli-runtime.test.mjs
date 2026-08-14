@@ -99,7 +99,12 @@ describe("runtime resolution", () => {
   });
 
   test("records the runtime an export linked against, in the artifact and the report", async () => {
-    const runtime = { target: "linux-x64", version: "1.2.3", package: "@blitsen/linux-x64",
+    // This host's target rather than a fixed one: the record is what the export
+    // links against, and the exporter refuses a runtime built for anything but
+    // the target being built for. Fixed at `linux-x64`, the test asserted the
+    // record on an x64 runner and asserted that refusal on an arm64 one (#133).
+    const target = hostTarget();
+    const runtime = { target, version: "1.2.3", package: `@blitsen/${target}`,
       source: "package" };
     await withStubbedExport(async ({ nativePath, outfile }) => {
       const result = await buildStandalone(
@@ -113,7 +118,7 @@ describe("runtime resolution", () => {
     expect(await main(["build", join(import.meta.dir, "../../../examples/pong"),
       "--outfile", "/tmp/blitsen-never"], output,
     { build: async () => ({ outfile: "/tmp/pong", assets: 3, bytes: 123, runtime }) })).toBe(0);
-    expect(lines.map(([, line]) => line)).toContain("Runtime: @blitsen/linux-x64@1.2.3");
+    expect(lines.map(([, line]) => line)).toContain(`Runtime: @blitsen/${target}@1.2.3`);
   });
 
   test("describes a runtime that came from a path as unversioned", () => {
