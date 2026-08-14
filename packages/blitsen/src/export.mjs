@@ -1,3 +1,6 @@
+import { createHash } from "node:crypto";
+import { spawnSync } from "node:child_process";
+import { createReadStream } from "node:fs";
 import { access, copyFile, mkdir, open, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, join, posix, relative, resolve, sep } from "node:path";
 import { gzipSync } from "node:zlib";
@@ -349,9 +352,9 @@ async function planAddons(root, addons) {
 }
 
 async function hashFile(absolute) {
-  const hasher = new Bun.CryptoHasher("sha256");
-  for await (const chunk of Bun.file(absolute).stream()) hasher.update(chunk);
-  return hasher.digest("hex");
+  const hash = createHash("sha256");
+  for await (const chunk of createReadStream(absolute)) hash.update(chunk);
+  return hash.digest("hex");
 }
 
 // The runtime is either the descriptor the resolver produced (src/runtime.mjs) or a
@@ -537,10 +540,8 @@ async function phase2LoadsModules(target) {
   const runtime = await resolvePhase2Runtime({ target }).catch(() => null);
   if (runtime === null) return true;
   try {
-    const report = Bun.spawnSync({
-      cmd: [runtime.path, "--engine-report"], stdout: "pipe", stderr: "pipe",
-    });
-    if (report.exitCode !== 0) return true;
+    const report = spawnSync(runtime.path, ["--engine-report"]);
+    if (report.status !== 0) return true;
     const parsed = JSON.parse(report.stdout.toString());
     // A statically linked engine is inside the executable and has no library to
     // be missing; only a runtime that loads one at run time can come back with
@@ -796,6 +797,16 @@ export async function buildStandalone(
       await writeFile(launcher, launcherSource(manifest, {
         width, height, title, layout: assets, assetDirectory, runtime: linkedRuntime,
       }));
+      // The Bun host is the one thing here that only Bun can build: `Bun.build`
+      // is what links the launcher into that target's Bun. The CLI otherwise
+      // runs anywhere Node does, and an export that needs this path says which
+      // half is missing rather than dying on an undefined global (#131).
+      if (globalThis.Bun === undefined) {
+        throw new Error("this export links the Bun host, which only Bun can build: "
+          + "run the same command with `bun` on PATH, or remove the .node addon that "
+          + "asked for it — an application without one links Blitsen's own runtime, "
+          + "which needs nothing but this package");
+      }
       const result = await Bun.build({
         entrypoints: [launcher],
         // Bun downloads the target's own runtime to compile against, which is what

@@ -1,3 +1,5 @@
+import { spawnSync } from "node:child_process";
+import { setTimeout } from "node:timers/promises";
 import { access, copyFile, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile }
   from "node:fs/promises";
 import { gunzipSync } from "node:zlib";
@@ -159,11 +161,11 @@ async function downloadRuntimePackage(name, version, run) {
 }
 
 const npmRun = async (cmd, cwd) => {
-  const spawned = Bun.spawnSync({ cmd, cwd, stdout: "pipe", stderr: "pipe" });
+  const spawned = spawnSync(cmd[0], cmd.slice(1), { cwd });
   return {
-    code: spawned.exitCode,
-    stdout: spawned.stdout.toString(),
-    stderr: spawned.stderr.toString(),
+    code: spawned.status ?? 1,
+    stdout: spawned.stdout?.toString() ?? "",
+    stderr: spawned.stderr?.toString() ?? spawned.error?.message ?? "",
   };
 };
 
@@ -363,6 +365,6 @@ export function openRuntime(resolved) {
     reloadCSS: engine.reloadCSS ? file => engine.reloadCSS(file) : null,
     reloadDirectory: engine.reloadDirectory ? () => engine.reloadDirectory() : null,
     pumpWindow: engine.pumpWindow ? () => engine.pumpWindow() : null,
-    waitForNextFrame: globalThis.Bun ? delay => Bun.sleep(delay) : null,
+    waitForNextFrame: delay => setTimeout(delay),
   };
 }

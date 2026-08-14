@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, join, resolve } from "node:path";
 
@@ -274,11 +275,12 @@ export function signArgv(command, artifact) {
 }
 
 export async function signArtifact({ command, artifact }) {
-  const child = Bun.spawn(signArgv(command, artifact), {
-    stdout: "inherit",
-    stderr: "inherit",
+  const argv = signArgv(command, artifact);
+  const child = spawn(argv[0], argv.slice(1), { stdio: "inherit" });
+  const status = await new Promise((resolve, reject) => {
+    child.on("error", reject);
+    child.on("exit", code => resolve(code ?? 1));
   });
-  const status = await child.exited;
   if (status !== 0) {
     throw new Error(`signing command failed with exit code ${status}: ${command}`);
   }
