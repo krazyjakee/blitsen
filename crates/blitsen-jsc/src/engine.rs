@@ -695,7 +695,16 @@ mod tests {
     fn public_c_api_implements_the_engine_boundary() {
         let mut engine = match JavaScriptCore::load() {
             Ok(engine) => engine,
-            Err(error) if std::env::var_os("BLITSEN_REQUIRE_JSC").is_none() => {
+            // Empty counts as absent. A workflow that selects per platform
+            // writes `${{ runner.os == 'Linux' && '1' || '' }}`, which exports
+            // the variable set-but-empty everywhere else rather than leaving it
+            // unset — so asking only whether it exists made this demand a
+            // JavaScriptCore installation on macOS and Windows, where CI
+            // deliberately installs none.
+            Err(error)
+                if std::env::var_os("BLITSEN_REQUIRE_JSC")
+                    .is_none_or(|required| required.is_empty()) =>
+            {
                 // Cross-target builds compile the loader without requiring a
                 // host JSC installation. Native release jobs supply it.
                 eprintln!("skipping JSC conformance test: {error}");

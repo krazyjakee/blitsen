@@ -11,7 +11,7 @@
 import { strict as assert } from "node:assert";
 import { cp, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, relative } from "node:path";
+import { basename, join, relative } from "node:path";
 
 import { buildAddon, repository } from "./build-addon.mjs";
 import { resolvePhase2Runtime } from "../src/runtime.mjs";
@@ -258,8 +258,17 @@ async function buildWith({ host }) {
  * `run-determinism.mjs` uses.
  */
 async function compareGoldens() {
-  const golden = JSON.parse(await readFile(
-    join(import.meta.dir, `replay/pong-${process.platform}-${process.arch}.golden.json`), "utf8"));
+  // A golden is a recording, and only the platform it was recorded on has one.
+  // Rather than skip the sharpest check in #90 everywhere else, fall back to the
+  // reference recording and let the fingerprint tier below do its job: the DOM
+  // stream holds only what the application wrote, so it is comparable from any
+  // host, while layout and pixels are already gated on a fingerprint that a
+  // different machine will not match. Falling back is what makes "identical DOM
+  // digests" a cross-platform claim instead of a Linux one.
+  const own = join(import.meta.dir, `replay/pong-${process.platform}-${process.arch}.golden.json`);
+  const reference = join(import.meta.dir, "replay/pong-linux-x64.golden.json");
+  const goldenPath = await Bun.file(own).exists() ? own : reference;
+  const golden = JSON.parse(await readFile(goldenPath, "utf8"));
   const tracePath = join(import.meta.dir, "replay/pong.trace.json");
   const trace = JSON.parse(await readFile(tracePath, "utf8"));
   const runtime = await resolvePhase2Runtime();
@@ -283,7 +292,7 @@ async function compareGoldens() {
     assert.deepEqual(diverged, [],
       `the Phase 2 host produced different ${stream} digests at frames ${diverged.join(", ")}`);
   }
-  return { streams, frames: report.frames, portable };
+  return { streams, frames: report.frames, portable, golden: basename(goldenPath) };
 }
 
 const results = [];
@@ -370,7 +379,7 @@ try {
   const goldens = await compareGoldens();
   console.log(`Host conformance passed: identical CLI output, config handling, artifact layout `
     + `and standalone check.`);
-  console.log(`  Goldens: ${goldens.frames} replayed frames, `
+  console.log(`  Goldens: ${goldens.frames} replayed frames against ${goldens.golden}, `
     + `${goldens.streams.join("/")} digests identical to the Phase 1 recording`
     + `${goldens.portable ? "" : " (layout and pixels not comparable on this rasterizer)"}.`);
   console.log(`  ${HOSTS[0].label}: ${phase1.bytes.toLocaleString()} bytes`);

@@ -629,7 +629,16 @@ export async function buildStandalone(
       + `${runtimeBinary.platform}-${runtimeBinary.architectures.join("/")} `
       + `(${runtimeBinary.format}), but this build targets ${buildTarget}: ${nativePath}`);
   }
-  const destination = resolve(outfile ?? defaultOutfile(root));
+  // Windows executes by extension, so a Windows export is named `.exe` whoever
+  // asked for what. `bun build --compile` already appends it on the Phase 1
+  // path; the Phase 2 path links the bundle to exactly the name it is given, so
+  // an unsuffixed one produced a `win32` artifact that Windows will not run and
+  // that nothing could spawn. Decided from the build target rather than the host,
+  // because `--target win32-x64` from Linux owes the same name.
+  const requestedDestination = resolve(outfile ?? defaultOutfile(root));
+  const destination = buildTarget.startsWith("win32-") && extname(requestedDestination) !== ".exe"
+    ? `${requestedDestination}.exe`
+    : requestedDestination;
   const assetDirectory = `${basename(destination)}.assets`;
   const sideLoaded = join(dirname(destination), assetDirectory);
   if (!force) {
