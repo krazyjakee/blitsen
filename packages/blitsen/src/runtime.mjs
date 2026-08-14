@@ -201,6 +201,15 @@ export async function fetchRuntime({
   }
   await mkdir(directory, { recursive: true });
   await writeFile(cached, addon);
+  // The notices travel with the binary, because an export reads them from
+  // beside the runtime it links (#121). This is the one path that links a
+  // runtime the machine never installed, and without them a cross-target build
+  // produced an artifact that correctly reported itself uncleared for
+  // redistribution — the only export shape that could not be shipped.
+  for (const notices of ["NOTICES.txt", "NOTICES.json"]) {
+    const bytes = extractFromTarball(tarball, `package/${notices}`);
+    if (bytes !== null) await writeFile(join(directory, notices), bytes);
+  }
   return { path: cached, target, version, package: name, source: "fetched" };
 }
 

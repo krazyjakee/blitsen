@@ -10,9 +10,9 @@
 // so the extraction is exercised against npm's actual output rather than a
 // hand-written archive that might agree with a hand-written reader.
 import { describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { main } from "../src/cli.mjs";
 import {
   extractFromTarball, fetchRuntime, hostTarget, resolveRuntime, runtimeCacheDir, TARGETS,
@@ -92,6 +92,45 @@ describe("cross-target export", () => {
     });
     // `npm pack` on a cold Windows runner takes longer than the default 5s, and
     // a timeout there reads as a broken tarball reader (#134).
+  }, 120_000);
+
+  // Issue #121, on the one path that links a runtime this machine never
+  // installed: an export reads its notices from beside the runtime, so a fetch
+  // that brings back the binary alone produces an artifact that reports itself
+  // uncleared for redistribution — the only export shape that could not legally
+  // be shipped, and the one a `--target` build always takes.
+  test("brings the target's notices back with its binary", async () => {
+    if (!npm) return;
+    await withWork(async work => {
+      const source = join(work, "package");
+      await mkdir(source, { recursive: true });
+      await writeFile(join(source, "package.json"), JSON.stringify({
+        name: "@blitsen/win32-x64", version: VERSION,
+        files: ["blitsen.node", "NOTICES.txt", "NOTICES.json"],
+      }));
+      await writeFile(join(source, "blitsen.node"), nativeStub("win32-x64"));
+      await writeFile(join(source, "NOTICES.txt"), "THIRD-PARTY NOTICES\n\nstub\n");
+      await writeFile(join(source, "NOTICES.json"), '{"packages":[]}');
+      const packed = Bun.spawnSync({
+        cmd: [npm, "pack", source, "--pack-destination", work], cwd: work,
+        stdout: "pipe", stderr: "pipe",
+      });
+      expect(packed.exitCode).toBe(0);
+      const tarball = join(work, (await readdir(work)).find(file => file.endsWith(".tgz")));
+      // Stands in for `npm pack` against a registry: it leaves a tarball where
+      // the downloader looks for one.
+      const run = async (_cmd, cwd) => {
+        await copyFile(tarball, join(cwd, "fetched.tgz"));
+        return { code: 0, stdout: "", stderr: "" };
+      };
+      const resolved = await fetchRuntime({
+        target: "win32-x64", version: VERSION, cacheDir: join(work, "cache"), run,
+      });
+      expect(resolved.source).toBe("fetched");
+      const beside = dirname(resolved.path);
+      expect(await Bun.file(join(beside, "NOTICES.txt")).text()).toContain("THIRD-PARTY NOTICES");
+      expect(await Bun.file(join(beside, "NOTICES.json")).exists()).toBeTrue();
+    });
   }, 120_000);
 
   test("uses the cached runtime rather than downloading again", async () => {
