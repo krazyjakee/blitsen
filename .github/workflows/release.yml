@@ -39,12 +39,17 @@ jobs:
   # evidence of anything. What that choice costs is measured per target in the
   # job summary rather than assumed (open question 11).
   #
-  # The two arm64 labels are overridable, because GitHub's free arm64 runners
-  # are **public repositories only**. This repository is public, so
-  # `ubuntu-24.04-arm` and `windows-11-arm` schedule for it and the defaults
-  # below are the ones that run. The override survives for the case that stops
-  # being true: set the repository variables LINUX_ARM64_RUNNER and
-  # WIN32_ARM64_RUNNER to larger or self-hosted labels if it goes private again.
+  # Three labels are overridable by repository variable. The two arm64 ones
+  # because GitHub's free arm64 runners are **public repositories only**: this
+  # repository is public, so `ubuntu-24.04-arm` and `windows-11-arm` schedule
+  # for it and the defaults below are the ones that run — set
+  # LINUX_ARM64_RUNNER or WIN32_ARM64_RUNNER if that stops being true.
+  #
+  # `darwin-x64` is the third, and it is overridable because the Intel macOS
+  # image is the one that moves: `macos-13` queued indefinitely here — 40
+  # minutes without a runner across two dispatches, while every other label
+  # picked one up inside a minute — so the default is the current Intel image
+  # and DARWIN_X64_RUNNER is how it moves again without a commit.
   build:
     name: ${{ matrix.target }}
     runs-on: ${{ matrix.runner }}
@@ -62,7 +67,7 @@ jobs:
             library: libblitsen_node.so
             executable: blitsen-runtime
           - target: darwin-x64
-            runner: macos-13
+            runner: ${{ vars.DARWIN_X64_RUNNER || 'macos-15-intel' }}
             library: libblitsen_node.dylib
             executable: blitsen-runtime
           - target: darwin-arm64

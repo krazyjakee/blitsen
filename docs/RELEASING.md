@@ -101,21 +101,25 @@ that account, and only then run a real publish — the workflow publishes all si
 before `blitsen` itself, so a scope that refuses them fails the release halfway through (issue
 \#131).
 
-### arm64 runners, and this repository
+### The runner labels, and which of them move
 
 GitHub's free `ubuntu-24.04-arm` and `windows-11-arm` runners are **public repositories only**.
 This repository is public, so both labels schedule for it and the workflow defaults are the ones
 that run.
 
-The override survives for the case that stops being true. Point the two arm64 targets at runners
-the repository can use, with repository variables:
+The override survives for the case that stops being true. Point those targets at runners the
+repository can use, with repository variables:
 
 | Variable | Default |
 | --- | --- |
 | `LINUX_ARM64_RUNNER` | `ubuntu-24.04-arm` |
 | `WIN32_ARM64_RUNNER` | `windows-11-arm` |
+| `DARWIN_X64_RUNNER` | `macos-15-intel` |
 
-Set them to larger-runner or self-hosted labels. `ci.yml` reads the same two variables for its
+The third is there for a different reason: the Intel macOS image is the one that keeps moving.
+`macos-13` queued for 40 minutes without picking up a runner across two dispatches, while every
+other label started inside a minute — so `darwin-x64` names the current Intel image and the
+variable is how it moves again without a commit. `ci.yml` reads the same three variables for its
 smoke jobs, so both files follow one decision.
 
 ## Why six native runners rather than cross-compilation
