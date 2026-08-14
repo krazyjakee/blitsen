@@ -181,7 +181,12 @@ describe("directory CLI", () => {
       const entry = await readFile(join(directory, `${stem}.desktop`), "utf8");
       expect(entry).toContain("[Desktop Entry]\nType=Application\n");
       expect(entry).toContain("Name=Pong Deluxe\n");
-      expect(entry).toContain(`Exec=${artifact}\n`);
+      // Read back through the desktop-entry quoting rules rather than compared
+      // to a raw path: backslashes are reserved, so a Windows path arrives
+      // quoted and escaped. The rules themselves are the next test's subject.
+      const exec = /^Exec=(.*)$/m.exec(entry)[1];
+      expect(exec.startsWith('"') ? exec.slice(1, -1).replace(/\\(.)/g, "$1") : exec)
+        .toBe(artifact);
       expect(entry).toContain(`Icon=${join(directory, `${stem}.png`)}\n`);
       // Linux takes the PNG as it is; only Windows and macOS need a container.
       expect(Buffer.compare(await readFile(join(directory, `${stem}.png`)), await readFile(icon)))
