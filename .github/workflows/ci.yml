@@ -122,6 +122,16 @@ jobs:
       - run: bun run --cwd packages/blitsen test:hosts
       # Issue #121: the notices an export owes travel inside it, and the gate
       # reads them back out of a real artifact — before and after signing.
+      # The CLI under Node, which is what `npx blitsen` and every script line
+      # start. Every gate in this repository runs under Bun, so `Bun` was always
+      # defined and `npx blitsen build` died at step ③ for anyone who installed
+      # the package instead of cloning it (#131). One real export, run.
+      - name: Build and run an export under Node
+        shell: bash
+        run: |
+          node packages/blitsen/bin/blitsen.mjs build examples/pong \
+            --out "$RUNNER_TEMP/NodeBuilt" --force
+          BLITSEN_STANDALONE_CHECK=1 "$RUNNER_TEMP/NodeBuilt"
       - run: bun run --cwd packages/blitsen test:licensing
       # Issue #67: the other way to run an application — served by a dev server
       # rather than read off disk. The fixture server runs inside the gate.
