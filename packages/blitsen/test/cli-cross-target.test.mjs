@@ -174,7 +174,10 @@ describe("cross-target export", () => {
 
       const formats = {
         "win32-x64": /PE32\+ executable.*x86-64/,
-        "darwin-arm64": /Mach-O 64-bit arm64/,
+        // `file` words this differently per host — macOS says "64-bit executable
+        // arm64" where Linux says "64-bit arm64" — so the pattern reads the
+        // format and the architecture and not the sentence between them.
+        "darwin-arm64": /Mach-O 64-bit.*arm64/,
         "linux-arm64": /ELF 64-bit.*(aarch64|ARM)/,
       };
       for (const [target, expected] of Object.entries(formats)) {
