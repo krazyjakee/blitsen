@@ -6,9 +6,17 @@ import { copyFile, cp, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, wr
   from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, extname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { packageVersion } from "../src/cli.mjs";
+import { hostTarget } from "../src/runtime.mjs";
+
+// What `blitsen build` names an export, given the path asked for: Windows
+// executes by extension, so a `win32-*` target is `.exe` whoever asked for what.
+// Tests that read the artifact back have to follow the same rule rather than
+// assuming the name they passed in (#134).
+export const exportedName = (outfile, target = hostTarget()) =>
+  (target.startsWith("win32-") && extname(outfile) !== ".exe" ? `${outfile}.exe` : outfile);
 
 export const viteBase = join(import.meta.dir, "fixtures/vite-base");
 export const configFixtures = join(import.meta.dir, "fixtures/config");

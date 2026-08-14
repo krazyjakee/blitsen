@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { main, parseArgs } from "../src/cli.mjs";
 import { buildStandalone, planIngest, rewriteRootRelativeReferences } from "../src/export.mjs";
-import { viteBase, withStubbedExport, capture } from "./cli-support.mjs";
+import { viteBase, exportedName, withStubbedExport, capture } from "./cli-support.mjs";
 
 describe("directory CLI", () => {
   test("normalizes Vite root-relative HTML and CSS references during ingest", () => {
@@ -138,7 +138,7 @@ describe("directory CLI", () => {
     await withStubbedExport(async ({ nativePath, outfile }) => {
       const options = { root: viteBase, width: 800, height: 600, title: "Base", outfile, force: true };
       const first = await buildStandalone(options, nativePath);
-      const bytes = await readFile(outfile);
+      const bytes = await readFile(first.outfile);
       const second = await buildStandalone(options, nativePath);
 
       expect(first.layout).toBe("embedded");
@@ -153,7 +153,7 @@ describe("directory CLI", () => {
       expect(second.manifest).toEqual(first.manifest);
       // Byte equality holds for one input directory, output path, working
       // directory and Bun version: Bun records the compiled entrypoint's path.
-      expect(Buffer.compare(bytes, await readFile(outfile))).toBe(0);
+      expect(Buffer.compare(bytes, await readFile(second.outfile))).toBe(0);
     });
   });
 
@@ -163,7 +163,7 @@ describe("directory CLI", () => {
         root: viteBase, width: 800, height: 600, title: "Base", outfile, assets: "side-loaded",
       }, nativePath);
       expect(result.layout).toBe("side-loaded");
-      expect(result.assetDirectory).toBe(`${outfile}.assets`);
+      expect(result.assetDirectory).toBe(`${exportedName(outfile)}.assets`);
       expect((await readdir(result.assetDirectory)).sort()).toEqual(["assets", "index.html"]);
       const side = await readFile(join(result.assetDirectory, "index.html"), "utf8");
       expect(side).toContain('src="./assets/index-BASE.js"');

@@ -5,11 +5,13 @@
 // failed there with exit code 127, which is not a signing result (#134).
 import { writeFile } from "node:fs/promises";
 
-// On Windows the hook runs through `cmd /c`, so the quotes Blitsen puts around
-// the path to survive spaces are still there when the interpreter parses its
-// own arguments: a native signing tool's C runtime strips them, Bun's argv does
-// not. A signing hook written in JavaScript therefore has to (#134).
-const artifact = (process.argv[2] ?? "").replace(/^"(.*)"$/s, "$1");
+// On Windows the hook runs through `cmd /c`, and the quotes Blitsen puts around
+// the path to survive spaces reach the interpreter intact: a native signing
+// tool's C runtime both groups on them and strips them, Bun's argv does
+// neither, so a path with a space arrives as several arguments with a quote at
+// each end of the run. A signing hook written in JavaScript has to rejoin and
+// unwrap them itself (#134).
+const artifact = process.argv.slice(2).join(" ").replace(/^"(.*)"$/s, "$1");
 if (!artifact) {
   console.error("usage: record-artifact.mjs <artifact>");
   process.exit(1);

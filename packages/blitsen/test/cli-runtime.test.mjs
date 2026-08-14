@@ -115,7 +115,7 @@ describe("runtime resolution", () => {
         { ...runtime, path: nativePath });
       expect(result.runtime).toEqual({ ...runtime, path: nativePath });
       // The stamp survives the link, so a shipped executable names its own runtime.
-      expect((await readFile(outfile)).includes(JSON.stringify(runtime))).toBeTrue();
+      expect((await readFile(result.outfile)).includes(JSON.stringify(runtime))).toBeTrue();
     });
     const { lines, output } = capture();
     expect(await main(["build", join(import.meta.dir, "../../../examples/pong"),

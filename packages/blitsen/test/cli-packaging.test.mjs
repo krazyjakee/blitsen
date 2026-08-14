@@ -2,10 +2,10 @@ import { describe, expect, test } from "bun:test";
 import { copyFile, cp, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { buildStandalone, describeExecutableBinary, describeNativeBinary } from "../src/export.mjs";
 import { packageBuild, signArgv, signArtifact } from "../src/packaging.mjs";
-import { viteBase, addonFixtures, icon, signHook, compiler, engineAddon, engineBuilt, compileAddon, elfHeader, executableStub, nativeStub, withStubbedExport, withArtifact } from "./cli-support.mjs";
+import { viteBase, addonFixtures, icon, signHook, compiler, engineAddon, engineBuilt, compileAddon, elfHeader, executableStub, exportedName, nativeStub, withStubbedExport, withArtifact } from "./cli-support.mjs";
 
 describe("directory CLI", () => {
   test("reads the container header a .node must have to load on this host", () => {
@@ -163,26 +163,31 @@ describe("directory CLI", () => {
         root: viteBase, width: 800, height: 600, title: "Pong Deluxe", outfile,
         icon, sign: signHook, platform: "linux", progress: event => events.push(event),
       }, nativePath);
-      expect(result.outfile).toBe(outfile);
+      // The artifact, not the path asked for: a Windows target is named `.exe`,
+      // and every name below is derived from the executable rather than assumed.
+      const artifact = exportedName(outfile);
+      const stem = basename(artifact);
+      expect(result.outfile).toBe(artifact);
       // Steps ③–⑤ announce themselves as they finish, with what they produced.
       expect(events.map(event => event.step)).toEqual(["collect", "link", "package"]);
       expect(events[0].detail).toBe("9 embedded assets");
       expect(events[0].notes[0]).toBe("dropped 2 files unreachable from index.html "
         + "(--include <glob> keeps them): assets/index-BASE.js.map, assets/orphan.txt");
-      expect(events[1].detail).toBe(outfile);
+      expect(events[1].detail).toBe(artifact);
       expect(events[2].detail).toBe(`linux: ${result.packaging.artifacts.join(", ")}`);
-      expect(events[2].notes).toEqual([`signed ${outfile} with: ${signHook}`]);
+      expect(events[2].notes).toEqual([`signed ${artifact} with: ${signHook}`]);
       expect(result.packaging.artifacts)
-        .toEqual([join(directory, "App.desktop"), join(directory, "App.png")]);
-      const entry = await readFile(join(directory, "App.desktop"), "utf8");
+        .toEqual([join(directory, `${stem}.desktop`), join(directory, `${stem}.png`)]);
+      const entry = await readFile(join(directory, `${stem}.desktop`), "utf8");
       expect(entry).toContain("[Desktop Entry]\nType=Application\n");
       expect(entry).toContain("Name=Pong Deluxe\n");
-      expect(entry).toContain(`Exec=${outfile}\n`);
-      expect(entry).toContain(`Icon=${join(directory, "App.png")}\n`);
+      expect(entry).toContain(`Exec=${artifact}\n`);
+      expect(entry).toContain(`Icon=${join(directory, `${stem}.png`)}\n`);
       // Linux takes the PNG as it is; only Windows and macOS need a container.
-      expect(Buffer.compare(await readFile(join(directory, "App.png")), await readFile(icon))).toBe(0);
-      expect(result.signed).toEqual({ command: signHook, artifact: outfile });
-      expect(await readFile(`${outfile}.signed`, "utf8")).toBe(`${outfile}\n`);
+      expect(Buffer.compare(await readFile(join(directory, `${stem}.png`)), await readFile(icon)))
+        .toBe(0);
+      expect(result.signed).toEqual({ command: signHook, artifact });
+      expect(await readFile(`${artifact}.signed`, "utf8")).toBe(`${artifact}\n`);
     });
   });
 
