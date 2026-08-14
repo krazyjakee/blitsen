@@ -116,22 +116,27 @@ export async function measureExport({ runs = 5, windowed = false } = {}) {
   const directory = await mkdtemp(join(tmpdir(), "blitsen-measure-"));
   try {
     const addon = await buildAddon({ purpose: "measurement target", release: true, into: directory });
-    const outfile = join(directory, "pong");
     const root = join(repository, "examples/pong");
     const result = await buildStandalone({
-      root, width: 720, height: 520, title: "Blitsen Pong", outfile,
+      root, width: 720, height: 520, title: "Blitsen Pong", outfile: join(directory, "pong"),
     }, addon);
+    // What was written, not what was asked for: `bun build --compile` appends
+    // `.exe` on Windows, so the requested name is a path to nothing there.
+    // Spawning the requested one failed with ENOENT on Windows alone.
+    const outfile = result.outfile;
 
     // A do-nothing compiled entrypoint isolates what the Bun runtime itself
     // costs, in bytes and in process start, from what Blitsen adds to it.
     const floorSource = join(directory, "floor.mjs");
-    const floorExecutable = join(directory, "floor");
+    const requestedFloor = join(directory, "floor");
     await writeFile(floorSource, "process.exitCode = 0;\n");
     const floorBuild = await Bun.build({
       entrypoints: [floorSource],
-      compile: { outfile: floorExecutable },
+      compile: { outfile: requestedFloor },
     });
     if (!floorBuild.success) throw new Error("failed to compile the Bun runtime floor");
+    const floorExecutable = await stat(requestedFloor)
+      .then(() => requestedFloor, () => `${requestedFloor}.exe`);
 
     let applicationBytes = 0;
     for (const asset of result.manifest) {

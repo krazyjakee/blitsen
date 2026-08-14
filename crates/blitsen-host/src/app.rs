@@ -499,10 +499,17 @@ impl NetProvider for DirectoryResources {
         // already inside it is an ordinary relative reference and is read where
         // it points, so a directory that happens to sit at the filesystem root
         // cannot change what a relative URL means.
-        let outside = request
+        //
+        // Stated as "not demonstrably inside", because a `file:` URL that names
+        // no path at all is not inside either. `file:///assets/app.css` has no
+        // drive letter, so `to_file_path` fails on Windows where it succeeds on
+        // Unix — and reading that failure as "not outside" left the server-root
+        // retry unreachable there, so a stock `vite build` export opened with no
+        // stylesheet on Windows alone.
+        let outside = !request
             .url
             .to_file_path()
-            .is_ok_and(|path| !path.starts_with(&self.root));
+            .is_ok_and(|path| path.starts_with(&self.root));
         if request.url.scheme() == "file" && outside {
             let relative = request.url.path().trim_start_matches('/');
             if let Some(bytes) = self.source.read(relative) {
@@ -647,9 +654,12 @@ mod tests {
         };
         // What Blitz asks for after resolving `href="/assets/app.css"`.
         assert_eq!(served("file:///assets/app.css"), 14);
-        // An ordinary relative reference still reads where it points.
-        let inside = format!("file://{}/assets/app.css", root.to_string_lossy());
-        assert_eq!(served(&inside), 14);
+        // An ordinary relative reference still reads where it points. Built
+        // through `Url::from_file_path` rather than by formatting the path into
+        // a string: on Windows that string is `C:\...`, whose drive letter parses
+        // as a URL host and whose separators are not URL separators.
+        let inside = Url::from_file_path(root.join("assets").join("app.css")).unwrap();
+        assert_eq!(served(inside.as_str()), 14);
         // And a server-root path the application does not ship stays empty, so
         // the document paints without it rather than waiting on it.
         assert_eq!(served("file:///assets/nothing.css"), 0);

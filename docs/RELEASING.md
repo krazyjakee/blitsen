@@ -68,6 +68,23 @@ whole path.
 | `WINDOWS_CERTIFICATE_PFX` | Windows signing, base64 of the `.pfx` | Unsigned Windows runtimes |
 | `WINDOWS_CERTIFICATE_PASSWORD` | Its passphrase | — |
 
+### 0.1.0 ships unsigned, and says so
+
+**Decided for 0.1.0: no platform is signed.** No Apple Developer ID and no Windows code-signing
+certificate exist for this project, and the workflow's signing steps are no-ops that warn per
+target (issue \#132). Two things follow, and the release notes have to carry both:
+
+- What npm delivers is a `.node` addon and an executable inside a package. Gatekeeper does not
+  inspect an addon a package manager downloaded, and SmartScreen's reputation check is about what
+  a user downloads and launches — so an unsigned runtime is mostly invisible at install time.
+- What a user's users see is different. `blitsen build` produces an executable launched by name,
+  which is exactly what an OS gatekeeper checks. That artifact is the application author's to
+  sign, `--sign` is the seam for it, and the package README says so.
+
+Revisit at the first release anyone but its author installs. Signing needs a Developer ID
+Application certificate and a Windows certificate, added as the secrets below; notarisation stays
+out of scope and is tracked in \#71.
+
 ### The npm scope
 
 `blitsen` is published from a personal account; the six runtimes are `@blitsen/*` and a scoped name
