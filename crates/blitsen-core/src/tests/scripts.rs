@@ -96,3 +96,25 @@ fn a_remote_script_skips_without_stopping_the_document() {
         assert_eq!(engine.evaluations.len(), 1);
     }
 }
+
+/// The identifier a script evaluates under is handed back to a module resolver,
+/// and Windows' `canonicalize` answers a spelling no resolver accepts. This is
+/// what the Phase 1 host tripped over on Windows: `Cannot find module
+/// '\\?\C:\…\module.js' from '\\?\C:\…\module.js'`, naming a file that was
+/// plainly there (#134).
+#[test]
+fn a_canonical_path_is_simplified_where_the_platform_extends_it() {
+    let ordinary = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../spikes/s7/fixture/index.html");
+    let canonical = ordinary.canonicalize().unwrap();
+    let simple = crate::simplified(canonical.clone());
+    // Same file either way, and nothing is dropped that a resolver needs.
+    assert!(simple.is_file(), "{} is not a file", simple.display());
+    assert!(!simple.to_string_lossy().starts_with(r"\\?\"));
+    assert_eq!(crate::simplified(simple.clone()), simple, "idempotent");
+    if cfg!(windows) {
+        assert_eq!(simple, Path::new(&canonical.to_string_lossy()[4..]));
+    } else {
+        // Nothing to strip off Windows: the path is returned unchanged.
+        assert_eq!(simple, canonical);
+    }
+}

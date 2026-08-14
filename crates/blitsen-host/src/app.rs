@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 use blitsen_blitz::BlitzDom;
 use blitsen_core::bundle::AppBundle;
-use blitsen_core::{ScriptDocument, ScriptLoader, WindowState};
+use blitsen_core::{ScriptDocument, ScriptLoader, WindowState, simplified};
 use blitsen_dom::DomBackend;
 use blitsen_js::{JsEngine, JsError};
 use blitz::dom::DocumentConfig;
@@ -57,12 +57,15 @@ pub enum AppFiles {
 impl AppFiles {
     /// Opens a directory of built output at `entrypoint`.
     pub fn directory(entrypoint: impl AsRef<Path>) -> Result<Self, JsError> {
-        let entrypoint = entrypoint.as_ref().canonicalize().map_err(|error| {
+        // Simplified, because this path becomes a script identifier and an
+        // inline module's resolution base: Windows' extended-length spelling is
+        // one a module resolver refuses (see `blitsen_core::simplified`).
+        let entrypoint = simplified(entrypoint.as_ref().canonicalize().map_err(|error| {
             JsError::new(format!(
                 "could not resolve {}: {error}",
                 entrypoint.as_ref().display()
             ))
-        })?;
+        })?);
         let root = entrypoint
             .parent()
             .ok_or_else(|| JsError::new("the entrypoint has no directory"))?

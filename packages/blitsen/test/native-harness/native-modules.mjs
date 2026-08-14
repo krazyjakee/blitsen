@@ -118,7 +118,18 @@ if (displayed) {
 const processor = os.cpu();
 assert.equal(processor.logicalCores, cpus().length, "the bridge counts the cores node:os counts");
 assert.equal(processor.logicalCores, processor.cores.length);
-assert.equal(processor.brand, cpus()[0].model.trim(), "and names the same processor");
+// `node:os` reads the model out of /proc/cpuinfo, which on arm64 Linux has no
+// `model name` line at all: node answers "unknown" where the bridge reads the
+// implementer and part registers through sysinfo and answers "Neoverse-N2".
+// There is nothing to cross-check against there, so the weaker fact is asserted
+// where the stronger one cannot be, rather than weakening it everywhere (#133).
+const nodeBrand = cpus()[0].model.trim();
+if (nodeBrand && nodeBrand !== "unknown") {
+  assert.equal(processor.brand, nodeBrand, "and names the same processor");
+} else {
+  assert(processor.brand.length > 0,
+    "the bridge names the processor on a host where node:os will not");
+}
 // `x86_64` against node's `x64`: the same architecture in two vocabularies, so
 // the check is a translation rather than an equality.
 assert.equal(processor.architecture, { x64: "x86_64", arm64: "aarch64" }[arch()] ?? arch());

@@ -272,6 +272,30 @@ fn is_remote_script(src: &str) -> bool {
     src.starts_with("//") || src.contains("://")
 }
 
+/// Drops Windows' extended-length prefix from a canonicalised path.
+///
+/// `Path::canonicalize` answers `\\?\C:\…` on Windows. That is a valid path to
+/// open a file with and *not* a valid module specifier: the identifier a script
+/// evaluates under is handed back to a resolver — Bun's `createRequire` on the
+/// Phase 1 host — which cannot open it, and reports the module as missing while
+/// naming the file that is plainly there. Everything after the prefix is the
+/// ordinary absolute path, and it is the one spelling both sides agree on.
+///
+/// A UNC path (`\\?\UNC\server\share`) is left alone: simplifying it means
+/// rewriting rather than trimming, and nothing here runs off a network share.
+pub fn simplified(path: PathBuf) -> PathBuf {
+    #[cfg(windows)]
+    {
+        let text = path.to_string_lossy();
+        if let Some(rest) = text.strip_prefix(r"\\?\")
+            && !rest.starts_with("UNC\\")
+        {
+            return PathBuf::from(rest.to_owned());
+        }
+    }
+    path
+}
+
 fn resolve_local_script(root: &Path, src: &str) -> Result<PathBuf, JsError> {
     if src.contains("://") {
         return Err(JsError::new(format!(
@@ -295,5 +319,7 @@ fn resolve_local_script(root: &Path, src: &str) -> Result<PathBuf, JsError> {
             "script src escapes the application directory: {src}"
         )));
     }
-    Ok(path)
+    // Simplified only after the containment check, which compares two paths in
+    // the same canonical spelling.
+    Ok(simplified(path))
 }
