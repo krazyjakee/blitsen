@@ -10,9 +10,6 @@ import { fileURLToPath } from "node:url";
 // found through ordinary package resolution — never by walking node_modules.
 export const TARGETS = ["darwin-arm64", "darwin-x64", "linux-arm64", "linux-x64",
   "win32-arm64", "win32-x64"];
-// The targets whose runtime is actually built. The rest have a manifest and no
-// binary until CI can build them; see issue #70.
-export const BUILT_TARGETS = ["linux-x64"];
 export const RUNTIME_BINARY = "blitsen.node";
 // What `cargo build -p blitsen-node` leaves behind, for a checkout that built its own.
 const CARGO_LIBRARIES = {
@@ -53,10 +50,12 @@ function missingRuntime(target) {
     return new Error(`Blitsen has no runtime for ${target}: `
       + `supported targets are ${TARGETS.join(", ")}`);
   }
+  // All six targets build now — the release workflow builds each on its own
+  // runner — so what stands between a user and a runtime is publication alone,
+  // and the message says that rather than naming one buildable target (#131).
   return new Error(`no Blitsen runtime for ${target}: ${runtimePackage(target)} is not installed. `
     + "It installs as an optional dependency of blitsen for a matching host, but no platform "
-    + `runtime package is published yet and only ${BUILT_TARGETS.join(", ")} is built today `
-    + "(see issue #70). From a checkout, build one with "
+    + "runtime package is published yet (see issue #131). From a checkout, build one with "
     + "`cargo build --release -p blitsen-node`, or set BLITSEN_NATIVE_PATH to an addon.");
 }
 

@@ -37,7 +37,7 @@ describe("directory CLI", () => {
     expect(await main(["build", fixture, "--outfile", "/tmp/pong", "--icon", "app.png",
       "--sign", "codesign"], output, runtime)).toBe(0);
     expect(built.command).toBe("build");
-    expect(built.entrypoint.endsWith("examples/pong/index.html")).toBeTrue();
+    expect(built.entrypoint.endsWith(join("examples", "pong", "index.html"))).toBeTrue();
     expect(built.icon).toBe("app.png");
     expect(lines[0][1]).toBe(`① ingest  ${built.entrypoint}`);
     expect(lines[1][1]).toMatch(/^② scan {4}\d+ files, 0 errors, \d+ warnings$/);
@@ -70,7 +70,11 @@ describe("directory CLI", () => {
 
   test("names the offending file and exits non-zero when ingest cannot resolve a reference", async () => {
     await withStubbedExport(async ({ directory, nativePath, outfile }) => {
-      const root = join(directory, "app");
+      // Not "app": the export writes `App` in the same directory, and macOS is
+      // case-insensitive, so the two are one path there. The build then refused
+      // with "output already exists" — a real message about a directory this
+      // test created, which is not the refusal being tested (#134).
+      const root = join(directory, "source");
       await mkdir(root);
       await writeFile(join(root, "index.html"), '<link rel="stylesheet" href="/assets/gone.css">');
       const { lines, output } = capture();
@@ -134,7 +138,9 @@ describe("directory CLI", () => {
     coordinator.notify("styles/theme.CSS");
     await Bun.sleep(15);
     await coordinator.settled();
-    expect(calls).toEqual([["css", "styles/app.css"], ["css", "styles/theme.CSS"]]);
+    // The coordinator normalizes each path it is notified with, so what the
+    // reload hook receives is spelled the way this platform spells a path.
+    expect(calls).toEqual([["css", join("styles", "app.css")], ["css", join("styles", "theme.CSS")]]);
 
     coordinator.notify("styles/app.css");
     coordinator.notify("src/app.js");
@@ -155,7 +161,7 @@ describe("directory CLI", () => {
     coordinator.notify("styles/imported.css");
     await Bun.sleep(15);
     await coordinator.settled();
-    expect(calls).toEqual([["css", "styles/imported.css"], ["document"]]);
+    expect(calls).toEqual([["css", join("styles", "imported.css")], ["document"]]);
     coordinator.close();
   });
 

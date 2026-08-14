@@ -260,14 +260,21 @@ export async function packageBuild({
 // Signing itself stays outside Blitsen: this is the hook, invoked with the
 // artifact as its single positional argument so codesign or signtool can be
 // wired without Blitsen managing certificates.
-export function signArgv(platform, command, artifact) {
-  return platform === "win32"
+//
+// The interpreter is *this machine's*, not the target's, because the hook runs
+// here: packaging a Linux artifact from Windows spawned `sh`, which Windows
+// does not have, and reported the missing shell as a signing failure with exit
+// code 127 (#134). It is the same reason a cross-target build cannot sign at
+// all — the signing tool has to exist on the host, and only the host's shell
+// can start it.
+export function signArgv(command, artifact) {
+  return process.platform === "win32"
     ? ["cmd", "/c", `${command} "${artifact}"`]
     : ["sh", "-c", `${command} "$@"`, "sh", artifact];
 }
 
-export async function signArtifact({ platform, command, artifact }) {
-  const child = Bun.spawn(signArgv(platform, command, artifact), {
+export async function signArtifact({ command, artifact }) {
+  const child = Bun.spawn(signArgv(command, artifact), {
     stdout: "inherit",
     stderr: "inherit",
   });

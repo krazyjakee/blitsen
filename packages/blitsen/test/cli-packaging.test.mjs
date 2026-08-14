@@ -190,7 +190,9 @@ describe("directory CLI", () => {
     await withArtifact(async ({ directory, executable }) => {
       await packageBuild({ platform: "linux", executable, title: "Pong & Co" });
       const entry = await readFile(join(directory, "Pong Deluxe.desktop"), "utf8");
-      expect(entry).toContain(`Exec="${executable}"\n`);
+      // `\` is an escape character in a desktop entry, so a Windows path is
+      // written doubled. The expectation reads the format rather than the host.
+      expect(entry).toContain(`Exec="${executable.replaceAll("\\", "\\\\")}"\n`);
       expect(entry).toContain("Name=Pong & Co\n");
       expect(entry).not.toContain("Icon=");
     }, "Pong Deluxe");
@@ -218,7 +220,11 @@ describe("directory CLI", () => {
       // Side-loaded assets resolve from the executable's directory, so they move
       // into the bundle with it.
       expect(await readdir(result.assetDirectory)).toEqual(["index.html"]);
-      expect((await stat(result.executable)).mode & 0o111).toBeGreaterThan(0);
+      // A mode is POSIX: Windows reports none, and the bundle is being built
+      // for macOS from whatever host happens to run the test.
+      if (process.platform !== "win32") {
+        expect((await stat(result.executable)).mode & 0o111).toBeGreaterThan(0);
+      }
       expect(await readFile(join(bundle, "Contents/PkgInfo"), "utf8")).toBe("APPL????");
 
       const plist = await readFile(join(bundle, "Contents/Info.plist"), "utf8");
@@ -293,19 +299,20 @@ describe("directory CLI", () => {
   });
 
   test("hands the signing hook the artifact and fails the build when it rejects it", async () => {
-    expect(signArgv("darwin", "codesign -s ID", "/out/My App.app"))
-      .toEqual(["sh", "-c", 'codesign -s ID "$@"', "sh", "/out/My App.app"]);
-    expect(signArgv("win32", "signtool sign", "C:\\out\\App.exe"))
-      .toEqual(["cmd", "/c", 'signtool sign "C:\\out\\App.exe"']);
+    // The interpreter is this machine's: the hook runs here, whatever platform
+    // the artifact is for.
+    expect(signArgv("codesign -s ID", "/out/My App.app")).toEqual(process.platform === "win32"
+      ? ["cmd", "/c", 'codesign -s ID "/out/My App.app"']
+      : ["sh", "-c", 'codesign -s ID "$@"', "sh", "/out/My App.app"]);
     await withArtifact(async ({ executable }) => {
       // The hook is a command, not a shell fragment we interpolate into: the
       // artifact arrives as one positional argument however it is spelled.
       const bundle = `${executable} Deluxe.app`;
       await writeFile(bundle, "");
-      expect(await signArtifact({ platform: "linux", command: signHook, artifact: bundle }))
+      expect(await signArtifact({ command: signHook, artifact: bundle }))
         .toEqual({ command: signHook, artifact: bundle });
       expect(await readFile(`${bundle}.signed`, "utf8")).toBe(`${bundle}\n`);
-      await expect(signArtifact({ platform: "linux", command: "false", artifact: executable }))
+      await expect(signArtifact({ command: "false", artifact: executable }))
         .rejects.toThrow("signing command failed with exit code 1: false");
     });
   });

@@ -1,0 +1,22 @@
+# One byte sequence per file, on every platform.
+#
+# Windows checkouts default to `core.autocrlf=true`, which rewrites every text
+# file's line endings on the way to disk. Two things in this repository read
+# bytes rather than lines and cannot survive that: the API manifest reader
+# parses the runtime's Rust source with anchored patterns, and the ingest test
+# asserts a SHA-256 of compiled output against a committed digest. Both passed
+# on Linux and macOS and failed on Windows for reasons that had nothing to do
+# with either — see the first release dry run (#134).
+#
+# `eol=lf` is the whole fix: the working tree matches the object store
+# everywhere, so a digest means the same thing on all six targets.
+* text=auto eol=lf
+
+# Binary, and never to be touched: fixtures whose bytes are the fixture.
+*.png binary
+*.gif binary
+*.icns binary
+*.ico binary
+*.node binary
+*.tgz binary
+*.wav binary

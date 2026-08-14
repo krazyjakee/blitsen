@@ -46,11 +46,14 @@ describe("runtime resolution", () => {
 
   test("names the platform, and says it is unpublished, when its package is absent", async () => {
     await withPlatformPackages({ "linux-x64": { version: cliVersion } }, async ({ require }) => {
-      const missing = resolveRuntime({ target: "win32-arm64", version: cliVersion, env: {}, require });
+      // Not this host's target: an absent package falls back to a checkout's own
+      // build, which a runner that just built one has (#134).
+      const absent = hostTarget() === "win32-arm64" ? "darwin-x64" : "win32-arm64";
+      const missing = resolveRuntime({ target: absent, version: cliVersion, env: {}, require });
       await expect(missing).rejects.toThrow(
-        "no Blitsen runtime for win32-arm64: @blitsen/win32-arm64 is not installed");
+        `no Blitsen runtime for ${absent}: @blitsen/${absent} is not installed`);
       await expect(missing)
-        .rejects.toThrow("no platform runtime package is published yet and only linux-x64 is built");
+        .rejects.toThrow("no platform runtime package is published yet");
       // A host outside the six is a different failure: nothing to install at all.
       await expect(resolveRuntime({ target: "freebsd-x64", version: cliVersion, env: {}, require }))
         .rejects.toThrow("Blitsen has no runtime for freebsd-x64: supported targets are darwin-arm64");

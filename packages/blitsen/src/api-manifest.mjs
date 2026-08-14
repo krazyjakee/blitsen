@@ -551,7 +551,15 @@ function stringList(script, pattern, name) {
 }
 
 // Reads the globals, class members and deliberate deletions out of the bootstrap.
-export function extractRuntimeSurface(script) {
+//
+// Line endings are normalised first: every pattern below is anchored on `\n`
+// against source this reads as bytes, and a Windows checkout with
+// `core.autocrlf` on hands it CRLF. The repository pins `eol=lf` in
+// `.gitattributes` so that does not happen, and this is the second lock on the
+// same door — the first release dry run failed here, reporting that the
+// bootstrap had stopped installing globals it installs perfectly well (#134).
+export function extractRuntimeSurface(source) {
+  const script = source.includes("\r\n") ? source.replaceAll("\r\n", "\n") : source;
   const structure = blanked(script);
   const globals = new Set(objectKeys(structure, "const globals = {"));
   for (const [, name] of structure.matchAll(/globalThis\.([A-Za-z_$][\w$]*)\s*=[^=]/g))

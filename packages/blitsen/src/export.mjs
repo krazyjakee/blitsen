@@ -827,7 +827,7 @@ export async function buildStandalone(
     // The signing hook runs last, over the bundle on macOS and the executable
     // elsewhere, so it sees exactly what ships.
     const signed = sign
-      ? await signArtifact({ platform: buildPlatform, command: sign, artifact: packaged?.bundle ?? executable })
+      ? await signArtifact({ command: sign, artifact: packaged?.bundle ?? executable })
       : null;
     progress({
       step: "package",

@@ -81,7 +81,9 @@ describe("directory CLI", () => {
   test("resolves an index", async () => {
     const fixture = join(import.meta.dir, "../../../spikes/s7/fixture");
     const app = await resolveApplication(fixture);
-    expect(app.entrypoint.endsWith("fixture/index.html")).toBeTrue();
+    // `join`, not a literal: the resolved entrypoint is a native path, and this
+    // asserted the separator rather than the resolution on Windows (#134).
+    expect(app.entrypoint.endsWith(join("fixture", "index.html"))).toBeTrue();
   });
 
   test("reports the manifest version rather than a literal", async () => {
