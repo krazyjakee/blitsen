@@ -144,7 +144,7 @@ on the build report and inside the executable:
 
 ```
 Built /home/me/MyApp (12 assets, 58720256 bytes)
-Runtime: @blitsen/linux-x64@0.0.1
+Runtime: @blitsen/linux-x64@0.1.0
 ```
 
 **No platform package is published yet, and only `linux-x64` is built at all.** Until they ship,
