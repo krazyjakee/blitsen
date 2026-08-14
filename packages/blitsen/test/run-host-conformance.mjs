@@ -9,7 +9,7 @@
 //
 //     bun run --cwd packages/blitsen test:hosts
 import { strict as assert } from "node:assert";
-import { cp, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join, relative } from "node:path";
 
@@ -142,7 +142,14 @@ const PLATFORM_PROBE_ASSERT = `(() => {
 })()`;
 
 async function buildWith({ host }) {
-  const directory = await mkdtemp(join(tmpdir(), `blitsen-hosts-${host}-`));
+  // Realpathed, because everything below compares two hosts' output *as text*
+  // and `normalise` only replaces the directory it is given. The temporary
+  // directory is spelled one way by `tmpdir()` and another by the CLI, which
+  // reports resolved paths: `C:\Users\RUNNER~1\…` against
+  // `C:\Users\runneradmin\…` on Windows, `/var` against `/private/var` on
+  // macOS. Neither host's path was replaced, so the two differed by the only
+  // thing they are allowed to differ by (#123).
+  const directory = await realpath(await mkdtemp(join(tmpdir(), `blitsen-hosts-${host}-`)));
   await cp(join(repository, "examples/pong"), join(directory, "dist"), { recursive: true });
   const entrypoint = join(directory, "dist", "index.html");
   await writeFile(entrypoint,
