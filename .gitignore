@@ -1,2 +1,6 @@
 /node_modules/
 /target/
+# Generated per target by `bun run --cwd packages/blitsen notices` (#121).
+/packages/platforms/*/NOTICES.txt
+/packages/platforms/*/NOTICES.json
+/packages/platforms/*/addon/

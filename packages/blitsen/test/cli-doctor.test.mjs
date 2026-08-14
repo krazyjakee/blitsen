@@ -133,6 +133,19 @@ describe("directory CLI", () => {
       expect(report.errors).toBe(1);
       expect(report.diagnostics[0].code).toBe("WEB_FETCH");
       expect(report.diagnostics[0].message).toContain("does not ship");
+
+      // The idiomatic spelling, whose literal is one level in and whose base is
+      // the module rather than the document: a chunk naming its own neighbour
+      // is silent, and one naming a file nothing ships is not.
+      await writeFile(join(directory, "app.js"), "");
+      await writeFile(join(directory, "assets", "app.js"), [
+        `fetch(new URL("./blip.wav", import.meta.url));`,
+        `fetch(new URL("../data.json", import.meta.url).href);`,
+        `fetch(new URL("./absent.wav", import.meta.url));`,
+      ].join("\n"));
+      const modules = await doctorApplication(directory);
+      expect(modules.diagnostics.filter(entry => entry.code === "WEB_FETCH")
+        .map(entry => entry.target)).toEqual(["./absent.wav"]);
     } finally {
       await rm(directory, { recursive: true, force: true });
     }

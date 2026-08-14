@@ -21,9 +21,6 @@ pub(crate) use engine::napi_error;
 pub use engine::{NodeApiEngine, NodeClass, NodeWeakRef};
 pub use exports::*;
 
-/// Stable addon name used by packaging and smoke tests.
-pub const ADDON_NAME: &str = "blitsen-node";
-
 /// JavaScript-facing engine owner loaded by `new Engine()`.
 #[napi]
 pub struct Engine {
@@ -85,7 +82,16 @@ impl Engine {
             ));
         }
         let options: HostOptions = options.into();
-        let files = AppFiles::directory(&options.entrypoint).map_err(napi_error)?;
+        // A URL is a dev server to read the application from rather than a
+        // directory to read it from (#67). Both hosts take the same branch,
+        // because both open the same session over the same `AppFiles`.
+        let files = if options.entrypoint.starts_with("http://")
+            || options.entrypoint.starts_with("https://")
+        {
+            AppFiles::server(&options.entrypoint).map_err(napi_error)?
+        } else {
+            AppFiles::directory(&options.entrypoint).map_err(napi_error)?
+        };
         let mut engine = *self.runtime.borrow();
         let session = WindowSession::open(&mut engine, files, options).map_err(napi_error)?;
         *self.session.borrow_mut() = Some(session);

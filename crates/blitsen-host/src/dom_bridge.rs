@@ -36,6 +36,7 @@ pub mod window;
 // consecutive slices of one scope and are only valid in this order.
 const BOOTSTRAP: &str = concat!(
     "\n(() => {\n",
+    include_str!("dom_bridge/bootstrap/members.js"),
     include_str!("dom_bridge/bootstrap/prelude.js"),
     include_str!("dom_bridge/bootstrap/events.js"),
     include_str!("dom_bridge/bootstrap/event_target.js"),
@@ -43,6 +44,7 @@ const BOOTSTRAP: &str = concat!(
     include_str!("dom_bridge/bootstrap/element.js"),
     include_str!("dom_bridge/bootstrap/cssom.js"),
     include_str!("dom_bridge/bootstrap/forms.js"),
+    include_str!("dom_bridge/bootstrap/text_editing.js"),
     include_str!("dom_bridge/bootstrap/document.js"),
     include_str!("dom_bridge/bootstrap/range.js"),
     include_str!("dom_bridge/bootstrap/fetch.js"),
@@ -51,11 +53,25 @@ const BOOTSTRAP: &str = concat!(
     include_str!("dom_bridge/bootstrap/messaging.js"),
     include_str!("dom_bridge/bootstrap/audio.js"),
     include_str!("dom_bridge/bootstrap/history.js"),
+    include_str!("dom_bridge/bootstrap/url.js"),
     include_str!("dom_bridge/bootstrap/storage.js"),
     include_str!("dom_bridge/bootstrap/native.js"),
     include_str!("dom_bridge/bootstrap/globals.js"),
     "})();\n",
 );
+
+/// The process-wide network pool, for the rest of the host.
+///
+/// `fetch`, `WebSocket` and the dev server are all a socket being waited on, and
+/// one pool is what keeps them from being three sets of parked threads.
+pub(crate) fn net_runtime() -> Result<&'static tokio::runtime::Runtime, JsError> {
+    net_pool::runtime()
+}
+
+/// Locks without propagating poisoning, for the rest of the host.
+pub(crate) fn net_lock<T>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    net_pool::lock(mutex)
+}
 
 /// Installs the real DOM object graph into a JavaScript environment.
 pub fn install<E: JsEngine + 'static>(
@@ -327,6 +343,20 @@ fn install_text_codec<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsErr
                 .first()
                 .ok_or_else(|| JsError::new("missing bytes"))
                 .and_then(|value| engine.to_typed_array(value))?;
+            // Lossy unless the caller asked otherwise, which is what a body
+            // wants: a malformed byte becomes U+FFFD rather than losing the
+            // response. `new TextDecoder("utf-8", { fatal: true })` is the one
+            // caller that asked to be told instead, and only this side can
+            // tell — by the time the string exists the evidence is gone.
+            let fatal = match call.arguments.get(1) {
+                Some(value) => engine.to_boolean(value)?,
+                None => false,
+            };
+            if fatal {
+                let text = String::from_utf8(bytes.bytes)
+                    .map_err(|error| JsError::new(format!("invalid UTF-8: {error}")))?;
+                return engine.string(&text);
+            }
             engine.string(&String::from_utf8_lossy(&bytes.bytes))
         }),
     )

@@ -19,12 +19,34 @@
   class ErrorEvent extends Event {
     constructor(type, options = {}) {
       super(type, options);
-      Object.defineProperties(this, {
-        message: { value: String(options.message ?? ""), enumerable: true },
-        filename: { value: String(options.filename ?? ""), enumerable: true },
-        lineno: { value: Number(options.lineno ?? 0), enumerable: true },
-        colno: { value: Number(options.colno ?? 0), enumerable: true },
-        error: { value: options.error ?? null, enumerable: true },
+      defineMembers(this, {
+        message: String(options.message ?? ""),
+        filename: String(options.filename ?? ""),
+        lineno: Number(options.lineno ?? 0),
+        colno: Number(options.colno ?? 0),
+        error: options.error ?? null,
+      });
+    }
+  }
+
+  // Every message that crosses a boundary arrives as one of these, and the
+  // boundaries are what this fragment is: a port, a channel, a worker, and — in
+  // the document — a socket. It lives here rather than beside the DOM's other
+  // events because a message has to mean the same thing at both ends of a port,
+  // and the two ends are in different scopes running different bootstraps.
+  //
+  // The members a given sender cannot fill are present and empty rather than
+  // absent: `source` and `ports` are truthfully nothing when the message came
+  // off a socket, and a library reads them unguarded.
+  class MessageEvent extends Event {
+    constructor(type, options = {}) {
+      super(type, options);
+      defineMembers(this, {
+        data: options.data ?? null,
+        origin: String(options.origin ?? ""),
+        lastEventId: String(options.lastEventId ?? ""),
+        source: options.source ?? null,
+        ports: Object.freeze([...(options.ports ?? [])]),
       });
     }
   }
@@ -91,9 +113,9 @@
   class MessageChannel {
     constructor() {
       const [first, second] = JSON.parse(__blitsenPortChannel());
-      Object.defineProperties(this, {
-        port1: { value: new MessagePort(first), enumerable: true },
-        port2: { value: new MessagePort(second), enumerable: true },
+      defineMembers(this, {
+        port1: new MessagePort(first),
+        port2: new MessagePort(second),
       });
     }
   }

@@ -31,6 +31,7 @@ use blitz::dom::{NodeId, Widget};
 use kurbo::Affine;
 
 use crate::BlitzDom;
+use crate::surface::{Surface, SurfaceWidget};
 
 /// The tag whose elements carry a canvas.
 pub(crate) const CANVAS_TAG: &str = "canvas";
@@ -70,6 +71,12 @@ impl Default for CanvasState {
             revision: 0,
             scene: Scene::new(),
         }
+    }
+}
+
+impl Surface for CanvasState {
+    fn revision(&self) -> u64 {
+        self.revision
     }
 }
 
@@ -121,24 +128,17 @@ impl CanvasState {
 }
 
 /// Paints one `<canvas>` element's recorded contents into the document's scene.
-pub(crate) struct CanvasWidget {
-    state: Rc<RefCell<CanvasState>>,
-    /// Revision of the contents last recorded into a scene.
-    painted_revision: u64,
-}
+pub(crate) struct CanvasWidget(SurfaceWidget<CanvasState>);
 
 impl CanvasWidget {
     pub(crate) fn new(state: Rc<RefCell<CanvasState>>) -> Self {
-        Self {
-            state,
-            painted_revision: 0,
-        }
+        Self(SurfaceWidget::new(state))
     }
 }
 
 impl Widget for CanvasWidget {
     fn requires_redraw(&self) -> bool {
-        self.state.borrow().revision != self.painted_revision
+        self.0.needs_repaint()
     }
 
     /// Tracks the two content attributes that own the backing store.
@@ -146,7 +146,7 @@ impl Widget for CanvasWidget {
     /// Removing one restores the default rather than leaving the old value in
     /// place, because the attribute is the only thing that was holding it.
     fn attribute_changed(&mut self, name: &str, _old: Option<&str>, new: Option<&str>) {
-        let mut state = self.state.borrow_mut();
+        let mut state = self.0.state_mut();
         let (width, height) = state.size();
         match name {
             "width" => {
@@ -168,8 +168,7 @@ impl Widget for CanvasWidget {
         _scale: f64,
     ) -> Scene {
         let mut scene = Scene::new();
-        let state = self.state.borrow();
-        self.painted_revision = state.revision;
+        let state = self.0.begin_paint();
 
         let (canvas_width, canvas_height) = state.size();
         // A canvas with no backing store has nowhere to draw and no ratio to

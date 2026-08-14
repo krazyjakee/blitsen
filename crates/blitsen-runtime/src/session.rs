@@ -63,7 +63,13 @@ fn describe_runtime(record: &serde_json::Value) -> Option<String> {
 impl Settings {
     fn read(files: &AppFiles, arguments: &[String]) -> Result<Self, String> {
         let mut settings = Self::default();
-        if let Some(bytes) = files.source().read(blitsen_host::app::RUNTIME_CONFIG) {
+        // Only an export carries one. Asking a dev server for it would be a
+        // request per start for a file no dev server has (issue #67).
+        let configured = match files {
+            AppFiles::Server { .. } => None,
+            _ => files.source().read(blitsen_host::app::RUNTIME_CONFIG),
+        };
+        if let Some(bytes) = configured {
             let config: serde_json::Value = serde_json::from_slice(&bytes)
                 .map_err(|error| format!("blitsen.runtime.json is not valid JSON: {error}"))?;
             if let Some(width) = config.get("width").and_then(serde_json::Value::as_u64) {
@@ -107,6 +113,16 @@ impl Settings {
         }
         Ok(settings)
     }
+}
+
+/// Runs what a development server is serving (issue #67).
+///
+/// `blitsen http://localhost:5173`: the window replaces the browser tab, and the
+/// user's own dev server goes on transforming, hot-reloading and source-mapping
+/// exactly as it did. Nothing is built, ingested or copied.
+pub fn run_url(url: &str, arguments: &[String]) -> Result<ExitCode, String> {
+    let files = AppFiles::server(url).map_err(|error| error.to_string())?;
+    run(files, arguments)
 }
 
 /// Runs a directory of built output, as `blitsen run` does.
@@ -171,7 +187,9 @@ fn run(files: AppFiles, arguments: &[String]) -> Result<ExitCode, String> {
     let options = OpenDirectoryOptions {
         root: match &files {
             AppFiles::Directory { root, .. } => root.to_string_lossy().into_owned(),
-            AppFiles::Bundle { .. } => blitsen_host::modules::APP_ORIGIN.to_owned(),
+            AppFiles::Bundle { .. } | AppFiles::Server { .. } => {
+                blitsen_host::modules::APP_ORIGIN.to_owned()
+            }
         },
         entrypoint: files.entrypoint_name(),
         width: settings.width,
@@ -183,20 +201,35 @@ fn run(files: AppFiles, arguments: &[String]) -> Result<ExitCode, String> {
         WindowSession::open(&mut engine, files, options).map_err(|error| error.to_string())?;
 
     let mut pacer = Pacer::from_environment();
+    let mut pump_timeout = Some(std::time::Duration::ZERO);
     loop {
         // A macrotask turn, then the frame it may have dirtied. Animation
         // frames and microtask draining happen inside the pump, where the
         // window's redraw already sequences them (TECH.md §6).
-        services
+        let timers_ran = services
             .run_expired_timers(&mut engine)
             .map_err(|error| error.to_string())?;
-        if !session.pump().map_err(|error| error.to_string())? {
+        if timers_ran > 0 {
+            session.request_redraw();
+        }
+        if !session
+            .pump_for(pump_timeout)
+            .map_err(|error| error.to_string())?
+        {
             break;
         }
         if pacer.finished() {
             break;
         }
-        pacer.wait(services.next_timer_delay());
+        let next_timer = services.next_timer_delay();
+        if pacer.forcing_frames() || session.animation_frames_pending() {
+            pacer.wait(next_timer);
+            pump_timeout = Some(std::time::Duration::ZERO);
+        } else {
+            // Winit's proxy wakes this wait for network, worker, and platform
+            // events. A finite timeout wakes it when the next JS timer is due.
+            pump_timeout = next_timer;
+        }
     }
     native_window::release_window();
     pacer.report();

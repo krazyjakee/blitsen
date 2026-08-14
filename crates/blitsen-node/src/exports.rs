@@ -25,6 +25,47 @@ fn engine(env: Env) -> NodeApiEngine {
     NodeApiEngine::new(env)
 }
 
+/// The error every adapter below reports a failure of its own as.
+fn failure(message: impl std::fmt::Display) -> napi::Error {
+    napi::Error::new(Status::GenericFailure, message.to_string())
+}
+
+/// Serializes a harness result, which is how every one of them crosses back.
+///
+/// The boundary carries a string rather than a Node-API object: the shapes are
+/// the host's `Serialize` types, and the suite parses them straight back.
+fn json(value: &impl serde::Serialize) -> napi::Result<String> {
+    serde_json::to_string(value).map_err(failure)
+}
+
+/// The document a `run_document_scripts_harness` call left loaded.
+///
+/// Absent when the suite asserts before it has loaded anything, which is a test
+/// bug rather than a runtime one, so it is named as such.
+fn active_harness() -> napi::Result<harness::ActiveDocumentHarness> {
+    active_document_harness().ok_or_else(|| failure("no document harness is active"))
+}
+
+/// A frame count, capped so a mistyped argument cannot render for an hour.
+fn frame_count(frames: Option<u32>, default: u32) -> napi::Result<u32> {
+    let frames = frames.unwrap_or(default);
+    if frames > 10_000 {
+        return Err(napi::Error::new(
+            Status::InvalidArg,
+            "the animation harness is limited to 10000 frames",
+        ));
+    }
+    Ok(frames)
+}
+
+/// Creates a directory frames are about to be written into.
+fn recording_directory(directory: String) -> napi::Result<PathBuf> {
+    let directory = PathBuf::from(directory);
+    std::fs::create_dir_all(&directory)
+        .map_err(|error| failure(format!("could not create {}: {error}", directory.display())))?;
+    Ok(directory)
+}
+
 /// Boots Blitz headlessly, runs JavaScript DOM mutations, and returns the Rust
 /// tree state as JSON for cross-platform CI assertions.
 #[napi]
@@ -37,8 +78,7 @@ pub fn run_bridge_harness(
 ) -> napi::Result<String> {
     let (snapshot, _) = harness::execute_bridge_harness(engine(env), html, script, width, height)
         .map_err(napi_error)?;
-    serde_json::to_string(&snapshot)
-        .map_err(|error| napi::Error::new(Status::GenericFailure, error.to_string()))
+    json(&snapshot)
 }
 
 /// Advances a document through a deterministic sequence of animation frames.
@@ -51,24 +91,16 @@ pub fn run_animation_harness(
     width: Option<u32>,
     height: Option<u32>,
 ) -> napi::Result<String> {
-    let frames = frames.unwrap_or(3);
-    if frames > 10_000 {
-        return Err(napi::Error::new(
-            Status::InvalidArg,
-            "animation harness is limited to 10000 frames",
-        ));
-    }
     let snapshots = harness::execute_animation_harness(
         engine(env),
         html,
         script,
-        frames,
+        frame_count(frames, 3)?,
         width.unwrap_or(800),
         height.unwrap_or(600),
     )
     .map_err(napi_error)?;
-    serde_json::to_string(&snapshots)
-        .map_err(|error| napi::Error::new(Status::GenericFailure, error.to_string()))
+    json(&snapshots)
 }
 
 /// Loads a real HTML entrypoint and executes its collected script elements.
@@ -86,19 +118,13 @@ pub fn run_document_scripts_harness(
         height.unwrap_or(600),
     )
     .map_err(napi_error)?;
-    serde_json::to_string(&snapshot)
-        .map_err(|error| napi::Error::new(Status::GenericFailure, error.to_string()))
+    json(&snapshot)
 }
 
 /// Evaluates a script against the most recently loaded document harness.
 #[napi]
 pub fn evaluate_document_harness(env: Env, script: String) -> napi::Result<()> {
-    if active_document_harness().is_none() {
-        return Err(napi::Error::new(
-            Status::GenericFailure,
-            "no document harness is active",
-        ));
-    }
+    active_harness()?;
     NodeApiEngine::new(env)
         .evaluate_script(&script, "document-harness-evaluation.js")
         .map(|_| ())
@@ -108,13 +134,11 @@ pub fn evaluate_document_harness(env: Env, script: String) -> napi::Result<()> {
 /// Snapshots the most recently loaded document after the host event loop has advanced.
 #[napi]
 pub fn snapshot_document_harness() -> napi::Result<String> {
-    let (document, width, height) = active_document_harness()
-        .ok_or_else(|| napi::Error::new(Status::GenericFailure, "no document harness is active"))?;
+    let (document, width, height) = active_harness()?;
     let snapshot = harness::snapshot_and_render(document, width, height)
         .map(|(snapshot, _)| snapshot)
         .map_err(napi_error)?;
-    serde_json::to_string(&snapshot)
-        .map_err(|error| napi::Error::new(Status::GenericFailure, error.to_string()))
+    json(&snapshot)
 }
 
 /// Serializes the tree of the most recently loaded document harness.
@@ -125,12 +149,11 @@ pub fn snapshot_document_harness() -> napi::Result<String> {
 /// back is the rendered tree, not the near-empty root element the bundle ships.
 #[napi]
 pub fn capture_document_harness_html() -> napi::Result<String> {
-    let (document, _, _) = active_document_harness()
-        .ok_or_else(|| napi::Error::new(Status::GenericFailure, "no document harness is active"))?;
+    let (document, _, _) = active_harness()?;
     let document = document.borrow();
     let root = document
         .document_element()
-        .ok_or_else(|| napi::Error::new(Status::GenericFailure, "document has no root"))?;
+        .ok_or_else(|| failure("document has no root"))?;
     document
         .inner_html(root)
         .map_err(|error| napi_error(dom_error(error)))
@@ -146,25 +169,17 @@ pub fn run_document_animation_harness(
     width: Option<u32>,
     height: Option<u32>,
 ) -> napi::Result<String> {
-    let frames = frames.unwrap_or(60);
-    if frames > 10_000 {
-        return Err(napi::Error::new(
-            Status::InvalidArg,
-            "document animation harness is limited to 10000 frames",
-        ));
-    }
     let snapshots = harness::execute_document_animation_harness(
         engine(env),
         Path::new(&entrypoint),
         &setup_script,
-        frames,
+        frame_count(frames, 60)?,
         width.unwrap_or(800),
         height.unwrap_or(600),
         None,
     )
     .map_err(napi_error)?;
-    serde_json::to_string(&snapshots)
-        .map_err(|error| napi::Error::new(Status::GenericFailure, error.to_string()))
+    json(&snapshots)
 }
 
 /// Advances a document's animation loop and writes every rendered frame as a PNG.
@@ -182,20 +197,8 @@ pub fn record_document_animation_harness(
     width: Option<u32>,
     height: Option<u32>,
 ) -> napi::Result<u32> {
-    let frames = frames.unwrap_or(60);
-    if frames > 10_000 {
-        return Err(napi::Error::new(
-            Status::InvalidArg,
-            "document animation harness is limited to 10000 frames",
-        ));
-    }
-    let directory = PathBuf::from(directory);
-    std::fs::create_dir_all(&directory).map_err(|error| {
-        napi::Error::new(
-            Status::GenericFailure,
-            format!("could not create {}: {error}", directory.display()),
-        )
-    })?;
+    let frames = frame_count(frames, 60)?;
+    let directory = recording_directory(directory)?;
     harness::execute_document_animation_harness(
         engine(env),
         Path::new(&entrypoint),
@@ -225,15 +228,7 @@ pub fn replay_document_frames(
 ) -> napi::Result<String> {
     let trace = blitsen_core::replay::InputTrace::from_json(&trace)
         .map_err(|error| napi::Error::new(Status::InvalidArg, error.to_string()))?;
-    let directory = record_into.map(PathBuf::from);
-    if let Some(directory) = &directory {
-        std::fs::create_dir_all(directory).map_err(|error| {
-            napi::Error::new(
-                Status::GenericFailure,
-                format!("could not create {}: {error}", directory.display()),
-            )
-        })?;
-    }
+    let directory = record_into.map(recording_directory).transpose()?;
     let report = replay::replay(
         engine(env),
         Path::new(&entrypoint),
@@ -242,8 +237,7 @@ pub fn replay_document_frames(
         &record_frames.unwrap_or_default(),
     )
     .map_err(napi_error)?;
-    serde_json::to_string(&report)
-        .map_err(|error| napi::Error::new(Status::GenericFailure, error.to_string()))
+    json(&report)
 }
 
 /// Digests a fixed text-and-shape fixture to identify this machine's rasterizer.
@@ -461,10 +455,27 @@ pub fn node_api_smoke(env: Env) -> napi::Result<bool> {
         return Ok(false);
     }
 
+    // Keep this comfortably above common filesystem component limits. Bun used
+    // to mistake the data URL carrying a production-sized inline module for a
+    // package path, then fail with NameTooLong before evaluating it.
+    let large_module_source = format!(
+        "globalThis.__blitsenLargeModule = 42;\n/* {} */\nexport const answer = 42",
+        "module-padding".repeat(1024)
+    );
     let module = engine
-        .evaluate_module("export const answer = 42", "smoke-module.js")
+        .evaluate_module(&large_module_source, "smoke-module.js")
         .map_err(napi_error)?;
     if engine.value_type(&module).map_err(napi_error)? != JsType::Object {
+        return Ok(false);
+    }
+    let large_module_ran = engine
+        .evaluate_script(
+            "globalThis.__blitsenLargeModule === 42",
+            "large-module-smoke.js",
+        )
+        .and_then(|value| engine.to_boolean(&value))
+        .map_err(napi_error)?;
+    if !large_module_ran {
         return Ok(false);
     }
     engine.drain_microtasks().map_err(napi_error)?;

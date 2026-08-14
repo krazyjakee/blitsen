@@ -4,3 +4,9 @@
 #box {
   width: 150px;
 }
+
+/* A declaration the cascade cannot parse, so this sheet also answers whether a
+   linked stylesheet is normalised on the way in (issue #128). */
+#hits {
+  pointer-events: all;
+}

@@ -207,6 +207,13 @@ impl NetHandler for TrackedHandler {
             ResourceState::Loaded
         };
         self.log.settled(&self.entry.url, state);
+        // The one place a linked stylesheet's text is in Blitsen's hands before
+        // the cascade parses it. See `pointer_events` for what is rewritten and
+        // why the bytes rather than the request decide whether it is CSS.
+        let bytes = match crate::pointer_events::normalize_subresource(&bytes) {
+            Some(rewritten) => Bytes::from(rewritten),
+            None => bytes,
+        };
         inner.bytes(resolved_url, bytes);
     }
 }

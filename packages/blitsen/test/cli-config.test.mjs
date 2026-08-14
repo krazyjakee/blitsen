@@ -96,6 +96,54 @@ describe("directory CLI", () => {
     }
   });
 
+  test("runs the configured build and opens the directory it wrote", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "blitsen-wrapped-run-"));
+    const project = join(workspace, "app");
+    await cp(join(configFixtures, "wrapped"), project, { recursive: true });
+    const cwd = process.cwd();
+    let opened;
+    try {
+      process.chdir(project);
+      const { lines, output } = capture();
+      let pumps = 0;
+      expect(await main([], output, {
+        openDirectory: async options => { opened = options; },
+        pumpWindow: () => ++pumps < 2,
+        waitForNextFrame: async () => {},
+      })).toBe(0);
+      expect(lines[0][1])
+        .toBe(`⓪ build   node emit-dist.mjs (configured in ${join(project, "package.json")})`);
+      // The same directory `blitsen build` would have ingested, found the same
+      // way: the run proves what ships rather than something beside it.
+      expect(opened.root).toBe(await realpath(join(project, "dist")));
+      expect(opened.title).toBe("Wrapped App");
+    } finally {
+      process.chdir(cwd);
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  test("still opens the directory you are standing in when it has no config", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "blitsen-unconfigured-run-"));
+    const cwd = process.cwd();
+    try {
+      process.chdir(directory);
+      await writeFile(join(directory, "index.html"), "<p>hi");
+      const { output } = capture();
+      let opened;
+      let pumps = 0;
+      expect(await main([], output, {
+        openDirectory: async options => { opened = options; },
+        pumpWindow: () => ++pumps < 2,
+        waitForNextFrame: async () => {},
+      })).toBe(0);
+      expect(opened.root).toBe(await realpath(directory));
+    } finally {
+      process.chdir(cwd);
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   test("asks for a directory or a config when there is nothing here to build", async () => {
     const directory = await mkdtemp(join(tmpdir(), "blitsen-unconfigured-"));
     const cwd = process.cwd();

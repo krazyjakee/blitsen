@@ -551,11 +551,22 @@
 
   class NodeList {
     constructor(items) {
-      Object.defineProperty(this, "length", { value: items.length, enumerable: false });
-      items.forEach((item, index) => Object.defineProperty(this, index, { value: item, enumerable: true }));
-      Object.freeze(this);
+      defineIndexed(this, items);
     }
     item(index) { return this[index] ?? null; }
+    // The iteration members a `NodeList` is expected to have. `forEach` is the
+    // one a bundle reaches for by name —
+    // `document.querySelectorAll("style[data-id]").forEach(…)` is how Vite's own
+    // client collects its style elements — and a list that is iterable but has
+    // no `forEach` fails at exactly that line rather than at feature detection.
+    forEach(callback, thisArg) {
+      for (let index = 0; index < this.length; index++) {
+        callback.call(thisArg, this[index], index, this);
+      }
+    }
+    *entries() { for (let index = 0; index < this.length; index++) yield [index, this[index]]; }
+    *keys() { for (let index = 0; index < this.length; index++) yield index; }
+    *values() { for (let index = 0; index < this.length; index++) yield this[index]; }
     *[Symbol.iterator]() { for (let index = 0; index < this.length; index++) yield this[index]; }
   }
 
@@ -584,9 +595,7 @@
     constructor(element) {
       const nodes = call("attributeEntries", element[handle])
         .map(entry => new Attr(element, entry.namespace, entry.name));
-      Object.defineProperty(this, "length", { value: nodes.length, enumerable: false });
-      nodes.forEach((node, index) => Object.defineProperty(this, index, { value: node, enumerable: true }));
-      Object.freeze(this);
+      defineIndexed(this, nodes);
     }
     item(index) { return this[index] ?? null; }
     getNamedItem(name) { return this.getNamedItemNS(null, name); }

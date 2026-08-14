@@ -135,6 +135,40 @@ impl BlitzDom {
             }))
     }
 
+    /// The text node a viewport point lands on, when it lands on one.
+    ///
+    /// Exact rather than nearest: [`Cluster::from_point`], which the caret read
+    /// wants, snaps to the closest character anywhere on the line, so the empty
+    /// space to the right of a short line would answer as text. A caret has to
+    /// go somewhere when the pointer is near text; a cursor is only the caret
+    /// when the pointer is actually on it.
+    pub(crate) fn text_at_point(
+        &self,
+        target: NodeId,
+        x: f32,
+        y: f32,
+    ) -> Result<Option<NodeId>, DomError> {
+        let Some(root) = self.inline_root(target)? else {
+            return Ok(None);
+        };
+        let (origin_x, origin_y, scale) = self.inline_origin(root)?;
+        let node = self.node(root)?;
+        let Some(inline) = node
+            .element_data()
+            .and_then(|element| element.inline_layout_data.as_ref())
+        else {
+            return Ok(None);
+        };
+        let Some((cluster, _)) = Cluster::from_point_exact(
+            &inline.layout,
+            (x - origin_x) * scale,
+            (y - origin_y) * scale,
+        ) else {
+            return Ok(None);
+        };
+        Ok(self.alignment(root)?.node_at(cluster.text_range().start))
+    }
+
     /// The viewport position of an inline root's content box, and its scale.
     ///
     /// Parley's coordinates are relative to that origin and in device pixels,

@@ -14,57 +14,42 @@ pub(super) fn dispatch(
         "getAttribute" => Ok(dom
             .attribute(
                 handle(runtime, arguments, 0)?,
-                &DomName::attribute(
-                    bridge_arg(arguments, 1, "attribute name")?.to_ascii_lowercase(),
-                ),
+                &attribute_arg(arguments, 1)?,
             )
             .map_err(dom_error)?
             .map(Value::String)
             .unwrap_or(Value::Null)),
         "setAttribute" => {
             let node = handle(runtime, arguments, 0)?;
-            let name = DomName::attribute(
-                bridge_arg(arguments, 1, "attribute name")?.to_ascii_lowercase(),
-            );
+            let name = attribute_arg(arguments, 1)?;
             dom.set_attribute(node, &name, bridge_arg(arguments, 2, "attribute value")?)
                 .map_err(dom_error)?;
             Ok(Value::Null)
         }
         "removeAttribute" => {
             let node = handle(runtime, arguments, 0)?;
-            let name = DomName::attribute(
-                bridge_arg(arguments, 1, "attribute name")?.to_ascii_lowercase(),
-            );
+            let name = attribute_arg(arguments, 1)?;
             dom.remove_attribute(node, &name).map_err(dom_error)?;
             Ok(Value::Null)
         }
         "getAttributeNS" => Ok(dom
             .attribute(
                 handle(runtime, arguments, 0)?,
-                &attribute_name(
-                    bridge_arg(arguments, 1, "namespace")?,
-                    bridge_arg(arguments, 2, "attribute name")?,
-                )?,
+                &attribute_arg_ns(arguments, 1)?,
             )
             .map_err(dom_error)?
             .map(Value::String)
             .unwrap_or(Value::Null)),
         "setAttributeNS" => {
             let node = handle(runtime, arguments, 0)?;
-            let name = attribute_name(
-                bridge_arg(arguments, 1, "namespace")?,
-                bridge_arg(arguments, 2, "attribute name")?,
-            )?;
+            let name = attribute_arg_ns(arguments, 1)?;
             dom.set_attribute(node, &name, bridge_arg(arguments, 3, "attribute value")?)
                 .map_err(dom_error)?;
             Ok(Value::Null)
         }
         "removeAttributeNS" => {
             let node = handle(runtime, arguments, 0)?;
-            let name = attribute_name(
-                bridge_arg(arguments, 1, "namespace")?,
-                bridge_arg(arguments, 2, "attribute name")?,
-            )?;
+            let name = attribute_arg_ns(arguments, 1)?;
             dom.remove_attribute(node, &name).map_err(dom_error)?;
             Ok(Value::Null)
         }
@@ -90,9 +75,7 @@ pub(super) fn dispatch(
         "hasAttribute" => Ok(Value::Bool(
             dom.attribute(
                 handle(runtime, arguments, 0)?,
-                &DomName::attribute(
-                    bridge_arg(arguments, 1, "attribute name")?.to_ascii_lowercase(),
-                ),
+                &attribute_arg(arguments, 1)?,
             )
             .map_err(dom_error)?
             .is_some(),

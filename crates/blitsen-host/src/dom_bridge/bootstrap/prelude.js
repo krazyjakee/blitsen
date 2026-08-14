@@ -30,6 +30,35 @@
     contextIntervals.delete(id);
     hostClearInterval(id);
   };
+  // The host's own `URL`, kept before the bridge installs Blitsen's over it.
+  // Object URLs belong to the host rather than to the application — there is no
+  // origin behind one to hang a `blob:` on — and the Phase 1 loader needs them
+  // to evaluate an inline module (`blitsen-node/src/engine.rs`). Absent on the
+  // Phase 2 host, which has no URL of its own and no such loader.
+  // Whatever was captured the first time this bootstrap ran, because by the
+  // second document the global is already Blitsen's.
+  const hostUrl = globalThis.__blitsenHostUrl ?? globalThis.URL;
+  // The indexed half of a collection interface — `NodeList`, `NamedNodeMap`,
+  // `CSSRuleList`, `StyleSheetList`, which are four constructors of the same
+  // object. Entries sit at numeric keys, `length` is not enumerable, and the
+  // whole thing is frozen, which together are what make `list[0]`, `[...list]`
+  // and `Object.keys(list)` agree with each other and with a browser.
+  //
+  // A snapshot, not a live view: every one of these is built from an array the
+  // caller has already read out of the bridge, and re-reading the tree per index
+  // would be a bridge call per element of every loop over one.
+  const defineIndexed = (target, items) => {
+    Object.defineProperty(target, "length", { value: items.length, enumerable: false });
+    defineMembers(target, { ...items });
+    return Object.freeze(target);
+  };
+  // Interface constants: the names an interface numbers from zero, put on both
+  // the constructor and the prototype because both spellings are read —
+  // `WebSocket.OPEN` and `socket.OPEN` are the same constant.
+  const defineConstants = (constructor, names) => {
+    const values = Object.fromEntries(names.map((name, value) => [name, value]));
+    for (const target of [constructor, constructor.prototype]) defineMembers(target, values);
+  };
   const call = (operation, ...args) =>
     JSON.parse(__blitsenDomCall(operation, ...args.map(value => String(value))));
   const handle = Symbol("Blitsen node handle");

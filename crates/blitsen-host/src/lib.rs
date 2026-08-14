@@ -12,7 +12,9 @@
 
 mod alloc;
 pub mod app;
+// Proxy mode (#67): an application the user's own dev server is serving.
 mod assets;
+pub mod dev_server;
 pub mod dom_bridge;
 pub mod frame_loop;
 pub mod harness;

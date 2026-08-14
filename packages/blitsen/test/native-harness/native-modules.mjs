@@ -1,11 +1,12 @@
 import { strict as assert } from "node:assert";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { arch, cpus, homedir, hostname, tmpdir, totalmem } from "node:os";
 import { basename, isAbsolute, join } from "node:path";
 import { loadApiManifest } from "../../src/api-manifest.mjs";
 import app from "../../src/native/app.mjs";
 import clipboard from "../../src/native/clipboard.mjs";
 import dialog from "../../src/native/dialog.mjs";
+import os from "../../src/native/os.mjs";
 import windowModule from "../../src/native/window.mjs";
 
 import { addonPath, native } from "./addon.mjs";
@@ -14,7 +15,7 @@ import { addonPath, native } from "./addon.mjs";
 // does — through the `blitsen/app` and `blitsen/clipboard` proxies — so what is
 // asserted is the installed namespace, not a description of it.
 const nativeManifest = await loadApiManifest();
-const namespaces = { app, clipboard, dialog, window: windowModule };
+const namespaces = { app, clipboard, dialog, os, window: windowModule };
 // The members whose presence is a platform fact rather than a version fact: the
 // single-instance lock is a Unix socket, and a dialog is the XDG portal.
 const absentOn = new Map([["app.requestSingleInstanceLock", ["win32"]]]);
@@ -101,6 +102,61 @@ if (displayed) {
 } else {
   console.log("clipboard round-trips skipped: no DISPLAY or WAYLAND_DISPLAY on this host");
 }
+
+// What machine this is. None of it needs a window, so unlike the window and
+// dialog sections below these are real end-to-end readings rather than refusals.
+//
+// Bun is hosting this harness, so `node:os` is here to check against — and it
+// is a genuinely independent source, reading `sysinfo(2)` and `sysconf` where
+// the bridge reads `/proc` through the `sysinfo` crate. Two libraries agreeing
+// on the core count and the hostname is what rules out the failure a
+// self-consistent reading cannot: plausible numbers about the wrong machine.
+const processor = os.cpu();
+assert.equal(processor.logicalCores, cpus().length, "the bridge counts the cores node:os counts");
+assert.equal(processor.logicalCores, processor.cores.length);
+assert.equal(processor.brand, cpus()[0].model.trim(), "and names the same processor");
+// `x86_64` against node's `x64`: the same architecture in two vocabularies, so
+// the check is a translation rather than an equality.
+assert.equal(processor.architecture, { x64: "x86_64", arm64: "aarch64" }[arch()] ?? arch());
+assert(processor.physicalCores === null || processor.physicalCores <= processor.logicalCores,
+  `physical cores ${processor.physicalCores} cannot exceed logical ${processor.logicalCores}`);
+for (const core of processor.cores) {
+  assert(core.usage >= 0 && core.usage <= 100, `core usage ${core.usage} is out of range`);
+  assert.equal(typeof core.frequency, "number");
+}
+// Usage is a delta against the previous call, which leaves the first call with
+// nothing to measure from: it reports a baseline against the counters' own
+// origin — on Linux the average since boot — rather than 0. So both calls are
+// checked for range only. Neither is a number this can predict on a machine it
+// does not control, and asserting one would be asserting how busy the host is.
+assert(processor.usage >= 0 && processor.usage <= 100, `package usage ${processor.usage}`);
+const resampled = os.cpu();
+assert(resampled.usage >= 0 && resampled.usage <= 100, `package usage ${resampled.usage}`);
+
+const memory = os.memory();
+assert(memory.total > 0);
+assert(memory.used <= memory.total, `${memory.used} used of ${memory.total}`);
+assert(memory.available <= memory.total);
+assert(memory.swapUsed <= memory.swapTotal);
+// Node reads the same number through a different syscall; a 2% band absorbs
+// that without letting a wrong machine through.
+assert(Math.abs(memory.total - totalmem()) / totalmem() < 0.02,
+  `${memory.total} bytes installed, and node:os says ${totalmem()}`);
+
+const volumes = os.storage();
+assert(volumes.length > 0, "something is mounted");
+assert(volumes.some(volume => volume.total > 0), "and at least one mount has capacity");
+for (const volume of volumes) {
+  assert(volume.mountPoint.length > 0, "every volume says where it is mounted");
+  assert(volume.available <= volume.total, `${volume.mountPoint}: ${volume.available}/${volume.total}`);
+  assert(["ssd", "hdd", "unknown"].includes(volume.kind), `${volume.mountPoint}: ${volume.kind}`);
+}
+
+const machine = os.host();
+assert.equal(machine.hostName, hostname(), "the bridge names the host node:os names");
+assert(machine.bootTime > 0);
+assert(machine.uptime > 0);
+assert(machine.distributionId.length > 0);
 
 // The window, and the dialogs that are modal to it.
 //

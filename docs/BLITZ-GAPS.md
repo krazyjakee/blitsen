@@ -37,6 +37,7 @@ Status values: **open** (reproduced, unfiled), **filed** (upstream issue exists)
 | G13 | Link-ness never reaches `ElementState`, so the style-sharing cache hands one anchor's style to another | open | `crates/blitsen-blitz/src/tests/ua.rs::only_an_anchor_with_an_href_is_painted_as_a_link` | stylo's cascade layer: `:any-link` and `:link` are matched ad hoc in `blitz-dom`'s `stylo.rs`, so two sibling anchors of opposite kinds are sharing candidates. Same shape as G10. See below |
 
 | G14 | A replaced element panics in layout the moment it carries a custom widget | filed | `crates/blitsen-blitz/src/tests/canvas.rs::canvas_survives_carrying_a_custom_widget` | [blitz#706](https://github.com/DioxusLabs/blitz/issues/706); patched in a local checkout rather than worked around, because there is nothing to work around it with. See below |
+| G15 | `pointer-events` accepts only `auto` and `none`, so `all` is dropped and the element inherits | open | `crates/blitsen-blitz/src/tests/stylesheets.rs::an_element_that_declares_it_takes_hits_inside_one_that_does_not_is_hit` | stylo's cascade layer: the other nine values are `#[cfg(feature = "gecko")]`, which needs Gecko's bindings and cannot be enabled by an embedder. Worked around in `pointer_events.rs`; see below |
 
 Broad Tailwind/renderer work has an upstream collection in
 [blitz#389](https://github.com/DioxusLabs/blitz/issues/389).
@@ -372,6 +373,29 @@ the workspace `[patch]` points `blitz*` at a local checkout at the pinned revisi
 change: the existing sizing body factored into a `default_object_size` helper, called from a new
 `CustomWidget` arm. **A fresh clone of Blitsen does not build without that checkout**, which is the
 cost of the decision and the reason it is recorded here as well as in `Cargo.toml`.
+
+## G15 — `pointer-events: all` is not an invalid value, but the cascade drops it as one
+
+`stylo`'s `PointerEvents` enum has eleven variants and nine of them are `#[cfg(feature = "gecko")]`.
+Without that feature — which needs Gecko's bindings, so no embedder has it — the property parses
+`auto` and `none` and nothing else, and every other value is an invalid declaration.
+
+An invalid declaration is dropped, and `pointer-events` inherits, so the element keeps whatever its
+ancestor had. That inverts the author's meaning in the one pattern the property exists for: a
+container that takes no hits holding elements that declare that they do. React Flow ships exactly
+that — `.react-flow__nodes { pointer-events: none }` around `.react-flow__node { pointer-events:
+all }`, and `.react-flow__handle { pointer-events: none }` overridden by
+`.connectionindicator { pointer-events: all }` — so on the reactflow example *nothing on the canvas
+was hit-testable at all*: not `elementFromPoint`, not a click, not the cursor. It is the second half
+of issue #128, and the reason the first half alone did not fix it.
+
+Worked around in `crates/blitsen-blitz/src/pointer_events.rs`, which rewrites the nine dropped
+values to `auto` as CSS enters the document — the parsed tree, a `<style>` element's text, a `style`
+attribute, one CSSOM property, and a linked sheet's bytes. All nine mean "this element takes hits";
+only `none` does not. The cost is a readback: `getComputedStyle(el).pointerEvents` reports `auto`
+where a browser reports the author's keyword. Rewriting the cascade's input rather than special-
+casing the hit test is deliberate — a rule the hit test honoured but the cascade denied would be a
+divergence between two answers about the same element, which is worse than one honest answer.
 
 ## Keeping this list honest
 

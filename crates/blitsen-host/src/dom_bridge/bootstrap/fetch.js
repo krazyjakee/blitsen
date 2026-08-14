@@ -76,7 +76,7 @@
   class Blob {
     constructor(parts = [], options = {}) {
       blobBytes.set(this, concatBytes([...parts].map(part => asBytes(part) ?? __blitsenUtf8Encode(String(part)))));
-      Object.defineProperty(this, "type", { value: String(options.type ?? "").toLowerCase(), enumerable: true });
+      defineMembers(this, { type: String(options.type ?? "").toLowerCase() });
     }
     get size() { return bytesOf(this).length; }
     slice(start, end, type) { return new Blob([bytesOf(this).slice(start, end)], { type: type ?? "" }); }
@@ -125,7 +125,7 @@
   }
 
   class AbortController {
-    constructor() { Object.defineProperty(this, "signal", { value: createSignal(), enumerable: true }); }
+    constructor() { defineMembers(this, { signal: createSignal() }); }
     abort(reason) { raiseAbort(this.signal, reason); }
   }
 
@@ -196,11 +196,11 @@
       const signal = options.signal ?? source?.signal ?? null;
       if (signal !== null && !(signal instanceof AbortSignal))
         throw new TypeError("fetch signal must be an AbortSignal");
-      Object.defineProperties(this, {
-        method: { value: method, enumerable: true },
-        url: { value: resolveAgainstDocument(source ? source.url : String(input)).href, enumerable: true },
-        headers: { value: headers, enumerable: true },
-        signal: { value: signal, enumerable: true },
+      defineMembers(this, {
+        method,
+        url: resolveAgainstDocument(source ? source.url : String(input)).href,
+        headers,
+        signal,
       });
       bodyStates.set(this, { used: false, id: null, bytes: body });
     }
@@ -213,13 +213,13 @@
       if (!Number.isInteger(status) || status < 200 || status > 599)
         throw new RangeError(`invalid response status: ${options.status}`);
       const headers = new Headers(options.headers);
-      Object.defineProperties(this, {
-        status: { value: status, enumerable: true },
-        statusText: { value: String(options.statusText ?? ""), enumerable: true },
-        headers: { value: headers, enumerable: true },
-        ok: { value: status >= 200 && status < 300, enumerable: true },
-        url: { value: "", enumerable: true },
-        redirected: { value: false, enumerable: true },
+      defineMembers(this, {
+        status,
+        statusText: String(options.statusText ?? ""),
+        headers,
+        ok: status >= 200 && status < 300,
+        url: "",
+        redirected: false,
       });
       bodyStates.set(this, { used: false, id: null, bytes: encodeBody(body, headers) });
     }
@@ -233,13 +233,13 @@
 
   const receivedResponse = record => {
     const response = Object.create(Response.prototype);
-    Object.defineProperties(response, {
-      status: { value: record.status, enumerable: true },
-      statusText: { value: record.statusText, enumerable: true },
-      headers: { value: new Headers(record.headers), enumerable: true },
-      ok: { value: record.ok, enumerable: true },
-      url: { value: record.url, enumerable: true },
-      redirected: { value: record.redirected, enumerable: true },
+    defineMembers(response, {
+      status: record.status,
+      statusText: record.statusText,
+      headers: new Headers(record.headers),
+      ok: record.ok,
+      url: record.url,
+      redirected: record.redirected,
     });
     bodyStates.set(response, { used: false, id: record.id, bytes: null });
     abandonedBodies.register(response, record.id, response);

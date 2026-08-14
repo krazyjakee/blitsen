@@ -28,6 +28,14 @@ pub(crate) struct FormState {
     /// Whether the writes above still have to reach Blitz's own control state,
     /// which does not exist until the control has been laid out once.
     pub(crate) pending: bool,
+    /// Whether the current selection was set without a direction.
+    ///
+    /// The editor holds an anchor and a focus, so it can say forward or
+    /// backward and nothing else; HTML's `"none"` — what a range set from
+    /// script has until something says otherwise — is the one bit with nowhere
+    /// else to live. Cleared by anything that moves the caret, so it cannot
+    /// outlive the range it describes. See `crate::text_input`.
+    pub(crate) directionless: bool,
 }
 
 impl BlitzDom {
@@ -66,8 +74,17 @@ impl BlitzDom {
             return true;
         }
         input.editor.set_text(value);
-        self.document
-            .with_text_input(node, |mut driver| driver.refresh_layout());
+        // The caret lands at the end of the new value and any selection is
+        // dropped, which is what HTML's value setter does — a field a framework
+        // has just re-rendered must not keep a caret pointing into text that is
+        // no longer there.
+        self.document.with_text_input(node, |mut driver| {
+            driver.refresh_layout();
+            driver.move_to_text_end();
+        });
+        if let Some(state) = self.form_state.get_mut(&node) {
+            state.directionless = false;
+        }
         true
     }
 

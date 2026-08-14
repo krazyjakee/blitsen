@@ -20,12 +20,16 @@ const eventSurface = JSON.parse(native.runBridgeHarness(
        throw new Error("MouseEvent property surface");
      const keyboard = new KeyboardEvent("keydown", { key: "A", code: "KeyA", repeat: true,
        altKey: true, metaKey: true });
-     if (keyboard.key !== "A" || keyboard.code !== "KeyA" || !keyboard.repeat ||
+     if (keyboard.key !== "A" || keyboard.code !== "KeyA" || keyboard.keyCode !== 65 ||
+         keyboard.which !== 65 || keyboard.charCode !== 0 || !keyboard.repeat ||
          keyboard.ctrlKey || keyboard.shiftKey || !keyboard.altKey || !keyboard.metaKey)
        throw new Error("KeyboardEvent property surface");
+     const backspace = new KeyboardEvent("keydown", { key: "Backspace", code: "Backspace" });
+     if (backspace.keyCode !== 8 || backspace.which !== 8)
+       throw new Error("KeyboardEvent legacy command identity");
      const detail = { answer: 42 };
      if (new CustomEvent("answer", { detail }).detail !== detail) throw new Error("CustomEvent detail");
-     for (const unsupported of ["pageX", "pageY", "which", "charCode", "relatedTarget", "isTrusted"])
+     for (const unsupported of ["pageX", "pageY", "relatedTarget", "isTrusted"])
        if (unsupported in mouse || unsupported in keyboard || unsupported in event)
          throw new Error("unsupported event property must be absent: " + unsupported);
      target.setAttribute("data-events", "ok"); }`,
@@ -135,11 +139,13 @@ const keyboardDispatch = JSON.parse(native.runBridgeHarness(
      if (document.activeElement !== first || focusOrder.join(",") !== "first-focus") throw new Error("focus()");
      let keyRecord;
      first.addEventListener("keydown", event => {
-       keyRecord = [event.key, event.code, event.repeat, event.ctrlKey, event.currentTarget === first];
+       keyRecord = [event.key, event.code, event.keyCode, event.which, event.repeat, event.ctrlKey,
+         event.currentTarget === first];
      });
      __blitsenDispatchKeyboardEvent("keydown", { bubbles: true, cancelable: true,
        key: "a", code: "KeyA", repeat: true, ctrlKey: true });
-     if (keyRecord.join(",") !== "a,KeyA,true,true,true") throw new Error("native KeyboardEvent dispatch");
+     if (keyRecord.join(",") !== "a,KeyA,65,65,true,true,true")
+       throw new Error("native KeyboardEvent dispatch");
      __blitsenDispatchKeyboardEvent("keydown", { bubbles: true, cancelable: true,
        key: "Tab", code: "Tab", repeat: false });
      if (document.activeElement !== second || focusOrder.join(",") !== "first-focus,first-blur,second-focus")
@@ -167,20 +173,44 @@ const defaultActions = JSON.parse(native.runBridgeHarness(
      #content { height:300px }
    </style>
    <div id="scroller"><div id="content"><button id="focusable"><span id="click-target">target</span></button></div></div>
-   <button id="cancelled"><span id="cancel-target">cancel</span></button>`,
+   <button id="cancelled"><span id="cancel-target">cancel</span></button>
+   <input id="keeper"><div id="inert">nothing focusable here</div>`,
   `{ const clickTarget = document.getElementById("click-target");
      const focusable = document.getElementById("focusable");
+     // Focus is mousedown's default action, not click's, and it runs after the
+     // event has finished propagating.
      let focusDuringBubble;
-     window.addEventListener("click", () => { focusDuringBubble = document.activeElement; });
-     __blitsenInjectMouseEvent("click", clickTarget, { bubbles: true, cancelable: true });
+     window.addEventListener("mousedown", () => { focusDuringBubble = document.activeElement; });
+     __blitsenInjectMouseEvent("mousedown", clickTarget, { bubbles: true, cancelable: true });
      if (focusDuringBubble !== document.body || document.activeElement !== focusable)
-       throw new Error("click focus must follow bubbling and choose the nearest focusable ancestor");
+       throw new Error("mousedown focus must follow bubbling and choose the nearest focusable ancestor");
+     __blitsenInjectMouseEvent("click", clickTarget, { bubbles: true, cancelable: true });
+     if (document.activeElement !== focusable)
+       throw new Error("the click that follows must not take focus again");
 
-     focusable.blur();
+     // Cancelling the mousedown keeps focus where the application put it. This
+     // is the whole of how a component that focuses something of its own — a
+     // code editor moving the caret into a hidden textarea — holds onto it, and
+     // a click cannot stand in for it: by then the focus has already moved.
      const cancelTarget = document.getElementById("cancel-target");
-     cancelTarget.addEventListener("click", event => event.preventDefault());
+     const keeper = document.getElementById("keeper");
+     const claim = event => { keeper.focus(); event.preventDefault(); };
+     cancelTarget.addEventListener("mousedown", claim);
+     __blitsenInjectMouseEvent("mousedown", cancelTarget, { bubbles: true, cancelable: true });
      __blitsenInjectMouseEvent("click", cancelTarget, { bubbles: true, cancelable: true });
-     if (document.activeElement !== document.body) throw new Error("preventDefault click focus");
+     if (document.activeElement !== keeper)
+       throw new Error("a cancelled mousedown leaves focus where a listener put it: "
+         + document.activeElement.id);
+     cancelTarget.removeEventListener("mousedown", claim);
+
+     // And an uncancelled press on nothing focusable still drops focus, the way
+     // clicking off a field in a browser does — the divergence that would keep
+     // a dropdown listening for focusout open for ever.
+     __blitsenInjectMouseEvent("mousedown", document.getElementById("inert"),
+       { bubbles: true, cancelable: true });
+     if (document.activeElement !== document.body)
+       throw new Error("pressing on nothing focusable blurs what was focused: "
+         + document.activeElement.id);
 
      __blitsenInjectMouseEvent("wheel", clickTarget,
        { bubbles: true, cancelable: true, deltaY: 40 });

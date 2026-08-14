@@ -1,9 +1,10 @@
-//! Frame pacing for the outer loop, and the headless frame budget CI uses.
+//! Frame pacing for active windows, and the headless frame budget CI uses.
 //!
 //! The Phase 1 launcher paces itself with `Bun.sleep` against a 60 Hz schedule
 //! that never drifts forward on a slow frame. This is the same schedule, and it
 //! honours the same environment variables, so `test:standalone` measures the
-//! two hosts the same way.
+//! two hosts the same way. A window without animation or an acceptance-test
+//! frame budget blocks in winit instead, so this pacer creates no idle wakeups.
 
 use std::time::{Duration, Instant};
 
@@ -49,6 +50,12 @@ impl Pacer {
             self.started = Instant::now();
         }
         self.limit > 0 && self.frames >= self.limit + self.warmup
+    }
+
+    /// Whether an acceptance-test frame budget requires regular turns even
+    /// when the application itself has no animation frame pending.
+    pub fn forcing_frames(&self) -> bool {
+        self.limit > 0
     }
 
     /// Sleeps until the next frame, or until a timer comes due first.

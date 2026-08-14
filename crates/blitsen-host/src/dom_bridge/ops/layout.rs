@@ -124,9 +124,7 @@ pub(super) fn dispatch(
                 None => Value::Null,
                 Some(hit) => json!({
                     "target": DomRuntime::serialize_handle(hit.target),
-                    "path": hit.path.into_iter()
-                        .map(DomRuntime::serialize_handle)
-                        .collect::<Vec<_>>(),
+                    "path": serialized_all(hit.path),
                     "offsetX": hit.offset_x,
                     "offsetY": hit.offset_y,
                 }),

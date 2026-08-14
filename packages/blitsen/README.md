@@ -12,7 +12,16 @@ npx blitsen . --width 800 --height 600 --title "My app"
 ```
 
 It resolves `index.html`, preflights local entrypoint assets, and opens the result
-in a native window. Export with:
+in a native window.
+
+Point it at a dev server instead, and the window replaces the browser tab while your own tooling
+goes on serving, transforming and hot-reloading:
+
+```sh
+npx blitsen http://localhost:5173
+```
+
+Export with:
 
 ```sh
 npx blitsen build dist --out MyApp
@@ -189,10 +198,10 @@ that is a mistake rather than a missing capability. `blitsen/app`, `blitsen/wind
 `blitsen/dialog` and `blitsen/clipboard` carry members today, some of them platform-specific —
 `dialog.*` is Linux and the BSDs only — which is what makes the feature test above the way to ask.
 
-Exports are architecture proofs and are not yet cleared for redistribution: the automated
-third-party notice and library-replaceability gate
-([#121](https://github.com/krazyjakee/blitsen/issues/121)) is still outstanding, and `blitsen build`
-says so on every build. Follow development and read the feasibility results at
+An export embeds the third-party notices it owes, generated from the dependency graph the runtime
+was built from; run the executable with `--licenses` to print them. A build that finds none says
+so, which is what an export carrying a `.node` addon gets — it links the older Bun host, whose own
+notice set is not automated. Follow development and read the feasibility results at
 [github.com/krazyjakee/blitsen](https://github.com/krazyjakee/blitsen).
 
 The runtime owns its own event loop: timers, promise jobs and I/O completions are drained at the

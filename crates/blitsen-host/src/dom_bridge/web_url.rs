@@ -13,7 +13,12 @@ use url::Url;
 /// client-side router needs — and obviously not an HTTP origin.
 pub(super) const DOCUMENT_URL: &str = "blitsen://app/";
 
-/// Serializes a URL into the component set `location` exposes.
+/// Serializes a URL into the component set `location` and `URL` expose.
+///
+/// `location` reads a subset; the credentials and the `opaque` flag are here for
+/// `URL`, which has to be able to put a URL back together after a setter has
+/// changed one component of it — and cannot, for a URL whose path is opaque
+/// (`mailto:`, `data:`), which is exactly what the flag says.
 fn parts(url: &Url) -> Value {
     let port = url.port().map(|port| port.to_string()).unwrap_or_default();
     let host = url.host_str().unwrap_or_default();
@@ -21,6 +26,8 @@ fn parts(url: &Url) -> Value {
     json!({
         "href": url.as_str(),
         "protocol": format!("{}:", url.scheme()),
+        "username": url.username(),
+        "password": url.password().unwrap_or_default(),
         "host": if port.is_empty() { host.to_string() } else { format!("{host}:{port}") },
         "hostname": host,
         "port": port,
@@ -28,6 +35,7 @@ fn parts(url: &Url) -> Value {
         "pathname": if url.path().is_empty() { "/" } else { url.path() },
         "search": url.query().filter(|query| !query.is_empty()).map_or_else(String::new, |query| format!("?{query}")),
         "hash": url.fragment().filter(|fragment| !fragment.is_empty()).map_or_else(String::new, |fragment| format!("#{fragment}")),
+        "opaque": url.cannot_be_a_base(),
     })
 }
 

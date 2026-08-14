@@ -1,5 +1,27 @@
+// Blitsen lays out and paints canvas elements, but its DOM bridge does not yet
+// expose getContext(). Keep Monaco on the native canvas element and provide the
+// small 2D surface it needs until that bridge API lands.
 const originalCreateElement = document.createElement.bind(document);
 const canvasContexts = new WeakMap();
+
+const measureText = (text, font) => {
+  const probe = originalCreateElement("span");
+  probe.style.cssText = [
+    "position: absolute",
+    "left: -10000px",
+    "top: -10000px",
+    "white-space: pre",
+    `font: ${font}`,
+  ].join(";");
+  probe.textContent = String(text);
+  document.body.appendChild(probe);
+
+  const range = document.createRange();
+  range.selectNodeContents(probe);
+  const width = range.getBoundingClientRect().width;
+  probe.remove();
+  return { width };
+};
 
 const createCanvasContext = () => ({
   backingStorePixelRatio: 1,
@@ -36,55 +58,25 @@ const createCanvasContext = () => ({
     return { addColorStop() {} };
   },
   measureText(text) {
-    const fontSize = Number.parseFloat(this.font.match(/(\d+(?:\.\d+)?)px/)?.[1]) || 14;
-    return { width: String(text).length * fontSize * 0.6 };
+    return measureText(text, this.font);
   },
 });
 
 document.createElement = function createElement(tagName, options) {
-  const isCanvas = String(tagName).toLowerCase() === "canvas";
-  let element;
-
-  try {
-    element = originalCreateElement(tagName, options);
-  } catch (error) {
-    if (!isCanvas) {
-      throw error;
-    }
-
-    element = originalCreateElement("div");
+  const element = originalCreateElement(tagName, options);
+  if (String(tagName).toLowerCase() !== "canvas" || typeof element.getContext === "function") {
+    return element;
   }
 
-  let hasNative2dContext = false;
-
-  if (isCanvas) {
-    try {
-      hasNative2dContext = Boolean(element.getContext?.("2d"));
-    } catch {
-      // Blitsen may expose a placeholder method that throws for unsupported APIs.
+  element.getContext = (type) => {
+    if (type !== "2d") {
+      return null;
     }
-  }
-
-  if (isCanvas && !hasNative2dContext) {
-    const getContext = (type) => {
-      if (type !== "2d") {
-        return null;
-      }
-
-      if (!canvasContexts.has(element)) {
-        canvasContexts.set(element, createCanvasContext());
-      }
-
-      return canvasContexts.get(element);
-    };
-
-    try {
-      element.getContext = getContext;
-    } catch {
-      Object.defineProperty(element, "getContext", { value: getContext });
+    if (!canvasContexts.has(element)) {
+      canvasContexts.set(element, createCanvasContext());
     }
-  }
-
+    return canvasContexts.get(element);
+  };
   return element;
 };
 

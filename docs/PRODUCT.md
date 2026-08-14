@@ -227,6 +227,14 @@ The second form matters: developers keep their existing dev server, HMR and tool
 they are, and simply see the result in the native runtime instead of a browser. Production
 export then consumes the same tool's static output. Nothing about the inner loop changes.
 
+**Both forms work today.** A dev server is a third source of an application's files, beside a
+directory and the section inside an export, and everything downstream is unchanged — the document
+is on the application origin, modules resolve against it, and `fetch` reads through it. Measured
+against a real `vite dev`: React mounts and `[vite] connected.` appears on the console. What is not
+implemented is source-map consumption in stack frames; see
+[COMPATIBILITY.md](COMPATIBILITY.md#development-your-own-dev-server) for that and for the one Vite
+log line it costs to leave `location` on the application origin.
+
 ### Application code
 
 Ordinary web code, ordinary npm:

@@ -40,12 +40,9 @@ pub(super) fn dispatch(
             dom.query_selector(dom.document(), bridge_arg(arguments, 0, "selector")?)
                 .map_err(dom_error)?,
         )),
-        "querySelectorAll" => Ok(json!(
+        "querySelectorAll" => Ok(serialized_all(
             dom.query_selector_all(dom.document(), bridge_arg(arguments, 0, "selector")?)
-                .map_err(dom_error)?
-                .into_iter()
-                .map(DomRuntime::serialize_handle)
-                .collect::<Vec<_>>()
+                .map_err(dom_error)?,
         )),
         "querySelectorIn" => {
             let node = handle(runtime, arguments, 0)?;
@@ -56,31 +53,26 @@ pub(super) fn dispatch(
         }
         "querySelectorAllIn" => {
             let node = handle(runtime, arguments, 0)?;
-            Ok(json!(
+            Ok(serialized_all(
                 dom.query_selector_all(node, bridge_arg(arguments, 1, "selector")?)
-                    .map_err(dom_error)?
-                    .into_iter()
-                    .map(DomRuntime::serialize_handle)
-                    .collect::<Vec<_>>()
+                    .map_err(dom_error)?,
             ))
         }
         "elementsByClassName" => {
             let root = dom.document();
-            Ok(json!(
-                elements_by_class_name(dom, root, bridge_arg(arguments, 0, "class names")?)?
-                    .into_iter()
-                    .map(DomRuntime::serialize_handle)
-                    .collect::<Vec<_>>()
-            ))
+            Ok(serialized_all(elements_by_class_name(
+                dom,
+                root,
+                bridge_arg(arguments, 0, "class names")?,
+            )?))
         }
         "elementsByClassNameIn" => {
             let node = handle(runtime, arguments, 0)?;
-            Ok(json!(
-                elements_by_class_name(dom, node, bridge_arg(arguments, 1, "class names")?)?
-                    .into_iter()
-                    .map(DomRuntime::serialize_handle)
-                    .collect::<Vec<_>>()
-            ))
+            Ok(serialized_all(elements_by_class_name(
+                dom,
+                node,
+                bridge_arg(arguments, 1, "class names")?,
+            )?))
         }
         // Selector matching against a single element is the renderer's own, not
         // an emulation over `querySelectorAll`: a detached element has no scope

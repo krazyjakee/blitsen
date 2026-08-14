@@ -68,10 +68,26 @@ async function collectShippedPaths(root, directory = root, paths = new Set()) {
 // so `./data.json` and `/data.json` name the same file, and both are answered
 // from the export when it carries one. Query and fragment are not part of the
 // file's name, exactly as a server would drop them before opening it.
-function namesAShippedFile(target, shipped) {
+//
+// A relative one is also tried against the file it was written in, because
+// `fetch(new URL("./blip.wav", import.meta.url))` resolves against the module
+// rather than against the document, and a chunk in `assets/` naming its own
+// neighbour is the common case. Only ever an extra way to *not* report: a
+// finding survives only when neither reading of it names a shipped file.
+function namesAShippedFile(target, shipped, file) {
   if (target === undefined) return false;
-  const path = target.split(/[?#]/)[0].replace(/^\.?\//, "");
-  return path !== "" && shipped.has(path);
+  const path = target.split(/[?#]/)[0];
+  if (path === "") return false;
+  if (shipped.has(path.replace(/^\.?\//, ""))) return true;
+  if (path.startsWith("/")) return false;
+  const directory = file.split("/").slice(0, -1);
+  const segments = path.split("/");
+  for (const segment of segments) {
+    if (segment === "." || segment === "") continue;
+    if (segment === "..") directory.pop();
+    else directory.push(segment);
+  }
+  return shipped.has(directory.join("/"));
 }
 
 async function collectScannableFiles(root, directory = root) {
@@ -106,7 +122,8 @@ export async function doctorApplication(root) {
   // Reported only for what the export does not carry: reading a file the
   // application shipped is what `fetch` is for now, not a finding (issue #125).
   const reported = diagnostics.filter(diagnostic =>
-    diagnostic.code !== "WEB_FETCH" || !namesAShippedFile(diagnostic.target, shipped));
+    diagnostic.code !== "WEB_FETCH"
+    || !namesAShippedFile(diagnostic.target, shipped, diagnostic.file));
   reported.sort((left, right) => left.file.localeCompare(right.file)
     || left.line - right.line || left.column - right.column || left.code.localeCompare(right.code));
   return {

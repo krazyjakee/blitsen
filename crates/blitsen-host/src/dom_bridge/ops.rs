@@ -10,11 +10,15 @@ mod document;
 mod layout;
 mod query;
 mod style;
+mod text_input;
 mod tree;
 
 use blitsen_blitz::BlitzDom;
 use blitsen_core::js_property_to_css;
-use blitsen_dom::{DomBackend, DomError, DomName, Namespace, NodeKind, Rect};
+use blitsen_dom::{
+    DomBackend, DomError, DomName, Namespace, NodeKind, Rect, SelectionDirection, TextEdit,
+    TextMotion, TextSelection,
+};
 use blitsen_js::JsError;
 use blitz::dom::NodeId;
 use serde_json::{Value, json};
@@ -26,12 +30,13 @@ type Answer = Result<Option<Value>, JsError>;
 
 type Group = fn(&DomRuntime, &mut BlitzDom, &str, &[String]) -> Answer;
 
-const GROUPS: [Group; 6] = [
+const GROUPS: [Group; 7] = [
     query::dispatch,
     layout::dispatch,
     tree::dispatch,
     attributes::dispatch,
     style::dispatch,
+    text_input::dispatch,
     document::dispatch,
 ];
 
@@ -77,6 +82,35 @@ fn serialized(node: Option<NodeId>) -> Value {
     node.map(DomRuntime::serialize_handle)
         .map(Value::String)
         .unwrap_or(Value::Null)
+}
+
+/// The shape every operation answering with more than one node returns.
+fn serialized_all(nodes: impl IntoIterator<Item = NodeId>) -> Value {
+    Value::Array(
+        nodes
+            .into_iter()
+            .map(DomRuntime::serialize_handle)
+            .map(Value::String)
+            .collect(),
+    )
+}
+
+/// An ordinary HTML attribute's name, from the argument at `index`.
+///
+/// Lower-cased because the null namespace is the one HTML attributes live in and
+/// it folds case; the namespaced trio goes through [`attribute_name`] instead.
+fn attribute_arg(arguments: &[String], index: usize) -> Result<DomName, JsError> {
+    Ok(DomName::attribute(
+        bridge_arg(arguments, index, "attribute name")?.to_ascii_lowercase(),
+    ))
+}
+
+/// A namespaced attribute's name, from the pair the `*AttributeNS` trio passes.
+fn attribute_arg_ns(arguments: &[String], index: usize) -> Result<DomName, JsError> {
+    attribute_name(
+        bridge_arg(arguments, index, "namespace")?,
+        bridge_arg(arguments, index + 1, "attribute name")?,
+    )
 }
 
 fn dom_error(error: DomError) -> JsError {

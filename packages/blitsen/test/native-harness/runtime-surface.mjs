@@ -1,5 +1,6 @@
 import { strict as assert } from "node:assert";
 import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 
 import { native } from "./addon.mjs";
 
@@ -7,8 +8,13 @@ import { native } from "./addon.mjs";
 // this asks the runtime that source produces, so neither `doctor` nor
 // COMPATIBILITY.md can claim an API the application would find otherwise —
 // including one the Phase 1 host supplies and the Phase 2 engine would not.
+//
+// A path rather than a URL object, because by the time this file runs the
+// bridge has installed Blitsen's `URL` over the host's, and `node:fs` only
+// accepts the host's. Application code never sees that seam — this harness runs
+// inside the Phase 1 host's own realm, which is the one place the two meet.
 const manifest = JSON.parse(await readFile(
-  new URL("../../src/api-manifest.json", import.meta.url), "utf8"));
+  join(import.meta.dirname, "../../src/api-manifest.json"), "utf8"));
 const declared = JSON.parse(native.runBridgeHarness(
   `<div id="surface"></div>`,
   `{ globalThis.__blitsenSurface = ${JSON.stringify(manifest.apis)}.map(entry => {

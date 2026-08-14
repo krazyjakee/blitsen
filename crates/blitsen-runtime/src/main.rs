@@ -16,6 +16,7 @@
 
 mod engine;
 mod loop_pacing;
+mod memory_defaults;
 mod report;
 mod session;
 
@@ -25,6 +26,9 @@ use std::process::ExitCode;
 use blitsen_core::bundle::AppBundle;
 
 fn main() -> ExitCode {
+    // Before Tokio, wgpu or a driver starts a thread: the environment changes
+    // and glibc arena policy below are process-global initialization.
+    memory_defaults::apply();
     match run() {
         Ok(code) => code,
         Err(error) => {
@@ -54,12 +58,21 @@ fn run() -> Result<ExitCode, String> {
             report::print_engine();
             Ok(ExitCode::SUCCESS)
         }
+        // The third-party notices this artifact carries (issue #121). Printed by
+        // the executable itself, from the section appended to it, so what a
+        // recipient reads is what was shipped rather than what a build log said.
+        Some("--licenses") => report::print_licenses(bundle.as_ref()),
         // Frame determinism (issue #48) across the host swap: the same trace,
         // replayed at the same fixed timestep, has to produce the same digests
         // on both hosts. The Phase 1 side of this is `replayDocumentFrames` in
         // the addon; this is the same function behind the other engine.
         Some("--replay") => report::replay(&arguments[1..]),
         Some(argument) if argument.starts_with("--") => Err(format!("unknown option {argument}")),
+        // Proxy mode (#67): a URL is a dev server to read the application from,
+        // rather than a directory to read it from. Same session either way.
+        Some(url) if url.starts_with("http://") || url.starts_with("https://") => {
+            session::run_url(url, &arguments[1..])
+        }
         Some(directory) => session::run_directory(PathBuf::from(directory), &arguments[1..]),
         None => match bundle {
             Some(bundle) => session::run_bundle(bundle, &arguments),

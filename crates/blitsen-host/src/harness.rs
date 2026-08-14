@@ -13,9 +13,7 @@ use std::sync::Arc;
 use anyrender::{PaintScene as _, render_to_buffer};
 use anyrender_vello_cpu::VelloCpuImageRenderer;
 use blitsen_blitz::{BlitzDom, resources::LocalResources};
-use blitsen_core::{
-    DocumentScript, ScriptDocument, WindowState, execute_collected_document_scripts_from,
-};
+use blitsen_core::{DocumentScript, WindowState, execute_collected_document_scripts_from};
 use blitsen_dom::{DomBackend, LayoutSnapshot};
 use blitsen_js::{JsEngine, JsError};
 use blitz::dom::{DocumentConfig, util::Color};
@@ -105,37 +103,13 @@ pub fn active_document_harness() -> Option<ActiveDocumentHarness> {
     ACTIVE_DOCUMENT_HARNESS.with(|active| active.borrow().clone())
 }
 
-/// Installs the bridge and runs a document's scripts, as a window does.
+/// Installs the bridge and runs a document's scripts, as a window does, reading
+/// external ones through `loader`.
 ///
 /// Called for a fresh document and for a reload, which is why it begins by
-/// disposing whatever the previous document left on the global object.
-pub fn execute_window_scripts<E: JsEngine + 'static>(
-    engine: &mut E,
-    runtime: DomRuntime,
-    scripts: Vec<DocumentScript>,
-    entrypoint: &str,
-    width: u32,
-    height: u32,
-    test_harness: bool,
-) -> Result<Rc<RefCell<WindowState>>, JsError> {
-    execute_window_scripts_from(
-        engine,
-        runtime,
-        scripts,
-        entrypoint,
-        width,
-        height,
-        test_harness,
-        &blitsen_core::LocalScripts,
-        None,
-    )
-}
-
-/// Installs the bridge and runs a document's scripts, reading external ones
-/// through `loader`.
-///
-/// An exported Phase 2 application has no filesystem to read them from; its
-/// loader reads the section appended to the executable instead.
+/// disposing whatever the previous document left on the global object. An
+/// exported Phase 2 application has no filesystem to read the external scripts
+/// from; its loader reads the section appended to the executable instead.
 #[allow(clippy::too_many_arguments)]
 pub fn execute_window_scripts_from<E: JsEngine + 'static>(
     engine: &mut E,
@@ -438,7 +412,7 @@ pub fn encode_png(pixels: &[u8], width: u32, height: u32) -> Result<Vec<u8>, JsE
 }
 
 /// Loads a real entrypoint the way a window does and snapshots the result.
-pub fn execute_document_harness<E: JsEngine + 'static>(
+pub fn execute_document_harness<E: JsEngine + Clone + 'static>(
     engine: E,
     entrypoint: &Path,
     width: u32,
@@ -454,42 +428,40 @@ pub fn execute_document_harness<E: JsEngine + 'static>(
 }
 
 /// Parses an entrypoint, installs the bridge and runs its document scripts.
-pub fn load_document_harness<E: JsEngine + 'static>(
+///
+/// The directory is opened as an application rather than as loose files, which
+/// is the same thing a window does with it (`app::load_document`). It used to
+/// read them off disk directly, and that made every headless path — the
+/// standalone check an exported application answers, `--replay`, the fixtures —
+/// disagree with the window beside it: a module ran under a `file:` identifier
+/// instead of an application URL, so `new URL("./data.json", import.meta.url)`
+/// named a path `fetch` refuses, and the Phase 1 export failed the read that the
+/// Phase 2 one completed (#126, #90).
+pub fn load_document_harness<E: JsEngine + Clone + 'static>(
     mut engine: E,
     entrypoint: &Path,
     width: u32,
     height: u32,
     test_harness: bool,
 ) -> Result<(E, Rc<RefCell<BlitzDom>>), JsError> {
-    let source = std::fs::read_to_string(entrypoint).map_err(|error| {
-        JsError::new(format!("could not read {}: {error}", entrypoint.display()))
-    })?;
-    let root = entrypoint.parent().unwrap_or_else(|| Path::new("."));
-    let runtime = DomRuntime::new(BlitzDom::from_html(
-        &source,
-        DocumentConfig {
-            base_url: Some(format!("file://{}/", root.display())),
-            net_provider: Some(Arc::new(LocalResources) as Arc<dyn NetProvider>),
-            viewport: Some(Viewport::new(width, height, 1.0, ColorScheme::Light)),
-            ..Default::default()
-        },
-    ));
-    let document = runtime.document();
-    let scripts = document.borrow().document_scripts().map_err(dom_error)?;
-    execute_window_scripts(
+    let files = crate::app::AppFiles::directory(entrypoint)?;
+    let net_provider = files
+        .net_provider()
+        .unwrap_or_else(|| Arc::new(LocalResources) as Arc<dyn NetProvider>);
+    let loaded = crate::app::load_document(
         &mut engine,
-        runtime,
-        scripts,
-        &entrypoint.to_string_lossy(),
+        &files,
+        net_provider,
         width,
         height,
+        None,
         test_harness,
     )?;
     engine.evaluate_script(
         "globalThis.__blitsenDispatchLifecycleEvent('load')",
         "blitsen:load",
     )?;
-    Ok((engine, document))
+    Ok((engine, loaded.document))
 }
 
 /// Runs a loaded entrypoint through the frame pipeline, optionally recording

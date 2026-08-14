@@ -116,6 +116,67 @@ try {
   assert.deepEqual(settled.get("refused"), ["refused", "TypeError"]);
   delete globalThis.__blitsenNetwork;
 
+  // `URL` and `URLSearchParams`, which are Blitsen's rather than the host's on
+  // both hosts (#125, #126). The one an application reaches for first is
+  // `new URL("./blip.wav", import.meta.url)`: the identifier a module script
+  // runs under is an application URL, and resolving an asset against it has to
+  // land on the file the application shipped.
+  const urls = JSON.parse(native.runBridgeHarness(
+    `<div id="url"></div>`,
+    `{ const results = globalThis.__blitsenUrl = {};
+       const asset = new URL("./blip.wav", "blitsen://app/assets/index-a1b2c3.js");
+       results.asset = asset.href;
+       results.parts = [asset.protocol, asset.host, asset.pathname, asset.search, asset.hash];
+       const absolute = new URL("https://example.com:8443/a/b?q=1&q=2#frag");
+       results.absolute = [absolute.origin, absolute.port, absolute.pathname,
+         absolute.search, absolute.hash, String(absolute), absolute.toJSON()];
+       results.params = [absolute.searchParams.getAll("q"), absolute.searchParams.get("missing"),
+         absolute.searchParams.size];
+       absolute.searchParams.set("q", "3");
+       absolute.searchParams.append("r", "a b&c");
+       // A live searchParams writes through to the URL it came from, which is
+       // the whole reason to hand one out rather than a copy.
+       results.written = [absolute.search, absolute.href];
+       absolute.pathname = "moved";
+       absolute.hash = "top";
+       absolute.port = "";
+       results.mutated = [absolute.href, absolute.host, absolute.origin];
+       const invalid = absolute.href;
+       absolute.port = "not-a-port";
+       results.refused = absolute.href === invalid;
+       results.canParse = [URL.canParse("blitsen://app/x"), URL.canParse("nonsense"),
+         URL.parse("nonsense"), typeof URL.parse("blitsen://app/x")];
+       let threw;
+       try { new URL("./relative-with-no-base"); } catch (error) { threw = error.constructor.name; }
+       results.threw = threw;
+       // Object URLs are absent, not stubbed: there is no origin to hang one on.
+       results.objectUrls = ["createObjectURL" in URL, "revokeObjectURL" in URL];
+       const query = new URLSearchParams([["b", "2"], ["a", "1"], ["a", "0"]]);
+       query.sort();
+       results.query = [query.toString(), [...query.keys()], new URLSearchParams("x=1&y=a+b%26c").get("y")];
+       document.getElementById("url").setAttribute("data-url", "ok"); }`,
+    200,
+    100,
+  ));
+  assert.equal(urls.nodes.find(node => node.attributes.id === "url").attributes["data-url"], "ok");
+  const url = globalThis.__blitsenUrl;
+  assert.equal(url.asset, "blitsen://app/assets/blip.wav",
+    "an asset resolves against the module that named it, on the application origin");
+  assert.deepEqual(url.parts, ["blitsen:", "app", "/assets/blip.wav", "", ""]);
+  assert.deepEqual(url.absolute, ["https://example.com:8443", "8443", "/a/b", "?q=1&q=2", "#frag",
+    "https://example.com:8443/a/b?q=1&q=2#frag", "https://example.com:8443/a/b?q=1&q=2#frag"]);
+  assert.deepEqual(url.params, [["1", "2"], null, 2]);
+  assert.deepEqual(url.written, ["?q=3&r=a+b%26c",
+    "https://example.com:8443/a/b?q=3&r=a+b%26c#frag"]);
+  assert.deepEqual(url.mutated, ["https://example.com/moved?q=3&r=a+b%26c#top",
+    "example.com", "https://example.com"]);
+  assert.equal(url.refused, true, "a setter given something unparseable leaves the URL alone");
+  assert.deepEqual(url.canParse, [true, false, null, "object"]);
+  assert.equal(url.threw, "TypeError", "a relative URL with no base is a TypeError");
+  assert.deepEqual(url.objectUrls, [false, false]);
+  assert.deepEqual(url.query, ["a=1&a=0&b=2", ["a", "a", "b"], "a b&c"]);
+  delete globalThis.__blitsenUrl;
+
   // `window.stop()`. Svelte's minified store reads the bare name for its truth
   // value alone, but what it names is a real abort of the document's load.
   const stopped = JSON.parse(native.runBridgeHarness(

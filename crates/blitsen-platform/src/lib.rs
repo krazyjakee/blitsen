@@ -11,6 +11,7 @@ pub mod clipboard;
 // module's own documentation says why.
 #[cfg(all(unix, not(target_os = "macos")))]
 pub mod dialog;
+pub mod os;
 
 use std::fmt;
 

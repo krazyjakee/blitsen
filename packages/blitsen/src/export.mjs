@@ -1,5 +1,6 @@
 import { access, copyFile, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, join, posix, relative, resolve, sep } from "node:path";
+import { gzipSync } from "node:zlib";
 import { linkBundle } from "./bundle.mjs";
 import { packageBuild, signArtifact } from "./packaging.mjs";
 import { describeRuntime, hostTarget, requestedHost, resolvePhase2Runtime } from "./runtime.mjs";
@@ -380,11 +381,25 @@ try {
   const engine = new native.Engine();
   if (process.env.BLITSEN_STANDALONE_CHECK === "1") {
     native.runDocumentScriptsHarness(entrypoint, ${options.width}, ${options.height});
-    await Bun.sleep(Number(process.env.BLITSEN_STANDALONE_CHECK_DELAY || 50));
+    // Turning the loop rather than only sleeping through it: a fetch, an image
+    // decode and a timer all land on the animation-frame tick, so a check that
+    // slept would report on an application whose asynchronous work had not
+    // happened. The Phase 2 check settles the same way, which is what lets the
+    // two be compared line for line (issue #90).
+    const settle = async () => {
+      const deadline = performance.now()
+        + Number(process.env.BLITSEN_STANDALONE_CHECK_DELAY || 50);
+      do {
+        native.evaluateDocumentHarness(
+          "globalThis.__blitsenAnimationFrameTick(" + performance.now() + ")");
+        await Bun.sleep(4);
+      } while (performance.now() < deadline);
+    };
+    await settle();
     native.snapshotDocumentHarness();
     if (process.env.BLITSEN_STANDALONE_CHECK_SCRIPT)
       native.evaluateDocumentHarness(process.env.BLITSEN_STANDALONE_CHECK_SCRIPT);
-    await Bun.sleep(Number(process.env.BLITSEN_STANDALONE_CHECK_DELAY || 50));
+    await settle();
     if (process.env.BLITSEN_STANDALONE_CHECK_ASSERT)
       native.evaluateDocumentHarness(process.env.BLITSEN_STANDALONE_CHECK_ASSERT);
     native.snapshotDocumentHarness();
@@ -419,6 +434,14 @@ try {
       console.log(\`Blitsen native frame check passed (\${frameLimit} frames at \${cadence.toFixed(1)} fps)\`);
     }
   }
+} catch (error) {
+  // What the runtime prints for the same failure: one line, named, on stderr.
+  // Letting it escape instead gave a Bun stack trace through the generated
+  // launcher, which is this file's business rather than the user's — and made
+  // the two hosts describe the same refusal differently (issue #90).
+  process.stderr.write("blitsen: " + (error?.message ?? String(error)) + "\\n");
+  await cleanup();
+  process.exit(1);
 } finally {
   await cleanup();
 }
@@ -494,6 +517,32 @@ async function phase2LoadsModules(target) {
     // itself rather than throwing.
     return true;
   }
+}
+
+/** What the runtime carries the notices as, inside an export's bundle. */
+export const NOTICES_BUNDLE_FILE = "blitsen.notices.txt.gz";
+
+/**
+ * The third-party notices shipped beside the runtime being linked (issue #121).
+ *
+ * Generated where that runtime was built — this checkout, or the release job
+ * that produced its platform package — because deriving them needs the
+ * dependency graph and a user's machine has no toolchain (P9). `null` means the
+ * runtime shipped without them, which is not fatal and is not silent: the build
+ * says the export is not cleared for redistribution, which is the truth.
+ */
+async function embeddedNotices(runtimePath) {
+  const path = process.env.BLITSEN_NOTICES_PATH ?? join(dirname(runtimePath), "NOTICES.txt");
+  const text = await readFile(path).catch(() => null);
+  if (text === null) return null;
+  return {
+    path,
+    bytes: text.length,
+    // Deterministic: two builds of the same notices produce the same bytes, so
+    // an export stays reproducible (#71).
+    gzip: gzipSync(text, { level: 9, mtime: 0 }),
+    file: NOTICES_BUNDLE_FILE,
+  };
 }
 
 export async function buildStandalone(
@@ -572,6 +621,7 @@ export async function buildStandalone(
   try {
     const manifest = [];
     let usesModules = false;
+    let notices = null;
     for (const [path, absolute] of [...carried].sort(([left], [right]) => left.localeCompare(right))) {
       const staged = join(staging, "app", ...path.split("/"));
       await mkdir(dirname(staged), { recursive: true });
@@ -665,6 +715,12 @@ export async function buildStandalone(
       const { path: _linkedPath, ...stamp } = linkedRuntime;
       files.set("blitsen.runtime.json", Buffer.from(
         `${JSON.stringify({ width, height, title, layout: assets, runtime: stamp })}\n`));
+      // Issue #121: the notices the artifact owes travel inside it. They are
+      // generated where the runtime is built and shipped in its platform
+      // package, so this is a copy rather than a computation — there is no
+      // toolchain on a user's machine to derive them from.
+      notices = await embeddedNotices(phase2Runtime.path);
+      if (notices !== null) files.set(NOTICES_BUNDLE_FILE, notices.gzip);
       await linkBundle({ runtime: phase2Runtime.path, output: destination, files });
     } else {
       await copyFile(nativePath, join(staging, "blitsen.node"));
@@ -730,6 +786,7 @@ export async function buildStandalone(
       runtime: linkedRuntime,
       layout: assets,
       assets: manifest.length,
+      notices,
       manifest,
       addons: carriedAddons,
       unreferenced,

@@ -1,9 +1,13 @@
 import { readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 
+// Paths rather than URL objects, here and everywhere else this package reads a
+// file of its own: the DOM bridge installs Blitsen's `URL` over the host's in
+// the realm the CLI shares with it, and `node:fs` accepts only the host's.
 const RUNTIME_SOURCE_ROOT = "../../../crates/blitsen-host/src/";
-const RUNTIME_SOURCE = new URL(`${RUNTIME_SOURCE_ROOT}dom_bridge.rs`, import.meta.url);
-const MANIFEST_FILE = new URL("./api-manifest.json", import.meta.url);
-const COMPATIBILITY_DOC = new URL("../../../docs/COMPATIBILITY.md", import.meta.url);
+const RUNTIME_SOURCE = join(import.meta.dirname, `${RUNTIME_SOURCE_ROOT}dom_bridge.rs`);
+const MANIFEST_FILE = join(import.meta.dirname, "./api-manifest.json");
+const COMPATIBILITY_DOC = join(import.meta.dirname, "../../../docs/COMPATIBILITY.md");
 const SOURCE_NAME = "crates/blitsen-host/src/dom_bridge.rs";
 
 // The web surface Blitsen makes a claim about, grouped by the diagnostic that
@@ -40,12 +44,18 @@ const CATALOGUE = {
     "HTMLTemplateElement.content", "DOMTokenList.supports",
     "Document.createElementNS", "Document.createComment", "Document.createDocumentFragment",
     "Document.getElementsByTagName", "Document.getElementsByClassName", "Document.importNode",
-    "Document.currentScript"],
+    "Document.currentScript",
+    // `entries`, `keys` and `values` are implemented and unlisted: they are
+    // generator methods, which this file's reader cannot see in the source, and
+    // listing one would be a claim it could not check.
+    "NodeList.item", "NodeList.forEach"],
   // The form controls. `value`/`checked` are the control's state and
   // `defaultValue`/`defaultChecked` the attribute reflections; the collections
-  // are snapshots, like every other collection here. What stays absent is
-  // constraint validation, the label and file lists, text selection, and the
-  // navigating half of submission — see COMPATIBILITY.md.
+  // are snapshots, like every other collection here. The selection members
+  // answer for `<textarea>` and the single-line-text input types and are null
+  // on the rest, which is HTML's own rule. What stays absent is constraint
+  // validation, the label and file lists, and the navigating half of
+  // submission — see COMPATIBILITY.md.
   WEB_FORM_CONTROLS: ["HTMLInputElement", "HTMLTextAreaElement", "HTMLSelectElement",
     "HTMLOptionElement", "HTMLButtonElement", "HTMLFormElement",
     "HTMLInputElement.value", "HTMLInputElement.defaultValue", "HTMLInputElement.checked",
@@ -54,8 +64,11 @@ const CATALOGUE = {
     "HTMLInputElement.files", "HTMLInputElement.labels", "HTMLInputElement.validity",
     "HTMLInputElement.checkValidity", "HTMLInputElement.select",
     "HTMLInputElement.setSelectionRange", "HTMLInputElement.selectionStart",
-    "HTMLInputElement.selectionEnd",
+    "HTMLInputElement.selectionEnd", "HTMLInputElement.selectionDirection",
     "HTMLTextAreaElement.value", "HTMLTextAreaElement.defaultValue",
+    "HTMLTextAreaElement.select", "HTMLTextAreaElement.setSelectionRange",
+    "HTMLTextAreaElement.selectionStart", "HTMLTextAreaElement.selectionEnd",
+    "HTMLTextAreaElement.selectionDirection",
     "HTMLSelectElement.options", "HTMLSelectElement.selectedIndex", "HTMLSelectElement.value",
     "HTMLSelectElement.length", "HTMLSelectElement.selectedOptions",
     "HTMLSelectElement.multiple", "HTMLSelectElement.add",
@@ -111,6 +124,15 @@ const CATALOGUE = {
     "setInterval", "clearInterval", "requestIdleCallback", "cancelIdleCallback"],
   WEB_NETWORK: ["fetch", "Headers", "Request", "Response", "Blob", "AbortController",
     "AbortSignal"],
+  // WHATWG URL, over the same Rust parser `location` reads. Object URLs are the
+  // absent half: a `blob:` URL is a handle into a store a later fetch reads, and
+  // there is no origin behind an application to hang one on.
+  // `canParse` and `parse` are implemented and deliberately unlisted: a member
+  // is looked up on the prototype, and a static one is not there — listing it
+  // would be a claim this file cannot check against the runtime.
+  WEB_URL: ["URL", "URLSearchParams",
+    ["URL.createObjectURL", "\\bURL\\.createObjectURL\\s*\\("],
+    ["URL.revokeObjectURL", "\\bURL\\.revokeObjectURL\\s*\\("]],
   WEB_ROUTING: ["window", ["self", "\\bself\\."], "location", "history", "Location", "History", "PopStateEvent",
     "HashChangeEvent"],
   WEB_VIEWPORT: ["BlitsenViewElement", "BlitsenViewSurface"],
@@ -206,6 +228,7 @@ const NATIVE = {
   dialog: ["openFile", "openFiles", "saveFile", "openFolder", "openFolders", "message"],
   clipboard: ["readText", "readHtml", "readImage", "writeText", "writeHtml", "writeImage",
     "clear", "readMime", "writeMime"],
+  os: ["cpu", "memory", "storage", "host", "displays", "battery", "locale", "idleTime"],
 };
 
 // Why a declared member is not implemented. Absence is the answer, not an
@@ -238,6 +261,20 @@ const NATIVE_ABSENT = {
     + "different mechanism on each platform — X11 selection targets, `wl_data_offer`, "
     + "`NSPasteboardType`, a registered Windows format — and no part of that is shared.",
   "clipboard.writeMime": "The counterpart of `readMime`, absent for the same reason.",
+  "os.displays": "The monitors are `window.monitors()`, which already reports each one's size, "
+    + "position and scale factor. A second list here could disagree with that one.",
+  "os.battery": "Nothing behind this module reports power. The processor, the memory and the "
+    + "volumes come from one library that implements all three per platform; the battery is a "
+    + "fourth source on each — UPower's D-Bus service, IOKit, `GetSystemPowerStatus` — and a "
+    + "desktop with no battery has to read as *absent* rather than as an empty reading, which is "
+    + "a distinction only the real source can make.",
+  "os.locale": "Reading the tag is the easy half. Nothing in this runtime consumes it: the "
+    + "JavaScript engine ships no `Intl` (see ENGINE_ABSENT), so `os.locale()` would hand back a "
+    + "string with no formatter behind it and imply support that is not there.",
+  "os.idleTime": "Seconds since the last input is a different mechanism on every platform, and "
+    + "Wayland has no answer at all for a client that is not focused — the idle-notify protocol "
+    + "reports crossing a threshold the compositor was asked about, not a duration. Reporting "
+    + "zero on the sessions that cannot answer would be indistinguishable from a machine in use.",
 };
 
 // Globals the *engine* supplies rather than the bridge, so their status cannot
@@ -299,6 +336,8 @@ const DIAGNOSTICS = {
     + "to connect; pass a MessagePort to whoever needs one."],
   WEB_SOCKET: ["warning", "Server-sent events are not implemented; WebSocket is.",
     "Feature-detect EventSource, or hold the stream open over a WebSocket instead."],
+  WEB_URL: ["warning", "Object URLs are not implemented; URL and URLSearchParams are.",
+    "Pass the Blob itself to whatever was going to fetch the URL, or build a data: URL."],
   WEB_XHR: ["warning", "XMLHttpRequest is not implemented.", "Use fetch with an absolute URL."],
   WEB_STREAM: ["warning", "Streaming bodies are not implemented; a response is buffered whole.",
     "Read the response with text(), json(), or arrayBuffer().", /\.body\s*\.\s*getReader\b/],
@@ -341,7 +380,13 @@ const USAGE_RULES = [
   // that names one is not a finding at all — `doctor` resolves it against the
   // output and only reports what is not there. The capture group is what it
   // resolves; a URL assembled at runtime has none, and is undiagnosable here.
-  ["WEB_FETCH", "error", "\\bfetch\\s*\\(\\s*[\"'`](?!https?:\\/\\/)([^\"'`]*)[\"'`]",
+  //
+  // `fetch(new URL("./blip.wav", import.meta.url))` is the idiomatic spelling
+  // and its literal is one level in, so the optional prefix reaches it. What it
+  // names is relative to the *module*, not to the document, which is why the
+  // resolution in `doctor.mjs` tries the scanned file's own directory too.
+  ["WEB_FETCH", "error",
+    "\\bfetch\\s*\\(\\s*(?:new\\s+URL\\s*\\(\\s*)?[\"'`](?!https?:\\/\\/)([^\"'`]*)[\"'`]",
     "fetch names a path this application does not ship, and there is no server behind it.",
     "Ship the file in the output, or request an absolute http(s) URL."],
   // Storage exists and works; what it cannot do is outlive the process, and a
@@ -411,6 +456,13 @@ const RENDERER_RULES = [
     "Check the element is still legible without it; use borders and backgrounds where it is not."],
   ["html", "HTML_CANVAS", "error", "<canvas\\b",
     "<canvas> is not implemented.", "Use ordinary DOM/CSS elements or a native viewport."],
+  // Issue #127: an entrypoint that loads source rather than built output. The
+  // runtime refuses it at the point of failure; this is the same refusal at
+  // build time, where the fix costs one command instead of a blank window.
+  ["html", "HTML_SOURCE_ENTRY", "error",
+    "<script\\b[^>]*\\bsrc\\s*=\\s*[\"'][^\"']*\\.(?:ts|tsx|mts|cts|jsx|vue|svelte)(?:[?#][^\"']*)?[\"']",
+    "This document loads source, not built output; nothing in Blitsen transpiles it.",
+    "Run your bundler (Vite: `vite build`) and point Blitsen at its output directory."],
   ["html", "HTML_MEDIA", "warning", "<(?:video|track)\\b",
     "Video and text tracks are not implemented; <audio> is.",
     "Ship moving pictures as DOM, images and CSS, or feature-detect the media path."],
@@ -429,7 +481,7 @@ const RENDERER_RULES = [
 export async function readBootstrapScript() {
   const rust = await readFile(RUNTIME_SOURCE, "utf8");
   const fragments = [...rust.matchAll(/include_str!\("(dom_bridge\/bootstrap\/[^"]+)"\)/g)]
-    .map(([, path]) => new URL(RUNTIME_SOURCE_ROOT + path, import.meta.url));
+    .map(([, path]) => join(import.meta.dirname, RUNTIME_SOURCE_ROOT + path));
   if (fragments.length === 0)
     throw new Error(`${SOURCE_NAME} no longer splices a bootstrap script`);
   return (await Promise.all(fragments.map(file => readFile(file, "utf8")))).join("");
@@ -661,9 +713,9 @@ export async function generateApiManifest() {
 // Each `blitsen/<module>` subpath has its own declaration file. The interface
 // it names carries the members; a module with none names `NativeUnimplemented`,
 // which declares none, so the check reads an empty set for it and the two agree.
-const TYPE_DEFINITIONS = new URL("./native/native.d.ts", import.meta.url);
+const TYPE_DEFINITIONS = join(import.meta.dirname, "./native/native.d.ts");
 const MODULE_INTERFACES = { app: "NativeApp", window: "NativeWindow",
-  dialog: "NativeDialog", clipboard: "NativeClipboard" };
+  dialog: "NativeDialog", clipboard: "NativeClipboard", os: "NativeOs" };
 
 /** Reads the members each `Native*` interface declares, by module. */
 export function readDeclaredNativeMembers(definitions) {

@@ -50,7 +50,22 @@ describe("directory CLI", () => {
     expect(lines.some(([, line]) => line === "          dropped 1 file")).toBeTrue();
     expect(lines.some(([, line]) => line === "          note")).toBeTrue();
     expect(lines.at(-2)[1]).toBe("Built /tmp/pong (3 assets, 123 bytes)");
-    expect(lines.at(-1)[1]).toContain("not yet cleared for redistribution");
+    // This export carried no notices — the stub above reports none — so the
+    // build says the one thing that is then true of it (#121).
+    expect(lines.at(-1)[1]).toContain("not cleared for redistribution");
+  });
+
+  test("reports the third-party notices an export carries", async () => {
+    const fixture = join(import.meta.dir, "../../../examples/pong");
+    const runtime = {
+      build: async () => ({ outfile: "/tmp/pong", assets: 3, bytes: 123,
+        notices: { path: "/runtime/NOTICES.txt", bytes: 895_322, file: "blitsen.notices.txt.gz" } }),
+    };
+    const { lines, output } = capture();
+    expect(await main(["build", fixture, "--outfile", "/tmp/pong"], output, runtime)).toBe(0);
+    expect(lines.at(-1)[1]).toBe(
+      "Third-party notices: embedded, 895322 bytes (run the executable with --licenses)");
+    expect(lines.some(([, line]) => line.includes("not cleared"))).toBeFalse();
   });
 
   test("names the offending file and exits non-zero when ingest cannot resolve a reference", async () => {

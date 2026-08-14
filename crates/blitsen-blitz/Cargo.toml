@@ -19,6 +19,10 @@ blitz = { git = "https://github.com/DioxusLabs/blitz", rev = "1efe22d2524d71ede5
 # Tree::intrinsic_dimensions no longer exists); the meta-crate never enables it,
 # so upstream has not noticed. custom-widget is the seam `<blitsen-view>` uses.
 blitz-dom = { git = "https://github.com/DioxusLabs/blitz", rev = "1efe22d2524d71ede5b94592204c21f0de644219", default-features = false, features = ["system-fonts", "woff", "accessibility", "file-input", "custom-widget"] }
+# The cursor a resolved `cursor` keyword names. Blitz keeps its own copy of
+# this mapping private, and the enum is what the shell takes, so it is named
+# here directly rather than through a re-export that does not exist.
+cursor-icon = "1.2"
 data-url = "0.3.2"
 html-escape = "0.2"
 # blitz-dom decodes `<img>` and `background-image` with the `image` crate but
@@ -39,9 +43,6 @@ style = { package = "stylo", version = "0.20" }
 
 [dev-dependencies]
 anyrender_vello_cpu = "0.15"
-# The cursor the shell would set is the observable half of the UA baseline for
-# controls; naming it needs the same enum blitz-dom returns.
-cursor-icon = "1.2"
 blitsen-core = { path = "../blitsen-core" }
 blitz-paint = { git = "https://github.com/DioxusLabs/blitz", rev = "1efe22d2524d71ede5b94592204c21f0de644219", default-features = false, features = ["custom-widget"] }
 png = "0.18"

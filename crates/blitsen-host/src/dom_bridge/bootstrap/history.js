@@ -26,16 +26,16 @@
   class PopStateEvent extends Event {
     constructor(type, options = {}) {
       super(type, options);
-      Object.defineProperty(this, "state", { value: options.state ?? null, enumerable: true });
+      defineMembers(this, { state: options.state ?? null });
     }
   }
 
   class HashChangeEvent extends Event {
     constructor(type, options = {}) {
       super(type, options);
-      Object.defineProperties(this, {
-        oldURL: { value: String(options.oldURL ?? ""), enumerable: true },
-        newURL: { value: String(options.newURL ?? ""), enumerable: true },
+      defineMembers(this, {
+        oldURL: String(options.oldURL ?? ""),
+        newURL: String(options.newURL ?? ""),
       });
     }
   }

@@ -102,6 +102,16 @@ pub trait ScriptLoader {
     /// resolve again, not a display string.
     fn load(&self, root: &Path, src: &str) -> Result<(String, String), JsError>;
 
+    /// Whether something between the file and this loader transforms it.
+    ///
+    /// A dev server does: `/src/main.jsx` comes back as JavaScript, which is the
+    /// whole point of proxy mode (#67). A directory and a bundle do not, and an
+    /// entrypoint that loads source in those shapes is a mistake with one fix —
+    /// see [`source_only_extension`].
+    fn serves_transformed(&self) -> bool {
+        false
+    }
+
     /// The document's own address, when it has one an import can resolve
     /// against.
     ///
@@ -182,6 +192,23 @@ where
                 eprintln!("blitsen: skipping remote script, which is not fetched: {src}");
                 continue;
             }
+            // Pointed at source rather than at built output (issue #127). This
+            // is refused rather than skipped, and refused before anything runs,
+            // because it is a mistake about the whole application: nothing in
+            // the document is going to work, and the answer is one command.
+            // Phase 1 used to render such a tree — its host transpiles JSX and
+            // resolves `react` out of `node_modules` — so an author could build
+            // against something that would stop working under the shipped
+            // runtime, which resolves and transpiles nothing by decision.
+            if let Some(extension) =
+                source_only_extension(&src).filter(|_| !loader.serves_transformed())
+            {
+                return Err(JsError::new(format!(
+                    "{src} is {extension} source, not built output — a browser could not run it \
+                     either. Blitsen loads the graph a bundler already produced: build the \
+                     application (Vite: `vite build`) and point Blitsen at the output directory."
+                )));
+            }
             // A script the application does not ship is skipped for the same
             // reason a remote one is, and it is the same reason a browser has:
             // one source that does not arrive must not stop every other script
@@ -218,6 +245,25 @@ where
         results.push(result);
     }
     Ok(results)
+}
+
+/// What a `<script src>` is written in, when it is not JavaScript.
+///
+/// Only extensions that are unambiguously a compiler's input: a `.js` file is
+/// output whatever produced it, and a `.ts` file is not. Query strings and
+/// fragments are dropped first, because a dev server's `?t=…` is part of the URL
+/// and not of the name.
+fn source_only_extension(src: &str) -> Option<&'static str> {
+    let path = src.split(['?', '#']).next().unwrap_or_default();
+    let extension = path.rsplit_once('.').map(|(_, tail)| tail)?;
+    match extension.to_ascii_lowercase().as_str() {
+        "ts" | "mts" | "cts" => Some("TypeScript"),
+        "tsx" => Some("TypeScript JSX"),
+        "jsx" => Some("JSX"),
+        "vue" => Some("Vue single-file component"),
+        "svelte" => Some("Svelte component"),
+        _ => None,
+    }
 }
 
 /// Reports a `src` Blitsen will not fetch: another origin, or a server root that

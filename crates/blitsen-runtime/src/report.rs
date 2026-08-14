@@ -4,6 +4,7 @@
 //! executable carries what the CLI thinks it wrote, and `--engine-report` says
 //! which JavaScriptCore this binary found and what that library can do.
 
+use std::io::Read as _;
 use std::path::Path;
 use std::process::ExitCode;
 
@@ -40,6 +41,32 @@ pub fn print(bundle: Option<&AppBundle>, executable: &Path) {
         }
     };
     println!("{report}");
+}
+
+/// Prints the third-party notices appended to this executable (issue #121).
+///
+/// An artifact with none says so and fails, which is the whole point of the
+/// gate: "the notices are there" has to be answerable by the thing that ships,
+/// not by the build that produced it.
+pub fn print_licenses(bundle: Option<&AppBundle>) -> Result<ExitCode, String> {
+    let Some(bundle) = bundle else {
+        return Err(
+            "this runtime carries no application, and so carries no notices for one \
+                    (--licenses reports what an export ships)"
+                .to_owned(),
+        );
+    };
+    let compressed = bundle.read(blitsen_host::app::NOTICES).map_err(|_| {
+        "this export carries no third-party notices, so it is not cleared for redistribution \
+             (docs/LICENSING.md)"
+            .to_owned()
+    })?;
+    let mut text = String::new();
+    flate2::read::GzDecoder::new(compressed.as_slice())
+        .read_to_string(&mut text)
+        .map_err(|error| format!("the embedded notices could not be read: {error}"))?;
+    print!("{text}");
+    Ok(ExitCode::SUCCESS)
 }
 
 /// Language-level globals the compatibility profile makes a claim about.

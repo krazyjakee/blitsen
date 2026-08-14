@@ -48,9 +48,7 @@
 
   class CSSRuleList {
     constructor(rules) {
-      Object.defineProperty(this, "length", { value: rules.length, enumerable: false });
-      rules.forEach((rule, index) => Object.defineProperty(this, index, { value: rule, enumerable: true }));
-      Object.freeze(this);
+      defineIndexed(this, rules);
     }
     item(index) { return this[index] ?? null; }
     *[Symbol.iterator]() { for (let index = 0; index < this.length; index++) yield this[index]; }
@@ -99,9 +97,7 @@
 
   class StyleSheetList {
     constructor(sheets) {
-      Object.defineProperty(this, "length", { value: sheets.length, enumerable: false });
-      sheets.forEach((sheet, index) => Object.defineProperty(this, index, { value: sheet, enumerable: true }));
-      Object.freeze(this);
+      defineIndexed(this, sheets);
     }
     item(index) { return this[index] ?? null; }
     *[Symbol.iterator]() { for (let index = 0; index < this.length; index++) yield this[index]; }
@@ -186,9 +182,9 @@
   class MediaQueryListEvent extends Event {
     constructor(type, options = {}) {
       super(type, options);
-      Object.defineProperties(this, {
-        media: { value: String(options.media ?? ""), enumerable: true },
-        matches: { value: Boolean(options.matches), enumerable: true },
+      defineMembers(this, {
+        media: String(options.media ?? ""),
+        matches: Boolean(options.matches),
       });
     }
   }

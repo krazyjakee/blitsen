@@ -126,6 +126,11 @@
     get styleSheets() { return new StyleSheetList(call("styleSheets").map(wrap).map(sheetFor)); }
   }
 
+  // `Document` is a `Node` in the specification and an `EventTarget` here — the
+  // document is the one node with no handle into the tree — so the node-type
+  // constants every other node inherits have to be declared on it directly.
+  defineNodeTypeConstants(Document);
+
   const document = new Document();
   class HTMLElement {
     static [Symbol.hasInstance](value) { return value instanceof Element; }

@@ -30,10 +30,10 @@ JavaScript comes from the [generated manifest](#capability-tiers) below.
 | Area | In profile |
 | --- | --- |
 | Application shape | One built `index.html` plus the local files reachable from it; root-relative HTML/CSS asset URLs are normalized while ingesting without changing `dist` |
-| JavaScript | ES modules already emitted by the application's bundler |
+| JavaScript | ES modules already emitted by the application's bundler. **Source is refused**, not transpiled — see [Built output, not source](#built-output-not-source) |
 | Framework DOM | Stable node identity, standard node type/name/value/owner fields, `MutationObserver`, creation/insertion/removal, text and attributes, elements, comments, namespaced elements, fragments and `<template>` |
 | Selection and collections | `querySelector`, `querySelectorAll`, `getElementsByTagName` and `getElementsByClassName` on the document and on an element, `getElementById`, `closest`, `matches`, `children` and the element-traversal properties, `dataset`, `attributes`, static `NodeList`, `classList`, `link.relList` |
-| Events | Capture/target/bubble listeners, click, mouse, wheel, keyboard, focus, resize and lifecycle events |
+| Events | Capture/target/bubble listeners, click, mouse, wheel, keyboard, focus, resize and lifecycle events, plus `beforeinput`/`input` from typing into a control |
 | Style read-back | `getComputedStyle`, `matchMedia`/`MediaQueryList`, `ResizeObserver`, `CSS.escape`/`CSS.supports` |
 | Geometry and text | `getBoundingClientRect`, `getClientRects`, the offset/client/scroll box properties, `clientTop`/`clientLeft`, `offsetParent`, `innerText`, `compareDocumentPosition`, `elementFromPoint` |
 | Ranges and selection | `Range` and `document.createRange` for boundary points, text and geometry — `getClientRects` over a run of characters — `caretRangeFromPoint`/`caretPositionFromPoint`, and a `Selection` a script sets and reads; not the tree-editing range methods, and not a selection the user can make by dragging |
@@ -49,6 +49,67 @@ JavaScript comes from the [generated manifest](#capability-tiers) below.
 The M3b acceptance app intentionally uses the normal Vite default output, including
 root-relative `/assets/...` references and Vite's module-preload bootstrap. It contains no
 Blitsen imports or runtime branches.
+
+## Development: your own dev server
+
+```sh
+blitsen http://localhost:5173      # while `vite` is running in another terminal
+```
+
+The window replaces the browser tab and nothing else about the inner loop
+changes. The document, its module graph, its stylesheets and anything it
+`fetch`es come from the server; your bundler goes on transforming, watching and
+hot-reloading, and **source is fine here** — a dev server is what compiles it.
+
+What holds:
+
+| | Proxy mode |
+| --- | --- |
+| Modules | Loaded over HTTP as served, query strings and all: `/src/main.jsx?t=1738` is asked for as written, because that is a different response from `/src/main.jsx` |
+| `import.meta.url` | The application origin, as everywhere else — `blitsen://app/src/main.jsx` — so an asset resolved against it is a sibling and `fetch` reads it back through the server |
+| Hot reload | The channel is an ordinary `WebSocket` back to the dev server, and it stays open: messages land on the frame turn like any other socket's |
+| A server that is not up yet | Waited for, then reported: `blitsen http://localhost:5173` before `npm run dev` waits ten seconds and then says nothing is answering, and what to do |
+| A server that restarts | Reads fail while it is down, are named once on stderr, and succeed again when it comes back |
+| `build` and `doctor` | Refused with a URL. Both read files; a dev server has no output directory to ingest or scan |
+
+Two things to know:
+
+- **Vite logs one connection error before its HMR socket connects.** Its client
+  derives a socket URL from `location`, which is the application origin here and
+  not a host it can reach; it then falls back to the host and port the server
+  injected, which works. Setting `server.hmr.host`/`clientPort` in your Vite
+  config removes the message.
+- **Source maps are not consumed.** A stack frame names the served module URL —
+  `blitsen://app/src/main.jsx:12:5` — which is the file you wrote when the server
+  serves modules one-to-one, and the transformed line when it does not. Mapping
+  frames back through `//# sourceMappingURL` is not implemented.
+
+## Built output, not source
+
+Blitsen loads the module graph a bundler already produced. It transpiles nothing and resolves no
+bare specifier, by decision — so pointing it at a source tree is refused rather than half-supported:
+
+```sh
+cd my-app && blitsen                    # index.html loads /src/main.jsx
+blitsen: /src/main.jsx is JSX source, not built output — a browser could not run it either.
+Blitsen loads the graph a bundler already produced: build the application (Vite: `vite build`)
+and point Blitsen at the output directory.
+```
+
+`.ts`, `.mts`, `.cts`, `.tsx`, `.jsx`, `.vue` and `.svelte` at a `<script src>` are the refusal;
+`doctor` grades the same entrypoint `HTML_SOURCE_ENTRY`, an error, so a build stops before an
+export exists. A bare specifier inside a module — `import React from "react"` — is refused where it
+is resolved, naming the same fix.
+
+This is stricter than it was. The Phase 1 host is Bun, which transpiles JSX and resolves
+`node_modules` itself, so a source tree used to render; an author could develop against something
+that would stop working under the shipped runtime, which is exactly the surprise
+[#90](https://github.com/krazyjakee/blitsen/issues/90) exists to prevent.
+
+**The refusal is about reading source off disk, not about developing.** Point Blitsen at your dev
+server — `blitsen http://localhost:5173` — and the same `/src/main.jsx` runs, because the server
+transforms it and Blitsen reads what it serves. That is a deliberate mode with its own behaviour
+([above](#development-your-own-dev-server)) rather than an accident of which engine is hosting.
 
 ## Asset URLs
 
@@ -84,12 +145,32 @@ at runtime cannot be safely edited by a regular expression. In practice:
   see [Networking](#networking). A literal path that names nothing in the output is diagnosed as
   an error at build time.
 - `new URL('/assets/x.png', import.meta.url)` and any specifier built from a variable or template
-  literal are **not diagnosed**, and the server-root form is the one place the two shapes do not
-  yet agree: inside an export it resolves against the application origin and finds the file, while
-  a directory being run resolves it against the document's `file:` URL and lands outside the
-  application, where nothing is readable. Configure your bundler with a relative base (Vite:
+  literal are **not diagnosed**. The server-root form resolves against whatever origin the module
+  is on, so it finds the file inside an export and inside a directory run by the shipped runtime,
+  and lands outside the application on the Phase 1 host, whose modules are on `file:` (see
+  [Module identifiers](#module-identifiers)). Configure your bundler with a relative base (Vite:
   `base: './'`) if your application computes asset URLs from a server root, and the question does
   not arise.
+
+### Module identifiers
+
+A module script is named by an absolute URL, and `import.meta.url` is that URL. Which origin it is
+on depends on the host, and nothing else does:
+
+| | Shipped runtime | Phase 1 (Bun host) |
+| --- | --- | --- |
+| Inline `<script type="module">` | `blitsen://app/index.html#script-2` | `file:///…/index.html#script-2` |
+| `<script type="module" src>` | `blitsen://app/assets/app.js` | `file:///…/assets/app.js` |
+
+The fragment on an inline module is what makes one distinct from the next; it does not affect
+resolution. The Phase 1 host is on `file:` because its module loader is the filesystem's — that is
+also what makes `createRequire(import.meta.url)` reach a `.node` addon there — and the shipped
+runtime is on the application origin because there is no filesystem inside an executable.
+
+What holds on both, and is what an application depends on: the identifier is an absolute URL, a
+relative asset resolved against it is a sibling of the module, and `fetch` reads that URL out of
+the application. `test:hosts` asserts all three on both hosts, and a directory being run answers
+the same way the export does.
 
 ## Networking
 
@@ -131,8 +212,11 @@ Three consequences worth stating:
 - **A path the application does not ship is a 404**, with a readable empty body — the web's own
   answer, so a caller that checks `response.ok` and falls back keeps working. Catching a typo is
   `doctor`'s job, and it does it at build time: a literal path at a `fetch` call site is resolved
-  against the output, and reported as an error only when nothing there answers it. A URL assembled
-  at runtime has no literal to resolve and is not diagnosed.
+  against the output, and reported as an error only when nothing there answers it. Two spellings
+  are read — `fetch("./data.json")` and `fetch(new URL("./data.json", import.meta.url))`, the
+  second resolved against the file it was written in, because that is what `import.meta.url`
+  means. **The rule is literal-only**: a URL assembled from a variable or a template has nothing
+  to resolve, and `doctor`'s silence about one is not a statement that it will arrive.
 - **A URL outside the application is refused**, `file:` included. An application reading its own
   files is a different thing from one reading the disk; the second is what the `blitsen/*` modules
   and a native addon are for, and it is deliberately not what a web API does.
@@ -474,6 +558,12 @@ Where it differs from a browser:
   answer rather than a missing one.
 - Only `width` and `height` are used values. The inset and box properties report their computed
   value, which is the declaration resolved to absolute units rather than the used geometry.
+- **`pointer-events` reads `auto` where a browser reads `all`.** The cascade parses only `auto` and
+  `none`; the nine values that mean "this element takes hits" — `all`, `visible`, `painted`, `fill`,
+  `stroke`, the `visible*` trio and `bounding-box` — are rewritten to `auto` as the CSS enters the
+  document, because the alternative is the cascade dropping them and the element inheriting the
+  `none` of the container it sits in. The element behaves as declared; only the readback is the
+  other word for it. See G15 in [`BLITZ-GAPS.md`](BLITZ-GAPS.md).
 
 **`matchMedia(query)`** runs the query through the same parser and the same evaluator the cascade
 uses for `@media`, so what matches in a stylesheet matches here. `MediaQueryList` carries `media`,
@@ -734,12 +824,60 @@ A checkbox or radio clicked without the click being cancelled toggles and fires 
 `change`, and a checked radio clears the rest of its group. `form.reset()`, `action` and `method`
 stay absent for the same reason `submit()` does: they describe a document navigation.
 
+### Typing, and the caret
+
+A key that reaches a focused `<input>` or `<textarea>` **edits it**. The keyboard events are
+dispatched first and in full, because the edit is their default action: `preventDefault` on a
+`keydown` stops the character from being typed, which is how a field that accepts only digits is
+written. What happens next is announced and then reported — a cancelable `beforeinput` naming the
+`inputType` about to be applied, the mutation, then a non-cancelable `input` saying it was. Both
+are `InputEvent`s carrying `inputType` and `data`, and `input` is fired only when the value
+actually moved, so backspacing at the start of a field is silent rather than a stream of empty
+edits.
+
+The operations behind the keys are `insertText`, `insertLineBreak` (Enter, in a `<textarea>` only —
+a single-line field has no line to break, so Enter there is left to the application),
+`deleteContentBackward`/`deleteContentForward` and their `deleteWord` pair under Ctrl. Arrow keys,
+Home and End move the caret; Shift extends the selection and Ctrl widens each motion to a word or
+to the whole value; Ctrl+A selects all. Clicking into a field puts the caret where the click
+landed, shift-clicking extends to it, and dragging selects. A key a field took is not also a
+scroll — a space typed into one does not page the document down behind it.
+
+**Focus moves on `mousedown`, not on `click`**, because that is the event it is the default action
+of and the only one an application can still refuse. A component that focuses something of its own
+from a `mousedown` handler and then cancels the event keeps it — which is how every editor that
+paints its own text and funnels keys through one off-screen `<textarea>` works, Monaco included.
+Taking focus at `click` instead handed it back to the nearest focusable ancestor one event later,
+so those keystrokes went to the body. Activation — a checkbox toggling, a submit button submitting
+— stays on `click`, where HTML puts it. A press that lands on nothing focusable still blurs what
+was focused, as it does in a browser.
+
+`selectionStart`, `selectionEnd`, `selectionDirection`, `setSelectionRange()` and `select()` are
+implemented on `<textarea>` and on the single-line-text input types, and are `null` on the rest:
+HTML gives a date or a colour no caret to report, and a component reads that null before it tries
+to restore one after a re-render. There is still one copy of the state and it is the renderer's —
+the same editor `value` reads and writes, and the same one the caret and the selection highlight
+are painted from — so a range set from script is a range the user can see, and a caret the user
+moved is one script reads back. Which node has focus is mirrored into the renderer for the same
+reason: nothing paints a caret, a highlight or a `:focus` rule until it is told.
+
+One divergence, and it is HTML's own bit rather than the editor's: an anchor and a focus can say
+forward or backward and have no third answer, so `"none"` — the direction a range set from script
+has until something says otherwise — is kept beside the control and dropped the moment anything
+moves the caret.
+
+What is **not** here: the clipboard (`cut`/`copy`/`paste` and their `inputType`s), undo and redo,
+IME composition (`compositionstart` and the rest — there is no IME path into this runtime, which is
+why `InputEvent.isComposing` is always false), `getTargetRanges()` on a `beforeinput`, the
+`selectionchange` event, implicit form submission on Enter, and the `change` event a text control
+fires when its value is committed on blur. A framework that listens for `input` — React's
+`onChange` is `input` — is unaffected by that last one.
+
 ### What is absent
 
-Constraint validation (`validity`, `checkValidity`, `setCustomValidity`), `labels`, `files`, and
-text selection (`select()`, `setSelectionRange`, `selectionStart`/`selectionEnd`) are all absent
-rather than stubbed. Each is a surface of its own and each would be a wrong answer if guessed at:
-there is no selection model behind an input in this runtime, and no file picker behind one either.
+Constraint validation (`validity`, `checkValidity`, `setCustomValidity`), `labels` and `files` are
+absent rather than stubbed. Each is a surface of its own and each would be a wrong answer if
+guessed at: there is no file picker behind an input in this runtime, and no validity model either.
 
 ## Storage
 
@@ -811,6 +949,7 @@ be able to see that the construct is unconditional — a guarded one is not one 
 | --- | --- |
 | `WEB_FETCH` | A literal server-root URL at a `fetch` call site is not a capability test, so nothing selects a fallback. The data never arrives, and what renders from it never renders. |
 | `HTML_CANVAS` | `<canvas>` is in the document the export ships, and the renderer paints nothing inside it. Unlike an image or a font, the element has no degraded appearance to fall back to. |
+| `HTML_SOURCE_ENTRY` | The document loads `.tsx`, `.jsx`, `.vue` or `.svelte` — source, which nothing here transpiles and no browser would run either. Blitsen was pointed at a source tree rather than at build output, and the fix is one command: `vite build`, then point it at `dist`. |
 
 `ASSET_REMOTE_SCRIPT` used to be the third, on the reading that the loader refusing one remote
 `src` left the document running no script at all — which is what stopped wordle-plus loading. The
@@ -871,7 +1010,12 @@ cannot drift apart. Regenerate with `bun run --cwd packages/blitsen api:sync`.
 
 Blitsen makes no claim either way about the JavaScript host's own utilities — `URL`,
 `URLSearchParams`, `TextEncoder`, `crypto`, `structuredClone`, `performance`, `queueMicrotask`,
-`DOMException`, `console` — so they are not listed; the Phase 2 engine has to supply them. Renderer capability (`CSS_*`, `HTML_*`) is not generated
+`DOMException`, `console` — so they are not listed; the host below the DOM supplies them, which
+under Phase 1 is Bun and under Phase 2 is `crates/blitsen-host/src/runtime_services/bootstrap.js`.
+Two of them are narrower there than in a browser, because the missing part is a real absence
+rather than a stub: `crypto` has `getRandomValues` and `randomUUID` and no `subtle`, and
+`TextDecoder` decodes the UTF encodings and throws `RangeError` for the legacy single-byte labels.
+`test:hosts` asserts the rest of that surface behaves identically on both hosts. Renderer capability (`CSS_*`, `HTML_*`) is not generated
 either: no JavaScript declaration describes it, and it is evidenced by the S6 spike and the
 determinism gate instead.
 
@@ -879,13 +1023,14 @@ determinism gate instead.
 
 | Group | Implemented | Absent |
 | --- | --- | --- |
-| WEB_DOM | `document`, `Document`, `Node`, `Element`, `NodeList`, `DOMTokenList`, `Attr`, `NamedNodeMap`, `CSSStyleDeclaration`, `MutationObserver`, `HTMLElement`, `HTMLIFrameElement`, `SVGElement`, `Text`, `Comment`, `DocumentFragment`, `HTMLLinkElement`, `HTMLTemplateElement`, `HTMLImageElement`, `Image`, `HTMLImageElement.src`, `HTMLImageElement.naturalWidth`, `HTMLImageElement.naturalHeight`, `HTMLImageElement.complete`, `HTMLImageElement.onload`, `HTMLImageElement.onerror`, `Element.querySelector`, `Element.querySelectorAll`, `Element.closest`, `Element.matches`, `Element.cloneNode`, `Element.contains`, `Element.children`, `Element.previousSibling`, `Element.lastChild`, `Element.parentElement`, `Element.dataset`, `Element.nodeValue`, `Element.before`, `Element.after`, `Element.getElementsByTagName`, `Element.outerHTML`, `Element.insertAdjacentHTML`, `Element.scrollIntoView`, `Element.getElementsByClassName`, `Element.firstElementChild`, `Element.lastElementChild`, `Element.nextElementSibling`, `Element.previousElementSibling`, `Element.childElementCount`, `Element.append`, `Element.prepend`, `Element.replaceChildren`, `Element.getAttributeNS`, `Element.setAttributeNS`, `Element.removeAttributeNS`, `Element.hasAttributes`, `Element.getAttributeNames`, `Element.toggleAttribute`, `Element.getClientRects`, `Element.getRootNode`, `Element.normalize`, `Element.attributes`, `Element.insertAdjacentElement`, `Element.innerText`, `Element.compareDocumentPosition`, `Element.offsetParent`, `Element.clientTop`, `Element.clientLeft`, `Element.hidden`, `Element.tabIndex`, `Element.title`, `Document.title`, `Document.dir`, `Document.getElementsByName`, `Document.elementFromPoint`, `Document.elementsFromPoint`, `Document.scrollingElement`, `Document.characterSet`, `Document.documentURI`, `Document.hasFocus`, `Document.adoptNode`, `HTMLLinkElement.relList`, `HTMLLinkElement.onload`, `HTMLLinkElement.onerror`, `HTMLTemplateElement.content`, `DOMTokenList.supports`, `Document.createElementNS`, `Document.createComment`, `Document.createDocumentFragment`, `Document.getElementsByTagName`, `Document.getElementsByClassName`, `Document.importNode` | `Element.attachShadow`, `Document.currentScript` |
-| WEB_FORM_CONTROLS | `HTMLInputElement`, `HTMLTextAreaElement`, `HTMLSelectElement`, `HTMLOptionElement`, `HTMLButtonElement`, `HTMLFormElement`, `HTMLInputElement.value`, `HTMLInputElement.defaultValue`, `HTMLInputElement.checked`, `HTMLInputElement.defaultChecked`, `HTMLInputElement.type`, `HTMLInputElement.name`, `HTMLInputElement.disabled`, `HTMLInputElement.form`, `HTMLTextAreaElement.value`, `HTMLTextAreaElement.defaultValue`, `HTMLSelectElement.options`, `HTMLSelectElement.selectedIndex`, `HTMLSelectElement.value`, `HTMLSelectElement.length`, `HTMLSelectElement.selectedOptions`, `HTMLSelectElement.multiple`, `HTMLOptionElement.value`, `HTMLOptionElement.text`, `HTMLOptionElement.selected`, `HTMLOptionElement.index`, `HTMLOptionElement.label`, `HTMLOptionElement.defaultSelected`, `HTMLButtonElement.value`, `HTMLButtonElement.type`, `HTMLFormElement.elements`, `HTMLFormElement.requestSubmit` | `HTMLInputElement.files`, `HTMLInputElement.labels`, `HTMLInputElement.validity`, `HTMLInputElement.checkValidity`, `HTMLInputElement.select`, `HTMLInputElement.setSelectionRange`, `HTMLInputElement.selectionStart`, `HTMLInputElement.selectionEnd`, `HTMLSelectElement.add`, `HTMLFormElement.submit`, `HTMLFormElement.reset`, `HTMLFormElement.action`, `HTMLFormElement.method`, `HTMLFormElement.checkValidity` |
+| WEB_DOM | `document`, `Document`, `Node`, `Element`, `NodeList`, `DOMTokenList`, `Attr`, `NamedNodeMap`, `CSSStyleDeclaration`, `MutationObserver`, `HTMLElement`, `HTMLIFrameElement`, `SVGElement`, `Text`, `Comment`, `DocumentFragment`, `HTMLLinkElement`, `HTMLTemplateElement`, `HTMLImageElement`, `Image`, `HTMLImageElement.src`, `HTMLImageElement.naturalWidth`, `HTMLImageElement.naturalHeight`, `HTMLImageElement.complete`, `HTMLImageElement.onload`, `HTMLImageElement.onerror`, `Element.querySelector`, `Element.querySelectorAll`, `Element.closest`, `Element.matches`, `Element.cloneNode`, `Element.contains`, `Element.children`, `Element.previousSibling`, `Element.lastChild`, `Element.parentElement`, `Element.dataset`, `Element.nodeValue`, `Element.before`, `Element.after`, `Element.getElementsByTagName`, `Element.outerHTML`, `Element.insertAdjacentHTML`, `Element.scrollIntoView`, `Element.getElementsByClassName`, `Element.firstElementChild`, `Element.lastElementChild`, `Element.nextElementSibling`, `Element.previousElementSibling`, `Element.childElementCount`, `Element.append`, `Element.prepend`, `Element.replaceChildren`, `Element.getAttributeNS`, `Element.setAttributeNS`, `Element.removeAttributeNS`, `Element.hasAttributes`, `Element.getAttributeNames`, `Element.toggleAttribute`, `Element.getClientRects`, `Element.getRootNode`, `Element.normalize`, `Element.attributes`, `Element.insertAdjacentElement`, `Element.innerText`, `Element.compareDocumentPosition`, `Element.offsetParent`, `Element.clientTop`, `Element.clientLeft`, `Element.hidden`, `Element.tabIndex`, `Element.title`, `Document.title`, `Document.dir`, `Document.getElementsByName`, `Document.elementFromPoint`, `Document.elementsFromPoint`, `Document.scrollingElement`, `Document.characterSet`, `Document.documentURI`, `Document.hasFocus`, `Document.adoptNode`, `HTMLLinkElement.relList`, `HTMLLinkElement.onload`, `HTMLLinkElement.onerror`, `HTMLTemplateElement.content`, `DOMTokenList.supports`, `Document.createElementNS`, `Document.createComment`, `Document.createDocumentFragment`, `Document.getElementsByTagName`, `Document.getElementsByClassName`, `Document.importNode`, `NodeList.item`, `NodeList.forEach` | `Element.attachShadow`, `Document.currentScript` |
+| WEB_FORM_CONTROLS | `HTMLInputElement`, `HTMLTextAreaElement`, `HTMLSelectElement`, `HTMLOptionElement`, `HTMLButtonElement`, `HTMLFormElement`, `HTMLInputElement.value`, `HTMLInputElement.defaultValue`, `HTMLInputElement.checked`, `HTMLInputElement.defaultChecked`, `HTMLInputElement.type`, `HTMLInputElement.name`, `HTMLInputElement.disabled`, `HTMLInputElement.form`, `HTMLInputElement.select`, `HTMLInputElement.setSelectionRange`, `HTMLInputElement.selectionStart`, `HTMLInputElement.selectionEnd`, `HTMLInputElement.selectionDirection`, `HTMLTextAreaElement.value`, `HTMLTextAreaElement.defaultValue`, `HTMLTextAreaElement.select`, `HTMLTextAreaElement.setSelectionRange`, `HTMLTextAreaElement.selectionStart`, `HTMLTextAreaElement.selectionEnd`, `HTMLTextAreaElement.selectionDirection`, `HTMLSelectElement.options`, `HTMLSelectElement.selectedIndex`, `HTMLSelectElement.value`, `HTMLSelectElement.length`, `HTMLSelectElement.selectedOptions`, `HTMLSelectElement.multiple`, `HTMLOptionElement.value`, `HTMLOptionElement.text`, `HTMLOptionElement.selected`, `HTMLOptionElement.index`, `HTMLOptionElement.label`, `HTMLOptionElement.defaultSelected`, `HTMLButtonElement.value`, `HTMLButtonElement.type`, `HTMLFormElement.elements`, `HTMLFormElement.requestSubmit` | `HTMLInputElement.files`, `HTMLInputElement.labels`, `HTMLInputElement.validity`, `HTMLInputElement.checkValidity`, `HTMLSelectElement.add`, `HTMLFormElement.submit`, `HTMLFormElement.reset`, `HTMLFormElement.action`, `HTMLFormElement.method`, `HTMLFormElement.checkValidity` |
 | WEB_EVENTS | `EventTarget`, `Event`, `CustomEvent`, `SubmitEvent`, `MouseEvent`, `KeyboardEvent`, `FocusEvent`, `InputEvent`, `PointerEvent`, `WheelEvent`, `addEventListener`, `removeEventListener`, `dispatchEvent`, `ErrorEvent` | — |
 | WEB_SCROLL | `scrollTo`, `scrollBy`, `scroll`, `scrollX`, `scrollY`, `pageXOffset`, `pageYOffset` | — |
 | WEB_SELECTION | `getSelection`, `Range`, `Selection`, `CaretPosition`, `Document.createRange`, `Document.getSelection`, `Document.caretRangeFromPoint`, `Document.caretPositionFromPoint`, `Range.setStart`, `Range.setEnd`, `Range.setStartBefore`, `Range.setStartAfter`, `Range.setEndBefore`, `Range.setEndAfter`, `Range.selectNode`, `Range.selectNodeContents`, `Range.collapse`, `Range.cloneRange`, `Range.startContainer`, `Range.startOffset`, `Range.endContainer`, `Range.endOffset`, `Range.collapsed`, `Range.commonAncestorContainer`, `Range.comparePoint`, `Range.compareBoundaryPoints`, `Range.intersectsNode`, `Range.isPointInRange`, `Range.toString`, `Range.getClientRects`, `Range.getBoundingClientRect`, `Selection.anchorNode`, `Selection.anchorOffset`, `Selection.focusNode`, `Selection.focusOffset`, `Selection.isCollapsed`, `Selection.rangeCount`, `Selection.type`, `Selection.direction`, `Selection.getRangeAt`, `Selection.addRange`, `Selection.removeAllRanges`, `Selection.setBaseAndExtent`, `Selection.collapse`, `Selection.extend`, `Selection.selectAllChildren`, `Selection.containsNode`, `Selection.toString`, `CaretPosition.offsetNode`, `CaretPosition.offset`, `CaretPosition.getClientRect` | `Range.deleteContents`, `Range.extractContents`, `Range.cloneContents`, `Range.insertNode`, `Range.surroundContents` |
 | WEB_SCHEDULING | `requestAnimationFrame`, `cancelAnimationFrame`, `setTimeout`, `clearTimeout`, `setInterval`, `clearInterval` | `requestIdleCallback`, `cancelIdleCallback` |
 | WEB_NETWORK | `fetch`, `Headers`, `Request`, `Response`, `Blob`, `AbortController`, `AbortSignal` | — |
+| WEB_URL | `URL`, `URLSearchParams` | `URL.createObjectURL`, `URL.revokeObjectURL` |
 | WEB_ROUTING | `window`, `self`, `location`, `history`, `Location`, `History`, `PopStateEvent`, `HashChangeEvent` | — |
 | WEB_VIEWPORT | `BlitsenViewElement`, `BlitsenViewSurface` | — |
 | WEB_STORAGE | `Storage`, `localStorage`, `sessionStorage` | `indexedDB` |
@@ -916,6 +1061,7 @@ determinism gate instead.
 | `WEB_FORM_CONTROLS` | warning | This form-control API is not implemented. |
 | `WEB_SELECTION` | warning | This part of the range API is not implemented; the boundary, text and geometry reads are. |
 | `WEB_SCHEDULING` | warning | Idle-callback scheduling is not implemented. |
+| `WEB_URL` | warning | Object URLs are not implemented; URL and URLSearchParams are. |
 | `WEB_STORAGE` | warning | IndexedDB is not implemented. |
 | `WEB_WORKER` | warning | Shared and service workers are not implemented; dedicated Worker is. |
 | `WEB_MESSAGING` | warning | BroadcastChannel is not implemented; MessageChannel and Worker are. |
@@ -939,6 +1085,7 @@ determinism gate instead.
 | `CSS_FIXED` | warning | Fixed and sticky boxes resolve against the root box, not the viewport (Blitz bug 690). |
 | `CSS_EFFECT` | warning | This paint effect is ignored rather than applied. |
 | `HTML_CANVAS` | error | <canvas> is not implemented. |
+| `HTML_SOURCE_ENTRY` | error | This document loads source, not built output; nothing in Blitsen transpiles it. |
 | `HTML_MEDIA` | warning | Video and text tracks are not implemented; <audio> is. |
 | `HTML_SVG` | warning | SVG rendering is currently limited and not in the strict profile. |
 | `ASSET_REMOTE_SCRIPT` | warning | A remote <script src> is not fetched; it is skipped and the rest of the page runs. |
@@ -988,7 +1135,7 @@ runtime implements none of them, and this is a decision rather than a gap** (iss
 
 Blitsen hosts JavaScriptCore itself and supplies only what the DOM and the application actually
 rely on: timers, a microtask checkpoint, `performance`, `console`, `reportError`, `DOMException`,
-and the web surface in the tables above. Implementing Node's module surface on top of that would
+`crypto`, `TextEncoder`/`TextDecoder`, and the web surface in the tables above. Implementing Node's module surface on top of that would
 mean reimplementing a large, under-specified API with no conformance corpus, to serve applications
 whose input is by definition browser-targeted static output — and every megabyte of it would ship
 in every export, which is what Phase 2 exists to stop.
@@ -1052,6 +1199,7 @@ lib. The capability tiers above are the list, and `blitsen doctor` is the check.
 | `blitsen/window` | `setSize`, `setFullscreen`, `isFullscreen`, `setDecorations`, `isDecorated`, `setAlwaysOnTop`, `setCursor`, `setCursorVisible`, `setCursorGrab`, `monitors` | `create`, `setTransparent`, `isAlwaysOnTop` |
 | `blitsen/dialog` | `openFile`, `openFiles`, `saveFile`, `openFolder`, `openFolders`, `message` | — |
 | `blitsen/clipboard` | `readText`, `readHtml`, `readImage`, `writeText`, `writeHtml`, `writeImage`, `clear` | `readMime`, `writeMime` |
+| `blitsen/os` | `cpu`, `memory`, `storage`, `host` | `displays`, `battery`, `locale`, `idleTime` |
 
 | Absent member | Why |
 | --- | --- |
@@ -1065,6 +1213,10 @@ lib. The capability tiers above are the list, and `blitsen doctor` is the check.
 | `window.isAlwaysOnTop` | winit sets the window level and cannot read it back, and the window manager may change it without telling the application. Remembering what was last set would be a second source of truth that quietly goes stale. |
 | `clipboard.readMime` | `arboard` reads the flavours above and no others. Arbitrary MIME needs a different mechanism on each platform — X11 selection targets, `wl_data_offer`, `NSPasteboardType`, a registered Windows format — and no part of that is shared. |
 | `clipboard.writeMime` | The counterpart of `readMime`, absent for the same reason. |
+| `os.displays` | The monitors are `window.monitors()`, which already reports each one's size, position and scale factor. A second list here could disagree with that one. |
+| `os.battery` | Nothing behind this module reports power. The processor, the memory and the volumes come from one library that implements all three per platform; the battery is a fourth source on each — UPower's D-Bus service, IOKit, `GetSystemPowerStatus` — and a desktop with no battery has to read as *absent* rather than as an empty reading, which is a distinction only the real source can make. |
+| `os.locale` | Reading the tag is the easy half. Nothing in this runtime consumes it: the JavaScript engine ships no `Intl` (see ENGINE_ABSENT), so `os.locale()` would hand back a string with no formatter behind it and imply support that is not there. |
+| `os.idleTime` | Seconds since the last input is a different mechanism on every platform, and Wayland has no answer at all for a client that is not focused — the idle-notify protocol reports crossing a threshold the compositor was asked about, not a duration. Reporting zero on the sessions that cannot answer would be indistinguishable from a machine in use. |
 
 <!-- /generated -->
 

@@ -32,6 +32,13 @@ absent is genuinely `undefined` against a real bridge context.
 
 ## Where it is
 
+**Developing against your own dev server.** `blitsen http://localhost:5173` opens what Vite (or
+anything else serving over HTTP) is serving, rather than a directory of output: modules load as
+they are served, hot reload keeps its channel open, and the window is the tab. Measured against a
+real `vite dev` — React mounts and `[vite] connected.` appears — and gated headlessly by
+`bun run --cwd packages/blitsen test:proxy`. Source-map consumption in stack frames is the one
+part not implemented; see the [compatibility profile](docs/COMPATIBILITY.md#development-your-own-dev-server).
+
 **Rendering real applications.** Six applications written by other people — a React admin dashboard
 using Tailwind 4, Radix, TanStack and Recharts; a Vue 3 app with vue-router and Pinia; a Svelte
 game; and the three stock `create-vite` templates — all render from their own unmodified
@@ -54,6 +61,13 @@ windowed export sustains 60 fps. See the [M3 acceptance evidence](docs/M3.md).
 *Every frame is HTML and CSS laid out by Blitz and mutated from JavaScript — the paddles, the ball
 and the scoreboard are ordinary DOM nodes. The recording comes from the same harness the acceptance
 gate asserts on, so it cannot drift from what the tests verify.*
+
+**Past what a browser can answer.** [`examples/hardware`](examples/hardware) is a CPU-Z-shaped
+report on the machine it is running on — processor and per-thread load, memory and swap, every
+mounted volume, kernel and boot time — read through [`blitsen/os`](docs/COMPATIBILITY.md#native-modules).
+None of it has a web spelling: the closest the platform comes is `navigator.hardwareConcurrency`,
+one deliberately coarsened number. It is three files with no build step, and it runs with
+`bun run --cwd packages/blitsen example:hardware`.
 
 Input, animation and restyle are proven together by [`examples/interactive`](examples/interactive),
 whose gate drives the document through the same coordinate hit test the native window uses
@@ -78,10 +92,32 @@ when the [M0 measurement](docs/M0.md) showed it was unreachable against a design
 engine library alongside; the shipped total is now inside it, which is a result of the engine
 choice rather than a walk-back of the measurement.
 
-Exports are architecture proofs and are **not yet cleared for redistribution**: the automated
-third-party notice gate in [LICENSING.md](docs/LICENSING.md) is not implemented. It is a much
-smaller gate than it was — statically linking an MIT engine removed the relinking flow entirely —
-but until it exists and passes, `blitsen build` says so on every run.
+**An export carries the notices it owes.** The third-party notices are generated from the
+dependency graph the runtime was built from, shipped inside the platform package, and embedded in
+the executable — `./MyApp --licenses` prints them back out of the artifact. The
+[LICENSING.md](docs/LICENSING.md) acceptance gate is an automated test
+(`bun run --cwd packages/blitsen test:licensing`): it builds a real export, reads the notices out
+of it, checks every linked package and every licence text against what `cargo` resolved, and
+repeats the check after signing. An export that carries none says so on the build line, which is
+what a Phase 1 export — the one that carries a copy of Bun — still gets.
+
+## Resource comparison
+
+A release-build “hello” window measured on Ubuntu x64 (Ryzen 9 5900X, X11), using Electron 43.4.0,
+Tauri 2.11.5 and this Blitsen checkout:
+
+| Runtime | Disk | Idle CPU | Idle memory (PSS) |
+| --- | ---: | ---: | ---: |
+| Electron | 339.4 MB | 0.2% | 284.3 MB |
+| Tauri | 4.7 MB | <0.1% | 191.9 MB |
+| Blitsen | 38.8 MB | 0.2% | 101.0 MB |
+
+Figures are medians of five runs after a five-second warm-up; CPU is the whole process tree over
+ten seconds (100% is one core), and disk is the packaged app's apparent size. Tauri's CPU and
+memory include its host, WebKit network and WebKit web processes; its disk figure excludes the
+system WebKitGTK it uses. Electron ships Chromium, while Blitsen ships its renderer and JavaScript
+engine. On Linux, Blitsen defaults to Vulkan and asks compatible loaders for only the active DRM
+driver's ICD; hybrid and unknown configurations retain full driver discovery.
 
 ## Documentation
 

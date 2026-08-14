@@ -88,12 +88,9 @@ pub(super) fn dispatch(
             dom.parent(handle(runtime, arguments, 0)?)
                 .map_err(dom_error)?,
         )),
-        "childNodes" => Ok(json!(
+        "childNodes" => Ok(serialized_all(
             dom.children(handle(runtime, arguments, 0)?)
-                .map_err(dom_error)?
-                .into_iter()
-                .map(DomRuntime::serialize_handle)
-                .collect::<Vec<_>>()
+                .map_err(dom_error)?,
         )),
         "childElements" => {
             let children = dom
@@ -102,10 +99,10 @@ pub(super) fn dispatch(
             let mut elements = Vec::new();
             for child in children {
                 if dom.node_kind(child).map_err(dom_error)? == NodeKind::Element {
-                    elements.push(DomRuntime::serialize_handle(child));
+                    elements.push(child);
                 }
             }
-            Ok(json!(elements))
+            Ok(serialized_all(elements))
         }
         "firstChild" => Ok(serialized(
             dom.children(handle(runtime, arguments, 0)?)
@@ -210,12 +207,7 @@ pub(super) fn dispatch(
                 dom.insert_before(parent, *child, reference)
                     .map_err(dom_error)?;
             }
-            Ok(json!(
-                parsed
-                    .into_iter()
-                    .map(DomRuntime::serialize_handle)
-                    .collect::<Vec<_>>()
-            ))
+            Ok(serialized_all(parsed))
         }
         _ => return Ok(None),
     }?;

@@ -5,9 +5,10 @@
 
 use std::cell::RefCell;
 use std::ffi::c_void;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::ptr;
 
+use blitsen_host::modules::APP_ORIGIN;
 use blitsen_js::{
     ExternalId, JsEngine, JsError, JsType, LoopTurn, NativeCall, NativeCallback, NativeClass,
     TypedArray, TypedArrayKind,
@@ -552,8 +553,17 @@ impl JsEngine for NodeApiEngine {
 
     fn evaluate_script(&mut self, source: &str, filename: &str) -> Result<Self::Value, JsError> {
         let source = format!("{source}\n//# sourceURL={filename}");
-        let source = if !filename.starts_with("blitsen:")
-            && (Path::new(filename).is_absolute() || filename.contains("#script-"))
+        // A document's own script goes through indirect eval, so its top-level
+        // `const` lands in a scope that is thrown away with the document rather
+        // than in the realm's permanent lexical scope — where a second load
+        // would find it already declared. The runtime's own scripts are named
+        // `blitsen:<something>` with no authority, and are not documents; the
+        // application origin is `blitsen://app/…`, and is.
+        let internal = filename.starts_with("blitsen:") && !filename.starts_with(APP_ORIGIN);
+        let source = if !internal
+            && (filename.starts_with(APP_ORIGIN)
+                || Path::new(filename).is_absolute()
+                || filename.contains("#script-"))
         {
             let source =
                 serde_json::to_string(&source).map_err(|error| JsError::new(error.to_string()))?;
@@ -567,9 +577,19 @@ impl JsEngine for NodeApiEngine {
     }
 
     fn evaluate_module(&mut self, source: &str, identifier: &str) -> Result<Self::Value, JsError> {
-        let path = Path::new(identifier);
+        // A module is named by its application URL on both hosts (#126), and
+        // this host's module loader is Bun's, which resolves one module's import
+        // of the next against the filesystem. So the URL is turned back into the
+        // path behind it before the loader sees it; an application with no path
+        // behind it — a bundle — never reaches this host, which cannot run one.
+        let on_disk = application_path(identifier);
+        let path = on_disk.as_deref().unwrap_or_else(|| Path::new(identifier));
         let loader_base = if path.is_absolute() {
             path.to_path_buf()
+        } else if let Some(document) = application_document_path(identifier) {
+            // An inline module: not a file, but its imports resolve against the
+            // document that carried it, which is one.
+            document
         } else {
             std::env::current_dir()
                 .map_err(|error| JsError::new(error.to_string()))?
@@ -578,7 +598,7 @@ impl JsEngine for NodeApiEngine {
         let loader_base = serde_json::to_string(&loader_base.to_string_lossy())
             .map_err(|error| JsError::new(error.to_string()))?;
         if path.is_absolute() && path.is_file() {
-            let specifier = serde_json::to_string(identifier)
+            let specifier = serde_json::to_string(&path.to_string_lossy())
                 .map_err(|error| JsError::new(error.to_string()))?;
             return self.evaluate_script(
                 &format!(
@@ -614,15 +634,25 @@ impl JsEngine for NodeApiEngine {
         // treating a production-sized one as a package path and asks the
         // filesystem to resolve its entire base64 body. Linux then answers
         // `NameTooLong` before a byte of the application runs. A Blob URL is
-        // still an engine-owned module with no temporary file, and import()
-        // returns the evaluation promise this method's callers already expect.
+        // still an engine-owned module with no temporary file, and Bun's
+        // createRequire evaluates it synchronously, preserving document order.
         self.evaluate_script(
             &format!(
+                // The host's own `URL`, not the application's: the DOM bootstrap
+                // installs Blitsen's `URL` over whatever the host supplied, and
+                // Blitsen's has no object URLs — there is no origin behind an
+                // application to hang a `blob:` on. The bootstrap keeps the
+                // host's class aside for exactly this, because Bun's is a global
+                // and not on `node:url`.
                 "(() => {{ \
                    const NativeBlob = process.getBuiltinModule('buffer').Blob; \
-                   const url = URL.createObjectURL(new NativeBlob([{source}], \
+                   const NativeURL = globalThis.__blitsenHostUrl ?? URL; \
+                   const url = NativeURL.createObjectURL(new NativeBlob([{source}], \
                      {{ type: 'text/javascript' }})); \
-                   return import(url).finally(() => URL.revokeObjectURL(url)); \
+                   try {{ \
+                     return process.getBuiltinModule('module') \
+                       .createRequire({loader_base})(url); \
+                   }} finally {{ NativeURL.revokeObjectURL(url); }} \
                  }})()"
             ),
             identifier,
@@ -642,27 +672,76 @@ impl JsEngine for NodeApiEngine {
     }
 }
 
-/// The document URL an inline script's identifier names.
+/// The file an application URL names, when the application is on disk.
 ///
-/// Identifiers arrive as `<entrypoint>#script-<n>`, and the entrypoint is a
-/// path while a directory is being run and an application URL inside a shipped
-/// executable. Both answer the same question — which document is this — so both
-/// are turned into the URL a browser would have reported, and neither carries
-/// the fragment, because `import.meta.url` is the document's address rather than
-/// this script's place in it.
-fn document_url(identifier: &str) -> Option<String> {
-    let entrypoint = identifier.split('#').next().unwrap_or_default();
-    if entrypoint.is_empty() {
+/// `blitsen://app/assets/app.js` is where an application's own files live, and a
+/// directory being run is the shape where each of them is also a real file. The
+/// fragment an inline script carries is kept out of the answer by refusing it:
+/// `index.html#script-2` is not a file, and treating it as one would evaluate
+/// the document as a module.
+fn application_path(identifier: &str) -> Option<PathBuf> {
+    let relative = identifier.strip_prefix(blitsen_host::modules::APP_ORIGIN)?;
+    if relative.contains('#') || relative.contains('?') {
         return None;
     }
-    if entrypoint.contains("://") {
-        return Some(entrypoint.to_owned());
+    let root = blitsen_host::app::application_root()?;
+    let path = root.join(relative);
+    path.is_file().then_some(path)
+}
+
+/// The document an inline script's identifier names, on disk.
+///
+/// `blitsen://app/index.html#script-2` is not a file; `index.html` beside it is,
+/// and it is what an `import` inside that script resolves against.
+fn application_document_path(identifier: &str) -> Option<PathBuf> {
+    let relative = identifier.strip_prefix(blitsen_host::modules::APP_ORIGIN)?;
+    let document = relative.split(['#', '?']).next().unwrap_or_default();
+    if document.is_empty() {
+        return None;
     }
-    let path = Path::new(entrypoint);
-    path.is_absolute()
+    let path = blitsen_host::app::application_root()?.join(document);
+    path.is_file().then_some(path)
+}
+
+/// The URL an inline script's identifier names, for this host.
+///
+/// Identifiers arrive as `<entrypoint>#script-<n>` on the application origin.
+/// This host answers with the `file:` URL of the file behind it, because that
+/// is the origin everything else it evaluates is on: Bun's loader is the
+/// filesystem's, so an external module is named by its real path, and
+/// `createRequire(import.meta.url)` — the documented way to reach a `.node`
+/// addon — needs a file URL. One host, one kind of URL.
+///
+/// Phase 2 answers `blitsen://app/…` for the same document, and the two are
+/// interchangeable where it matters: both are absolute, both resolve a relative
+/// asset to a sibling, and `fetch` reads either out of the application (#126).
+///
+/// The fragment is kept. It is what makes one inline module distinct from the
+/// next, which a module registry keyed by URL needs, and it costs nothing to
+/// resolve against.
+fn document_url(identifier: &str) -> Option<String> {
+    if identifier.is_empty() {
+        return None;
+    }
+    let (entrypoint, fragment) = identifier
+        .split_once('#')
+        .map_or((identifier, String::new()), |(path, tail)| {
+            (path, format!("#{tail}"))
+        });
+    let on_disk = application_document_path(identifier)
+        .map(|path| path.to_string_lossy().into_owned())
+        .or_else(|| {
+            Path::new(entrypoint)
+                .is_absolute()
+                .then(|| entrypoint.to_owned())
+        });
+    match on_disk {
         // The same escaping the document's own base URL uses, so a relative
         // resolution from a script and one from the document agree.
-        .then(|| format!("file://{}", entrypoint.replace(' ', "%20")))
+        Some(path) => Some(format!("file://{}{fragment}", path.replace(' ', "%20"))),
+        // A bundle: no file behind it, so the application URL is the address.
+        None => identifier.contains("://").then(|| identifier.to_owned()),
+    }
 }
 
 pub(crate) fn external_from_raw(
@@ -728,21 +807,24 @@ mod tests {
     /// the application shipped rather than resolving against a `data:` URL.
     #[test]
     fn an_inline_scripts_identifier_names_the_document_it_came_from() {
+        // The fragment stays: it is what makes one inline module distinct from
+        // the next, which a module registry keyed by URL needs, and resolving a
+        // relative asset against it lands in the same place either way (#126).
         assert_eq!(
             document_url("/tmp/app/index.html#script-1").as_deref(),
-            Some("file:///tmp/app/index.html")
+            Some("file:///tmp/app/index.html#script-1")
         );
-        // A shipped executable addresses its own files by the application
-        // origin, and that is already a URL.
+        // An application URL with no file behind it — a bundle — is already a
+        // URL and is answered as it stands.
         assert_eq!(
             document_url("blitsen://app/index.html#script-2").as_deref(),
-            Some("blitsen://app/index.html")
+            Some("blitsen://app/index.html#script-2")
         );
         // The same escaping the document's base URL uses, so a relative
         // resolution from a script and one from the document agree.
         assert_eq!(
             document_url("/tmp/my app/index.html#script-1").as_deref(),
-            Some("file:///tmp/my%20app/index.html")
+            Some("file:///tmp/my%20app/index.html#script-1")
         );
         // Nothing to name, rather than a guess: the harness evaluates modules
         // under identifiers that address no document at all.

@@ -63,9 +63,10 @@
     Headers, Request, Response, Blob, AbortController, AbortSignal, fetch, stop, WebSocket,
     AudioContext, AudioNode, AudioParam, AudioBuffer, AudioBufferSourceNode, AudioDestinationNode,
     GainNode, StereoPannerNode, Audio, HTMLAudioElement,
-    Location, History,
+    Location, History, URL, URLSearchParams,
     requestAnimationFrame, cancelAnimationFrame,
     setTimeout, clearTimeout, setInterval, clearInterval,
+    __blitsenHostUrl: hostUrl,
     __blitsenAnimationFrameTick: animationFrameTick,
     __blitsenAnimationFramesPending: () =>
       animationFrames.size > 0 || inflightFetches.size > 0 || liveSockets.size > 0
@@ -97,6 +98,9 @@
       livePorts.clear();
       liveWorkers.clear();
       dialogs.clear();
+      // A press held across a reload would otherwise keep the old document's
+      // field alive to drag a selection in.
+      caretDragControl = null;
       secondInstanceHandler = null;
       __blitsenFetchDispose();
       __blitsenSocketDispose();

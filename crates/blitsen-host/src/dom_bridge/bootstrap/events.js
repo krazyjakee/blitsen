@@ -52,17 +52,12 @@
       super(type, options);
       // The browsing context the event belongs to. D3 reads this to install
       // its temporary move/up listeners on the window during a drag.
-      Object.defineProperty(this, "view", {
-        value: options.view ?? null, enumerable: true,
-      });
-      const numbers = ["clientX", "clientY", "offsetX", "offsetY", "screenX", "screenY",
-        "button", "buttons", "deltaX", "deltaY"];
-      for (const property of numbers) Object.defineProperty(this, property, {
-        value: Number(options[property] ?? 0), enumerable: true,
-      });
-      for (const property of ["ctrlKey", "shiftKey", "altKey", "metaKey"]) Object.defineProperty(this, property, {
-        value: Boolean(options[property]), enumerable: true,
-      });
+      const members = { view: options.view ?? null };
+      for (const property of ["clientX", "clientY", "offsetX", "offsetY", "screenX", "screenY",
+        "button", "buttons", "deltaX", "deltaY"]) members[property] = Number(options[property] ?? 0);
+      for (const property of ["ctrlKey", "shiftKey", "altKey", "metaKey"])
+        members[property] = Boolean(options[property]);
+      defineMembers(this, members);
     }
   }
 
@@ -73,17 +68,17 @@
   class PointerEvent extends MouseEvent {
     constructor(type, options = {}) {
       super(type, options);
-      Object.defineProperties(this, {
-        pointerId: { value: Number(options.pointerId ?? 1), enumerable: true },
-        pointerType: { value: String(options.pointerType ?? "mouse"), enumerable: true },
-        isPrimary: { value: options.isPrimary === undefined ? true : Boolean(options.isPrimary), enumerable: true },
-        width: { value: Number(options.width ?? 1), enumerable: true },
-        height: { value: Number(options.height ?? 1), enumerable: true },
-        pressure: { value: Number(options.pressure ?? 0), enumerable: true },
-        tangentialPressure: { value: Number(options.tangentialPressure ?? 0), enumerable: true },
-        tiltX: { value: Number(options.tiltX ?? 0), enumerable: true },
-        tiltY: { value: Number(options.tiltY ?? 0), enumerable: true },
-        twist: { value: Number(options.twist ?? 0), enumerable: true },
+      defineMembers(this, {
+        pointerId: Number(options.pointerId ?? 1),
+        pointerType: String(options.pointerType ?? "mouse"),
+        isPrimary: options.isPrimary === undefined ? true : Boolean(options.isPrimary),
+        width: Number(options.width ?? 1),
+        height: Number(options.height ?? 1),
+        pressure: Number(options.pressure ?? 0),
+        tangentialPressure: Number(options.tangentialPressure ?? 0),
+        tiltX: Number(options.tiltX ?? 0),
+        tiltY: Number(options.tiltY ?? 0),
+        twist: Number(options.twist ?? 0),
       });
     }
   }
@@ -95,9 +90,9 @@
   class WheelEvent extends MouseEvent {
     constructor(type, options = {}) {
       super(type, options);
-      Object.defineProperties(this, {
-        deltaZ: { value: Number(options.deltaZ ?? 0), enumerable: true },
-        deltaMode: { value: Number(options.deltaMode ?? 0), enumerable: true },
+      defineMembers(this, {
+        deltaZ: Number(options.deltaZ ?? 0),
+        deltaMode: Number(options.deltaMode ?? 0),
       });
     }
   }
@@ -105,8 +100,7 @@
   class FocusEvent extends Event {
     constructor(type, options = {}) {
       super(type, options);
-      Object.defineProperty(this, "relatedTarget",
-        { value: options.relatedTarget ?? null, enumerable: true });
+      defineMembers(this, { relatedTarget: options.relatedTarget ?? null });
     }
   }
 
@@ -116,25 +110,66 @@
   class InputEvent extends Event {
     constructor(type, options = {}) {
       super(type, options);
-      Object.defineProperties(this, {
-        data: { value: options.data === undefined ? null : String(options.data), enumerable: true },
-        inputType: { value: String(options.inputType ?? ""), enumerable: true },
-        isComposing: { value: Boolean(options.isComposing), enumerable: true },
+      defineMembers(this, {
+        // Nullable rather than merely optional: a deletion contributes no text
+        // and says so with null, which `String()` would hand a listener as the
+        // four characters "null".
+        data: options.data === undefined || options.data === null
+          ? null : String(options.data),
+        inputType: String(options.inputType ?? ""),
+        isComposing: Boolean(options.isComposing),
       });
     }
   }
 
+  // Monaco and other mature keyboard-driven widgets still use the deprecated
+  // numeric keyCode/which pair to resolve keybindings. Native events have both
+  // modern identities already, so derive the legacy value at the boundary
+  // instead of making every application carry a compatibility listener.
+  const legacyKeyCode = (key, code) => {
+    if (/^Key[A-Z]$/.test(code)) return code.charCodeAt(3);
+    if (/^Digit[0-9]$/.test(code)) return code.charCodeAt(5);
+    if (/^Numpad[0-9]$/.test(code)) return 96 + Number(code.slice(-1));
+    const functionKey = /^F([1-9]|1[0-9]|2[0-4])$/.exec(code);
+    if (functionKey !== null) return 111 + Number(functionKey[1]);
+    return {
+      Backspace: 8, Tab: 9, Enter: 13, NumpadEnter: 13,
+      ShiftLeft: 16, ShiftRight: 16, ControlLeft: 17, ControlRight: 17,
+      AltLeft: 18, AltRight: 18, Pause: 19, CapsLock: 20, Escape: 27,
+      Space: 32, PageUp: 33, PageDown: 34, End: 35, Home: 36,
+      ArrowLeft: 37, ArrowUp: 38, ArrowRight: 39, ArrowDown: 40,
+      Insert: 45, Delete: 46, MetaLeft: 91, MetaRight: 92, ContextMenu: 93,
+      NumpadMultiply: 106, NumpadAdd: 107, NumpadComma: 108,
+      NumpadSubtract: 109, NumpadDecimal: 110, NumpadDivide: 111,
+      NumLock: 144, ScrollLock: 145, Semicolon: 186, Equal: 187,
+      Comma: 188, Minus: 189, Period: 190, Slash: 191, Backquote: 192,
+      BracketLeft: 219, Backslash: 220, BracketRight: 221, Quote: 222,
+    }[code] ?? {
+      Backspace: 8, Tab: 9, Enter: 13, Shift: 16, Control: 17, Alt: 18,
+      Pause: 19, CapsLock: 20, Escape: 27, " ": 32, Space: 32,
+      PageUp: 33, PageDown: 34, End: 35, Home: 36, ArrowLeft: 37,
+      ArrowUp: 38, ArrowRight: 39, ArrowDown: 40, Insert: 45, Delete: 46,
+      Meta: 91, ContextMenu: 93, NumLock: 144, ScrollLock: 145,
+    }[key] ?? 0;
+  };
+
   class KeyboardEvent extends Event {
     constructor(type, options = {}) {
       super(type, options);
-      Object.defineProperties(this, {
-        key: { value: String(options.key ?? ""), enumerable: true },
-        code: { value: String(options.code ?? ""), enumerable: true },
-        repeat: { value: Boolean(options.repeat), enumerable: true },
-        ctrlKey: { value: Boolean(options.ctrlKey), enumerable: true },
-        shiftKey: { value: Boolean(options.shiftKey), enumerable: true },
-        altKey: { value: Boolean(options.altKey), enumerable: true },
-        metaKey: { value: Boolean(options.metaKey), enumerable: true },
+      const key = String(options.key ?? "");
+      const code = String(options.code ?? "");
+      const keyCode = legacyKeyCode(key, code);
+      defineMembers(this, {
+        key,
+        code,
+        keyCode,
+        which: keyCode,
+        charCode: 0,
+        repeat: Boolean(options.repeat),
+        ctrlKey: Boolean(options.ctrlKey),
+        shiftKey: Boolean(options.shiftKey),
+        altKey: Boolean(options.altKey),
+        metaKey: Boolean(options.metaKey),
       });
     }
   }
@@ -154,30 +189,13 @@
     }
   }
 
-  // `MessageEvent` exists because `WebSocket` delivers one. The members a
-  // message channel would fill are here and empty rather than absent: they are
-  // the ones a library reads unguarded, and `source` and `ports` are truthfully
-  // nothing when the message came off a socket.
-  class MessageEvent extends Event {
-    constructor(type, options = {}) {
-      super(type, options);
-      Object.defineProperties(this, {
-        data: { value: options.data ?? null, enumerable: true },
-        origin: { value: String(options.origin ?? ""), enumerable: true },
-        lastEventId: { value: String(options.lastEventId ?? ""), enumerable: true },
-        source: { value: options.source ?? null, enumerable: true },
-        ports: { value: Object.freeze([...(options.ports ?? [])]), enumerable: true },
-      });
-    }
-  }
-
   class CloseEvent extends Event {
     constructor(type, options = {}) {
       super(type, options);
-      Object.defineProperties(this, {
-        code: { value: options.code === undefined ? 0 : Number(options.code), enumerable: true },
-        reason: { value: String(options.reason ?? ""), enumerable: true },
-        wasClean: { value: Boolean(options.wasClean), enumerable: true },
+      defineMembers(this, {
+        code: options.code === undefined ? 0 : Number(options.code),
+        reason: String(options.reason ?? ""),
+        wasClean: Boolean(options.wasClean),
       });
     }
   }
@@ -192,7 +210,7 @@
   class SubmitEvent extends Event {
     constructor(type, options = {}) {
       super(type, options);
-      Object.defineProperty(this, "submitter", { value: options.submitter ?? null, enumerable: true });
+      defineMembers(this, { submitter: options.submitter ?? null });
     }
   }
 
@@ -317,6 +335,12 @@
     const previous = activeElement ?? document.body;
     if (next === previous) { activeElement = next; return; }
     activeElement = next;
+    // The renderer paints from its own idea of focus — the caret in a field,
+    // the highlight behind a selection, every `:focus` rule — and is told here
+    // because this is where the decision is made. The body goes as nothing: it
+    // is where HTML parks focus when no control holds it, and `:focus` matches
+    // on neither.
+    call("setFocusedNode", next === document.body ? "" : next[handle]);
     previous?.dispatchEvent(new FocusEvent("blur", { relatedTarget: next }));
     next?.dispatchEvent(new FocusEvent("focus", { relatedTarget: previous }));
     previous?.dispatchEvent(new FocusEvent("focusout", { bubbles: true, relatedTarget: next }));
@@ -340,7 +364,16 @@
     const target = wrap(String(rawHandle));
     const event = new MouseEvent(String(type), { ...init, view: init.view ?? globalThis });
     const allowed = target.dispatchEvent(event);
-    if (type === "click" && allowed) { focusNearest(target); activateControl(target); }
+    // Focus is `mousedown`'s default action and activation is `click`'s. They
+    // are two different events on purpose: a component that has focused
+    // something of its own — a code editor moving the caret into its hidden
+    // textarea — cancels the mousedown to keep it, and by the time a click has
+    // happened there is nothing left to cancel. Taking focus at click instead
+    // handed it straight back to the nearest focusable ancestor, or to the body
+    // when there was none, one event after the application had placed it.
+    if (type === "mousedown" && allowed) focusNearest(target);
+    if (type === "click" && allowed) activateControl(target);
+    if (allowed) textEditingMouse(type, target, event);
     if (type === "wheel" && allowed)
       __blitsenScrollDefault(String(target[handle]), String(-event.deltaX), String(-event.deltaY));
     return allowed;
@@ -350,6 +383,10 @@
     const target = activeElement ?? document.body ?? document;
     const allowed = target.dispatchEvent(event);
     if (type === "keydown" && init.key === "Tab" && allowed) moveFocus(Boolean(init.shiftKey));
+    // A key the focused field took is not also a scroll: a space typed into it
+    // must not page the document down behind it, and Home must not leave the
+    // caret behind at the top of it.
+    if (type === "keydown" && allowed && textEditingKeydown(event, target)) return allowed;
     if (type === "keydown" && allowed && target instanceof Node && !event.ctrlKey && !event.altKey && !event.metaKey) {
       const page = Math.max(1, innerHeight * 0.9);
       const delta = {

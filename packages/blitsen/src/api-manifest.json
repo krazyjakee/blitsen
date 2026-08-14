@@ -818,6 +818,24 @@
       "pattern": null
     },
     {
+      "api": "NodeList.item",
+      "kind": "member",
+      "owner": "NodeList.prototype",
+      "member": "item",
+      "status": "implemented",
+      "code": "WEB_DOM",
+      "pattern": null
+    },
+    {
+      "api": "NodeList.forEach",
+      "kind": "member",
+      "owner": "NodeList.prototype",
+      "member": "forEach",
+      "status": "implemented",
+      "code": "WEB_DOM",
+      "pattern": null
+    },
+    {
       "api": "HTMLInputElement",
       "kind": "global",
       "status": "implemented",
@@ -972,7 +990,7 @@
       "kind": "member",
       "owner": "HTMLInputElement.prototype",
       "member": "select",
-      "status": "absent",
+      "status": "implemented",
       "code": "WEB_FORM_CONTROLS",
       "pattern": null
     },
@@ -981,7 +999,7 @@
       "kind": "member",
       "owner": "HTMLInputElement.prototype",
       "member": "setSelectionRange",
-      "status": "absent",
+      "status": "implemented",
       "code": "WEB_FORM_CONTROLS",
       "pattern": null
     },
@@ -990,7 +1008,7 @@
       "kind": "member",
       "owner": "HTMLInputElement.prototype",
       "member": "selectionStart",
-      "status": "absent",
+      "status": "implemented",
       "code": "WEB_FORM_CONTROLS",
       "pattern": null
     },
@@ -999,7 +1017,16 @@
       "kind": "member",
       "owner": "HTMLInputElement.prototype",
       "member": "selectionEnd",
-      "status": "absent",
+      "status": "implemented",
+      "code": "WEB_FORM_CONTROLS",
+      "pattern": null
+    },
+    {
+      "api": "HTMLInputElement.selectionDirection",
+      "kind": "member",
+      "owner": "HTMLInputElement.prototype",
+      "member": "selectionDirection",
+      "status": "implemented",
       "code": "WEB_FORM_CONTROLS",
       "pattern": null
     },
@@ -1017,6 +1044,51 @@
       "kind": "member",
       "owner": "HTMLTextAreaElement.prototype",
       "member": "defaultValue",
+      "status": "implemented",
+      "code": "WEB_FORM_CONTROLS",
+      "pattern": null
+    },
+    {
+      "api": "HTMLTextAreaElement.select",
+      "kind": "member",
+      "owner": "HTMLTextAreaElement.prototype",
+      "member": "select",
+      "status": "implemented",
+      "code": "WEB_FORM_CONTROLS",
+      "pattern": null
+    },
+    {
+      "api": "HTMLTextAreaElement.setSelectionRange",
+      "kind": "member",
+      "owner": "HTMLTextAreaElement.prototype",
+      "member": "setSelectionRange",
+      "status": "implemented",
+      "code": "WEB_FORM_CONTROLS",
+      "pattern": null
+    },
+    {
+      "api": "HTMLTextAreaElement.selectionStart",
+      "kind": "member",
+      "owner": "HTMLTextAreaElement.prototype",
+      "member": "selectionStart",
+      "status": "implemented",
+      "code": "WEB_FORM_CONTROLS",
+      "pattern": null
+    },
+    {
+      "api": "HTMLTextAreaElement.selectionEnd",
+      "kind": "member",
+      "owner": "HTMLTextAreaElement.prototype",
+      "member": "selectionEnd",
+      "status": "implemented",
+      "code": "WEB_FORM_CONTROLS",
+      "pattern": null
+    },
+    {
+      "api": "HTMLTextAreaElement.selectionDirection",
+      "kind": "member",
+      "owner": "HTMLTextAreaElement.prototype",
+      "member": "selectionDirection",
       "status": "implemented",
       "code": "WEB_FORM_CONTROLS",
       "pattern": null
@@ -1966,6 +2038,38 @@
       "status": "implemented",
       "code": "WEB_NETWORK",
       "pattern": "(?<![.\\w$])AbortSignal\\b"
+    },
+    {
+      "api": "URL",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_URL",
+      "pattern": "(?<![.\\w$])URL\\b"
+    },
+    {
+      "api": "URLSearchParams",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_URL",
+      "pattern": "(?<![.\\w$])URLSearchParams\\b"
+    },
+    {
+      "api": "URL.createObjectURL",
+      "kind": "member",
+      "owner": "URL.prototype",
+      "member": "createObjectURL",
+      "status": "absent",
+      "code": "WEB_URL",
+      "pattern": "\\bURL\\.createObjectURL\\s*\\("
+    },
+    {
+      "api": "URL.revokeObjectURL",
+      "kind": "member",
+      "owner": "URL.prototype",
+      "member": "revokeObjectURL",
+      "status": "absent",
+      "code": "WEB_URL",
+      "pattern": "\\bURL\\.revokeObjectURL\\s*\\("
     },
     {
       "api": "window",
@@ -3342,6 +3446,58 @@
       "member": "writeMime",
       "status": "absent",
       "reason": "The counterpart of `readMime`, absent for the same reason."
+    },
+    {
+      "api": "os.cpu",
+      "module": "os",
+      "member": "cpu",
+      "status": "implemented"
+    },
+    {
+      "api": "os.memory",
+      "module": "os",
+      "member": "memory",
+      "status": "implemented"
+    },
+    {
+      "api": "os.storage",
+      "module": "os",
+      "member": "storage",
+      "status": "implemented"
+    },
+    {
+      "api": "os.host",
+      "module": "os",
+      "member": "host",
+      "status": "implemented"
+    },
+    {
+      "api": "os.displays",
+      "module": "os",
+      "member": "displays",
+      "status": "absent",
+      "reason": "The monitors are `window.monitors()`, which already reports each one's size, position and scale factor. A second list here could disagree with that one."
+    },
+    {
+      "api": "os.battery",
+      "module": "os",
+      "member": "battery",
+      "status": "absent",
+      "reason": "Nothing behind this module reports power. The processor, the memory and the volumes come from one library that implements all three per platform; the battery is a fourth source on each — UPower's D-Bus service, IOKit, `GetSystemPowerStatus` — and a desktop with no battery has to read as *absent* rather than as an empty reading, which is a distinction only the real source can make."
+    },
+    {
+      "api": "os.locale",
+      "module": "os",
+      "member": "locale",
+      "status": "absent",
+      "reason": "Reading the tag is the easy half. Nothing in this runtime consumes it: the JavaScript engine ships no `Intl` (see ENGINE_ABSENT), so `os.locale()` would hand back a string with no formatter behind it and imply support that is not there."
+    },
+    {
+      "api": "os.idleTime",
+      "module": "os",
+      "member": "idleTime",
+      "status": "absent",
+      "reason": "Seconds since the last input is a different mechanism on every platform, and Wayland has no answer at all for a client that is not focused — the idle-notify protocol reports crossing a threshold the compositor was asked about, not a duration. Reporting zero on the sessions that cannot answer would be indistinguishable from a machine in use."
     }
   ],
   "diagnostics": {
@@ -3397,6 +3553,12 @@
       "severity": "warning",
       "message": "Server-sent events are not implemented; WebSocket is.",
       "guidance": "Feature-detect EventSource, or hold the stream open over a WebSocket instead.",
+      "extra": null
+    },
+    "WEB_URL": {
+      "severity": "warning",
+      "message": "Object URLs are not implemented; URL and URLSearchParams are.",
+      "guidance": "Pass the Blob itself to whatever was going to fetch the URL, or build a data: URL.",
       "extra": null
     },
     "WEB_XHR": {
@@ -3488,7 +3650,7 @@
     {
       "code": "WEB_FETCH",
       "severity": "error",
-      "pattern": "\\bfetch\\s*\\(\\s*[\"'`](?!https?:\\/\\/)([^\"'`]*)[\"'`]",
+      "pattern": "\\bfetch\\s*\\(\\s*(?:new\\s+URL\\s*\\(\\s*)?[\"'`](?!https?:\\/\\/)([^\"'`]*)[\"'`]",
       "message": "fetch names a path this application does not ship, and there is no server behind it.",
       "guidance": "Ship the file in the output, or request an absolute http(s) URL."
     },
@@ -3532,6 +3694,14 @@
       "pattern": "<canvas\\b",
       "message": "<canvas> is not implemented.",
       "guidance": "Use ordinary DOM/CSS elements or a native viewport."
+    },
+    {
+      "kind": "html",
+      "code": "HTML_SOURCE_ENTRY",
+      "severity": "error",
+      "pattern": "<script\\b[^>]*\\bsrc\\s*=\\s*[\"'][^\"']*\\.(?:ts|tsx|mts|cts|jsx|vue|svelte)(?:[?#][^\"']*)?[\"']",
+      "message": "This document loads source, not built output; nothing in Blitsen transpiles it.",
+      "guidance": "Run your bundler (Vite: `vite build`) and point Blitsen at its output directory."
     },
     {
       "kind": "html",

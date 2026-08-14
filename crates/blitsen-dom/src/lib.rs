@@ -16,7 +16,8 @@ pub use invalidation::{
 pub use types::{
     CaretPosition, DomError, DomName, HitTest, ImageState, LayoutMetrics, LayoutSnapshot,
     LinkState, MediaQueryMatch, NATIVE_VIEWPORT_BYTES_PER_PIXEL, NATIVE_VIEWPORT_TAG, Namespace,
-    NodeId, NodeKind, Rect, ViewportSurface,
+    NodeId, NodeKind, Rect, SelectionDirection, TextEdit, TextMotion, TextSelection,
+    ViewportSurface,
 };
 
 /// Boundary implemented by every DOM and renderer backend.
@@ -94,6 +95,51 @@ pub trait DomBackend {
     /// tracks the control: a later attribute write is the default changing,
     /// not the value.
     fn set_form_value(&mut self, node: Self::NodeId, value: &str) -> Result<(), DomError>;
+    /// Returns the selection inside a text control.
+    ///
+    /// A control the backend has not laid out yet has no caret to report and
+    /// answers with a collapsed selection at the start, which is where HTML
+    /// puts one before anything has moved it.
+    fn form_selection(&self, node: Self::NodeId) -> Result<TextSelection, DomError>;
+    /// Replaces the selection inside a text control, clamping it to the value.
+    fn set_form_selection(
+        &mut self,
+        node: Self::NodeId,
+        selection: TextSelection,
+    ) -> Result<(), DomError>;
+    /// Moves the caret inside a text control.
+    ///
+    /// `extend` keeps the anchor where it is, which is the difference between
+    /// an arrow key and a shifted one. Reports whether the control had a caret
+    /// to move: one that has never been laid out does not.
+    fn move_form_selection(
+        &mut self,
+        node: Self::NodeId,
+        motion: TextMotion,
+        extend: bool,
+    ) -> Result<bool, DomError>;
+    /// Puts the caret at a point inside a text control's border box.
+    ///
+    /// `offset_x` and `offset_y` are CSS pixels from the control's top-left
+    /// corner — the offsets a mouse event already carries. `extend` leaves the
+    /// anchor alone, which is a shift-click or a drag rather than a click.
+    fn move_form_caret_to_point(
+        &mut self,
+        node: Self::NodeId,
+        offset_x: f32,
+        offset_y: f32,
+        extend: bool,
+    ) -> Result<bool, DomError>;
+    /// Applies one editing operation to a text control and raises HTML's dirty
+    /// value flag, exactly as [`DomBackend::set_form_value`] does.
+    fn edit_form_value(&mut self, node: Self::NodeId, edit: TextEdit<'_>)
+    -> Result<bool, DomError>;
+    /// Focuses a node in the renderer, or clears focus when given nothing.
+    ///
+    /// Focus is the bridge's to decide — it runs the focus events and knows
+    /// what is focusable — but the renderer has to be told, because a caret,
+    /// a selection highlight and every `:focus` rule are painted from it.
+    fn set_focused(&mut self, node: Option<Self::NodeId>) -> Result<(), DomError>;
     /// Returns an `<input>`'s checkedness or an `<option>`'s selectedness.
     ///
     /// One method because they are one concept: a boolean control state whose

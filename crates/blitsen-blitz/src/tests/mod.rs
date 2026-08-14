@@ -2,6 +2,7 @@
 
 mod boundary;
 mod canvas;
+mod cursor;
 mod forms;
 mod images;
 mod ranges;
@@ -15,7 +16,7 @@ use anyrender::{Paint, Scene};
 use anyrender_vello_cpu::VelloCpuImageRenderer;
 use std::sync::{Arc, Mutex};
 
-use blitsen_dom::{DomBackend, DomError, DomName, ImageState, LinkState, NodeKind};
+use blitsen_dom::{DomBackend, DomError, DomName, ImageState, LayoutSnapshot, LinkState, NodeKind};
 use blitz::dom::DocumentConfig;
 use blitz::traits::net::{NetHandler, NetProvider, Request};
 use blitz::traits::shell::{ColorScheme, Viewport};
@@ -30,6 +31,17 @@ use super::resources::LocalResources;
 /// path a headless harness takes.
 fn fixtures_url() -> String {
     format!("file://{}/fixtures/", env!("CARGO_MANIFEST_DIR"))
+}
+
+/// The value the cascade resolved for a property of an element with an id.
+fn resolved(dom: &BlitzDom, snapshot: LayoutSnapshot, id: &str, property: &str) -> String {
+    let node = dom
+        .get_element_by_id(id)
+        .expect("query")
+        .expect("element exists");
+    dom.resolved_style(node, property, snapshot)
+        .expect("resolved style")
+        .expect("property is resolvable")
 }
 
 /// Renders a document and returns straight-alpha RGBA8 rows.

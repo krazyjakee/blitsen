@@ -25,6 +25,31 @@ const interactiveSnapshot = JSON.parse(native.runDocumentScriptsHarness(
 const interactiveDemo = interactiveSnapshot.nodes.find(node => node.attributes.id === "demo");
 assert.equal(interactiveDemo.attributes["data-ready"], "true",
   "interactive acceptance example installs its event and animation script");
+// The hardware example, which is the only one of these whose script depends on a
+// `native:` module. Running it here is what catches an application that parses
+// and then throws on evaluation — the marker is absent, rather than the document
+// merely looking sparse.
+const hardwareSnapshot = JSON.parse(native.runDocumentScriptsHarness(
+  join(testDir, "../../../examples/hardware/index.html"),
+  1180,
+  820,
+));
+const hardwareHeader = hardwareSnapshot.nodes.find(node => node.attributes.id === "bar");
+assert.equal(hardwareHeader.attributes["data-ready"], "true",
+  "the hardware example reads blitsen/os and runs its script to the end");
+// The counts come from the machine running this, so they are asserted as facts
+// about any machine rather than as numbers: something has threads, and something
+// is mounted.
+assert(Number(hardwareHeader.attributes["data-threads"]) >= 1,
+  `logical processors: ${hardwareHeader.attributes["data-threads"]}`);
+assert(Number(hardwareHeader.attributes["data-volumes"]) >= 1,
+  `volumes with capacity: ${hardwareHeader.attributes["data-volumes"]}`);
+assert.equal(
+  hardwareSnapshot.nodes.filter(node => node.attributes.class === "core").length,
+  Number(hardwareHeader.attributes["data-threads"]),
+  "one meter is built per logical processor",
+);
+
 const pongSnapshot = JSON.parse(native.runDocumentScriptsHarness(
   join(testDir, "../../../examples/pong/index.html"),
   720,

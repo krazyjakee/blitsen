@@ -81,6 +81,71 @@
     }
   };
 
+  // Text selection. HTML gives it to `<textarea>` and to the input types whose
+  // value is one line of plain text, and to nothing else: a date or a colour
+  // has a value with structure and no caret in it, and `selectionStart` on one
+  // is defined to answer null rather than 0 — which is what a component reads
+  // before it tries to put a caret back after a re-render.
+  const SELECTABLE_TYPES = ["text", "search", "url", "tel", "password"];
+  const isSelectable = element => elementTag(element) === "textarea" ||
+    SELECTABLE_TYPES.includes(element.type);
+  // Read from and written to the renderer's own editor, for the reason `value`
+  // is: it is what paints the caret and the highlight, so a range set here is a
+  // range the user can see.
+  const controlSelection = element => call("formSelection", element[handle]);
+  const toOffset = value => {
+    // `null` counts as 0, which is what HTML says of the nullable arguments.
+    const number = Math.trunc(Number(value));
+    return Number.isFinite(number) ? Math.max(number, 0) : 0;
+  };
+  // HTML's "set the selection range". The end is clamped to the value and the
+  // start to the end, so a range cannot end up inside out however it was asked
+  // for, and a direction that is neither name is `"none"` — a range with no
+  // direction of its own, which is what one set from script has.
+  const selectRange = (element, start, end, direction) => {
+    if (!isSelectable(element)) return;
+    const length = element.value.length;
+    end = Math.min(toOffset(end), length);
+    start = Math.min(toOffset(start), end);
+    call("setFormSelection", element[handle], start, end,
+      direction === "forward" || direction === "backward" ? direction : "none");
+  };
+  // The setters throw where the getters answer null: HTML makes reading a
+  // caret off a control that has none a question with an answer, and writing
+  // one to it a mistake.
+  const requireSelectable = element => {
+    if (!isSelectable(element))
+      throw new DOMException("this control has no text selection", "InvalidStateError");
+  };
+  const selectionMembers = {
+    start(element) { return isSelectable(element) ? controlSelection(element).start : null; },
+    setStart(element, value) {
+      requireSelectable(element);
+      const { end, direction } = controlSelection(element);
+      const start = toOffset(value);
+      selectRange(element, start, Math.max(start, end), direction);
+    },
+    end(element) { return isSelectable(element) ? controlSelection(element).end : null; },
+    setEnd(element, value) {
+      requireSelectable(element);
+      const { start, direction } = controlSelection(element);
+      selectRange(element, start, value, direction);
+    },
+    direction(element) { return isSelectable(element) ? controlSelection(element).direction : null; },
+    setDirection(element, value) {
+      requireSelectable(element);
+      const { start, end } = controlSelection(element);
+      selectRange(element, start, end, String(value));
+    },
+    range(element, start, end, direction) {
+      requireSelectable(element);
+      selectRange(element, start, end, direction);
+    },
+    // A no-op on a control with no selection rather than a throw, which is the
+    // one place HTML lets this pair disagree.
+    all(element) { selectRange(element, 0, element.value.length, "none"); },
+  };
+
   class HTMLFormControlElement extends Element {
     get name() { return reflected(this, "name"); }
     set name(value) { this.setAttribute("name", value); }
@@ -111,6 +176,16 @@
     set checked(value) { setChecked(this, Boolean(value)); }
     get defaultChecked() { return this.hasAttribute("checked"); }
     set defaultChecked(value) { this.toggleAttribute("checked", Boolean(value)); }
+    get selectionStart() { return selectionMembers.start(this); }
+    set selectionStart(value) { selectionMembers.setStart(this, value); }
+    get selectionEnd() { return selectionMembers.end(this); }
+    set selectionEnd(value) { selectionMembers.setEnd(this, value); }
+    get selectionDirection() { return selectionMembers.direction(this); }
+    set selectionDirection(value) { selectionMembers.setDirection(this, value); }
+    setSelectionRange(start, end, direction = "none") {
+      selectionMembers.range(this, start, end, direction);
+    }
+    select() { selectionMembers.all(this); }
   }
 
   class HTMLTextAreaElement extends HTMLFormControlElement {
@@ -122,6 +197,16 @@
     // what it reads.
     get defaultValue() { return this.textContent; }
     set defaultValue(value) { this.textContent = value; }
+    get selectionStart() { return selectionMembers.start(this); }
+    set selectionStart(value) { selectionMembers.setStart(this, value); }
+    get selectionEnd() { return selectionMembers.end(this); }
+    set selectionEnd(value) { selectionMembers.setEnd(this, value); }
+    get selectionDirection() { return selectionMembers.direction(this); }
+    set selectionDirection(value) { selectionMembers.setDirection(this, value); }
+    setSelectionRange(start, end, direction = "none") {
+      selectionMembers.range(this, start, end, direction);
+    }
+    select() { selectionMembers.all(this); }
   }
 
   class HTMLButtonElement extends HTMLFormControlElement {

@@ -6,11 +6,15 @@
 
 mod backend;
 mod canvas;
+mod cursor;
 mod forms;
 mod hit_test;
+mod pointer_events;
 pub mod resources;
 mod stylesheets;
+mod surface;
 mod text;
+mod text_input;
 mod tree;
 mod ua;
 mod viewport;
@@ -88,6 +92,7 @@ impl BlitzDom {
         let mut dom = Self::new(HtmlDocument::from_html(html, config));
         dom.resources = log;
         dom.base_url = base_url;
+        dom.normalize_pointer_events();
         dom
     }
 

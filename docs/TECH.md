@@ -551,7 +551,7 @@ import { app }       from "native:app";
 | `native:tray` | tray icon, context menu, application menu |
 | `native:notify` | desktop notifications |
 | `native:input` | raw keyboard/mouse state, gamepads, potentially raw HID |
-| `native:os` | displays, battery, locale, idle time |
+| `native:os` | processor, memory, storage volumes and OS identity; displays, battery, locale, idle time |
 
 **The rule: `native:` is additive, never a superset.** Anything the Node surface already names
 keeps its Node name — `process.argv`, `process.execPath`, `process.exit`, `node:os` for CPU /
@@ -561,6 +561,13 @@ is what keeps existing packages working unmodified, and it is why there is no `n
 `native:net`: filesystem watching is `node:fs.watch` and raw sockets are `node:net`/`node:dgram`.
 Where a genuine gap remains (memory-mapped buffers, raw HID), it gets a narrowly named module of
 its own rather than a parallel re-spelling of a module Bun already ships.
+
+The rule reads against a host that ships Node's modules, which is what Phase 1 did. The shipped
+Phase 2 runtime implements none of them and refuses `node:*` at resolution (COMPATIBILITY.md,
+"Node compatibility in the shipped runtime"), so for the facts `node:os` would have named there is
+no Node spelling left to keep and `native:os` is the whole API — which is what that section's
+Phase 1 → Phase 2 table already routes `node:os` facts to. This is the rule applied, not waived:
+the test is whether the *shipped runtime* has another word for the thing.
 
 The rule also has a Phase 2 cost argument behind it. When the embedded-JSC host replaces Bun
 (§3), every Node module the design leans on becomes ours to supply — deferred work, not avoided

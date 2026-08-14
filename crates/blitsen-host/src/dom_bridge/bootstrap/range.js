@@ -250,13 +250,8 @@
   }
   Object.defineProperty(Range.prototype, Symbol.toStringTag,
     { value: "Range", configurable: true });
-  // The four boundary-point comparisons, on the constructor and on instances,
-  // which is where the DOM puts them and where a caller reads them.
-  const BOUNDARY_COMPARISONS = Object.fromEntries(
-    ["START_TO_START", "START_TO_END", "END_TO_END", "END_TO_START"]
-      .map((name, value) => [name, { value, enumerable: true }]));
-  Object.defineProperties(Range, BOUNDARY_COMPARISONS);
-  Object.defineProperties(Range.prototype, BOUNDARY_COMPARISONS);
+  // The four boundary-point comparisons, which the DOM numbers from zero.
+  defineConstants(Range, ["START_TO_START", "START_TO_END", "END_TO_END", "END_TO_START"]);
 
   // A character boundary the way `caretPositionFromPoint` reports one: the text
   // node the point landed in, and how far into it.

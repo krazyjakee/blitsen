@@ -290,3 +290,104 @@ fn a_scripted_link_loads_when_it_is_connected() {
         "a sheet enters the cascade while layout resolves, so the state is snapshot gated"
     );
 }
+
+/// `pointer-events` has nine values this cascade cannot parse and one of them
+/// is the one every canvas library uses. Asserted through hit testing rather
+/// than through the resolved value, because being reachable by a pointer is
+/// what the declaration is for.
+///
+/// The shape is React Flow's: a container that takes no hits, holding elements
+/// that declare that they do. Dropping the inner declaration left them
+/// inheriting `none`, and nothing on the canvas could be hit at all.
+#[test]
+fn an_element_that_declares_it_takes_hits_inside_one_that_does_not_is_hit() {
+    let mut dom = viewport_document(
+        r#"<style>
+             .nodes { position: absolute; inset: 0; pointer-events: none }
+             .node { position: absolute; left: 20px; top: 20px; width: 80px; height: 40px;
+                     pointer-events: all }
+           </style>
+           <div class="nodes"><div class="node" id="node"></div></div>"#,
+        1.0,
+    );
+    let snapshot = dom.flush_layout().expect("layout");
+    let node = dom
+        .get_element_by_id("node")
+        .expect("query")
+        .expect("element exists");
+    assert_eq!(
+        resolved(&dom, snapshot, "node", "pointer-events"),
+        "auto",
+        "the declaration was dropped and the element inherited `none`"
+    );
+    assert_eq!(
+        dom.hit_test(40.0, 40.0, snapshot)
+            .expect("hit test")
+            .map(|hit| hit.target),
+        Some(node),
+        "the element declared that it takes hits and took none"
+    );
+}
+
+/// The same declaration, arriving every other way CSS can arrive: from a
+/// script's `<style>`, from an inline style attribute, and from the CSSOM.
+#[test]
+fn a_declaration_written_after_the_parse_is_normalised_the_same_way() {
+    let mut dom = viewport_document(
+        r#"<style>.nodes { position: absolute; inset: 0; pointer-events: none }</style>
+           <div class="nodes">
+             <div class="node" id="scripted"></div>
+             <div class="node" id="inline"></div>
+           </div>"#,
+        1.0,
+    );
+    let sheet = dom.create_element(&DomName::html("style")).expect("style");
+    let head = dom
+        .query_selector(dom.document(), "head")
+        .expect("query")
+        .expect("head exists");
+    dom.append_child(head, sheet).expect("append");
+    dom.set_text_content(
+        sheet,
+        "#scripted { position: absolute; left: 0; top: 0; width: 40px; height: 40px;
+                     pointer-events: all }",
+    )
+    .expect("sheet text");
+    let inline = dom
+        .get_element_by_id("inline")
+        .expect("query")
+        .expect("element exists");
+    dom.set_inline_style_text(
+        inline,
+        "position: absolute; left: 50px; top: 0; width: 40px; height: 40px; pointer-events: all",
+    )
+    .expect("inline style");
+    let snapshot = dom.flush_layout().expect("layout");
+    assert_eq!(
+        resolved(&dom, snapshot, "scripted", "pointer-events"),
+        "auto"
+    );
+    assert_eq!(resolved(&dom, snapshot, "inline", "pointer-events"), "auto");
+    // And one property at a time, which never reaches the cascade as text.
+    dom.set_inline_style(inline, "pointer-events", "visiblePainted")
+        .expect("property")
+        .then_some(())
+        .expect("the property was refused rather than normalised");
+    let snapshot = dom.flush_layout().expect("layout");
+    assert_eq!(resolved(&dom, snapshot, "inline", "pointer-events"), "auto");
+}
+
+/// A linked sheet's text is bytes off a transfer rather than text in the tree,
+/// so it is the one stylesheet that has to be normalised as it arrives.
+#[test]
+fn a_linked_stylesheet_is_normalised_on_its_way_into_the_cascade() {
+    let mut dom = fixture_document(
+        r#"<link rel="stylesheet" href="linked.css">
+               <div style="pointer-events: none"><div id="hits"></div></div>"#,
+        None,
+    );
+    // Inside a container that takes no hits, so a dropped declaration is
+    // observable: the element would inherit `none` rather than resolve `auto`.
+    let snapshot = dom.flush_layout().unwrap();
+    assert_eq!(resolved(&dom, snapshot, "hits", "pointer-events"), "auto");
+}

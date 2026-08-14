@@ -89,19 +89,6 @@
     }
   }
 
-  class MessageEvent extends Event {
-    constructor(type, options = {}) {
-      super(type, options);
-      Object.defineProperties(this, {
-        data: { value: options.data ?? null, enumerable: true },
-        origin: { value: String(options.origin ?? ""), enumerable: true },
-        lastEventId: { value: String(options.lastEventId ?? ""), enumerable: true },
-        source: { value: options.source ?? null, enumerable: true },
-        ports: { value: Object.freeze([...(options.ports ?? [])]), enumerable: true },
-      });
-    }
-  }
-
   // This worker's own address, which everything relative resolves against — its
   // script's URL, exactly as it is in a browser.
   const workerIdentity = JSON.parse(__blitsenWorkerIdentity);

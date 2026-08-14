@@ -1,10 +1,11 @@
 //! Where a running application's files come from, and how the rest of the host
 //! stops caring which.
 //!
-//! Two shapes reach the same window session: a directory of built output being
-//! run, and the section appended to an exported executable (issue #88). The
-//! difference is confined to this module — everything downstream sees an
-//! entrypoint, a base URL, a subresource provider and a script loader.
+//! Three shapes reach the same window session: a directory of built output being
+//! run, the section appended to an exported executable (issue #88), and a
+//! development server answering over HTTP (issue #67). The difference is
+//! confined to this module — everything downstream sees an entrypoint, a base
+//! URL, a subresource provider and a script loader.
 
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
@@ -21,9 +22,13 @@ use blitz::traits::net::{Bytes, NetHandler, NetProvider, Request};
 use blitz::traits::shell::{ColorScheme, Viewport};
 use url::Url;
 
+use crate::dev_server::DevServer;
 use crate::modules::{APP_ORIGIN, AppSource, DirectorySource, path_of, url_of};
 
-/// The application's files, and which of the two shapes they came in.
+/// What a served URL with no filename asks for.
+const DEFAULT_DOCUMENT: &str = "index.html";
+
+/// The application's files, and which of the three shapes they came in.
 #[derive(Clone)]
 pub enum AppFiles {
     /// A directory of built output, run in place.
@@ -38,6 +43,13 @@ pub enum AppFiles {
         /// The opened bundle, shared with the subresource provider.
         bundle: Arc<AppBundle>,
         /// Application-relative entrypoint, conventionally `index.html`.
+        entrypoint: String,
+    },
+    /// A development server answering over HTTP (issue #67).
+    Server {
+        /// The server, shared with the subresource provider.
+        server: Arc<DevServer>,
+        /// The path the document is served at, relative to the server's root.
         entrypoint: String,
     },
 }
@@ -56,6 +68,29 @@ impl AppFiles {
             .ok_or_else(|| JsError::new("the entrypoint has no directory"))?
             .to_path_buf();
         Ok(Self::Directory { root, entrypoint })
+    }
+
+    /// Runs whatever a development server is serving at `url` (issue #67).
+    ///
+    /// The path in the URL is the document; a URL that names a directory — the
+    /// ordinary `http://localhost:5173` — asks for `index.html` under it, which
+    /// is what every dev server in the audience serves there.
+    pub fn server(url: &str) -> Result<Self, JsError> {
+        let parsed = Url::parse(url).map_err(|error| {
+            JsError::new(format!("{url} is not a URL Blitsen can open: {error}"))
+        })?;
+        let path = parsed.path().trim_start_matches('/');
+        let entrypoint = if path.is_empty() || path.ends_with('/') {
+            format!("{path}{DEFAULT_DOCUMENT}")
+        } else {
+            path.to_owned()
+        };
+        let mut origin = parsed.clone();
+        origin.set_path("/");
+        origin.set_query(None);
+        origin.set_fragment(None);
+        let server = DevServer::connect(origin.as_str(), &entrypoint)?;
+        Ok(Self::Server { server, entrypoint })
     }
 
     /// Runs the application appended to this executable.
@@ -84,6 +119,23 @@ impl AppFiles {
             Self::Bundle { bundle, entrypoint } => bundle
                 .read_to_string(entrypoint)
                 .map_err(|error| JsError::new(error.to_string())),
+            Self::Server { server, entrypoint } => {
+                let bytes = server.read(entrypoint).ok_or_else(|| {
+                    JsError::new(format!(
+                        "{} did not serve the document{}",
+                        server.url_for(entrypoint),
+                        server
+                            .last_error()
+                            .map_or_else(String::new, |error| format!(": {error}"))
+                    ))
+                })?;
+                String::from_utf8(bytes).map_err(|_| {
+                    JsError::new(format!(
+                        "{} is not UTF-8, so it is not a document",
+                        server.url_for(entrypoint)
+                    ))
+                })
+            }
         }
     }
 
@@ -92,6 +144,7 @@ impl AppFiles {
         match self {
             Self::Directory { entrypoint, .. } => entrypoint.to_string_lossy().into_owned(),
             Self::Bundle { entrypoint, .. } => url_of(entrypoint),
+            Self::Server { entrypoint, .. } => url_of(entrypoint),
         }
     }
 
@@ -103,7 +156,11 @@ impl AppFiles {
             Self::Directory { root, .. } => {
                 format!("file://{}/", root.to_string_lossy().replace(' ', "%20"))
             }
-            Self::Bundle { .. } => APP_ORIGIN.to_owned(),
+            // Served, but still addressed as an application: the document, its
+            // modules and its assets are on the application origin here exactly
+            // as they are inside an export, and only the bytes come from
+            // somewhere else (issue #67).
+            Self::Bundle { .. } | Self::Server { .. } => APP_ORIGIN.to_owned(),
         }
     }
 
@@ -117,8 +174,11 @@ impl AppFiles {
             Self::Directory { root, .. } => count_files(root),
             Self::Bundle { bundle, .. } => bundle
                 .paths()
-                .filter(|path| *path != RUNTIME_CONFIG)
+                .filter(|path| *path != RUNTIME_CONFIG && *path != NOTICES)
                 .count(),
+            // Unknowable, and not worth guessing: a server has no list of what
+            // it would serve if asked.
+            Self::Server { .. } => 0,
         }
     }
 
@@ -128,7 +188,7 @@ impl AppFiles {
             source: self.source(),
             root: match self {
                 Self::Directory { root, .. } => Some(root.clone()),
-                Self::Bundle { .. } => None,
+                Self::Bundle { .. } | Self::Server { .. } => None,
             },
         }
     }
@@ -138,6 +198,7 @@ impl AppFiles {
         match self {
             Self::Directory { root, .. } => Arc::new(DirectorySource::new(root.clone())),
             Self::Bundle { bundle, .. } => Arc::clone(bundle) as Arc<dyn AppSource>,
+            Self::Server { server, .. } => Arc::clone(server) as Arc<dyn AppSource>,
         }
     }
 
@@ -146,6 +207,7 @@ impl AppFiles {
         Box::new(AppScripts {
             source: self.source(),
             entrypoint: self.entrypoint_path(),
+            transformed: matches!(self, Self::Server { .. }),
         })
     }
 
@@ -157,7 +219,7 @@ impl AppFiles {
                 .strip_prefix(root)
                 .map(|relative| relative.to_string_lossy().replace('\\', "/"))
                 .unwrap_or_else(|_| "index.html".to_owned()),
-            Self::Bundle { entrypoint, .. } => entrypoint.clone(),
+            Self::Bundle { entrypoint, .. } | Self::Server { entrypoint, .. } => entrypoint.clone(),
         }
     }
 
@@ -174,6 +236,9 @@ impl AppFiles {
             }) as Arc<dyn NetProvider>),
             Self::Bundle { bundle, .. } => Some(Arc::new(BundleResources {
                 bundle: Arc::clone(bundle),
+            }) as Arc<dyn NetProvider>),
+            Self::Server { server, .. } => Some(Arc::new(ServerResources {
+                server: Arc::clone(server),
             }) as Arc<dyn NetProvider>),
         }
     }
@@ -256,6 +321,22 @@ pub struct LoadedDocument {
     pub window_state: Rc<RefCell<WindowState>>,
 }
 
+thread_local! {
+    static APPLICATION_ROOT: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
+}
+
+/// Where the running application's files are on disk, when they are on disk.
+///
+/// An application is addressed by URL — `blitsen://app/assets/app.js` — whether
+/// it is a directory being run or a section inside the executable, and that is
+/// the property issue #90 turns on. A host whose module loader is the
+/// filesystem's still needs the path behind that URL to resolve one module's
+/// import of the next, and this is where it asks. `None` is a bundle, which has
+/// no path at all.
+pub fn application_root() -> Option<PathBuf> {
+    APPLICATION_ROOT.with(|root| root.borrow().clone())
+}
+
 /// Parses the entrypoint, validates its assets and runs its scripts.
 ///
 /// The one place a document is built, whichever host is doing it and whether or
@@ -272,6 +353,12 @@ pub fn load_document<E: JsEngine + Clone + 'static>(
     viewport: Option<Viewport>,
     test_harness: bool,
 ) -> Result<LoadedDocument, JsError> {
+    APPLICATION_ROOT.with(|current| {
+        *current.borrow_mut() = match files {
+            AppFiles::Directory { root, .. } => Some(root.clone()),
+            AppFiles::Bundle { .. } | AppFiles::Server { .. } => None,
+        };
+    });
     let source = files.entrypoint_source()?;
     let dom_runtime = crate::DomRuntime::new(BlitzDom::from_html(
         &source,
@@ -323,6 +410,13 @@ pub fn load_document<E: JsEngine + Clone + 'static>(
 /// The window settings the CLI writes beside an exported application.
 pub const RUNTIME_CONFIG: &str = "blitsen.runtime.json";
 
+/// The third-party notices the export carries, gzipped (issue #121).
+///
+/// Inside the bundle rather than beside the executable, because an export is one
+/// file and a notice a user can delete is not one that travels with the binary.
+/// Compressed because it is 876 KB of licence text and 88 KB of bytes.
+pub const NOTICES: &str = "blitsen.notices.txt.gz";
+
 fn count_files(root: &Path) -> usize {
     let Ok(entries) = std::fs::read_dir(root) else {
         return 0;
@@ -355,6 +449,8 @@ struct AppScripts {
     /// The entrypoint's application-relative path, which a `src` resolves
     /// against.
     entrypoint: String,
+    /// Whether the source transforms what it serves — a dev server does.
+    transformed: bool,
 }
 
 impl ScriptLoader for AppScripts {
@@ -372,6 +468,10 @@ impl ScriptLoader for AppScripts {
 
     fn document_url(&self) -> Option<String> {
         Some(url_of(&self.entrypoint))
+    }
+
+    fn serves_transformed(&self) -> bool {
+        self.transformed
     }
 }
 
@@ -433,6 +533,27 @@ impl NetProvider for BundleResources {
         }
         // `data:` subresources, and anything else the ordinary local provider
         // understands, still work inside a bundle.
+        blitsen_blitz::resources::LocalResources.fetch(doc_id, request, handler);
+    }
+}
+
+/// Serves a dev server's subresources, on the application origin (issue #67).
+///
+/// The same shape as [`BundleResources`], and for the same reason: a stylesheet
+/// is a pending critical resource until its handler completes, so one the server
+/// will not serve is answered with no bytes rather than left hanging.
+struct ServerResources {
+    server: Arc<DevServer>,
+}
+
+impl NetProvider for ServerResources {
+    fn fetch(&self, doc_id: usize, request: Request, handler: Box<dyn NetHandler>) {
+        let url = request.url.as_str().to_owned();
+        if let Some(path) = path_of(&url) {
+            let bytes = self.server.read(path).unwrap_or_default();
+            handler.bytes(url, Bytes::from(bytes));
+            return;
+        }
         blitsen_blitz::resources::LocalResources.fetch(doc_id, request, handler);
     }
 }

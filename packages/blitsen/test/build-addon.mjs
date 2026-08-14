@@ -39,3 +39,19 @@ export async function buildAddon({ purpose, release = false, features = [], into
   await copyFile(join(target, libraryName), addon);
   return addon;
 }
+
+/**
+ * Builds the Phase 2 runtime an acceptance run is about to drive.
+ *
+ * The addon has `buildAddon` for the same reason: a runner that silently used
+ * the last build is a runner that can pass against code nobody is running.
+ */
+export function buildRuntime({ release = true } = {}) {
+  const build = Bun.spawnSync({
+    cmd: ["cargo", "build", ...(release ? ["--release"] : []), "-p", "blitsen-runtime"],
+    cwd: repository,
+    stdout: "inherit",
+    stderr: "inherit",
+  });
+  if (build.exitCode !== 0) process.exit(build.exitCode);
+}

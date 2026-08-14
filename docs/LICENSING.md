@@ -76,5 +76,37 @@ its own audited third-party manifest.
 
 That gate is unchanged in principle and much cheaper in practice: for a default
 export it is now "are the notices present and complete", with no substitution of
-an engine library and no relink flow to complete. Until it exists and passes,
-`blitsen build` says so on every run, and it is not implemented yet (#121).
+an engine library and no relink flow to complete. **It exists and it runs**
+(#121):
+
+```sh
+bun run --cwd packages/blitsen test:licensing
+```
+
+What it does, in the order the requirement is written:
+
+1. Reads the dependency graph `cargo` resolved for the runtime, for one target,
+   and audits it — a package with no licence and no licence file fails here, as
+   does an MPL-2.0 package whose source nothing can reach.
+2. Builds a real export and asks the **artifact**, not the build:
+   `./MyApp --licenses` prints what was embedded.
+3. Asserts completeness: every linked package, named with the version that was
+   linked; every distinct licence text reproduced in full; a source offer naming
+   the exact revision of each MPL-2.0 package.
+4. Repeats it after `--sign`, because packaging and signing rewrite the artifact
+   and are exactly what could quietly remove a section.
+5. Asserts that an export *without* notices says so and refuses to print any,
+   so the claim cannot be inherited from a build that had them.
+
+The notices are generated where the runtime is built — `bun run --cwd
+packages/blitsen notices`, which the release job runs per target — and shipped
+inside the platform package as `NOTICES.txt` with an audited `NOTICES.json`
+beside it. They are compressed into the export's own bundle section (876 KB of
+licence text, 88 KB of bytes), so they travel inside the one file a user gets
+rather than beside it.
+
+A build that finds no notices to embed still prints the old sentence, because it
+is still true of that export: **that is what a Phase 1 export gets**, since it
+carries a copy of Bun whose LGPL flow — Bun's complete notice set, the WebKit
+revision, the source offer, the relink instructions — is not automated here.
+Phase 2 is the cleared path.

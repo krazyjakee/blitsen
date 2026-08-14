@@ -24,7 +24,7 @@ export const runtimePackage = target => `@blitsen/${target}`;
 
 // Single source of truth: the published package manifest, not a literal.
 export async function packageVersion() {
-  const manifest = new URL("../package.json", import.meta.url);
+  const manifest = join(import.meta.dirname, "../package.json");
   return JSON.parse(await readFile(manifest, "utf8")).version;
 }
 
@@ -216,7 +216,7 @@ const modified = async path => (await stat(path).catch(() => null))?.mtimeMs ?? 
  */
 async function repositoryRuntime(target) {
   if (target !== hostTarget()) return null;
-  const directory = fileURLToPath(new URL("../../../target/release/", import.meta.url));
+  const directory = join(import.meta.dirname, "../../../target/release/");
   const addon = join(directory, RUNTIME_BINARY);
   const name = CARGO_LIBRARIES[process.platform];
   const library = name ? join(directory, name) : null;
@@ -304,11 +304,6 @@ export function requestedHost(env = process.env) {
   return requested;
 }
 
-/** Which host an export links into: `"blitsen"` (the default) or `"bun"` (Phase 1). */
-export function exportHost(env = process.env) {
-  return requestedHost(env) ?? "blitsen";
-}
-
 /**
  * Finds the Phase 2 runtime executable for `target`.
  *
@@ -341,8 +336,7 @@ export async function resolvePhase2Runtime({
     }
   } catch {} // Not installed is the ordinary case for every non-host target.
   if (target === hostTarget()) {
-    const root = new URL("../../../", import.meta.url);
-    const path = fileURLToPath(new URL(`target/release/${binary}`, root));
+    const path = join(import.meta.dirname, `../../../target/release/${binary}`);
     if (await readable(path)) {
       return { path, target, version: null, package: null, source: "repository" };
     }

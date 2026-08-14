@@ -30,8 +30,16 @@ blitsen-core = { path = "../blitsen-core" }
 blitsen-host = { path = "../blitsen-host" }
 blitsen-jsc = { path = "../blitsen-jsc", optional = true }
 blitsen-js = { path = "../blitsen-js" }
+# The notices an export carries are gzipped: 876 KB of licence text, 88 KB of
+# bytes, and flate2 is already in this tree.
+flate2 = "1"
 blitsen-quickjs = { path = "../blitsen-quickjs", optional = true }
 serde_json = "1"
+
+[target.'cfg(all(target_os = "linux", target_env = "gnu"))'.dependencies]
+# `mallopt(M_ARENA_MAX)` applies the measured arena cap before any worker starts;
+# an environment variable set from `main` would be too late for libc startup.
+libc = "0.2"
 
 [lints]
 workspace = true

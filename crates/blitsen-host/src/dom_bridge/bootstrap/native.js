@@ -70,6 +70,23 @@
     monitors: () => JSON.parse(__blitsenNativeWindowMonitors()),
   };
 
+  // What machine this is. `navigator.hardwareConcurrency` is the only thing the
+  // web has in this direction and it answers one deliberately-coarse number, so
+  // none of this is a re-spelling of something standard.
+  //
+  // Each call samples: these are readings, not constants, and a monitor polls
+  // them. `cpu().usage` in particular is the share of each core busy since the
+  // previous call, so the first call is the exception — with no previous call
+  // to measure from it reports a baseline against the counters' own origin,
+  // which on Linux is the average since boot. Every call after it measures the
+  // interval the caller chose.
+  const nativeOs = {
+    cpu: () => JSON.parse(__blitsenNativeOsCpu()),
+    memory: () => JSON.parse(__blitsenNativeOsMemory()),
+    storage: () => JSON.parse(__blitsenNativeOsStorage()),
+    host: () => JSON.parse(__blitsenNativeOsHost()),
+  };
+
   // Dialogs. Promise-returning rather than blocking: the call arrives on the
   // thread that pumps the window, so waiting here would stop the application
   // painting for as long as the dialog is up. Nothing is lost by that — the
@@ -141,6 +158,7 @@
     app: nativeMembers(nativeApp),
     clipboard: nativeMembers(nativeClipboard),
     window: nativeMembers(nativeWindow),
+    os: nativeMembers(nativeOs),
     dialog: nativeMembers(nativeDialog),
   });
 

@@ -88,6 +88,7 @@
   ],
   "scripts": {
     "api:sync": "bun src/api-manifest.mjs",
+    "example:hardware": "bun test/run-hardware.mjs",
     "example:hello": "bun test/run-hello-dom.mjs",
     "example:interactive": "bun test/run-interactive.mjs",
     "example:native-view": "bun test/run-native-view.mjs",
@@ -114,7 +115,10 @@
     "test:hosts": "bun test/run-host-conformance.mjs",
     "test:third-party": "bun test/run-third-party.mjs",
     "test:types": "bun test/run-types.mjs",
-    "test:standalone": "bun test/run-standalone.mjs"
+    "test:standalone": "bun test/run-standalone.mjs",
+    "notices": "bun test/generate-notices.mjs",
+    "test:licensing": "bun test/run-redistribution.mjs",
+    "test:proxy": "bun test/run-proxy.mjs"
   },
   "publishConfig": {
     "access": "public"

@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Blitsen Hardware</title>
+    <link rel="stylesheet" href="./style.css">
+  </head>
+  <body>
+    <header id="bar">
+      <div class="brand">
+        <div class="mark"></div>
+        <div class="who">
+          <h1 id="machine">Reading the machine…</h1>
+          <p id="platform">&nbsp;</p>
+        </div>
+      </div>
+      <div class="live">
+        <div class="gauge">
+          <div class="gauge-head"><span>Processor</span><b id="live-cpu">—</b></div>
+          <div class="track"><div class="fill cpu" id="live-cpu-fill"></div></div>
+        </div>
+        <div class="gauge">
+          <div class="gauge-head"><span>Memory</span><b id="live-mem">—</b></div>
+          <div class="track"><div class="fill mem" id="live-mem-fill"></div></div>
+        </div>
+        <div class="uptime">
+          <span>Uptime</span>
+          <b id="live-uptime">—</b>
+        </div>
+      </div>
+    </header>
+
+    <nav id="tabs">
+      <button class="tab on" data-panel="processor">Processor</button>
+      <button class="tab" data-panel="memory">Memory</button>
+      <button class="tab" data-panel="storage">Storage</button>
+      <button class="tab" data-panel="system">System</button>
+    </nav>
+
+    <main>
+      <section class="panel on" id="panel-processor">
+        <div class="card hero">
+          <p class="eyebrow">Processor</p>
+          <h2 id="cpu-brand">—</h2>
+          <dl class="specs" id="cpu-specs"></dl>
+        </div>
+        <div class="card">
+          <div class="card-head">
+            <h3>Package load</h3>
+            <b class="big" id="cpu-usage">—</b>
+          </div>
+          <div class="track tall"><div class="fill cpu" id="cpu-usage-fill"></div></div>
+          <p class="note" id="cpu-note">Sampling…</p>
+        </div>
+        <div class="card">
+          <div class="card-head"><h3>Logical processors</h3><span class="dim" id="core-count"></span></div>
+          <div class="cores" id="cores"></div>
+        </div>
+      </section>
+
+      <section class="panel" id="panel-memory">
+        <div class="card hero">
+          <p class="eyebrow">Memory</p>
+          <h2 id="mem-headline">—</h2>
+          <div class="track tall split" id="mem-bar">
+            <div class="fill mem" id="mem-used-fill"></div>
+          </div>
+          <p class="note" id="mem-note">&nbsp;</p>
+        </div>
+        <div class="tiles" id="mem-tiles"></div>
+        <div class="card">
+          <div class="card-head"><h3>Swap</h3><b id="swap-headline" class="dim">—</b></div>
+          <div class="track tall"><div class="fill swap" id="swap-fill"></div></div>
+          <p class="note" id="swap-note">&nbsp;</p>
+        </div>
+      </section>
+
+      <section class="panel" id="panel-storage">
+        <div class="volumes" id="volumes"></div>
+        <p class="note pad" id="storage-note">&nbsp;</p>
+      </section>
+
+      <section class="panel" id="panel-system">
+        <div class="card hero">
+          <p class="eyebrow">Operating system</p>
+          <h2 id="os-headline">—</h2>
+          <dl class="specs wide" id="system-specs"></dl>
+        </div>
+        <div class="card">
+          <h3>Where this comes from</h3>
+          <p class="prose">
+            Every number on these four tabs is read through <code>blitsen/os</code>, a native
+            module with no web equivalent. A browser tab cannot ask what the processor is
+            called, how much memory is installed, or what is mounted — the closest the web
+            platform comes is <code>navigator.hardwareConcurrency</code>, one deliberately
+            coarsened number.
+          </p>
+          <p class="prose">
+            The displays are the one thing not read here: those are
+            <code>window.monitors()</code>, which already reports each monitor's size,
+            position and scale factor.
+          </p>
+        </div>
+      </section>
+    </main>
+
+    <div id="unsupported">
+      <div class="card">
+        <h3>No native modules in this host</h3>
+        <p class="prose">
+          This document is running somewhere without the Blitsen native namespace, so there is
+          no machine to report on. Run it with <code>blitsen examples/hardware</code>.
+        </p>
+      </div>
+    </div>
+
+    <script src="./app.js"></script>
+  </body>
+</html>

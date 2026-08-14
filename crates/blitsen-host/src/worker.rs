@@ -44,11 +44,13 @@ use crate::runtime_services::RuntimeServices;
 /// Events are this scope's own rather than the DOM bootstrap's: a worker has no
 /// tree for an event to travel through, so the dispatcher is flat, and the
 /// twelve hundred lines of node and element wrappers around the document's
-/// `EventTarget` have nothing to do here. Everything below events is shared
-/// source with the document — the clone codec and the messaging classes are the
-/// same file, because a message must mean the same thing at both ends.
+/// `EventTarget` have nothing to do here. Everything around that is shared
+/// source with the document — `members.js` above, because an interface member
+/// has the same shape in either scope, and the clone codec and the messaging
+/// classes below, because a message must mean the same thing at both ends.
 const BOOTSTRAP: &str = concat!(
     "\n(() => {\n",
+    include_str!("dom_bridge/bootstrap/members.js"),
     include_str!("worker/prelude.js"),
     include_str!("dom_bridge/bootstrap/fetch.js"),
     include_str!("dom_bridge/bootstrap/clone.js"),

@@ -10,6 +10,7 @@ use blitsen_js::{JsEngine, JsError, TypedArray, TypedArrayKind};
 use blitsen_platform::PlatformError;
 use blitsen_platform::app::{self, Directory};
 use blitsen_platform::clipboard::{self, Image};
+use blitsen_platform::os;
 use serde_json::json;
 
 use super::{argument, json_value, window};
@@ -23,7 +24,47 @@ pub(super) fn install<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsErr
     install_app(engine)?;
     install_clipboard(engine)?;
     install_window(engine)?;
+    install_os(engine)?;
     install_dialog(engine)
+}
+
+// Every one of these answers a whole record at once rather than a field at a
+// time. A monitor reads the processor once per tick and shows a dozen numbers
+// off it; a getter per field would sample the machine a dozen times for one
+// frame and hand back readings taken at different instants, which is a
+// per-core usage list that does not add up to the total beside it.
+fn install_os<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsError> {
+    engine.define_global_function(
+        "__blitsenNativeOsCpu",
+        Box::new(move |call| {
+            let mut engine = E::from_value(&call.this);
+            json_value(&mut engine, &json!(os::cpu()))
+        }),
+    )?;
+
+    engine.define_global_function(
+        "__blitsenNativeOsMemory",
+        Box::new(move |call| {
+            let mut engine = E::from_value(&call.this);
+            json_value(&mut engine, &json!(os::memory()))
+        }),
+    )?;
+
+    engine.define_global_function(
+        "__blitsenNativeOsStorage",
+        Box::new(move |call| {
+            let mut engine = E::from_value(&call.this);
+            json_value(&mut engine, &json!(os::storage()))
+        }),
+    )?;
+
+    engine.define_global_function(
+        "__blitsenNativeOsHost",
+        Box::new(move |call| {
+            let mut engine = E::from_value(&call.this);
+            json_value(&mut engine, &json!(os::host()))
+        }),
+    )
 }
 
 fn install_app<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsError> {

@@ -5,8 +5,8 @@
 
 use blitsen_dom::{
     CaretPosition, DomBackend, DomError, DomName, HitTest, ImageState, LayoutMetrics,
-    LayoutSnapshot, LinkState, MediaQueryMatch, NATIVE_VIEWPORT_TAG, NodeKind, Rect,
-    ViewportSurface,
+    LayoutSnapshot, LinkState, MediaQueryMatch, NATIVE_VIEWPORT_TAG, NodeKind, Rect, TextEdit,
+    TextMotion, TextSelection, ViewportSurface,
 };
 use blitz::dom::node::ImageData;
 use blitz::dom::{NodeData, NodeId};
@@ -15,6 +15,7 @@ use style::properties::{PropertyDeclaration, PropertyId};
 use style::stylesheets::{CssRule, CustomMediaEvaluator};
 use style::values::computed::Overflow;
 
+use crate::pointer_events;
 use crate::resources::ResourceState;
 use crate::{BlitzDom, RESOURCE_RESOLVE_PASSES, css_pixels};
 
@@ -180,6 +181,11 @@ impl DomBackend for BlitzDom {
 
     fn set_attribute(&mut self, node: NodeId, name: &DomName, value: &str) -> Result<(), DomError> {
         self.ensure_element(node)?;
+        // A `style` attribute is CSS arriving at the cascade like any other.
+        let normalized = (name.local == "style")
+            .then(|| pointer_events::normalize_css(value))
+            .flatten();
+        let value = normalized.as_deref().unwrap_or(value);
         self.document
             .mutate()
             .set_attribute(node, Self::qual_name(name), value);
@@ -233,6 +239,55 @@ impl DomBackend for BlitzDom {
         Ok(())
     }
 
+    fn form_selection(&self, node: NodeId) -> Result<TextSelection, DomError> {
+        self.ensure_element(node)?;
+        Ok(self.editor_selection(node))
+    }
+
+    fn set_form_selection(
+        &mut self,
+        node: NodeId,
+        selection: TextSelection,
+    ) -> Result<(), DomError> {
+        self.ensure_element(node)?;
+        self.write_editor_selection(node, selection);
+        Ok(())
+    }
+
+    fn move_form_selection(
+        &mut self,
+        node: NodeId,
+        motion: TextMotion,
+        extend: bool,
+    ) -> Result<bool, DomError> {
+        self.ensure_element(node)?;
+        Ok(self.move_editor_selection(node, motion, extend))
+    }
+
+    fn move_form_caret_to_point(
+        &mut self,
+        node: NodeId,
+        offset_x: f32,
+        offset_y: f32,
+        extend: bool,
+    ) -> Result<bool, DomError> {
+        self.ensure_element(node)?;
+        Ok(self.move_editor_caret_to_point(node, offset_x, offset_y, extend))
+    }
+
+    fn edit_form_value(&mut self, node: NodeId, edit: TextEdit<'_>) -> Result<bool, DomError> {
+        self.ensure_element(node)?;
+        Ok(self.edit_editor_value(node, edit))
+    }
+
+    fn set_focused(&mut self, node: Option<NodeId>) -> Result<(), DomError> {
+        if let Some(node) = node {
+            self.ensure_element(node)?;
+        }
+        self.set_focused_node(node);
+        Ok(())
+    }
+
     fn form_checked(&self, node: NodeId) -> Result<bool, DomError> {
         self.ensure_element(node)?;
         if let Some(checked) = self.checked_state(node) {
@@ -275,6 +330,13 @@ impl DomBackend for BlitzDom {
         value: &str,
     ) -> Result<bool, DomError> {
         self.ensure_element(node)?;
+        // `element.style.pointerEvents = "all"` arrives with the property and
+        // the value already apart, so there is no declaration text to scan.
+        let value = if pointer_events::is_property(property) {
+            pointer_events::normalize_value(value).unwrap_or(value)
+        } else {
+            value
+        };
         let original = self.style_text(node)?;
         let mut declarations = Self::declarations(&original);
         declarations.retain(|(name, _)| name != property);
@@ -384,6 +446,13 @@ impl DomBackend for BlitzDom {
     }
 
     fn set_text_content(&mut self, node: NodeId, text: &str) -> Result<(), DomError> {
+        // The text of a `<style>` is a stylesheet, and this is how one written
+        // by a bundler's CSS-in-JS shim reaches the cascade.
+        let normalized = self
+            .is_tag(node, "style")
+            .then(|| pointer_events::normalize_css(text))
+            .flatten();
+        let text = normalized.as_deref().unwrap_or(text);
         match self.node_kind(node)? {
             NodeKind::Text => self.document.mutate().set_node_text(node, text),
             NodeKind::Element | NodeKind::Document | NodeKind::Fragment => {

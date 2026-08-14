@@ -5,7 +5,6 @@
 //! layout puts the boxes.
 
 use super::*;
-use blitsen_dom::LayoutSnapshot;
 use cursor_icon::CursorIcon;
 
 /// Hovers an element and reports the cursor the shell would set.
@@ -20,19 +19,8 @@ fn cursor_over(dom: &mut BlitzDom, id: &str) -> Option<CursorIcon> {
         .expect("query")
         .expect("element exists");
     let rect = dom.layout_metrics(node, snapshot).expect("metrics").rect;
-    let document = dom.document_mut().as_mut();
-    document.set_hover_to(rect.x + 2.0, rect.y + rect.height / 2.0);
-    document.get_cursor()
-}
-
-fn resolved(dom: &BlitzDom, snapshot: LayoutSnapshot, id: &str, property: &str) -> String {
-    let node = dom
-        .get_element_by_id(id)
-        .expect("query")
-        .expect("element exists");
-    dom.resolved_style(node, property, snapshot)
-        .expect("resolved style")
-        .expect("property is resolvable")
+    dom.cursor_at(rect.x + 2.0, rect.y + rect.height / 2.0)
+        .expect("cursor")
 }
 
 /// A button is a control, not a paragraph: the hit on its own label must not

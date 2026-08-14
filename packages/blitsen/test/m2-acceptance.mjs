@@ -28,6 +28,9 @@ const setup = `{
   if (!(rect.width > 0 && rect.height > 0)) throw new Error("control has no layout box");
   const widthBefore = demo.offsetWidth;
 
+  // The press and then the click, the way the native window delivers them:
+  // focus is the mousedown's default action and activation the click's.
+  __blitsenInjectPointerAt("mousedown", rect.x + rect.width / 2, rect.y + rect.height / 2);
   const hit = __blitsenInjectPointerAt("click", rect.x + rect.width / 2, rect.y + rect.height / 2);
   if (!hit) throw new Error("hit test found no node under the control centre");
   record("hit-path", hit.path.map(node => node.id || node.nodeName).join(">"));
@@ -61,8 +64,8 @@ assert.equal(data("click-order"), "click: window↓  document↓  stage↓  stag
 assert.equal(data("key-order"), "keydown: window↓  document↓  stage↓  stage↑  document↑  window↑",
   "keydown propagates through the same three-level path as click");
 
-// --- Default actions: click moves focus, and preventDefault is honoured ---
-assert.equal(data("focus"), "control", "clicking the control made it the active element");
+// --- Default actions: the press moves focus, and preventDefault is honoured ---
+assert.equal(data("focus"), "control", "pressing on the control made it the active element");
 assert.equal(data("key-prevented"), "true",
   "the control's keydown listener cancelled the event through preventDefault");
 

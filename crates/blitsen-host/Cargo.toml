@@ -25,6 +25,11 @@ blitz = { git = "https://github.com/DioxusLabs/blitz", rev = "1efe22d2524d71ede5
 blitz-paint = { git = "https://github.com/DioxusLabs/blitz", rev = "1efe22d2524d71ede5b94592204c21f0de644219", default-features = false, features = ["custom-widget"] }
 data-url = "0.3.2"
 futures-util = { version = "0.3", default-features = false, features = ["std", "sink"] }
+# `crypto.getRandomValues`, and nothing else. The platform generator itself
+# rather than a PRNG seeded from it: this is the entropy an application's UUIDs
+# and tokens are built on. Already in the tree behind `rand_core`, so linking it
+# directly compiles no new crate.
+getrandom = "0.3"
 peniko = "0.6"
 png = "0.18"
 # Blitsen's own `fetch`, so the Phase 2 host swap does not change what the

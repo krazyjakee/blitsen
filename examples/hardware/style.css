@@ -1,0 +1,310 @@
+/* Written against the v1 compatibility profile rather than against a browser.
+   Four things a browser would allow are deliberately absent, and `blitsen
+   doctor examples/hardware` is what keeps them absent:
+
+     - `transition`, which currently holds a property at its pre-stylesheet
+       value (Blitz bug 689) — so a transitioned colour would render as *no*
+       colour, which is worse than no animation.
+     - `position: fixed` and `sticky`, which resolve against the root box rather
+       than the viewport (Blitz bug 690). The header scrolls with the page here.
+     - `filter`, `backdrop-filter`, `clip-path` and `mask`, which are ignored
+       rather than applied, so anything leaning on one would be illegible.
+     - SVG and <canvas>. Every meter below is a div with a width, and the mark in
+       the corner is two nested boxes.
+
+   Each bar also carries a flat `background-color` underneath its gradient, so
+   the reading stays visible even where the gradient does not paint. */
+
+:root {
+  --bg: #080b11;
+  --panel: #10151f;
+  --raised: #161d2a;
+  --line: #212b3c;
+  --line-soft: #1a2231;
+  --text: #e9eef8;
+  --dim: #8593ab;
+  --faint: #5d6980;
+  --cpu: #4dd8c0;
+  --mem: #7c9dff;
+  --swap: #c48cff;
+  --disk: #ffb454;
+  --hot: #ff6b81;
+}
+
+* { box-sizing: border-box }
+
+html, body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+body { padding-bottom: 40px }
+
+code {
+  font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  font-size: 12.5px;
+  color: var(--cpu);
+  background: #0d131d;
+  border: 1px solid var(--line-soft);
+  border-radius: 5px;
+  padding: 1px 5px;
+}
+
+/* ---- header ---------------------------------------------------------- */
+
+#bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 24px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 22px 32px 20px;
+  border-bottom: 1px solid var(--line);
+  background-color: #0b0f17;
+  background-image: linear-gradient(180deg, #131a26 0%, #0b0f17 100%);
+}
+
+.brand { display: flex; align-items: center; gap: 14px }
+
+/* The mark: two boxes, one rotated inside the other. No SVG. */
+.mark {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  background-color: #16b8a0;
+  background-image: linear-gradient(135deg, #5eead4 0%, #4c7dff 100%);
+  transform: rotate(45deg);
+  border: 1px solid #79f0dc;
+}
+
+.who h1 { margin: 0; font-size: 19px; font-weight: 620; letter-spacing: -0.2px }
+.who p { margin: 2px 0 0; font-size: 12.5px; color: var(--dim) }
+
+.live { display: flex; align-items: center; gap: 26px; flex-wrap: wrap }
+
+.gauge { width: 190px }
+.gauge-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 11.5px;
+  color: var(--dim);
+  text-transform: uppercase;
+  letter-spacing: 0.7px;
+  margin-bottom: 6px;
+}
+.gauge-head b { color: var(--text); font-size: 13px; letter-spacing: 0 }
+
+.uptime { text-align: right }
+.uptime span {
+  display: block;
+  font-size: 11.5px;
+  color: var(--dim);
+  text-transform: uppercase;
+  letter-spacing: 0.7px;
+}
+.uptime b { font-size: 15px; font-variant-numeric: tabular-nums }
+
+/* ---- meters ---------------------------------------------------------- */
+
+.track {
+  height: 7px;
+  border-radius: 6px;
+  background: #1c2432;
+  overflow: hidden;
+}
+.track.tall { height: 12px; border-radius: 8px }
+
+.fill { height: 100%; width: 0; border-radius: 6px }
+.fill.cpu  { background-color: #4dd8c0; background-image: linear-gradient(90deg, #3ec6b6, #6ef0d2) }
+.fill.mem  { background-color: #7c9dff; background-image: linear-gradient(90deg, #6a86f5, #96b4ff) }
+.fill.swap { background-color: #c48cff; background-image: linear-gradient(90deg, #a96ff0, #d3a6ff) }
+.fill.disk { background-color: #ffb454; background-image: linear-gradient(90deg, #f0a03c, #ffc879) }
+.fill.hot  { background-color: #ff6b81; background-image: linear-gradient(90deg, #f2536c, #ff8b9c) }
+
+/* ---- tabs ------------------------------------------------------------ */
+
+#tabs {
+  display: flex;
+  gap: 4px;
+  padding: 0 32px;
+  border-bottom: 1px solid var(--line);
+  background: #0a0e16;
+}
+
+.tab {
+  appearance: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--dim);
+  font: inherit;
+  font-size: 13.5px;
+  padding: 13px 16px 11px;
+  cursor: pointer;
+}
+.tab:hover { color: var(--text) }
+.tab.on { color: var(--text); border-bottom-color: var(--cpu) }
+
+/* ---- panels ---------------------------------------------------------- */
+
+main { padding: 26px 32px 0 }
+
+.panel { display: none; flex-direction: column; gap: 18px }
+.panel.on { display: flex }
+
+.card {
+  background-color: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 20px 22px;
+}
+
+.card.hero {
+  background-color: #121826;
+  background-image: linear-gradient(160deg, #18202f 0%, #101623 60%);
+}
+
+.card-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.card h3 { margin: 0; font-size: 13px; color: var(--dim); text-transform: uppercase; letter-spacing: 0.8px }
+.card h2 { margin: 6px 0 16px; font-size: 26px; font-weight: 640; letter-spacing: -0.4px }
+
+.eyebrow {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--cpu);
+  text-transform: uppercase;
+  letter-spacing: 1.1px;
+}
+
+.big { font-size: 26px; font-weight: 650; font-variant-numeric: tabular-nums }
+
+.note { margin: 12px 0 0; font-size: 12.5px; color: var(--faint) }
+.note.pad { padding: 0 2px }
+.dim { color: var(--dim); font-size: 13px }
+
+.prose { margin: 10px 0 0; color: var(--dim); font-size: 13px; max-width: 78ch }
+
+/* ---- spec lists ------------------------------------------------------ */
+
+.specs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; margin: 0 }
+.specs.wide { grid-template-columns: repeat(3, 1fr) }
+
+.specs div {
+  background: #0e131d;
+  padding: 12px 14px;
+  border: 1px solid var(--line-soft);
+}
+.specs dt {
+  font-size: 11px;
+  color: var(--faint);
+  text-transform: uppercase;
+  letter-spacing: 0.7px;
+  margin-bottom: 4px;
+}
+.specs dd { margin: 0; font-size: 14px; font-weight: 560 }
+
+/* ---- cores ----------------------------------------------------------- */
+
+.cores { display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px }
+
+.core {
+  background: #0e131d;
+  border: 1px solid var(--line-soft);
+  border-radius: 9px;
+  padding: 9px 10px 10px;
+}
+.core-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 7px;
+}
+.core-name { font-size: 11px; color: var(--faint); letter-spacing: 0.4px }
+.core-pct { font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums }
+.core-mhz { margin-top: 6px; font-size: 10.5px; color: var(--faint); font-variant-numeric: tabular-nums }
+
+/* ---- tiles ----------------------------------------------------------- */
+
+.tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px }
+
+.tile {
+  background-color: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 16px 18px;
+}
+.tile span {
+  display: block;
+  font-size: 11px;
+  color: var(--faint);
+  text-transform: uppercase;
+  letter-spacing: 0.7px;
+}
+.tile b { display: block; margin-top: 6px; font-size: 20px; font-weight: 620; font-variant-numeric: tabular-nums }
+.tile i { display: block; margin-top: 2px; font-size: 12px; color: var(--dim); font-style: normal }
+
+/* ---- volumes --------------------------------------------------------- */
+
+.volumes { display: flex; flex-direction: column; gap: 12px }
+
+.volume {
+  background-color: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  padding: 16px 20px;
+}
+.vol-head { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; flex-wrap: wrap }
+.vol-mount { font-size: 16px; font-weight: 620 }
+.vol-dev { font-size: 12px; color: var(--faint) }
+
+.badge {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  color: var(--dim);
+  background: #0e131d;
+}
+.badge.ssd { color: #6ef0d2; border-color: #23473f }
+.badge.hdd { color: #ffc879; border-color: #4a3a20 }
+.badge.ro  { color: #ff8b9c; border-color: #4d2029 }
+
+.vol-figures {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin: 10px 0 8px;
+  font-variant-numeric: tabular-nums;
+}
+.vol-free { font-size: 15px; font-weight: 600 }
+.vol-total { font-size: 12.5px; color: var(--dim) }
+
+/* Shown by `app.js` only where the native namespace is missing. `display` rather
+   than the `hidden` attribute, so it does not depend on a UA-stylesheet rule. */
+#unsupported { display: none; padding: 32px }
+
+/* The window opens at whatever size it was given, and these are the two points
+   where six core columns and four spec columns stop fitting. */
+@media (max-width: 1000px) {
+  .cores { grid-template-columns: repeat(4, 1fr) }
+  .specs, .tiles { grid-template-columns: repeat(2, 1fr) }
+  .specs.wide { grid-template-columns: repeat(2, 1fr) }
+}
+
+@media (max-width: 640px) {
+  #bar, #tabs, main { padding-left: 18px; padding-right: 18px }
+  .cores { grid-template-columns: repeat(2, 1fr) }
+  .specs, .specs.wide, .tiles { grid-template-columns: 1fr }
+}

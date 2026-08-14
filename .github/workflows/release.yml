@@ -115,6 +115,13 @@ jobs:
           cp "target/release/${{ matrix.library }}" "packages/platforms/${{ matrix.target }}/blitsen.node"
           cp "target/release/${{ matrix.executable }}" "packages/platforms/${{ matrix.target }}/${{ matrix.executable }}"
 
+      # Issue #121: the third-party notices an export embeds, generated from the
+      # dependency graph this job just built and audited for this target. One
+      # manifest per platform package; the build fails here rather than shipping
+      # an artifact whose terms cannot be honoured.
+      - name: Stage the third-party notices
+        run: bun run --cwd packages/blitsen notices --target ${{ matrix.target }}
+
       # Both are native code Blitsen ships, so both get signed — and the Phase 2
       # executable is the one a user's machine launches by name, which is
       # exactly what an OS gatekeeper checks. Both steps are no-ops without

@@ -317,6 +317,111 @@ pub struct CaretPosition<N> {
     pub offset: u32,
 }
 
+/// Which end of a text control's selection the caret sits at.
+///
+/// HTML has three answers where an editor has two. An anchor and a focus can
+/// say forward or backward and nothing else, but a range set from script is
+/// defined to have no direction at all until something says otherwise — and
+/// `"none"` is what a component reads back to tell "the user selected this,
+/// leftwards" from "I restored this range after a re-render".
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum SelectionDirection {
+    /// Collapsed, or a range that was never given a direction.
+    #[default]
+    None,
+    /// The caret is at the end of the range: it grew rightwards.
+    Forward,
+    /// The caret is at the start of the range: it grew leftwards.
+    Backward,
+}
+
+impl SelectionDirection {
+    /// The name HTML gives the direction, which is the value of the IDL
+    /// attribute and the string `setSelectionRange` accepts.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Forward => "forward",
+            Self::Backward => "backward",
+        }
+    }
+
+    /// Reads a direction back from its HTML name; anything else is `"none"`,
+    /// which is what HTML does with an unrecognized value.
+    pub fn from_name(name: &str) -> Self {
+        match name {
+            "forward" => Self::Forward,
+            "backward" => Self::Backward,
+            _ => Self::None,
+        }
+    }
+}
+
+/// The selection inside one text control.
+///
+/// Offsets are UTF-16 code units for the same reason [`CaretPosition`]'s are:
+/// they index the string JavaScript reads out of `value`, and the backend
+/// counts them against text the bridge does not hold. `start` never exceeds
+/// `end` — that is HTML's invariant, not a hope about the caller.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct TextSelection {
+    /// Offset of the start of the selection, in UTF-16 code units.
+    pub start: u32,
+    /// Offset of the end of the selection, in UTF-16 code units.
+    pub end: u32,
+    /// Which end the caret sits at.
+    pub direction: SelectionDirection,
+}
+
+/// One caret movement inside a text control.
+///
+/// Named by what the user asked for rather than by an offset, because the
+/// answer depends on text the bridge cannot see: which grapheme is to the left,
+/// where a soft-wrapped line begins, where a word ends. Only a backend that
+/// holds the laid-out text can resolve one.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TextMotion {
+    /// One grapheme towards the start.
+    Left,
+    /// One grapheme towards the end.
+    Right,
+    /// One visual line up, staying at the same horizontal position.
+    Up,
+    /// One visual line down, staying at the same horizontal position.
+    Down,
+    /// The start of the word to the left.
+    WordLeft,
+    /// The start of the word to the right.
+    WordRight,
+    /// The start of the visual line the caret is on.
+    LineStart,
+    /// The end of the visual line the caret is on.
+    LineEnd,
+    /// The start of the whole value.
+    TextStart,
+    /// The end of the whole value.
+    TextEnd,
+}
+
+/// One editing operation applied to a text control's selection.
+///
+/// Each is the mutation behind an `inputType`, and each replaces the selection
+/// when there is one — which is why a backspace with a range selected deletes
+/// the range rather than one more character before it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TextEdit<'a> {
+    /// Replaces the selection with text, leaving the caret after it.
+    Insert(&'a str),
+    /// Deletes the selection, or the grapheme before the caret.
+    DeleteBackward,
+    /// Deletes the selection, or the grapheme after the caret.
+    DeleteForward,
+    /// Deletes the selection, or the word before the caret.
+    DeleteWordBackward,
+    /// Deletes the selection, or the word after the caret.
+    DeleteWordForward,
+}
+
 impl Rect {
     /// Reports whether a viewport point lies inside the rectangle.
     pub fn contains(self, x: f32, y: f32) -> bool {

@@ -1,5 +1,28 @@
   const NODE_TYPES = { element: 1, text: 3, comment: 8, document: 9, fragment: 11 };
 
+  // The whole `nodeType` table, not only the kinds this engine builds: the
+  // constants are a numbering that code compares against, so a document that
+  // never holds a notation still has to say what a notation would have been.
+  const NODE_TYPE_CONSTANTS = {
+    ELEMENT_NODE: 1, ATTRIBUTE_NODE: 2, TEXT_NODE: 3, CDATA_SECTION_NODE: 4,
+    ENTITY_REFERENCE_NODE: 5, ENTITY_NODE: 6, PROCESSING_INSTRUCTION_NODE: 7,
+    COMMENT_NODE: 8, DOCUMENT_NODE: 9, DOCUMENT_TYPE_NODE: 10,
+    DOCUMENT_FRAGMENT_NODE: 11, NOTATION_NODE: 12,
+  };
+  // Declared on the interface object *and* its prototype, which is where WebIDL
+  // puts a constant and how `node.ELEMENT_NODE` resolves at all. Reading it off
+  // the instance is ordinary: Monaco classifies a mouse target with
+  // `child.nodeType === child.ELEMENT_NODE`, and an undefined right-hand side
+  // made every click in the editor an unknown target (issue #129). Read-only and
+  // non-configurable, as a browser writes them.
+  const defineNodeTypeConstants = interface_ => {
+    for (const [name, value] of Object.entries(NODE_TYPE_CONSTANTS)) {
+      const constant = { value, writable: false, enumerable: true, configurable: false };
+      Object.defineProperty(interface_, name, constant);
+      Object.defineProperty(interface_.prototype, name, constant);
+    }
+  };
+
   class Node extends EventTarget {
     constructor() { throw new TypeError("Illegal constructor"); }
     get nodeType() { return NODE_TYPES[call("kind", this[handle])]; }
@@ -48,6 +71,27 @@
     }
     remove() { call("remove", this[handle]); }
     replaceWith(replacement) { call("replaceWith", this[handle], requireNode(replacement)); }
+    // `replaceWith` from the parent's side, which is the form a renderer that
+    // owns the parent reaches for — Monaco's line renderer is written entirely
+    // in it. The parent has to be the child's own: replacing a node that lives
+    // elsewhere would move the replacement out from under the caller, and a
+    // browser refuses it rather than guessing.
+    replaceChild(replacement, child) {
+      const removed = requireNode(child);
+      if (child.parentNode !== this) {
+        throw new DOMException("the node to replace is not a child of this node", "NotFoundError");
+      }
+      const previousSibling = child.previousSibling;
+      const nextSibling = child.nextSibling;
+      if (replacement instanceof DocumentFragment) {
+        insertFragment(this, replacement, child);
+        return this.removeChild(child);
+      }
+      call("replaceWith", removed, requireNode(replacement));
+      notifyMutation({ type: "childList", target: this, addedNodes: new NodeList([replacement]),
+        removedNodes: new NodeList([child]), previousSibling, nextSibling });
+      return child;
+    }
     get parentNode() { return wrap(call("parentNode", this[handle])); }
     get parentElement() {
       const parent = this.parentNode;
@@ -112,6 +156,8 @@
       notifyMutation({ type: "characterData", target: this, oldValue: null });
     }
   }
+
+  defineNodeTypeConstants(Node);
 
   const styleCache = new WeakMap();
   const classListCache = new WeakMap();

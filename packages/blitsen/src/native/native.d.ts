@@ -184,6 +184,123 @@ export interface NativeClipboard {
   clear?(): void;
 }
 
+/** One logical processor: a hardware thread as the OS schedules onto it. */
+export interface CpuCore {
+  /** What the OS calls it — `cpu0`, `CPU 0`. */
+  readonly name: string;
+  /** Current clock in MHz, or 0 where the platform reports none. */
+  readonly frequency: number;
+  /** Share of this core busy since the previous `cpu()` call, 0–100. */
+  readonly usage: number;
+}
+
+/** The processor: a spec sheet, plus a sample taken when `cpu()` was called. */
+export interface Cpu {
+  /** Marketing name, such as `"AMD Ryzen 9 5900X 12-Core Processor"`. */
+  readonly brand: string;
+  /** Vendor string as the silicon reports it: `"GenuineIntel"`, `"AuthenticAMD"`. */
+  readonly vendor: string;
+  /** Instruction set architecture: `"x86_64"`, `"aarch64"`. */
+  readonly architecture: string;
+  /** Physical cores, or `null` where the platform will not say — which is not 1. */
+  readonly physicalCores: number | null;
+  /** Logical processors, which is `cores.length`. */
+  readonly logicalCores: number;
+  /** Usage across the whole package since the previous call, 0–100. */
+  readonly usage: number;
+  /** Per-core detail, in the order the OS enumerates them. */
+  readonly cores: readonly CpuCore[];
+}
+
+/** Memory and swap. Every field is bytes; none of the names implies a unit. */
+export interface Memory {
+  /** Physical memory installed. */
+  readonly total: number;
+  /**
+   * What a new allocation could get. Not `total - used`: it counts reclaimable
+   * cache the kernel would evict on demand.
+   */
+  readonly available: number;
+  /** Physical memory in use. */
+  readonly used: number;
+  /** Swap configured. */
+  readonly swapTotal: number;
+  /** Swap in use. */
+  readonly swapUsed: number;
+}
+
+/** A mounted filesystem — what a user means by "a drive". */
+export interface Volume {
+  /** The device or volume label the OS reports. */
+  readonly name: string;
+  /** Where it is mounted: `/`, `/home`, `C:\`. */
+  readonly mountPoint: string;
+  /** Filesystem driver: `"ext4"`, `"apfs"`, `"NTFS"`. */
+  readonly fileSystem: string;
+  /** What the medium is, where the platform classifies it. */
+  readonly kind: "ssd" | "hdd" | "unknown";
+  /**
+   * Capacity in bytes. Zero for the pseudo-filesystems a running desktop
+   * mounts — an AppImage, a snap loopback — which is how to tell them from a
+   * real volume.
+   */
+  readonly total: number;
+  /** Free bytes a caller could write. */
+  readonly available: number;
+  /** Whether the medium can be ejected. */
+  readonly removable: boolean;
+  /** Whether the mount refuses writes. */
+  readonly readOnly: boolean;
+}
+
+/** The operating system, and this boot of it. */
+export interface Host {
+  /** OS name: `"Ubuntu"`, `"Windows"`, `"Darwin"`. */
+  readonly name: string | null;
+  /** The long form where one exists: `"Ubuntu 24.04.1 LTS"`. */
+  readonly longName: string | null;
+  /** OS release: `"24.04"`, `"11"`. */
+  readonly osVersion: string | null;
+  /** Kernel release: `"6.8.0-124-generic"`. */
+  readonly kernelVersion: string | null;
+  /** `ID` from os-release on Linux; the OS name elsewhere. */
+  readonly distributionId: string;
+  /** This machine's hostname. */
+  readonly hostName: string | null;
+  /** Seconds since boot. */
+  readonly uptime: number;
+  /** Boot time as a Unix timestamp in seconds. */
+  readonly bootTime: number;
+}
+
+/**
+ * `blitsen/os`: what machine this is.
+ *
+ * None of it has a web spelling. `navigator.hardwareConcurrency` is the closest
+ * the platform comes and it answers one deliberately-coarse number; a page
+ * cannot ask what the processor is called, how much memory is installed, or
+ * what is mounted.
+ *
+ * Every member is a *reading*, not a constant, and each call samples afresh —
+ * so a monitor polls. `cpu().usage` is the share busy since the previous call
+ * in particular, which makes the first call the exception: with no earlier call
+ * to measure from it reports a baseline against the counters' own origin — on
+ * Linux, the average since boot — so a monitor discards it and starts from the
+ * second. Every call after the first measures the interval the caller chose.
+ *
+ * The displays are not here; they are `window.monitors()`.
+ */
+export interface NativeOs {
+  /** Samples the processor. */
+  cpu?(): Cpu;
+  /** Reads memory and swap. */
+  memory?(): Memory;
+  /** Lists the mounted volumes. */
+  storage?(): Volume[];
+  /** Reads the operating system's identity and this boot of it. */
+  host?(): Host;
+}
+
 /**
  * A `native:` module that installs nothing in this version.
  *

@@ -93,7 +93,7 @@ impl AppSource for DirectorySource {
         // `resolve` has already refused `..`, but the root is canonicalised and
         // rechecked here too: this is the only place a path becomes a real one.
         let root = self.root.canonicalize().ok()?;
-        let target = root.join(Path::new(path)).canonicalize().ok()?;
+        let target = root.join(Path::new(file_of(path))).canonicalize().ok()?;
         target
             .starts_with(&root)
             .then(|| std::fs::read(target).ok())?
@@ -102,11 +102,11 @@ impl AppSource for DirectorySource {
 
 impl AppSource for AppBundle {
     fn read(&self, path: &str) -> Option<Vec<u8>> {
-        AppBundle::read(self, path).ok()
+        AppBundle::read(self, file_of(path)).ok()
     }
 
     fn contains(&self, path: &str) -> bool {
-        AppBundle::contains(self, path)
+        AppBundle::contains(self, file_of(path))
     }
 }
 
@@ -176,14 +176,20 @@ pub fn url_of(path: &str) -> String {
 
 /// Joins and normalises, refusing anything that leaves the application.
 fn normalise(base: &str, specifier: &str) -> Result<String, JsError> {
-    // A query or fragment is part of the URL, not of the file it names, and a
-    // bundler emits both (`?worker`, `#hash`). They are dropped when the path is
-    // resolved, exactly as a server would drop them before opening a file.
-    let path = specifier
-        .split(['?', '#'])
-        .next()
-        .unwrap_or_default()
-        .trim_start_matches('/');
+    // A fragment names a place inside a document rather than a file, and never
+    // reaches a source. A query does reach one: `/src/main.jsx` and
+    // `/src/main.jsx?t=1738` are two different responses from a dev server, and
+    // proxy mode (#67) needs the second to be asked for as written. It is kept
+    // on the resolved URL and dropped by whichever source is file-backed, which
+    // is exactly what a file server would have done with it.
+    let (specifier, query) = specifier
+        .split_once('#')
+        .map_or((specifier, ""), |(head, _)| (head, ""));
+    let (path, query) = match specifier.split_once('?') {
+        Some((head, tail)) => (head, format!("?{tail}{query}")),
+        None => (specifier, query.to_owned()),
+    };
+    let path = path.trim_start_matches('/');
     let mut segments: Vec<&str> = if base.is_empty() {
         Vec::new()
     } else {
@@ -207,7 +213,16 @@ fn normalise(base: &str, specifier: &str) -> Result<String, JsError> {
     if segments.is_empty() {
         return Err(JsError::new(format!("{specifier} does not name a file")));
     }
-    Ok(segments.join("/"))
+    Ok(format!("{}{query}", segments.join("/")))
+}
+
+/// The file a resolved application path names, without what a server reads.
+///
+/// A file-backed source is asked for `assets/app.js?v=2` and opens
+/// `assets/app.js`, because that is the file, and the query was for whoever was
+/// serving it.
+pub fn file_of(path: &str) -> &str {
+    path.split('?').next().unwrap_or(path)
 }
 
 /// The module graph as the engine's loader sees it.
@@ -354,12 +369,22 @@ mod tests {
     }
 
     #[test]
-    fn a_query_or_fragment_names_the_same_file() {
+    fn a_query_is_kept_and_a_fragment_is_not() {
         let entry = url_of("assets/index.js");
+        // The query survives resolution, because a server answers it: proxy
+        // mode (#67) asks for `/src/main.jsx?t=1738` as written, and two
+        // versions of one module are two modules.
         assert_eq!(
             resolve(&entry, "./worker.js?worker&url").unwrap(),
-            url_of("assets/worker.js")
+            url_of("assets/worker.js?worker&url")
         );
+        // A file-backed source opens the file the URL names, which is what a
+        // file server would have done with the query.
+        assert_eq!(
+            file_of(path_of(&resolve(&entry, "./worker.js?worker&url").unwrap()).unwrap()),
+            "assets/worker.js"
+        );
+        // A fragment names a place inside a document and never reaches a source.
         assert_eq!(
             resolve(&entry, "./styles.css#layer").unwrap(),
             url_of("assets/styles.css")

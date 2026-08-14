@@ -21,9 +21,22 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun test packages/blitsen
 
+  # Issue #123: the workspace is tested on all three platforms, not just the one
+  # this project is developed on. Clippy and rustfmt run once — a lint result is
+  # not per-platform — and the tests run everywhere, because behaviour is.
+  #
+  # The JavaScriptCore library is a Linux-only extra: it is the engine behind the
+  # `javascriptcore` feature, which nothing ships (the runtime links QuickJS-ng
+  # statically) and which the conformance suite keeps alive as the second engine
+  # a regression can be bisected across. `BLITSEN_REQUIRE_JSC` makes its absence
+  # a failure rather than a skip, so that claim stays measured where it is made.
   rust:
-    name: Rust
-    runs-on: ubuntu-latest
+    name: Rust (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -31,6 +44,7 @@ jobs:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
       - name: Install Blitz system dependencies
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
@@ -38,17 +52,30 @@ jobs:
             libx11-dev libxcursor-dev libxi-dev libxrandr-dev \
             libasound2-dev \
             libjavascriptcoregtk-4.1-dev
-      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Lint
+        if: runner.os == 'Linux'
+        run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
         env:
-          BLITSEN_REQUIRE_JSC: "1"
+          BLITSEN_REQUIRE_JSC: ${{ runner.os == 'Linux' && '1' || '' }}
 
-  # The M3 acceptance evidence. Both harnesses are headless: the bridge harness
-  # renders through the CPU rasterizer, and the standalone check skips its
-  # frame-cadence assertion when no display is present (see docs/M3.md).
+  # The M3 acceptance evidence, and the P5/P6 claim it stands on. Both harnesses
+  # are headless: the bridge harness renders through the CPU rasterizer, and the
+  # standalone check skips its frame-cadence assertion when no display is present
+  # (see docs/M3.md).
+  #
+  # Issue #123: this ran on ubuntu alone, so every claim about the runtime, the
+  # bridge and the export was a Linux claim wearing a cross-platform label. It
+  # now runs on all three. `fail-fast: false` keeps the Linux result readable
+  # while the other two settle — expect their first runs to surface toolchain
+  # work rather than product failures.
   acceptance:
-    name: Native acceptance (headless)
-    runs-on: ubuntu-latest
+    name: Native acceptance (${{ matrix.os }}, headless)
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
@@ -57,6 +84,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Install Blitz system dependencies
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
@@ -69,13 +97,15 @@ jobs:
       - run: bun run --cwd packages/blitsen test:standalone
       - run: bun run --cwd packages/blitsen test:m3b
       # Issue #90: one project, both runtimes, and the only difference allowed
-      # is size. Needs the Phase 2 runtime, which needs a JavaScriptCore to load.
-      - name: Install JavaScriptCore for the Phase 2 runtime
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libjavascriptcoregtk-4.1-dev
+      # is size. The engine is inside the runtime, so nothing is installed for it.
       - run: cargo build --release -p blitsen-runtime
       - run: bun run --cwd packages/blitsen test:hosts
+      # Issue #121: the notices an export owes travel inside it, and the gate
+      # reads them back out of a real artifact — before and after signing.
+      - run: bun run --cwd packages/blitsen test:licensing
+      # Issue #67: the other way to run an application — served by a dev server
+      # rather than read off disk. The fixture server runs inside the gate.
+      - run: bun run --cwd packages/blitsen test:proxy
 
   # Frame determinism (issue #48). Replays one committed input trace twice, in
   # separate processes, and compares the digest sequences with each other and
@@ -108,9 +138,6 @@ jobs:
           name: determinism-divergence-${{ github.sha }}
           path: ${{ github.workspace }}/target/determinism-divergence
           if-no-files-found: ignore
-      # P4 evidence (issue #47): frame-time histogram with tail percentiles and
-      # per-stage cost, measured with the wall clock while JavaScript is fed a
-      # fixed timestep. Recorded and reported, never gated: see docs/M3.md.
       - name: Frame cost
         run: bun run --cwd packages/blitsen frames --out ${{ github.workspace }}/frame-metrics.json
       - uses: actions/upload-artifact@v4
@@ -119,18 +146,11 @@ jobs:
           name: frame-metrics-${{ github.sha }}
           path: ${{ github.workspace }}/frame-metrics.json
 
-  # Layout conformance (issue #61). P6 claims the same layout on every platform,
-  # so the corpus is rendered on every platform and held to one set of committed
-  # goldens. The declared box and colour checks are portable — the corpus pins
-  # its own font file — and are gated on all three runners; the golden images are
-  # gated wherever the raster fingerprint matches the machine that recorded them.
-  # Divergences upload as before/after/diff PNGs. See docs/CONFORMANCE.md.
-  #
-  # This is the first job in this workflow to build on macOS or Windows at all,
-  # and it deliberately builds only `blitsen-blitz`, which needs no JavaScript
-  # engine. Expect its first runs there to surface toolchain work rather than
-  # conformance failures; `fail-fast: false` keeps the Linux result readable
-  # while that settles.
+  # P6: byte-identical layout across platforms for the test corpus. This is the
+  # cheapest cross-platform job in the file — it deliberately builds only
+  # `blitsen-blitz`, which needs no JavaScript engine — and it is *not* the whole
+  # of P6 on its own: the acceptance job above is what exercises the renderer
+  # with a runtime behind it on the same three platforms (#123).
   conformance:
     name: Layout conformance (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -164,9 +184,17 @@ jobs:
   # only record and report, because a hosted runner's timings are too noisy to
   # gate on. Everything here is headless, so P2 and P3 are measured through the
   # proxies documented in docs/M3.md.
+  #
+  # Issue #123: measured per target, because P1 is one budget and six platforms.
+  # Only the platform with a committed baseline is gated on growth — the size
+  # gate says so itself for the others, and reports rather than failing.
   metrics:
-    name: Size gate and benchmarks (headless)
-    runs-on: ubuntu-latest
+    name: Size gate and benchmarks (${{ matrix.os }}, headless)
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
@@ -179,6 +207,7 @@ jobs:
           toolchain: 1.97.1
       - uses: Swatinem/rust-cache@v2
       - name: Install Blitz system dependencies
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
@@ -195,22 +224,18 @@ jobs:
       # Issue #89: recorded, never gated. The Phase 2 component breakdown moves
       # with the dependency tree, and a gate on it would fail for reasons that
       # are not regressions.
-      - name: Install JavaScriptCore for the Phase 2 runtime
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libjavascriptcoregtk-4.1-dev
       - run: cargo build --release -p blitsen-runtime
       - name: Phase 2 size breakdown
         run: bun run --cwd packages/blitsen size:phase2 --out ${{ github.workspace }}/phase2-size.json
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: phase2-size-${{ github.sha }}
+          name: phase2-size-${{ matrix.os }}-${{ github.sha }}
           path: ${{ github.workspace }}/phase2-size.json
       # The committed time series only grows from local runs: CI cannot push, so
       # it keeps its own per-commit copy here instead.
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: metrics-${{ github.sha }}
+          name: metrics-${{ matrix.os }}-${{ github.sha }}
           path: ${{ github.workspace }}/measurements.json

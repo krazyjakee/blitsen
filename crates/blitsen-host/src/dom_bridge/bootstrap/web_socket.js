@@ -131,9 +131,5 @@
     get onclose() { return socketHandlers.get(this)?.close ?? null; }
     set onclose(callback) { setSocketHandler(this, "close", callback); }
   }
-  // On the class and on every instance, because both spellings are read.
-  for (const target of [WebSocket, WebSocket.prototype])
-    Object.defineProperties(target, Object.fromEntries(
-      ["CONNECTING", "OPEN", "CLOSING", "CLOSED"].map((name, value) =>
-        [name, { value, enumerable: true }])));
+  defineConstants(WebSocket, ["CONNECTING", "OPEN", "CLOSING", "CLOSED"]);
 

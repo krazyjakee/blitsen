@@ -21,11 +21,14 @@ use std::rc::Rc;
 use std::time::{Duration, Instant, SystemTime};
 
 use blitsen_js::timers::{TimerId, TimerQueue};
-use blitsen_js::{JsEngine, JsError, JsType};
+use blitsen_js::{JsEngine, JsError, JsType, TypedArray, TypedArrayKind};
 
 use crate::dom_bridge::argument;
 
 const BOOTSTRAP: &str = include_str!("runtime_services/bootstrap.js");
+
+/// The quota `crypto.getRandomValues` refuses past, in bytes.
+const RANDOM_BYTES_LIMIT: f64 = 65_536.0;
 
 /// Timers, clock, console and the Web IDL globals an embedded host must supply.
 ///
@@ -77,6 +80,33 @@ impl<E: JsEngine + 'static> RuntimeServices<E> {
                     eprintln!("{text}");
                 }
                 Ok(call.this)
+            }),
+        )?;
+
+        // The one thing `crypto` needs that JavaScript cannot produce: bytes
+        // from the operating system's generator. Everything the web specifies
+        // around them — the accepted view types, the quota, the UUID layout —
+        // is in the bootstrap, because none of it needs to be here.
+        engine.define_global_function(
+            "__blitsenRandomBytes",
+            Box::new(move |call| {
+                let mut engine = E::from_value(&call.this);
+                let count = engine.to_number(call.argument(0, "byte count")?)?;
+                if !count.is_finite()
+                    || count.fract() != 0.0
+                    || !(0.0..=RANDOM_BYTES_LIMIT).contains(&count)
+                {
+                    return Err(JsError::new(format!(
+                        "random byte count must be a whole number from 0 to {RANDOM_BYTES_LIMIT}"
+                    )));
+                }
+                let mut bytes = vec![0_u8; count as usize];
+                getrandom::fill(&mut bytes).map_err(|error| {
+                    JsError::new(format!(
+                        "the system random generator is unavailable: {error}"
+                    ))
+                })?;
+                engine.typed_array(&TypedArray::new(TypedArrayKind::Uint8, bytes)?)
             }),
         )?;
 

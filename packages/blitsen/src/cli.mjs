@@ -7,16 +7,20 @@ import { buildStandalone } from "./export.mjs";
 import { describeRuntime, hostTarget, openRuntime, packageVersion, resolveRuntime, TARGETS }
   from "./runtime.mjs";
 
-const HELP = `Usage: blitsen [directory] [options]
+const HELP = `Usage: blitsen [directory|url] [options]
        blitsen build [directory] [options]
        blitsen doctor <directory> [--json]
 
-Open <directory>/index.html in a native Blitsen window, defaulting to the
-current directory.
+Open <directory>/index.html in a native Blitsen window. Given an http(s) URL —
+blitsen http://localhost:5173 — the window reads the document and its modules
+from your own dev server instead, so HMR, source maps and the rest of your
+inner loop keep working.
+With no directory, running and building do the same thing to find one: read the
+"blitsen" config in package.json, run the configured build command, and take
+its output directory — or, where there is no config, the directory you are
+standing in.
 Build creates a single-file executable: Blitsen's own runtime with the
-application appended to it. With no directory it reads the "blitsen" config in
-package.json, runs the configured build command, and ingests its output
-directory.
+application appended to it.
 Doctor checks built static output against the v1 compatibility profile.
 
 Options:
@@ -118,12 +122,13 @@ export function parseArgs(args) {
       throw new Error(`unexpected argument: ${argument}`);
     }
   }
-  // A build with no directory is the configured one, and a run with no directory
-  // is the one you are standing in — the input to Blitsen is a directory of
-  // static web output, and the working directory is a fair guess at which.
+  // A run with no directory is left null for the same reason a build is: which
+  // directory that means is the configuration's answer, not this function's, and
+  // answering "." here is what kept `blitsen` from ever reading the config —
+  // standing in a bundler project, it opened the source tree and found no
+  // index.html while `blitsen build` beside it built and ingested one.
   // Doctor is pointed rather than guessed: it grades build output, and defaulting
   // it to wherever the shell happens to be would grade the wrong tree in silence.
-  if (options.directory === null && options.command === "run") options.directory = ".";
   if (options.directory === null && options.command === "doctor") {
     throw new Error("missing application directory");
   }
@@ -155,11 +160,12 @@ async function applyConfiguration(options, output) {
   const { path, root, config } = await loadConfig();
   if (!config) {
     // A directory of static output is already an application: there is no build
-    // command to configure, and `blitsen` opens this same directory with no
-    // argument. Only when there is nothing here to build does the config matter,
-    // and then the message is about the config rather than about the entrypoint
-    // — a bundler project whose config is missing must not quietly export its
-    // source directory instead.
+    // command to configure, and the directory you are standing in is the one you
+    // meant — which is what `blitsen` with no argument has always opened, and is
+    // kept here so that it still does. Only when there is nothing here to run
+    // does the config matter, and then the message is about the config rather
+    // than about the entrypoint — a bundler project whose config is missing must
+    // not quietly run or export its source directory instead.
     const here = join(process.cwd(), "index.html");
     if (await access(here, constants.R_OK).then(() => true, () => false)) {
       options.directory = process.cwd();
@@ -179,7 +185,18 @@ async function applyConfiguration(options, output) {
   applyName(options);
 }
 
+/** Whether the argument names a dev server rather than a directory (#67). */
+export function isServerUrl(directory) {
+  return typeof directory === "string" && /^https?:\/\//i.test(directory.trim());
+}
+
 export async function resolveApplication(directory) {
+  // Proxy mode: nothing to resolve on this machine. The runtime asks the server
+  // for the document, and says so clearly when nothing is answering yet.
+  if (isServerUrl(directory)) {
+    const url = directory.trim();
+    return { root: url, entrypoint: url, served: true };
+  }
   const root = await realpath(resolve(directory)).catch(() => {
     throw new Error(`application directory does not exist: ${directory}`);
   });
@@ -282,9 +299,22 @@ export async function main(args, output = console, runtime = null) {
       if (!active?.build) {
         throw new Error("native build runtime is unavailable; reinstall blitsen for this platform");
       }
-      if (options.directory === null) await applyConfiguration(options, output);
     }
+    // One answer to "which directory", whether the application is about to be
+    // run or exported: the same config, the same build command, the same output.
+    // A run that found its application differently from the build beside it is a
+    // run that proves nothing about what ships.
+    if (options.directory === null) await applyConfiguration(options, output);
     const application = await resolveApplication(options.directory);
+    // Proxy mode is a way to *run* an application, and neither of the other two
+    // commands has anything to read: `doctor` grades files on disk and `build`
+    // ingests them, and a dev server serves what it transforms on request
+    // rather than a directory either could walk (#67).
+    if (application.served && options.command !== "run") {
+      throw new Error(`${options.command} needs a directory of built output, not a URL: `
+        + `a dev server has no output directory to ${options.command === "doctor" ? "scan" : "ingest"}. `
+        + "Run your build and point it at the output.");
+    }
     if (options.command === "doctor") {
       const report = await doctorApplication(application.root);
       if (options.json) output.log(JSON.stringify(report, null, 2));
@@ -328,18 +358,33 @@ export async function main(args, output = console, runtime = null) {
       // announces the artifact names it too.
       if (result.runtime) output.log(`Runtime: ${describeRuntime(result.runtime)}`);
       if (result.assetDirectory) output.log(`Side-loaded assets: ${result.assetDirectory}`);
-      // Not "Phase 1 exports": a Phase 2 export printed the same line and named
-      // the wrong host. What is true of both is the part that matters — the
-      // redistribution gate in LICENSING.md is not implemented (#121).
-      output.log("Exports are architecture proofs and are not yet cleared for redistribution.");
+      // Issue #121: the line comes off only for an export that carries the
+      // notices it owes, and it is the artifact that carries them — `<the
+      // executable> --licenses` prints what was embedded. An export without
+      // them still says so, because that is still true of it: a Phase 1 export
+      // carries a copy of Bun, whose own LGPL flow is not automated here
+      // (docs/LICENSING.md).
+      if (result.notices) {
+        output.log(`Third-party notices: embedded, ${result.notices.bytes} bytes `
+          + "(run the executable with --licenses)");
+      } else {
+        output.log("This export is not cleared for redistribution: it carries no third-party "
+          + "notices (docs/LICENSING.md).");
+      }
       return 0;
     }
     active ??= await hostRuntime();
     if (!active?.openDirectory) {
       throw new Error("native addon is unavailable; reinstall blitsen for this platform");
     }
+    if (application.served) {
+      output.log(`Serving from ${application.root} — your dev server owns the files, `
+        + "reloading and source maps; this window is the tab.");
+    }
     await active.openDirectory({ ...application, ...options });
-    const watcher = active.reloadCSS && active.reloadDirectory
+    // Nothing local to watch when the files are served: the dev server is
+    // already watching them, and its own channel is what tells the document.
+    const watcher = !application.served && active.reloadCSS && active.reloadDirectory
       ? watchApplication(application.root, active, output)
       : null;
     try {

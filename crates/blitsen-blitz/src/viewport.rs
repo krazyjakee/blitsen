@@ -32,6 +32,8 @@ use peniko::{
     ImageSampler,
 };
 
+use crate::surface::{Surface, SurfaceWidget};
+
 /// User-agent rules that give `<blitsen-view>` a replaced element's box.
 ///
 /// The default object size matches `<canvas>`. `overflow: hidden` is what makes
@@ -53,6 +55,12 @@ pub(crate) struct ViewportState {
     generation: u64,
     revision: u64,
     contents: Option<ImageData>,
+}
+
+impl Surface for ViewportState {
+    fn revision(&self) -> u64 {
+        self.revision
+    }
 }
 
 impl ViewportState {
@@ -117,24 +125,17 @@ impl ViewportState {
 }
 
 /// Paints one `<blitsen-view>` element's surface into the document's scene.
-pub(crate) struct ViewportWidget {
-    state: Rc<RefCell<ViewportState>>,
-    /// Revision of the contents last recorded into a scene.
-    painted_revision: u64,
-}
+pub(crate) struct ViewportWidget(SurfaceWidget<ViewportState>);
 
 impl ViewportWidget {
     pub(crate) fn new(state: Rc<RefCell<ViewportState>>) -> Self {
-        Self {
-            state,
-            painted_revision: 0,
-        }
+        Self(SurfaceWidget::new(state))
     }
 }
 
 impl Widget for ViewportWidget {
     fn requires_redraw(&self) -> bool {
-        self.state.borrow().revision != self.painted_revision
+        self.0.needs_repaint()
     }
 
     fn paint(
@@ -146,8 +147,7 @@ impl Widget for ViewportWidget {
         _scale: f64,
     ) -> Scene {
         let mut scene = Scene::new();
-        let state = self.state.borrow();
-        self.painted_revision = state.revision;
+        let state = self.0.begin_paint();
 
         // A viewport the application has not drawn at this size stays empty
         // rather than showing a frame it did not produce.

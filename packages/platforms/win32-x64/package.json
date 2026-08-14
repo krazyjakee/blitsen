@@ -17,7 +17,7 @@
     "./blitsen.node": "./blitsen.node",
     "./blitsen-runtime.exe": "./blitsen-runtime.exe"
   },
-  "files": ["blitsen.node", "blitsen-runtime.exe"],
+  "files": ["blitsen.node", "blitsen-runtime.exe", "NOTICES.txt", "NOTICES.json"],
   "preferUnplugged": true,
   "publishConfig": {
     "access": "public"

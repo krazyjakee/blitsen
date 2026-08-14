@@ -23,15 +23,21 @@ const treeSnapshot = JSON.parse(native.runBridgeHarness(
      const replacement = document.createElement("strong"); replacement.id = "replacement";
      three.replaceWith(replacement);
      expect(a.firstChild === replacement && replacement.nextSibling === null && three.parentNode === null, "replaceWith");
+     const swapped = document.createElement("strong"); swapped.id = "swapped";
+     expect(a.replaceChild(swapped, replacement) === replacement && a.firstChild === swapped
+       && replacement.parentNode === null, "replaceChild");
+     let refused = false;
+     try { b.replaceChild(document.createElement("i"), swapped); } catch { refused = true; }
+     expect(refused, "replaceChild refuses a node that is not its child");
      a.setAttribute("data-tree", "ok"); }`,
   320,
   180,
 ));
 const treeById = new Map(treeSnapshot.nodes.map((node) => [node.attributes.id, node]));
 assert.equal(treeById.get("a").attributes["data-tree"], "ok");
-assert.equal(treeById.get("replacement").parent, treeById.get("a").handle);
+assert.equal(treeById.get("swapped").parent, treeById.get("a").handle);
 assert.equal(treeById.get("two").parent, treeById.get("b").handle);
-for (const removedId of ["zero", "one", "three"])
+for (const removedId of ["zero", "one", "three", "replacement"])
   assert.equal(treeById.has(removedId), false, `${removedId} is detached from the Rust document tree`);
 
 const contentSnapshot = JSON.parse(native.runBridgeHarness(
@@ -79,6 +85,25 @@ const domSurface = JSON.parse(native.runBridgeHarness(
      const comment = document.createComment("v-if");
      expect(comment.nodeType === 8 && comment.nodeName === "#comment" && comment instanceof Comment &&
        comment.textContent === "v-if", "comment node");
+
+     // Read off the instance as often as off the interface: Monaco writes
+     // \`child.nodeType === child.ELEMENT_NODE\`, and an undefined constant there
+     // is a comparison that quietly never holds rather than an error.
+     const text = document.createTextNode("x");
+     expect(Node.ELEMENT_NODE === 1 && Node.ATTRIBUTE_NODE === 2 && Node.TEXT_NODE === 3 &&
+       Node.CDATA_SECTION_NODE === 4 && Node.ENTITY_REFERENCE_NODE === 5 && Node.ENTITY_NODE === 6 &&
+       Node.PROCESSING_INSTRUCTION_NODE === 7 && Node.COMMENT_NODE === 8 && Node.DOCUMENT_NODE === 9 &&
+       Node.DOCUMENT_TYPE_NODE === 10 && Node.DOCUMENT_FRAGMENT_NODE === 11 && Node.NOTATION_NODE === 12,
+       "the node-type constants are on the Node interface");
+     expect(span.nodeType === span.ELEMENT_NODE && text.nodeType === text.TEXT_NODE &&
+       comment.nodeType === comment.COMMENT_NODE && document.nodeType === document.DOCUMENT_NODE &&
+       Element.ELEMENT_NODE === 1 && Node.prototype.ELEMENT_NODE === 1,
+       "and reachable through every node, the document and the subclasses");
+     const constant = Object.getOwnPropertyDescriptor(Node, "ELEMENT_NODE");
+     expect(constant.value === 1 && !constant.writable && constant.enumerable && !constant.configurable,
+       "declared read-only the way a browser declares them");
+     try { Node.ELEMENT_NODE = 99; } catch { /* strict mode throws, sloppy mode ignores */ }
+     expect(Node.ELEMENT_NODE === 1 && span.ELEMENT_NODE === 1, "and not overwritable");
      root.appendChild(comment);
      expect(root.innerHTML.endsWith("<!--v-if-->") && root.childNodes.length === 3 &&
        root.children.length === 2, "a comment is in the tree but is not an element");

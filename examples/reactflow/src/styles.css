@@ -1,6 +1,6 @@
 :root {
-  color: #e2e8f0;
-  background: #0f172a;
+  color: #e7e9ee;
+  background: #0b0d12;
   font-family: Inter, ui-sans-serif, system-ui, sans-serif;
 }
 
@@ -17,39 +17,250 @@ body {
   overflow: hidden;
 }
 
+.canvas {
+  display: flex;
+  flex-direction: column;
+  background: #0b0d12;
+}
+
+.workflow-header {
+  z-index: 20;
+  display: flex;
+  flex: 0 0 70px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 22px;
+  border-bottom: 1px solid #292d38;
+  background: #11131a;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.24);
+}
+
+.workflow-identity,
+.workflow-actions {
+  display: flex;
+  align-items: center;
+}
+
+.workflow-identity {
+  gap: 12px;
+}
+
+.brand-mark {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  border-radius: 10px;
+  color: #160d08;
+  background: #ff8a4c;
+  font-size: 18px;
+  font-weight: 900;
+}
+
+.workflow-identity small {
+  display: block;
+  margin-bottom: 2px;
+  color: #858b9c;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+}
+
+.workflow-identity h1 {
+  margin: 0;
+  font-size: 16px;
+  line-height: 1.2;
+}
+
+.workflow-actions {
+  gap: 10px;
+  color: #969cab;
+  font-size: 11px;
+}
+
+.workflow-actions button,
+.text-controls button {
+  border: 1px solid #3c4352;
+  border-radius: 7px;
+  color: #eceef2;
+  background: #242936;
+  font: inherit;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.workflow-actions button {
+  height: 34px;
+  padding: 0 14px;
+  border-color: #ff8a4c;
+  color: #1a0f09;
+  background: #ff8a4c;
+}
+
+.active-state {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 9px;
+  border: 1px solid #24593c;
+  border-radius: 999px;
+  color: #86efac;
+  background: #12271d;
+}
+
+.active-state i,
+.pulse {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #4ade80;
+  box-shadow: 0 0 8px rgba(74, 222, 128, 0.8);
+}
+
+.flow-area {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
 .react-flow {
-  background: radial-gradient(circle at top, #253454 0%, #111827 48%, #090f1d 100%);
+  background-color: #0d1017;
+  background-image:
+    linear-gradient(rgba(79, 89, 110, 0.12) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(79, 89, 110, 0.12) 1px, transparent 1px),
+    radial-gradient(circle at 50% 0%, #1b2231 0%, #0d1017 62%);
+  background-size: 28px 28px, 28px 28px, 100% 100%;
 }
 
 .react-flow__node {
-  width: 180px;
-  padding: 14px 18px;
-  border: 1px solid #a78bfa;
-  border-radius: 10px;
-  color: #f8fafc;
-  background: #312e81;
-  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.28);
-  font-weight: 700;
+  width: 184px;
+  padding: 0;
+  pointer-events: auto;
+  border: 0;
+  color: #eef0f4;
+  background: transparent;
+  font-weight: 400;
+  text-align: left;
 }
 
-.react-flow__node.selected {
-  border-color: #f0abfc;
-  box-shadow: 0 0 0 2px rgba(240, 171, 252, 0.3);
+.workflow-node {
+  --tone: #8b93a7;
+  position: relative;
+  min-height: 108px;
+  padding: 0 13px 9px;
+  border: 1px solid #343a49;
+  border-left: 3px solid var(--tone);
+  border-radius: 11px;
+  background: #191c25;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.34);
+}
+
+.react-flow__node.selected .workflow-node {
+  border-color: var(--tone);
+  box-shadow: 0 0 0 2px rgba(196, 181, 253, 0.22), 0 14px 34px rgba(0, 0, 0, 0.4);
+}
+
+.tone-orange { --tone: #fb923c; }
+.tone-blue { --tone: #60a5fa; }
+.tone-violet { --tone: #a78bfa; }
+.tone-pink { --tone: #f472b6; }
+.tone-green { --tone: #4ade80; }
+.tone-cyan { --tone: #22d3ee; }
+
+.node-heading {
+  display: flex;
+  height: 36px;
+  align-items: center;
+  gap: 8px;
+  margin: 0 -13px 8px;
+  padding: 0 11px;
+  border-bottom: 1px solid #2a2f3b;
+  background: #20242e;
+  border-radius: 9px 9px 0 0;
+}
+
+.node-icon {
+  display: grid;
+  width: 23px;
+  height: 23px;
+  place-items: center;
+  border: 1px solid var(--tone);
+  border-radius: 6px;
+  color: var(--tone);
+  background: #12151c;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.node-app {
+  flex: 1;
+  color: #aeb4c2;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.035em;
+  text-transform: uppercase;
+}
+
+.node-ok {
+  display: grid;
+  width: 17px;
+  height: 17px;
+  place-items: center;
+  border-radius: 50%;
+  color: #07120c;
+  background: #4ade80;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.workflow-node strong,
+.workflow-node small {
+  display: block;
+}
+
+.workflow-node strong {
+  margin-bottom: 4px;
+  font-size: 12px;
+}
+
+.workflow-node small {
+  color: #8f96a7;
+  font-size: 9px;
+}
+
+.workflow-node footer {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 10px;
+  color: #60687a;
+  font-size: 8px;
 }
 
 .react-flow__handle {
   width: 10px;
   height: 10px;
-  border: 2px solid #1e1b4b;
-  background: #c4b5fd;
+  pointer-events: auto;
+  cursor: crosshair;
+  border: 2px solid #12151c;
+  background: var(--tone, #aeb6ca);
+  box-shadow: 0 0 0 1px var(--tone, #aeb6ca);
+}
+
+.output-label {
+  position: absolute;
+  right: 11px;
+  transform: translateY(-50%);
+  color: #9fa6b5;
+  font-size: 8px;
+  text-transform: uppercase;
 }
 
 .html-edge {
   position: absolute;
   height: 2px;
   transform-origin: 0 50%;
-  background: #c4b5fd;
-  box-shadow: 0 0 8px rgba(196, 181, 253, 0.5);
+  background: #727b90;
+  box-shadow: 0 0 7px rgba(114, 123, 144, 0.35);
   pointer-events: none;
 }
 
@@ -61,65 +272,86 @@ body {
   height: 0;
   border-top: 5px solid transparent;
   border-bottom: 5px solid transparent;
-  border-left: 8px solid #c4b5fd;
+  border-left: 8px solid #727b90;
 }
+
+.edge-true {
+  background: #4ade80;
+  box-shadow: 0 0 9px rgba(74, 222, 128, 0.5);
+}
+
+.edge-true i { border-left-color: #4ade80; }
+.edge-false { background: #a78bfa; }
+.edge-false i { border-left-color: #a78bfa; }
+
+.connection-preview {
+  z-index: 1001;
+  height: 3px;
+  background: #f0abfc;
+  box-shadow: 0 0 12px rgba(240, 171, 252, 0.8);
+}
+
+.connection-preview i { border-left-color: #f0abfc; }
+
+.connection-preview.valid {
+  background: #86efac;
+  box-shadow: 0 0 12px rgba(134, 239, 172, 0.8);
+}
+
+.connection-preview.valid i { border-left-color: #86efac; }
+
+.connection-preview.invalid {
+  background: #fda4af;
+  box-shadow: 0 0 12px rgba(253, 164, 175, 0.8);
+}
+
+.connection-preview.invalid i { border-left-color: #fda4af; }
 
 .text-controls {
   display: flex;
   gap: 6px;
-  margin: 18px;
-  padding: 6px;
-  border: 1px solid #475569;
-  border-radius: 10px;
-  background: #172033;
-  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.22);
+  margin: 16px;
+  padding: 5px;
+  border: 1px solid #343a49;
+  border-radius: 9px;
+  background: #171a22;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.3);
 }
 
 .text-controls button {
-  min-width: 36px;
-  height: 34px;
-  padding: 0 10px;
-  border: 1px solid #475569;
-  border-radius: 7px;
-  color: #e2e8f0;
-  background: #25314a;
-  font: inherit;
-  font-weight: 800;
-  cursor: pointer;
+  min-width: 34px;
+  height: 31px;
+  padding: 0 9px;
 }
 
-.title-card {
-  position: absolute;
-  top: 24px;
-  left: 24px;
-  z-index: 5;
-  width: 250px;
-  padding: 18px 20px;
-  border: 1px solid rgba(148, 163, 184, 0.35);
-  border-radius: 14px;
-  background: rgba(15, 23, 42, 0.9);
-  box-shadow: 0 16px 38px rgba(0, 0, 0, 0.25);
-  pointer-events: none;
+.run-summary {
+  display: grid;
+  grid-template-columns: 10px auto;
+  gap: 2px 7px;
+  margin: 16px;
+  padding: 10px 12px;
+  border: 1px solid #304b3c;
+  border-radius: 9px;
+  color: #c9f6d7;
+  background: #142019;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.24);
+  font-size: 10px;
+  font-weight: 700;
 }
 
-.title-card span {
-  color: #c4b5fd;
-  font-size: 12px;
-  font-weight: 800;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
+.run-summary .pulse {
+  align-self: center;
 }
 
-.title-card h1 {
-  margin: 5px 0 4px;
-  color: #f8fafc;
-  font-size: 28px;
-  line-height: 1.1;
+.run-summary small {
+  grid-column: 2;
+  color: #71907c;
+  font-size: 8px;
+  font-weight: 500;
 }
 
-.title-card p {
-  margin: 0;
-  color: #aebbd0;
-  font-size: 14px;
-  line-height: 1.45;
+@media (max-width: 760px) {
+  .save-state { display: none; }
+  .workflow-header { padding: 0 12px; }
+  .workflow-actions button { padding: 0 9px; }
 }

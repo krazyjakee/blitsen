@@ -16,6 +16,7 @@ use blitz::shell::{BlitzApplication, BlitzShellProxy, WindowConfig, create_defau
 use blitz::traits::net::NetProvider;
 use serde::Serialize;
 use winit::application::ApplicationHandler;
+use winit::cursor::CursorIcon;
 use winit::dpi::LogicalSize;
 use winit::event::{
     ButtonSource, DeviceEvent, ElementState, MouseButton, MouseScrollDelta, PointerSource,
@@ -54,6 +55,13 @@ pub struct WindowApplication<Rend: anyrender::WindowRenderer, E: JsEngine + Clon
     pub(crate) pending_resize: HashMap<WindowId, winit::dpi::PhysicalSize<u32>>,
     pub(crate) applied_resize: HashMap<WindowId, winit::dpi::PhysicalSize<u32>>,
     pub(crate) pointer_positions: HashMap<WindowId, (f64, f64)>,
+    /// The pointer position and tree revision the cursor was last resolved from.
+    ///
+    /// A hit test is the cost of resolving one, and neither a pointer that has
+    /// not moved nor a tree that has not changed can have changed the answer.
+    /// The position is kept as bits because it is compared, never measured.
+    pub(crate) cursor_resolved_from: HashMap<WindowId, (u64, u64, u64)>,
+    pub(crate) applied_cursor: HashMap<WindowId, Option<CursorIcon>>,
     pub(crate) mouse_down_targets: HashMap<u16, NodeId>,
     pub(crate) mouse_buttons: u16,
     pub(crate) modifiers: ModifiersState,
@@ -154,6 +162,10 @@ impl<E: JsEngine + Clone + 'static> WindowSession<E> {
     ) -> Result<Self, JsError> {
         let started_at = Instant::now();
         let runtime = tokio::runtime::Builder::new_multi_thread()
+            // Network and audio work are asynchronous rather than CPU-parallel.
+            // Tokio's default is one worker per core: 24 idle workers on the
+            // benchmark host bought no throughput and retained allocator arenas.
+            .worker_threads(2)
             .enable_all()
             .build()
             .map_err(|error| JsError::new(error.to_string()))?;
@@ -197,6 +209,8 @@ impl<E: JsEngine + Clone + 'static> WindowSession<E> {
             pending_resize: HashMap::new(),
             applied_resize: HashMap::new(),
             pointer_positions: HashMap::new(),
+            cursor_resolved_from: HashMap::new(),
+            applied_cursor: HashMap::new(),
             mouse_down_targets: HashMap::new(),
             mouse_buttons: 0,
             modifiers: ModifiersState::empty(),
@@ -263,6 +277,8 @@ impl<E: JsEngine + Clone + 'static> WindowSession<E> {
         application.pending_mouse_input.clear();
         application.pending_keyboard_input.clear();
         application.pointer_positions.clear();
+        application.cursor_resolved_from.clear();
+        application.applied_cursor.clear();
         application.mouse_down_targets.clear();
         application.mouse_buttons = 0;
         application.load_dispatched = false;
@@ -326,14 +342,35 @@ impl<E: JsEngine + Clone + 'static> WindowSession<E> {
     /// callback cannot be returned from there, so it is parked and surfaces
     /// here, at the first call after it happened.
     pub fn pump(&mut self) -> Result<bool, JsError> {
+        self.pump_for(Some(Duration::ZERO))
+    }
+
+    /// Advances winit once, waiting at most `timeout` for an event.
+    ///
+    /// `None` waits until an event arrives. The standalone runtime uses this
+    /// while nothing is animating, so a static window consumes no polling
+    /// turns. Callers embedded in another event loop should use [`Self::pump`].
+    pub fn pump_for(&mut self, timeout: Option<Duration>) -> Result<bool, JsError> {
         let _guard = self.runtime.enter();
         self.event_loop
-            .pump_app_events(Some(Duration::ZERO), &mut self.application);
+            .pump_app_events(timeout, &mut self.application);
         if let Some(error) = self.error.borrow_mut().take() {
             return Err(error);
         }
         Ok(!self.application.inner.windows.is_empty()
             || !self.application.inner.pending_windows.is_empty())
+    }
+
+    /// Reports whether JavaScript has an animation-frame callback to run.
+    pub fn animation_frames_pending(&self) -> bool {
+        self.application.animation_frames_pending()
+    }
+
+    /// Schedules a redraw of every open window.
+    pub fn request_redraw(&self) {
+        for view in self.application.inner.windows.values() {
+            view.window.request_redraw();
+        }
     }
 }
 
@@ -446,6 +483,13 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Ren
             }
             WindowEvent::ModifiersChanged(modifiers) => {
                 self.modifiers = modifiers.state();
+                return false;
+            }
+            // Outside the window the cursor belongs to whatever the pointer is
+            // over now, and the position last reported is no longer where it is.
+            WindowEvent::PointerLeft { .. } => {
+                self.pointer_positions.remove(&window_id);
+                self.cursor_resolved_from.remove(&window_id);
                 return false;
             }
             _ => return false,
@@ -751,6 +795,76 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Ren
         }
     }
 
+    /// Puts the cursor the document resolves under the pointer on the window.
+    ///
+    /// Blitz sets a cursor of its own from its hover state, and its hover hit
+    /// test cannot reach an element laid out past its parent's box, so this runs
+    /// after the frame Blitz painted and has the last word (issue #128).
+    ///
+    /// Resolved once per frame rather than once per pointer move: a cursor is
+    /// also changed by a class or an inline style landing under a pointer that
+    /// never moved, and a frame is the moment both are settled. The pointer
+    /// position and the tree revision together say whether the answer could have
+    /// changed at all, which keeps a still pointer over a still document from
+    /// paying for a hit test every frame.
+    fn sync_cursor(&mut self, window_id: WindowId) {
+        if self.error.borrow().is_some() {
+            return;
+        }
+        let Some(&(physical_x, physical_y)) = self.pointer_positions.get(&window_id) else {
+            return;
+        };
+        let Some(scale) = self
+            .inner
+            .windows
+            .get(&window_id)
+            .map(|view| f64::from(view.doc.inner().viewport().hidpi_scale))
+        else {
+            return;
+        };
+        let client_x = physical_x / scale;
+        let client_y = physical_y / scale;
+        let revision = match self.document.borrow_mut().flush_layout() {
+            Ok(snapshot) => snapshot.revision(),
+            Err(error) => {
+                *self.error.borrow_mut() = Some(crate::dom_error(error));
+                return;
+            }
+        };
+        let source = (client_x.to_bits(), client_y.to_bits(), revision);
+        if self.cursor_resolved_from.get(&window_id) == Some(&source) {
+            return;
+        }
+        self.cursor_resolved_from.insert(window_id, source);
+        let icon = match self
+            .document
+            .borrow()
+            .cursor_at(client_x as f32, client_y as f32)
+        {
+            Ok(icon) => icon,
+            Err(error) => {
+                *self.error.borrow_mut() = Some(crate::dom_error(error));
+                return;
+            }
+        };
+        if self.applied_cursor.get(&window_id) == Some(&icon) {
+            return;
+        }
+        self.applied_cursor.insert(window_id, icon);
+        let Some(view) = self.inner.windows.get(&window_id) else {
+            return;
+        };
+        // `cursor: none` is a hidden pointer rather than an arrow, which is the
+        // one value winit spells with a second call.
+        match icon {
+            Some(icon) => {
+                view.window.set_cursor(icon.into());
+                view.window.set_cursor_visible(true);
+            }
+            None => view.window.set_cursor_visible(false),
+        }
+    }
+
     fn sync_native_window(&self, window_id: WindowId) {
         let Some((width, height, scale)) = self.inner.windows.get(&window_id).map(|view| {
             let document = view.doc.inner();
@@ -940,6 +1054,11 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> ApplicationHandler
         }
         let animation_pending = redraw && self.run_animation_frame();
         self.inner.window_event(event_loop, window_id, event);
+        // After Blitz has had the frame, because painting it re-resolves Blitz's
+        // own hover state and sets a cursor from it.
+        if redraw {
+            self.sync_cursor(window_id);
+        }
         if viewport_changed {
             self.sync_native_window(window_id);
             if let Err(error) = self.dispatch_window_event("resize") {

@@ -14,6 +14,13 @@ publish.workspace = true
 arboard = { version = "3.6", features = ["wayland-data-control"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# Processor, memory, storage and OS identity for `src/os.rs`, which is one API
+# over three platforms' very different sources — sysfs and os-release, IOKit,
+# and the registry plus WMI. Only the `system` and `disk` halves are on: process
+# enumeration, network counters, temperature sensors and the user database are
+# each a capability of their own to decide on, and off by default they are
+# neither shipped in the binary nor implied by this module.
+sysinfo = { version = "0.39", default-features = false, features = ["system", "disk"] }
 
 # Dialogs exist only where the XDG desktop portal does; see `src/dialog.rs` for
 # why macOS and Windows are absent rather than approximated. `rfd` speaks the
