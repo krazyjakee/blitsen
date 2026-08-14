@@ -37,7 +37,12 @@ try {
     outfile: join(testDirectory, "pong-side-loaded"),
     assets: "side-loaded",
   }, addon);
-  assert.equal(sideLoaded.assetDirectory, join(testDirectory, "pong-side-loaded.assets"));
+  // Named after the executable the export actually produced: a Windows target
+  // is `.exe`, so the sidecar is `pong-side-loaded.exe.assets` there. Derived
+  // rather than spelled out, which is what made this a Linux-only assertion.
+  assert.equal(sideLoaded.assetDirectory, `${sideLoaded.outfile}.assets`);
+  assert.ok(sideLoaded.outfile.startsWith(join(testDirectory, "pong-side-loaded")),
+    `the export landed at ${sideLoaded.outfile}`);
   // Run from an unrelated working directory: assets resolve beside the executable.
   const sideCheck = Bun.spawnSync({
     cmd: [sideLoaded.outfile],
