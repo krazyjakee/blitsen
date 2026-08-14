@@ -5,6 +5,14 @@ on:
     branches: [main]
   pull_request:
 
+# Nine jobs across six runner labels is enough that two runs of the same branch
+# queue behind each other, and the older one is answering a question nobody is
+# asking any more. Superseded runs are cancelled — except on `main`, where every
+# commit's result is the record of that commit.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 env:
   CARGO_TERM_COLOR: always
 
