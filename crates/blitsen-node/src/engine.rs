@@ -738,10 +738,27 @@ fn document_url(identifier: &str) -> Option<String> {
     match on_disk {
         // The same escaping the document's own base URL uses, so a relative
         // resolution from a script and one from the document agree.
-        Some(path) => Some(format!("file://{}{fragment}", path.replace(' ', "%20"))),
+        Some(path) => Some(format!("{}{fragment}", file_url(&path))),
         // A bundle: no file behind it, so the application URL is the address.
         None => identifier.contains("://").then(|| identifier.to_owned()),
     }
+}
+
+/// A filesystem path as a `file:` URL.
+///
+/// A POSIX path is already a URL path. A Windows one is not: `C:\app\x.html`
+/// has to become `/C:/app/x.html`, separators and all, or what comes out is
+/// `file://C:\app\x.html` — which is not a file URL, and which
+/// `new URL("./asset.png", import.meta.url)` resolves against as though the
+/// drive letter were a hostname.
+fn file_url(path: &str) -> String {
+    let slashed = path.replace('\\', "/");
+    let rooted = if slashed.starts_with('/') {
+        slashed
+    } else {
+        format!("/{slashed}")
+    };
+    format!("file://{}", rooted.replace(' ', "%20"))
 }
 
 pub(crate) fn external_from_raw(
@@ -807,12 +824,20 @@ mod tests {
     /// the application shipped rather than resolving against a `data:` URL.
     #[test]
     fn an_inline_scripts_identifier_names_the_document_it_came_from() {
+        // Absolute means absolute *here*, and a URL path is not a Windows path:
+        // `/tmp/app` is not an absolute path on Windows, and `C:\app` is not a
+        // URL until the drive letter is rooted and the separators turned round.
+        let (document, url) = if cfg!(windows) {
+            (r"C:\app\index.html", "file:///C:/app/index.html")
+        } else {
+            ("/tmp/app/index.html", "file:///tmp/app/index.html")
+        };
         // The fragment stays: it is what makes one inline module distinct from
         // the next, which a module registry keyed by URL needs, and resolving a
         // relative asset against it lands in the same place either way (#126).
         assert_eq!(
-            document_url("/tmp/app/index.html#script-1").as_deref(),
-            Some("file:///tmp/app/index.html#script-1")
+            document_url(&format!("{document}#script-1")),
+            Some(format!("{url}#script-1"))
         );
         // An application URL with no file behind it — a bundle — is already a
         // URL and is answered as it stands.
@@ -822,9 +847,14 @@ mod tests {
         );
         // The same escaping the document's base URL uses, so a relative
         // resolution from a script and one from the document agree.
+        let (spaced, spaced_url) = if cfg!(windows) {
+            (r"C:\my app\index.html", "file:///C:/my%20app/index.html")
+        } else {
+            ("/tmp/my app/index.html", "file:///tmp/my%20app/index.html")
+        };
         assert_eq!(
-            document_url("/tmp/my app/index.html#script-1").as_deref(),
-            Some("file:///tmp/my%20app/index.html#script-1")
+            document_url(&format!("{spaced}#script-1")),
+            Some(format!("{spaced_url}#script-1"))
         );
         // Nothing to name, rather than a guess: the harness evaluates modules
         // under identifiers that address no document at all.
