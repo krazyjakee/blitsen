@@ -135,6 +135,21 @@ jobs:
         run: |
           if [ -z "$CERTIFICATE" ] || [ -z "$IDENTITY" ]; then
             echo "::warning::APPLE_CERTIFICATE_P12/APPLE_SIGNING_IDENTITY absent — shipping an unsigned ${{ matrix.target }} runtime"
+            # A skip warning is not evidence that the step below works, and the
+            # step below is the one nothing has ever run (#132). What can be
+            # checked without a certificate is that `codesign` accepts artifacts
+            # of this shape at all: ad-hoc, on copies in the runner's temp
+            # directory, so nothing that ships carries a signature this release
+            # did not intend. What stays unexercised is the keychain import,
+            # which needs a real `.p12`.
+            for artifact in blitsen.node "${{ matrix.executable }}"; do
+              probe="$RUNNER_TEMP/unsigned-probe-$artifact"
+              cp "packages/platforms/${{ matrix.target }}/$artifact" "$probe"
+              codesign --force --options runtime --sign - "$probe"
+              codesign --verify --strict --verbose=2 "$probe"
+              rm -f "$probe"
+            done
+            echo "::notice::codesign accepts this target's artifacts ad-hoc; only the keychain import is untested"
             exit 0
           fi
           keychain="$RUNNER_TEMP/build.keychain"
@@ -162,11 +177,10 @@ jobs:
           CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE_PFX }}
           CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
         run: |
-          if [ -z "$CERTIFICATE" ]; then
-            echo "::warning::WINDOWS_CERTIFICATE_PFX absent — shipping an unsigned ${{ matrix.target }} runtime"
-            exit 0
-          fi
-          echo "$CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/certificate.pfx"
+          # Located before the secret check, not after it, so a run without a
+          # certificate still proves the path assumption this step is built on
+          # (#132, #134). Finding the tool is the half that can be tested for
+          # free; what stays untested is `sign` itself.
           # The SDK's own architecture, not the target's: `signtool.exe` has to
           # run on this runner, and the arm64 image carries an arm64 build. The
           # x64 one is kept as a fallback because it runs under emulation there,
@@ -186,6 +200,12 @@ jobs:
             echo "::error::no signtool.exe for $architectures under Windows Kits on ${{ matrix.runner }}"
             exit 1
           fi
+          echo "Found $signtool"
+          if [ -z "$CERTIFICATE" ]; then
+            echo "::warning::WINDOWS_CERTIFICATE_PFX absent — shipping an unsigned ${{ matrix.target }} runtime"
+            exit 0
+          fi
+          echo "$CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/certificate.pfx"
           echo "Signing with $signtool"
           for artifact in blitsen.node "${{ matrix.executable }}"; do
             "$signtool" sign -f "$RUNNER_TEMP/certificate.pfx" -p "$CERTIFICATE_PASSWORD" \

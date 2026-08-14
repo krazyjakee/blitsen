@@ -26,8 +26,15 @@ Actions → Release → Run workflow
 ```
 
 A dry run is worth doing on its own. It builds all six runtimes, runs the package tests against
-each freshly built addon, packs every package and stops short of the registry — which is the only
-way the signing and staging steps get exercised before a real release depends on them.
+each freshly built addon, generates each target's notices, stages, packs, asks npm what every
+tarball would contain, and stops short of the registry.
+
+Be precise about what a clean dry run does **not** prove. With no certificates in the repository
+the two signing steps do not sign: the Windows step locates `signtool.exe` and stops, and the
+macOS step ad-hoc-signs a copy in the runner's temp directory to show `codesign` accepts an
+artifact of that shape. The keychain import, a real `sign`, and both `verify` calls against a
+genuine certificate stay unexercised until secrets exist — which is why "the signing step was
+skipped" is not the same as "signing works" (issue \#132).
 
 Each platform package carries two artifacts, built, signed and published together: `blitsen.node`,
 the addon `blitsen run` loads, and `blitsen-runtime` (`.exe` on Windows), the executable an export
