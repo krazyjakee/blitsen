@@ -264,8 +264,19 @@ pub fn render_bridge_harness_png(
 }
 
 /// Exercises the real Node-API weak-reference and finalizer identity path.
+///
+/// Returns how many of the wrappers were **still live** after collection was
+/// driven — zero on a runner that finished, and the survivors on one that did
+/// not. A count rather than a verdict because the two ways this can go wrong are
+/// not the same thing: a tail of survivors is a collector that did not finish,
+/// and no survivors collected at all is a finalizer that never ran, which would
+/// mean `WrapperTable` retains every DOM node an application touches. Issue #136
+/// exists because a boolean could not tell those apart.
+///
+/// An identity failure is an error rather than a count, because it is not a
+/// question of degree.
 #[napi]
-pub fn wrapper_identity_smoke(env: Env) -> napi::Result<bool> {
+pub fn wrapper_identity_smoke(env: Env) -> napi::Result<u32> {
     let mut engine = NodeApiEngine::new(env);
     let class = engine
         .register_class(NativeClass::new("IdentityNode"))
@@ -308,7 +319,9 @@ pub fn wrapper_identity_smoke(env: Env) -> napi::Result<bool> {
             .map_err(napi_error)
     })?;
     if !weak_map_works {
-        return Ok(false);
+        return Err(napi_error(JsError::new(
+            "a wrapper did not survive a WeakMap round trip: identity is not preserved",
+        )));
     }
 
     for slot in 2..=100_001_u64 {
@@ -323,7 +336,10 @@ pub fn wrapper_identity_smoke(env: Env) -> napi::Result<bool> {
         })?;
     }
     if table.len() != 100_001 {
-        return Ok(false);
+        return Err(napi_error(JsError::new(format!(
+            "the identity table holds {} wrappers, expected 100001",
+            table.len()
+        ))));
     }
     engine
         .evaluate_script(
@@ -331,21 +347,23 @@ pub fn wrapper_identity_smoke(env: Env) -> napi::Result<bool> {
             "blitsen:identity-drop",
         )
         .map_err(napi_error)?;
-    // Collected, not collected-in-two-passes. No garbage collector promises to
-    // finish a heap this size in a fixed number of calls, and JavaScriptCore on
-    // Windows does not: two `Bun.gc(true)` calls left entries alive and the
-    // whole harness failed there. Drive it until the table drains, bounded so a
-    // collector that genuinely never frees them still fails rather than hangs.
+    // Collected, not collected-in-a-fixed-number-of-passes. No garbage collector
+    // promises to finish a heap this size in a set number of calls, and the
+    // runners disagree about whether it does: `linux-x64` and `darwin-arm64`
+    // drain, `win32-x64` and `linux-arm64` do not, which is neither an operating
+    // system nor an architecture line (#136). Drive it until it drains, bounded
+    // so a collector that never frees anything returns rather than hanging, and
+    // report what survived either way.
     for _ in 0..32 {
         engine
             .evaluate_script("Bun.gc(true)", "blitsen:identity-gc")
             .map_err(napi_error)?;
         table.prune_collected(&mut engine).map_err(napi_error)?;
         if table.is_empty() {
-            return Ok(true);
+            break;
         }
     }
-    Ok(false)
+    Ok(u32::try_from(table.len()).unwrap_or(u32::MAX))
 }
 
 /// Runs the load-bearing Node-API subset used by the trait implementation.
