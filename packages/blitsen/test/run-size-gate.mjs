@@ -36,7 +36,7 @@ if (update) {
   };
   await writeFile(baselineFile, `${JSON.stringify(baseline, null, 2)}\n`);
   console.log(`Recorded ${record.platform} size baseline: `
-    + `${record.size.installedBytes} B installed, ${record.size.compressedBytes} B gzip -9.`);
+    + `${record.size.installedBytes} B installed, ${record.size.compressedBytes} B gzip level 9.`);
   process.exit(0);
 }
 
@@ -51,7 +51,7 @@ const delta = (current, before) => {
 };
 
 lines.push(`| measurement | baseline | current | delta |`, `| --- | --- | --- | --- |`);
-for (const [label, key] of [["installed", "installedBytes"], ["gzip -9", "compressedBytes"]]) {
+for (const [label, key] of [["installed", "installedBytes"], ["gzip level 9", "compressedBytes"]]) {
   const current = record.size[key];
   const before = previous?.[key] ?? null;
   lines.push(`| **${label}** | ${before === null ? "—" : formatBytes(before)} `
@@ -80,7 +80,7 @@ if (!previous) {
 
 const failures = [];
 if (previous) {
-  for (const [label, key] of [["installed", "installedBytes"], ["gzip -9", "compressedBytes"]]) {
+  for (const [label, key] of [["installed", "installedBytes"], ["gzip level 9", "compressedBytes"]]) {
     const current = record.size[key];
     if (current === null || previous[key] === null) continue;
     const { percent } = delta(current, previous[key]);

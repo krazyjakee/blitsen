@@ -215,6 +215,10 @@ jobs:
             libx11-dev libxcursor-dev libxi-dev libxrandr-dev \
             libasound2-dev
       - run: bun install --frozen-lockfile
+      # Before the measurement, not after it: what an export links is the Phase 2
+      # runtime, and `measure` refuses to guess at one. This built after the
+      # steps that need it until the job first ran and said so (#123).
+      - run: cargo build --release -p blitsen-runtime
       - name: Measure the export
         run: bun run --cwd packages/blitsen measure --runs 5 --out ${{ github.workspace }}/measurements.json
       - name: Size gate
@@ -223,8 +227,7 @@ jobs:
         run: bun run --cwd packages/blitsen bench --measurements ${{ github.workspace }}/measurements.json
       # Issue #89: recorded, never gated. The Phase 2 component breakdown moves
       # with the dependency tree, and a gate on it would fail for reasons that
-      # are not regressions.
-      - run: cargo build --release -p blitsen-runtime
+      # are not regressions. The runtime it reads was built above.
       - name: Phase 2 size breakdown
         run: bun run --cwd packages/blitsen size:phase2 --out ${{ github.workspace }}/phase2-size.json
       - uses: actions/upload-artifact@v4

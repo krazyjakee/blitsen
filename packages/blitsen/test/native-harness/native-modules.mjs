@@ -86,7 +86,11 @@ if (displayed) {
   clipboard.writeText(text);
   assert.equal(clipboard.readText(), text);
   clipboard.writeHtml("<b>bold</b>", "bold");
-  assert.equal(clipboard.readHtml(), "<b>bold</b>");
+  // The markup survives; the document around it is the pasteboard's own. macOS
+  // hands back a full `<html>` wrapping the fragment that was written, and a
+  // paste target reads the same rendered result either way — so this asserts
+  // the fragment arrived, not that the host declined to normalise it.
+  assert.match(clipboard.readHtml(), /<b>bold<\/b>/);
   assert.equal(clipboard.readText(), "bold",
     "HTML carries the plain text a paste that cannot read it receives");
   const pixels = new Uint8Array([255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255]);

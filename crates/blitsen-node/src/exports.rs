@@ -327,12 +327,25 @@ pub fn wrapper_identity_smoke(env: Env) -> napi::Result<bool> {
     }
     engine
         .evaluate_script(
-            "delete globalThis.__blitsenIdentityFirst; delete globalThis.__blitsenIdentitySecond; Bun.gc(true); Bun.gc(true)",
-            "blitsen:identity-gc",
+            "delete globalThis.__blitsenIdentityFirst; delete globalThis.__blitsenIdentitySecond",
+            "blitsen:identity-drop",
         )
         .map_err(napi_error)?;
-    table.prune_collected(&mut engine).map_err(napi_error)?;
-    Ok(table.is_empty())
+    // Collected, not collected-in-two-passes. No garbage collector promises to
+    // finish a heap this size in a fixed number of calls, and JavaScriptCore on
+    // Windows does not: two `Bun.gc(true)` calls left entries alive and the
+    // whole harness failed there. Drive it until the table drains, bounded so a
+    // collector that genuinely never frees them still fails rather than hangs.
+    for _ in 0..32 {
+        engine
+            .evaluate_script("Bun.gc(true)", "blitsen:identity-gc")
+            .map_err(napi_error)?;
+        table.prune_collected(&mut engine).map_err(napi_error)?;
+        if table.is_empty() {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// Runs the load-bearing Node-API subset used by the trait implementation.

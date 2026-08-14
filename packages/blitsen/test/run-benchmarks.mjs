@@ -44,16 +44,17 @@ const rows = [
   ["Headless first paint (P2 proxy)", milliseconds(record.startup.headlessFirstPaintMs),
     drift(record.startup.headlessFirstPaintMs.median, previous?.startup.headlessFirstPaintMs?.median),
     drift(record.startup.headlessFirstPaintMs.median, oldest?.startup.headlessFirstPaintMs?.median)],
-  ["Headless peak RSS (P3 proxy)", formatBytes(record.memory.headlessPeakBytes),
-    drift(record.memory.headlessPeakBytes, previous?.memory.headlessPeakBytes),
-    drift(record.memory.headlessPeakBytes, oldest?.memory.headlessPeakBytes)],
+  ["Headless peak RSS (P3 proxy)",
+    record.memory ? formatBytes(record.memory.headlessPeakBytes) : "not measured",
+    drift(record.memory?.headlessPeakBytes ?? null, previous?.memory?.headlessPeakBytes ?? null),
+    drift(record.memory?.headlessPeakBytes ?? null, oldest?.memory?.headlessPeakBytes ?? null)],
 ];
 if (record.startup.windowedFirstFrameMs) {
   rows.push(["Windowed first frame (P2, real)", milliseconds(record.startup.windowedFirstFrameMs),
     drift(record.startup.windowedFirstFrameMs.median, previous?.startup.windowedFirstFrameMs?.median),
     drift(record.startup.windowedFirstFrameMs.median, oldest?.startup.windowedFirstFrameMs?.median)]);
 }
-if (record.memory.windowedSteadyBytes) {
+if (record.memory?.windowedSteadyBytes) {
   rows.push(["Windowed idle RSS (P3, real)", formatBytes(record.memory.windowedSteadyBytes),
     drift(record.memory.windowedSteadyBytes, previous?.memory.windowedSteadyBytes),
     drift(record.memory.windowedSteadyBytes, oldest?.memory.windowedSteadyBytes)]);
@@ -64,6 +65,11 @@ const notes = [
   + `history has ${history.length} prior ${record.environment} entr${history.length === 1 ? "y" : "ies"} `
   + `for ${record.platform}.`,
 ];
+if (!record.memory) {
+  notes.push(`Resident memory was not measured on ${record.platform}: the sampler reads /proc, `
+    + "which is Linux alone, so P3 is a Linux figure and the row above says so rather than "
+    + "carrying a zero. Size and startup on this row's platform are measured normally.");
+}
 if (!record.windowed) {
   notes.push("Windowed P2/P3 were not measured in this run. They need a desktop session: "
     + "run `bun run --cwd packages/blitsen bench:windowed` on a real display for the real numbers.");

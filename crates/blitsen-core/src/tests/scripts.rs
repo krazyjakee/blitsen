@@ -1,5 +1,12 @@
 use super::*;
 
+/// A script read off disk is named by its path, which is the platform's own —
+/// `\` on Windows. The identity under test is which file was reached, not which
+/// separator the host spells it with, so both are compared in one spelling.
+fn ends_with_path(identity: &str, suffix: &str) -> bool {
+    identity.replace('\\', "/").ends_with(suffix)
+}
+
 #[test]
 fn document_scripts_run_in_order_with_local_module_identity() {
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../spikes/s7/fixture/index.html");
@@ -34,7 +41,7 @@ fn document_scripts_run_in_order_with_local_module_identity() {
     assert_eq!(engine.evaluations[0].0, "classic");
     assert!(engine.evaluations[0].2.ends_with("index.html#script-1"));
     assert_eq!(engine.evaluations[1].0, "module");
-    assert!(engine.evaluations[1].2.ends_with("src/math.js"));
+    assert!(ends_with_path(&engine.evaluations[1].2, "src/math.js"));
     assert!(!engine.evaluations[1].1.is_empty());
 }
 
@@ -55,7 +62,7 @@ fn a_server_root_source_is_read_from_the_application_root() {
     // carries inside an export. A stock `vite build` emits nothing else.
     let mut engine = RecordingScriptEngine::default();
     execute_document_scripts(&script("/src/math.js"), &mut engine, &fixture).unwrap();
-    assert!(engine.evaluations[0].2.ends_with("src/math.js"));
+    assert!(ends_with_path(&engine.evaluations[0].2, "src/math.js"));
     assert!(!engine.evaluations[0].1.is_empty());
 
     // What it is not is a licence to read the disk. A path the application does
