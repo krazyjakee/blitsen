@@ -118,18 +118,21 @@ if (displayed) {
 const processor = os.cpu();
 assert.equal(processor.logicalCores, cpus().length, "the bridge counts the cores node:os counts");
 assert.equal(processor.logicalCores, processor.cores.length);
-// `node:os` reads the model out of /proc/cpuinfo, which on arm64 Linux has no
-// `model name` line at all: node answers "unknown" where the bridge reads the
-// implementer and part registers through sysinfo and answers "Neoverse-N2".
-// There is nothing to cross-check against there, so the weaker fact is asserted
-// where the stronger one cannot be, rather than weakening it everywhere (#133).
+// Neither library invents a name, and they read different sources — so on two
+// of the six targets one of them has nothing to say. node reads
+// /proc/cpuinfo, which carries no `model name` on arm64 Linux, and answers
+// "unknown" where the bridge reads the implementer and part registers and
+// answers "Neoverse-N2"; the bridge reads the registry through sysinfo, which
+// is empty on arm64 Windows, where node answers "Cobalt 100" (#137).
+//
+// What holds on all six is that they never name *different* processors, which
+// is the failure this pair exists to rule out: plausible strings about the
+// wrong machine. Silence from either side is a platform fact, not a mismatch.
 const nodeBrand = cpus()[0].model.trim();
-if (nodeBrand && nodeBrand !== "unknown") {
-  assert.equal(processor.brand, nodeBrand, "and names the same processor");
-} else {
-  assert(processor.brand.length > 0,
-    "the bridge names the processor on a host where node:os will not");
-}
+const bridgeBrand = processor.brand.trim();
+const unnamed = bridgeBrand === "" || nodeBrand === "" || nodeBrand === "unknown";
+assert(unnamed || bridgeBrand === nodeBrand,
+  `the bridge says ${JSON.stringify(bridgeBrand)} and node:os says ${JSON.stringify(nodeBrand)}`);
 // `x86_64` against node's `x64`: the same architecture in two vocabularies, so
 // the check is a translation rather than an equality.
 assert.equal(processor.architecture, { x64: "x86_64", arm64: "aarch64" }[arch()] ?? arch());
