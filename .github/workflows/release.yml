@@ -40,11 +40,11 @@ jobs:
   # job summary rather than assumed (open question 11).
   #
   # The two arm64 labels are overridable, because GitHub's free arm64 runners
-  # are **public repositories only**. This repository is private today, so
-  # `ubuntu-24.04-arm` and `windows-11-arm` will not schedule for it: set the
-  # repository variables LINUX_ARM64_RUNNER and WIN32_ARM64_RUNNER to larger or
-  # self-hosted labels, or make the repository public. Left as the free labels
-  # by default so that becomes true the moment either happens.
+  # are **public repositories only**. This repository is public, so
+  # `ubuntu-24.04-arm` and `windows-11-arm` schedule for it and the defaults
+  # below are the ones that run. The override survives for the case that stops
+  # being true: set the repository variables LINUX_ARM64_RUNNER and
+  # WIN32_ARM64_RUNNER to larger or self-hosted labels if it goes private again.
   build:
     name: ${{ matrix.target }}
     runs-on: ${{ matrix.runner }}
