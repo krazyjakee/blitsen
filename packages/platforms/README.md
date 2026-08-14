@@ -5,13 +5,13 @@ One package per target from TECH.md §11, each shipping a single `blitsen.node` 
 the `os` and `cpu` fields here are what make npm, pnpm, yarn and Bun install only the
 host's binary. `packages/blitsen/src/runtime.mjs` resolves the installed one.
 
-**None of these is published, and only `linux-x64` can be built today.** What is
-committed here is the manifest and nothing else: the `blitsen.node` each package
-declares is produced by `cargo build --release -p blitsen-node` on a matching runner
-and staged into the directory at release time — see `.github/workflows/release.yml`,
-which is manual-dispatch only and packs rather than publishes. No binary is committed,
-and no artifact exists for the other five targets: they have no CI runner yet
-(issue #70, and §11's open cost question about six build matrices).
+**None of these is published yet.** What is committed here is the manifest and nothing
+else: each package's `blitsen.node`, its `blitsen-runtime` executable and the
+`NOTICES.txt`/`NOTICES.json` pair are produced on a matching runner and staged into the
+directory at release time — see `.github/workflows/release.yml`, which is manual-dispatch
+only and defaults to packing rather than publishing. All six targets have a runner now:
+the release workflow builds every one natively, and `ci.yml` exercises three of them in
+full and the other three as a smoke tier on every push (issue #133).
 
 Because the names are declared but unpublished, every install in this repository
 prints six registry 404 warnings and then succeeds: that is what an *optional*

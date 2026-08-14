@@ -68,21 +68,31 @@ whole path.
 | `WINDOWS_CERTIFICATE_PFX` | Windows signing, base64 of the `.pfx` | Unsigned Windows runtimes |
 | `WINDOWS_CERTIFICATE_PASSWORD` | Its passphrase | — |
 
+### The npm scope
+
+`blitsen` is published from a personal account; the six runtimes are `@blitsen/*` and a scoped name
+needs the **scope** to exist and to be owned by the account whose token CI uses. Create the
+`blitsen` organisation on npm (a free org covers unlimited public packages), confirm it is owned by
+that account, and only then run a real publish — the workflow publishes all six platform packages
+before `blitsen` itself, so a scope that refuses them fails the release halfway through (issue
+\#131).
+
 ### arm64 runners, and this repository
 
 GitHub's free `ubuntu-24.04-arm` and `windows-11-arm` runners are **public repositories only**.
-This repository is private, so those two jobs will not schedule as written.
+This repository is public, so both labels schedule for it and the workflow defaults are the ones
+that run.
 
-Either make the repository public, or point the two arm64 targets at runners this repository can
-use, with repository variables:
+The override survives for the case that stops being true. Point the two arm64 targets at runners
+the repository can use, with repository variables:
 
 | Variable | Default |
 | --- | --- |
 | `LINUX_ARM64_RUNNER` | `ubuntu-24.04-arm` |
 | `WIN32_ARM64_RUNNER` | `windows-11-arm` |
 
-Set them to larger-runner or self-hosted labels. The defaults are left as the free labels so the
-matrix becomes correct the moment the repository is public.
+Set them to larger-runner or self-hosted labels. `ci.yml` reads the same two variables for its
+smoke jobs, so both files follow one decision.
 
 ## Why six native runners rather than cross-compilation
 
@@ -105,11 +115,22 @@ in the job summary:
 Note that macOS runners bill at a multiplier, so wall clock is not the same as cost; multiply before
 comparing. Revisit cross-compilation when there are numbers from a few real releases to argue with.
 
+## What CI covers, and what only a release build touches
+
+`ci.yml` runs the full suite on `linux-x64`, `darwin-arm64` and `win32-x64`, and a smoke tier on the
+other three published targets — build both artifacts, package tests against them, the native
+acceptance harness, a standalone export, the layout corpus and a report-only size measurement
+(issue \#133). What no CI job covers on any target is the release path itself: staging, signing,
+packing and publish ordering. That is what a `publish: false` dispatch is for, and it is the only
+evidence those steps have.
+
 ## Before the first real release
 
-- [ ] Decide the repository's visibility, or set the two arm64 runner variables
-- [ ] Add `NPM_TOKEN`, and the signing secrets for whichever platforms are to be signed
-- [ ] Run once with `publish: false` and read the six job summaries
+- [x] Decide the repository's visibility, or set the two arm64 runner variables — public, defaults
+- [ ] Create the `blitsen` npm organisation and confirm who owns it (\#131)
+- [ ] Add `NPM_TOKEN`, and the signing secrets for whichever platforms are to be signed (\#132)
+- [ ] Decide whether 0.1.0 ships signed, or ships unsigned and says so in the release notes
+- [ ] Run once with `publish: false` and read the six job summaries (\#134)
 - [ ] Confirm `blitsen` and all six `@blitsen/*` manifests carry the same version
 - [ ] Publish, then install `blitsen` from the registry on a machine that has never built it
 

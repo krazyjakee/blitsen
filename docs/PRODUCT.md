@@ -373,7 +373,7 @@ provide — so the answer for any given project is mechanical, not guesswork.
 | P3 | Idle RAM, bare app | < 100 MB | |
 | P4 | Sustained frame rate | 60 fps for a moderate 2D scene | Measured with the Pong acceptance build. |
 | P5 | Platforms, initial | Windows x64, Linux x64, macOS arm64 | Windows is the priority target for size claims. |
-| P5b | Platforms, full matrix | win32 x64/arm64, linux x64/arm64, darwin x64/arm64 | One npm platform package each (TECH.md §11). |
+| P5b | Platforms, full matrix | win32 x64/arm64, linux x64/arm64, darwin x64/arm64 | One npm platform package each (TECH.md §11). Two tiers of evidence: `linux-x64`, `darwin-arm64` and `win32-x64` run the whole suite in CI; `linux-arm64`, `darwin-x64` and `win32-arm64` run a smoke tier — the release artifacts built, the package tests against them, a frame through the native harness, a standalone export and the layout corpus — with the product-behaviour suites and the size gate left to the first three (issue #133). |
 | P6 | Render consistency | Byte-identical layout across platforms for the test corpus | The core advantage over WebView-based tools. |
 | P7 | npm compatibility | Pure-JS packages install and import unmodified | Native Node addons: best-effort. |
 | P8 | No runtime dependency on an installed browser or WebView | Absolute | |

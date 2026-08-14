@@ -100,6 +100,13 @@ jobs:
       # checkout that had already built a runtime passed locally, and a clean
       # runner is the only place the order was ever load-bearing.
       - run: cargo build --release -p blitsen-runtime
+      # Issue #121: an export embeds the notices staged beside the runtime it
+      # links, and refuses to claim redistribution when they are absent. The
+      # release job stages them right after the same build; CI never did, so
+      # `test:hosts` built a Phase 2 export that correctly reported itself
+      # uncleared and then failed the assertion that it should not be.
+      - name: Stage the third-party notices
+        run: bun run --cwd packages/blitsen notices --root blitsen-runtime --out ${{ github.workspace }}/target/release
       - run: bun run --cwd packages/blitsen test:native
       - run: bun run --cwd packages/blitsen test:m2
       - run: bun run --cwd packages/blitsen test:standalone
@@ -246,4 +253,94 @@ jobs:
         if: always()
         with:
           name: metrics-${{ matrix.os }}-${{ github.sha }}
+          path: ${{ github.workspace }}/measurements.json
+
+  # Issue #133: the release publishes six targets and every job above covers
+  # three of them. These are the other three — the second architecture of a
+  # platform already tested, plus x86-64 macOS, which is a different runner
+  # image entirely. Without this job a `linux-arm64` runtime reaches users
+  # having never had a Blitsen window opened on it.
+  #
+  # It is a smoke tier rather than a sixth full matrix, and the split is not
+  # arbitrary. What changes with the architecture is codegen, the rasterizer's
+  # CPU feature detection and whether an export links at all, so this job builds
+  # exactly what the release publishes and then exercises those three things:
+  # the package tests against the freshly built addon, the native acceptance
+  # harness (a real frame, headless), a standalone export it runs, and the
+  # layout corpus. What does *not* change with the architecture is product
+  # behaviour — m2, m3b, host conformance, licensing and the proxy stay on the
+  # three primary targets, where they already run on all three platforms.
+  #
+  # The size measurement is report-only by construction: `size:gate` says so
+  # itself for a platform with no committed baseline, and the measurement is
+  # uploaded so a baseline can be recorded per target from a real number rather
+  # than guessed (#123).
+  #
+  # The two arm64 labels are the free public-repository runners, overridable by
+  # the same repository variables release.yml uses, so both files move together
+  # if this repository ever goes private again.
+  architectures:
+    name: ${{ matrix.target }} (smoke)
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-arm64
+            runner: ${{ vars.LINUX_ARM64_RUNNER || 'ubuntu-24.04-arm' }}
+            library: libblitsen_node.so
+            executable: blitsen-runtime
+          - target: darwin-x64
+            runner: macos-13
+            library: libblitsen_node.dylib
+            executable: blitsen-runtime
+          - target: win32-arm64
+            runner: ${{ vars.WIN32_ARM64_RUNNER || 'windows-11-arm' }}
+            library: blitsen_node.dll
+            executable: blitsen-runtime.exe
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - name: Install Blitz system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libfontconfig1-dev libxkbcommon-dev libwayland-dev \
+            libx11-dev libxcursor-dev libxi-dev libxrandr-dev \
+            libasound2-dev
+      # The same two artifacts release.yml builds and publishes for this target,
+      # in one build, so the rest of the job runs against what a user would get.
+      - name: Build the runtime
+        run: cargo build --release -p blitsen-node -p blitsen-runtime
+      - run: bun install --frozen-lockfile
+      - name: Package tests against this target's artifacts
+        run: bun test packages/blitsen
+        env:
+          BLITSEN_NATIVE_PATH: ${{ github.workspace }}/target/release/${{ matrix.library }}
+          BLITSEN_RUNTIME_PATH: ${{ github.workspace }}/target/release/${{ matrix.executable }}
+      - run: bun run --cwd packages/blitsen test:native
+      - run: bun run --cwd packages/blitsen test:standalone
+      - run: cargo test -p blitsen-blitz --test conformance -- --nocapture
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: conformance-divergence-${{ matrix.target }}-${{ github.sha }}
+          path: ${{ github.workspace }}/target/conformance-divergence
+          if-no-files-found: ignore
+      - name: Measure the export (report only)
+        run: bun run --cwd packages/blitsen measure --runs 3 --out ${{ github.workspace }}/measurements.json
+      - name: Size report
+        run: bun run --cwd packages/blitsen size:gate --measurements ${{ github.workspace }}/measurements.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: metrics-${{ matrix.target }}-${{ github.sha }}
           path: ${{ github.workspace }}/measurements.json

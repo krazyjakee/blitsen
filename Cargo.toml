@@ -45,6 +45,12 @@ anyrender = { git = "https://github.com/DioxusLabs/anyrender", rev = "dcd219746f
 # that no runner and no second clone has: CI, a release and a fresh `git clone`
 # all resolve this, and none of them can resolve `../blitz`. Retire the whole
 # section when the fix lands upstream and the pin moves past it.
+#
+# Issue #135: the revision is also tagged `blitsen-0.1.0` on the fork. The pin
+# stays a `rev` because that is what is immutable — a tag can be moved and a
+# branch can be force-pushed — and the tag exists so the object survives the
+# branch: a released binary whose source cannot be fetched back is not
+# reproducible, and `custom-widget-replaced-layout` is one deletion from that.
 [patch."https://github.com/DioxusLabs/blitz"]
 blitz = { git = "https://github.com/krazyjakee/blitz", rev = "df1e6594d24f73baadfacb1248122760529844ec" }
 blitz-dom = { git = "https://github.com/krazyjakee/blitz", rev = "df1e6594d24f73baadfacb1248122760529844ec" }
