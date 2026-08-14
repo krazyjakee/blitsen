@@ -165,13 +165,44 @@ evidence those steps have.
 
 ## Before the first real release
 
-- [x] Decide the repository's visibility, or set the two arm64 runner variables — public, defaults
-- [ ] Create the `blitsen` npm organisation and confirm who owns it (\#131)
-- [ ] Add `NPM_TOKEN`, and the signing secrets for whichever platforms are to be signed (\#132)
-- [ ] Decide whether 0.1.0 ships signed, or ships unsigned and says so in the release notes
-- [ ] Run once with `publish: false` and read the six job summaries (\#134)
-- [ ] Confirm `blitsen` and all six `@blitsen/*` manifests carry the same version
+- [x] Decide the repository's visibility, or set the runner variables — public, defaults
+- [x] Decide whether 0.1.0 ships signed, or unsigned and says so — unsigned, and it says so
+- [x] Run once with `publish: false` and read the six job summaries (\#134) — four clean runs
+- [x] Confirm `blitsen` and all six `@blitsen/*` manifests carry the same version — asserted by
+      the package tests, and again by the publish job before it publishes anything
+- [x] Rehearse the install against a local registry — see below; it found two release blockers
+- [ ] **Create the `blitsen` npm organisation and confirm who owns it** (\#131)
+- [ ] **Add `NPM_TOKEN`** — granular, write on the package `blitsen` and on the `@blitsen`
+      scope (\#132). A classic token fails at the sixth package if 2FA-for-publishing is on,
+      with a version already burned.
+- [ ] Merge to `main` — npm provenance records the ref it published from
 - [ ] Publish, then install `blitsen` from the registry on a machine that has never built it
 
-The last one is the only real check: everything before it tests the workflow, and only that tests
-the release.
+Only the two bold ones need an account rather than a commit, and nothing else can proceed without
+them: `npm` has no command that creates an organisation, so it is a web action on npmjs.com, and
+the token cannot exist before the scope does. The publish job asks the registry about both before
+it publishes anything, so a wrong token fails the run rather than stopping it half way.
+
+### Rehearsing the install without the registry
+
+The last box is the only real check, and most of it can be had before the scope exists — which is
+where the two worst faults in 0.1.0 were found. Run a local registry, publish all seven packages
+to it in release order, and install from it into an empty project:
+
+```sh
+npx verdaccio --config <config with max_body_size: 500mb> --listen 4873
+npm config set //localhost:4873/:_authToken rehearsal
+for t in darwin-arm64 darwin-x64 linux-arm64 linux-x64 win32-arm64 win32-x64; do
+  npm publish --registry http://localhost:4873/ --access public ./packages/platforms/$t
+done
+npm publish --registry http://localhost:4873/ --access public ./packages/blitsen
+mkdir /tmp/consumer && cd /tmp/consumer && npm init -y
+npm i -D blitsen --registry http://localhost:4873/
+npx blitsen build ./app --out MyApp        # under Node, which is what npx starts
+BLITSEN_STANDALONE_CHECK=1 ./MyApp
+```
+
+What that catches, and CI does not: `npx` runs **Node**, not Bun; only the host's platform package
+installs, so `os`/`cpu` are exercised; the executable bit has to survive a real `npm pack`; and a
+`--target` build fetches another platform's package from a registry rather than from a seeded
+cache.
