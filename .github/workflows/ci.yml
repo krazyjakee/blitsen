@@ -327,6 +327,11 @@ jobs:
           BLITSEN_NATIVE_PATH: ${{ github.workspace }}/target/release/${{ matrix.library }}
           BLITSEN_RUNTIME_PATH: ${{ github.workspace }}/target/release/${{ matrix.executable }}
       - run: bun run --cwd packages/blitsen test:native
+      # The generator resolves the dependency graph for this target, and it had
+      # only ever run on Linux x86-64 (#134). An export links the runtime, so
+      # the notices go beside it, exactly as the release job stages them.
+      - name: Stage the third-party notices
+        run: bun run --cwd packages/blitsen notices --root blitsen-runtime --out ${{ github.workspace }}/target/release
       - run: bun run --cwd packages/blitsen test:standalone
       - run: cargo test -p blitsen-blitz --test conformance -- --nocapture
       - uses: actions/upload-artifact@v4
