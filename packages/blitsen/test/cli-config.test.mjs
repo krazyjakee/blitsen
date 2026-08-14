@@ -100,7 +100,11 @@ describe("directory CLI", () => {
       process.chdir(cwd);
       await rm(workspace, { recursive: true, force: true });
     }
-  });
+    // These two spawn a real `node` against a copied fixture, and the default
+    // 5s was not enough on the arm64 Windows runner: the test timed out, the
+    // `finally` above deleted the workspace, and the process that was still
+    // starting reported the build script as missing (#133).
+  }, 60_000);
 
   test("runs the configured build and opens the directory it wrote", async () => {
     const workspace = await temporaryDirectory("blitsen-wrapped-run-");
@@ -127,7 +131,7 @@ describe("directory CLI", () => {
       process.chdir(cwd);
       await rm(workspace, { recursive: true, force: true });
     }
-  });
+  }, 60_000);
 
   test("still opens the directory you are standing in when it has no config", async () => {
     const directory = await temporaryDirectory("blitsen-unconfigured-run-");
