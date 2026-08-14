@@ -135,10 +135,21 @@ never executed on its own platform is not evidence that it works there. Re-open 
 measurement, not with the engine's old constraint.
 
 What the choice costs is **measured rather than argued**. Each build job records its own wall clock
-in the job summary:
+in the job summary. The first clean dry run, 2026-08-14:
 
-| Target | Runner | Wall clock |
-| --- | --- | --- |
+| Target | Runner | Wall clock | Published size |
+| --- | --- | --- | --- |
+| `linux-x64` | `ubuntu-latest` | 96s † | 31.4 MB |
+| `linux-arm64` | `ubuntu-24.04-arm` | 107s † | 29.4 MB |
+| `darwin-arm64` | `macos-latest` | 61s † | 25.5 MB |
+| `darwin-x64` | `macos-15-intel` | 898s | 27.0 MB |
+| `win32-x64` | `windows-latest` | 846s | 28.7 MB |
+| `win32-arm64` | `windows-11-arm` | 634s | 26.6 MB |
+
+† A warm `Swatinem/rust-cache` from an earlier dispatch. The three without a dagger are what a cold
+build of that target costs, and they are the honest numbers to argue cross-compilation with; the
+daggered three would sit in the same range cold. Published size is `npm pack`'s own figure for the
+platform package — both binaries and both notices files, compressed.
 
 Note that macOS runners bill at a multiplier, so wall clock is not the same as cost; multiply before
 comparing. Revisit cross-compilation when there are numbers from a few real releases to argue with.

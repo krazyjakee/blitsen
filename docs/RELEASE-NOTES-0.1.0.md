@@ -11,14 +11,18 @@ Blitsen is **pre-alpha**. What follows is written to be true rather than to be a
 Seven packages, published together: `blitsen`, which is thin JavaScript, and one runtime package
 per target, pinned to it exactly.
 
-| Target | Package |
-| --- | --- |
-| `linux-x64` | `@blitsen/linux-x64` |
-| `linux-arm64` | `@blitsen/linux-arm64` |
-| `darwin-x64` | `@blitsen/darwin-x64` |
-| `darwin-arm64` | `@blitsen/darwin-arm64` |
-| `win32-x64` | `@blitsen/win32-x64` |
-| `win32-arm64` | `@blitsen/win32-arm64` |
+| Target | Package | Download |
+| --- | --- | --- |
+| `linux-x64` | `@blitsen/linux-x64` | 31.4 MB |
+| `linux-arm64` | `@blitsen/linux-arm64` | 29.4 MB |
+| `darwin-x64` | `@blitsen/darwin-x64` | 27.0 MB |
+| `darwin-arm64` | `@blitsen/darwin-arm64` | 25.5 MB |
+| `win32-x64` | `@blitsen/win32-x64` | 28.7 MB |
+| `win32-arm64` | `@blitsen/win32-arm64` | 26.6 MB |
+
+Download is the compressed platform package: the addon `blitsen run` loads, the executable an
+export links into, and the third-party notices for that target's dependency graph. Only one of the
+six is installed on any machine.
 
 ```sh
 npm i -D blitsen
