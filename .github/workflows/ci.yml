@@ -92,13 +92,18 @@ jobs:
             libx11-dev libxcursor-dev libxi-dev libxrandr-dev \
             libasound2-dev
       - run: bun install --frozen-lockfile
+      # Issue #90: one project, both runtimes, and the only difference allowed
+      # is size. The engine is inside the runtime, so nothing is installed for it.
+      #
+      # First, because a standalone export links this and `test:standalone` will
+      # not invent one. It was built after that step until the job first ran: a
+      # checkout that had already built a runtime passed locally, and a clean
+      # runner is the only place the order was ever load-bearing.
+      - run: cargo build --release -p blitsen-runtime
       - run: bun run --cwd packages/blitsen test:native
       - run: bun run --cwd packages/blitsen test:m2
       - run: bun run --cwd packages/blitsen test:standalone
       - run: bun run --cwd packages/blitsen test:m3b
-      # Issue #90: one project, both runtimes, and the only difference allowed
-      # is size. The engine is inside the runtime, so nothing is installed for it.
-      - run: cargo build --release -p blitsen-runtime
       - run: bun run --cwd packages/blitsen test:hosts
       # Issue #121: the notices an export owes travel inside it, and the gate
       # reads them back out of a real artifact — before and after signing.
