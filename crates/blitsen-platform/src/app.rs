@@ -3,6 +3,34 @@
 //! Deliberately not here: the command line, the executable path and exit.
 //! Those are `process.argv`, `process.execPath` and `process.exit`, and
 //! `native:` is additive rather than a second spelling of Node (TECH.md §9).
+//!
+//! Absent on Android, and each of the three capabilities for its own reason
+//! rather than one blanket one — which is the point of writing them down, since
+//! they come back at different times.
+//!
+//! * **The directories** are the Activity's `filesDir` and `cacheDir`, and only
+//!   the Activity can name them. [`base_directory`] resolves `XDG_DATA_HOME` and
+//!   its siblings against `HOME`; Android sets none of those, so the XDG arm
+//!   would fall through to a `HOME` that is either unset or `/`, and hand back a
+//!   path nothing can write to. That is a plausible-looking wrong answer, which
+//!   is the shape `docs/PRODUCT.md` §7 exists to refuse. There is also no third
+//!   kind: Android's configuration is `SharedPreferences`, a store rather than a
+//!   place, so `Directory::Config` has no honest answer even once the other two
+//!   arrive.
+//! * **[`relaunch`]** spawns `current_exe()` with this process's own argument
+//!   list. Inside an APK there is no executable to spawn — the code is a shared
+//!   object the zygote loaded — and restarting is an `Intent` handed to the
+//!   system, not a child this process forks and outlives.
+//! * **[`single_instance`]** is the platform's job already. An Android
+//!   application is one process by construction, a second launch is delivered to
+//!   the instance running rather than started beside it, and what arrives is an
+//!   `Intent` rather than an `argv` and a working directory. Binding a socket to
+//!   win a race nothing is racing would be ceremony, and [`Invocation`] has no
+//!   fields an `Intent` fills.
+//!
+//! The first two are reachable through JNI once there is an entry point holding
+//! an `AndroidApp` (#142); the third stays absent because it is answering a
+//! question Android does not ask (#147).
 
 use std::path::PathBuf;
 use std::process::Command;
@@ -62,7 +90,16 @@ fn home() -> Result<PathBuf, PlatformError> {
     })
 }
 
-#[cfg(all(unix, not(target_os = "macos")))]
+// The XDG platforms, named rather than spelled as "unix that is not macOS" —
+// the mobile unixes are not XDG either, and the crate-level `cfg` that keeps
+// this module off Android is not the thing that should be load-bearing here. A
+// build that puts the module back on a platform this arm does not name fails to
+// find a `base_directory` at all, which is the decision being forced rather than
+// a path silently resolving to somewhere unwritable (#139, #147).
+#[cfg(all(
+    unix,
+    not(any(target_os = "macos", target_os = "android", target_os = "ios"))
+))]
 fn base_directory(kind: Directory) -> Result<PathBuf, PlatformError> {
     let (variable, fallback) = match kind {
         Directory::Data => ("XDG_DATA_HOME", ".local/share"),

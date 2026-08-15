@@ -19,15 +19,25 @@
 //! including the scale factor of the ones the window is not on.
 
 use std::cell::{Cell, RefCell};
-use std::str::FromStr;
 use std::sync::Arc;
 
 use blitsen_js::JsError;
 use serde_json::{Value, json};
+use winit::dpi::PhysicalSize;
+use winit::monitor::MonitorHandle;
+use winit::window::Window;
+
+// The property half is compiled off Android; see the note above `set`.
+#[cfg(not(target_os = "android"))]
+use std::str::FromStr;
+#[cfg(not(target_os = "android"))]
 use winit::cursor::CursorIcon;
-use winit::dpi::{LogicalSize, PhysicalSize};
-use winit::monitor::{Fullscreen, MonitorHandle};
-use winit::window::{CursorGrabMode, Window, WindowLevel};
+#[cfg(not(target_os = "android"))]
+use winit::dpi::LogicalSize;
+#[cfg(not(target_os = "android"))]
+use winit::monitor::Fullscreen;
+#[cfg(not(target_os = "android"))]
+use winit::window::{CursorGrabMode, WindowLevel};
 
 thread_local! {
     static CURRENT: RefCell<Option<Arc<dyn Window>>> = const { RefCell::new(None) };
@@ -67,6 +77,7 @@ pub(super) fn with<T>(
 }
 
 /// A property of the window, already parsed and range-checked.
+#[cfg(not(target_os = "android"))]
 enum Setting {
     Fullscreen(bool),
     Decorations(bool),
@@ -76,6 +87,7 @@ enum Setting {
     CursorGrab(CursorGrabMode),
 }
 
+#[cfg(not(target_os = "android"))]
 fn boolean(property: &str, value: &str) -> Result<bool, JsError> {
     match value {
         "true" => Ok(true),
@@ -88,6 +100,7 @@ fn boolean(property: &str, value: &str) -> Result<bool, JsError> {
 
 /// Parses a property before anything is asked of the window, so a mistyped
 /// value is a rejection rather than a window left half-configured.
+#[cfg(not(target_os = "android"))]
 fn setting(property: &str, value: &str) -> Result<Setting, JsError> {
     Ok(match property {
         "fullscreen" => Setting::Fullscreen(boolean(property, value)?),
@@ -113,6 +126,16 @@ fn setting(property: &str, value: &str) -> Result<Setting, JsError> {
 }
 
 /// Applies `property`.
+///
+/// This half of the module is compiled off Android, and the reason is the one
+/// case where winit's cross-platform surface is misleading rather than merely
+/// thin: every setter below is accepted there and quietly discarded, and
+/// [`get`] then reports the state as though the request had never been made. An
+/// activity is fullscreen and undecorated at a size the system chose, so
+/// `fullscreen()` answering `None` is not "not fullscreen" — it is winit having
+/// nothing to ask. The cursor properties name a pointer the device does not
+/// have. The bridge installs none of it there; see `native.rs` (#147).
+#[cfg(not(target_os = "android"))]
 pub(super) fn set(property: &str, value: &str) -> Result<(), JsError> {
     let setting = setting(property, value)?;
     with(|window| {
@@ -137,6 +160,7 @@ pub(super) fn set(property: &str, value: &str) -> Result<(), JsError> {
 }
 
 /// Reads back a property winit can be asked for.
+#[cfg(not(target_os = "android"))]
 pub(super) fn get(property: &str) -> Result<bool, JsError> {
     match property {
         "fullscreen" | "decorations" => {}
@@ -151,6 +175,7 @@ pub(super) fn get(property: &str) -> Result<bool, JsError> {
 }
 
 /// Asks for a new surface size, in CSS pixels.
+#[cfg(not(target_os = "android"))]
 pub(super) fn resize(width: f64, height: f64) -> Result<(), JsError> {
     let valid = |value: f64| value.is_finite() && value >= 1.0 && value <= f64::from(u32::MAX);
     if !valid(width) || !valid(height) {

@@ -3,6 +3,24 @@
 //! One clipboard is created per thread and kept for the life of the process on
 //! purpose. On X11 and Wayland the process that wrote the selection is the one
 //! that serves it, so dropping the clipboard takes the copied text with it.
+//!
+//! Absent on Android. The compile error comes first — `arboard` has no Android
+//! backend, its `platform` module resolves to nothing there, and the crate does
+//! not build — but a shim over `ClipboardManager` would not settle it either,
+//! because the two disagree about what an empty answer means. Every reader here
+//! returns an `Option`, and `None` says the clipboard holds nothing of that
+//! flavour. Android has refused clipboard reads to any application that does not
+//! hold focus since API 29, so the same `None` would also mean "you asked while
+//! in the background" — a refusal the caller has to be able to tell from an
+//! empty clipboard, and one these signatures have nowhere to put. Writing is not
+//! symmetric either: a `ClipData` is typed by MIME rather than by the three
+//! flavours below, and the paste confirmation the system shows is not ours to
+//! suppress.
+//!
+//! So the Android clipboard is a module of its own to design, on a JNI surface
+//! that does not exist until there is an entry point holding an `AndroidApp`
+//! (#142). Until then it is absent, which the bootstrap reports as `undefined`
+//! and a feature test reads correctly (#147).
 
 use std::cell::RefCell;
 

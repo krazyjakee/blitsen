@@ -9,9 +9,6 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
-# The clipboard crate TECH.md §9 names. `wayland-data-control` is on because a
-# Wayland session without XWayland has no other way to reach the clipboard.
-arboard = { version = "3.6", features = ["wayland-data-control"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Processor, memory, storage and OS identity for `src/os.rs`, which is one API
@@ -21,6 +18,15 @@ serde_json = "1"
 # each a capability of their own to decide on, and off by default they are
 # neither shipped in the binary nor implied by this module.
 sysinfo = { version = "0.39", default-features = false, features = ["system", "disk"] }
+
+# The clipboard crate TECH.md §9 names. `wayland-data-control` is on because a
+# Wayland session without XWayland has no other way to reach the clipboard.
+#
+# Off Android, where `arboard` has no backend at all — its `platform` module
+# resolves to nothing there and the crate does not compile. See `src/clipboard.rs`
+# for why that absence is inherited rather than worked around.
+[target.'cfg(not(target_os = "android"))'.dependencies]
+arboard = { version = "3.6", features = ["wayland-data-control"] }
 
 # Dialogs exist only where the XDG desktop portal does; see `src/dialog.rs` for
 # why macOS and Windows are absent rather than approximated. `rfd` speaks the

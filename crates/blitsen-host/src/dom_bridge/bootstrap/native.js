@@ -7,8 +7,17 @@
   // Only capability with no Node or web spelling belongs here: argv, the
   // executable path and exit stay `process.argv`, `process.execPath` and
   // `process.exit` (TECH.md §9).
+  //
+  // Which host functions exist is a per-platform decision, not a per-build
+  // accident: `dom_bridge/native.rs` installs a family only where the platform
+  // can answer it honestly, and on Android that is `os` and the monitor list and
+  // nothing else (#147). So every member below is written against a `hosted`
+  // flag rather than reaching for its host function directly — an uninstalled
+  // name is not merely falsy, it is undeclared, and a member that closed over it
+  // would be a function `if (app.dataDir)` accepts and the first call throws on.
   const nativeMembers = members => Object.freeze(Object.fromEntries(
     Object.entries(members).filter(([, member]) => member !== undefined)));
+  const hosted = name => typeof globalThis[name] === "function";
   const nativePending = typeof __blitsenNativeAppPending === "function"
     ? __blitsenNativeAppPending : () => false;
   let secondInstanceHandler = null;
@@ -23,11 +32,14 @@
       catch (error) { console.error("Uncaught exception in the second-instance handler", error); }
     }
   };
+  const appDirectories = hosted("__blitsenNativeAppDirectory");
   const nativeApp = {
-    dataDir: name => __blitsenNativeAppDirectory("data", String(name)),
-    cacheDir: name => __blitsenNativeAppDirectory("cache", String(name)),
-    configDir: name => __blitsenNativeAppDirectory("config", String(name)),
-    relaunch: () => { __blitsenNativeAppRelaunch(); },
+    dataDir: appDirectories ? name => __blitsenNativeAppDirectory("data", String(name)) : undefined,
+    cacheDir: appDirectories ? name => __blitsenNativeAppDirectory("cache", String(name)) : undefined,
+    configDir: appDirectories ? name => __blitsenNativeAppDirectory("config", String(name)) : undefined,
+    relaunch: hosted("__blitsenNativeAppRelaunch")
+      ? () => { __blitsenNativeAppRelaunch(); }
+      : undefined,
     requestSingleInstanceLock: typeof __blitsenNativeAppSingleInstance === "function"
       ? (name, onSecondInstance = null) => {
           if (onSecondInstance !== null && typeof onSecondInstance !== "function")
@@ -38,35 +50,73 @@
         }
       : undefined,
   };
+  // Absent whole on Android rather than member by member: there is no backend to
+  // read a flavour from, and the service that would replace it refuses a read
+  // outright unless the application holds focus, which none of these signatures
+  // can report apart from an empty clipboard.
+  const clipboardText = hosted("__blitsenNativeClipboardRead");
+  const clipboardWrite = hosted("__blitsenNativeClipboardWrite");
   const nativeClipboard = {
-    readText: () => __blitsenNativeClipboardRead("text"),
-    readHtml: () => __blitsenNativeClipboardRead("html"),
-    readImage: () => __blitsenNativeClipboardReadImage(),
-    writeText: text => { __blitsenNativeClipboardWrite("text", String(text)); },
-    writeHtml: (html, alternative = "") => {
-      __blitsenNativeClipboardWrite("html", String(html), String(alternative));
-    },
-    writeImage: image => {
-      __blitsenNativeClipboardWriteImage(String(image.width), String(image.height), image.data);
-    },
-    clear: () => { __blitsenNativeClipboardClear(); },
+    readText: clipboardText ? () => __blitsenNativeClipboardRead("text") : undefined,
+    readHtml: clipboardText ? () => __blitsenNativeClipboardRead("html") : undefined,
+    readImage: hosted("__blitsenNativeClipboardReadImage")
+      ? () => __blitsenNativeClipboardReadImage()
+      : undefined,
+    writeText: clipboardWrite
+      ? text => { __blitsenNativeClipboardWrite("text", String(text)); }
+      : undefined,
+    writeHtml: clipboardWrite
+      ? (html, alternative = "") => {
+          __blitsenNativeClipboardWrite("html", String(html), String(alternative));
+        }
+      : undefined,
+    writeImage: hosted("__blitsenNativeClipboardWriteImage")
+      ? image => {
+          __blitsenNativeClipboardWriteImage(String(image.width), String(image.height), image.data);
+        }
+      : undefined,
+    clear: hosted("__blitsenNativeClipboardClear")
+      ? () => { __blitsenNativeClipboardClear(); }
+      : undefined,
   };
   // The window this run already opened. Its size and scale factor are not here:
   // `innerWidth`, `innerHeight`, `devicePixelRatio` and the `resize` event
   // already answer those, and a second answer that could disagree is worse than
   // none. What is new is the monitors — including the ones the window is not on.
+  //
+  // The monitors and the properties are hosted separately because Android keeps
+  // one and not the other: the display it reports is real and its answers are
+  // true, while a size, a window level and a cursor are requests an activity
+  // accepts and discards. That split is `dom_bridge/native.rs`'s to make; this
+  // side only has to not assume the two arrive together.
+  const windowProperty = hosted("__blitsenNativeWindowSet");
+  const windowReadback = hosted("__blitsenNativeWindowGet");
   const nativeWindow = {
-    setSize: (width, height) => {
-      __blitsenNativeWindowResize(String(width), String(height));
-    },
-    setFullscreen: on => { __blitsenNativeWindowSet("fullscreen", String(Boolean(on))); },
-    isFullscreen: () => __blitsenNativeWindowGet("fullscreen"),
-    setDecorations: on => { __blitsenNativeWindowSet("decorations", String(Boolean(on))); },
-    isDecorated: () => __blitsenNativeWindowGet("decorations"),
-    setAlwaysOnTop: on => { __blitsenNativeWindowSet("alwaysOnTop", String(Boolean(on))); },
-    setCursor: cursor => { __blitsenNativeWindowSet("cursor", String(cursor)); },
-    setCursorVisible: on => { __blitsenNativeWindowSet("cursorVisible", String(Boolean(on))); },
-    setCursorGrab: mode => { __blitsenNativeWindowSet("cursorGrab", String(mode)); },
+    setSize: hosted("__blitsenNativeWindowResize")
+      ? (width, height) => {
+          __blitsenNativeWindowResize(String(width), String(height));
+        }
+      : undefined,
+    setFullscreen: windowProperty
+      ? on => { __blitsenNativeWindowSet("fullscreen", String(Boolean(on))); }
+      : undefined,
+    isFullscreen: windowReadback ? () => __blitsenNativeWindowGet("fullscreen") : undefined,
+    setDecorations: windowProperty
+      ? on => { __blitsenNativeWindowSet("decorations", String(Boolean(on))); }
+      : undefined,
+    isDecorated: windowReadback ? () => __blitsenNativeWindowGet("decorations") : undefined,
+    setAlwaysOnTop: windowProperty
+      ? on => { __blitsenNativeWindowSet("alwaysOnTop", String(Boolean(on))); }
+      : undefined,
+    setCursor: windowProperty
+      ? cursor => { __blitsenNativeWindowSet("cursor", String(cursor)); }
+      : undefined,
+    setCursorVisible: windowProperty
+      ? on => { __blitsenNativeWindowSet("cursorVisible", String(Boolean(on))); }
+      : undefined,
+    setCursorGrab: windowProperty
+      ? mode => { __blitsenNativeWindowSet("cursorGrab", String(mode)); }
+      : undefined,
     monitors: () => JSON.parse(__blitsenNativeWindowMonitors()),
   };
 

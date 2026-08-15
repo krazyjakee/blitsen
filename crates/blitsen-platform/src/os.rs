@@ -12,6 +12,27 @@
 //! that does not report its kernel version is not an error, and inventing a
 //! string for it would be worse than saying so.
 //!
+//! Present on Android, and the only `native:` module in this crate that is. The
+//! reason is that the paragraph above already answers the question Android asks.
+//! `sysinfo` reads the same `/proc/stat`, `/proc/meminfo` and `/proc/mounts`
+//! there as on any other Linux, so [`cpu`] and [`memory`] are the same facts
+//! from the same source; the halves Android genuinely restricts — process
+//! enumeration behind `hidepid`, the user database — are the ones already left
+//! out of the feature list in `Cargo.toml`, so nothing here reaches for them.
+//! Where a fact is missing it arrives as `None`, which is the contract a Linux
+//! machine that will not report its kernel version already gets.
+//!
+//! What is worth writing down rather than assuming is that two of these read
+//! *differently* there without reading wrongly. [`storage`] lists what is
+//! mounted, and on Android that is the system's own volumes — `/data`, the
+//! emulated external storage — rather than disks a user would recognise, most of
+//! them unwritable by this application; whether a path can be written is
+//! `node:fs`'s answer to give and not this module's to pre-empt. [`Cpu::usage`]
+//! is a share of cores a governor may have parked without telling this process,
+//! so a low reading there is not the same claim about the machine that a low
+//! reading on a desktop is. Both remain true statements about what is mounted
+//! and what ran, which is all this module ever promised (#147).
+//!
 //! Two instances are kept for the life of the thread rather than built per
 //! call. That is not only an allocation: CPU usage is a *delta* between two
 //! samples, so a fresh `System` per call would measure nothing and report zero
