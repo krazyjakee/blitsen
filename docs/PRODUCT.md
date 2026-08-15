@@ -352,13 +352,36 @@ than the tier list's endpoint suggests.
 `blitsen doctor` reports which web APIs a built bundle references that the runtime does not
 provide — so the answer for any given project is mechanical, not guesswork.
 
+### Android is a goal
+
+This document listed "a mobile or console target in the initial phases" as a non-goal until the
+cost was measured rather than reasoned about. #139 measured it, and the answer moved: the
+workspace cross-compiles under the NDK with nothing in the engine stack objecting, and the engine
+has been seen painting a correct frame on Android under both Vello and a CPU rasteriser. Android
+is therefore a goal, and the console non-goal stands on its own.
+
+Stated precisely, so the claim is not read as more than it is:
+
+- **Established.** The dependency graph cross-compiles. Vello renders correctly on *Android the
+  OS*, against a real Vulkan implementation.
+- **Not established.** That Vello holds up across *Android the hardware population* — Adreno and
+  Mali are where it has historically been fragile, and only a physical device answers that (#151).
+- **Not started.** The entry point (#142), application files out of an APK (#144), touch and
+  PointerEvents (#145), lifecycle (#146), the `native:` matrix (#147) and packaging (#148) are
+  Blitsen's own desktop assumptions, not engine limits.
+
+Android does not join P5b. It is a cross-compiled APK/AAB with per-ABI builds and keystore
+signing, not a seventh npm platform package an install resolves — see P5c.
+
 ### Non-goals
 
 - Rendering arbitrary websites, or passing the web platform test suite.
 - A same-origin policy, CSP, or any sandbox for first-party application code.
 - Legacy layout quirks, `document.write`, or the quirks-mode parser path.
 - An opinionated UI framework, component model, or state library of our own.
-- A mobile or console target in the initial phases.
+- A console target.
+- iOS. Android is a goal (below); iOS is not, and nothing in the Android work should be
+  read as a step toward it — the packaging, the entry point and the store model all differ.
 - Prescribing how anything is drawn inside the app. CSS transforms, a physics library, a WASM
   build of Box2D, a native addon and (eventually) `<canvas>` are all equally valid.
 
@@ -374,6 +397,7 @@ provide — so the answer for any given project is mechanical, not guesswork.
 | P4 | Sustained frame rate | 60 fps for a moderate 2D scene | Measured with the Pong acceptance build. |
 | P5 | Platforms, initial | Windows x64, Linux x64, macOS arm64 | Windows is the priority target for size claims. |
 | P5b | Platforms, full matrix | win32 x64/arm64, linux x64/arm64, darwin x64/arm64 | One npm platform package each (TECH.md §11). Two tiers of evidence: `linux-x64`, `darwin-arm64` and `win32-x64` run the whole suite in CI; `linux-arm64`, `darwin-x64` and `win32-arm64` run a smoke tier — the release artifacts built, the package tests against them, a frame through the native harness, a standalone export and the layout corpus — with the product-behaviour suites and the size gate left to the first three (issue #133). |
+| P5c | Platforms, Android | `arm64-v8a` shipping, `x86_64` for emulators | A distinct artifact, not a P5b row: a cross-compiled APK/AAB with keystore signing, produced by `blitsen build`, not a runtime an install resolves from npm (#148). Its size budget is its own — P1 is a desktop figure and does not transfer (#150). Evidence tier to be set with #133's precedent in mind (#149). |
 | P6 | Render consistency | Byte-identical layout across platforms for the test corpus | The core advantage over WebView-based tools. |
 | P7 | npm compatibility | Pure-JS packages install and import unmodified | Native Node addons: best-effort. |
 | P8 | No runtime dependency on an installed browser or WebView | Absolute | |
