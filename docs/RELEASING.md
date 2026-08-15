@@ -29,6 +29,19 @@ A dry run is worth doing on its own. It builds all six runtimes, runs the packag
 each freshly built addon, generates each target's notices, stages, packs, asks npm what every
 tarball would contain, and stops short of the registry.
 
+### The tag comes last, and does not trigger anything
+
+A real publish ends by tagging the commit it built and opening a GitHub Release from
+`docs/RELEASE-NOTES-<version>.md`, or from generated notes if that file is missing. A dispatch
+under a dist-tag other than `latest` marks the release a prerelease, which is the same distinction
+npm draws.
+
+**Pushing a tag does not publish.** The tag is written *after* the registry has accepted all seven
+packages, so it records a release rather than claiming one — it cannot name a version that failed
+to publish, and it points at the commit the run built rather than wherever the branch has moved
+since. The reverse arrangement, where `git push --tags` starts a release, makes a typo
+irreversible against a registry whose undo is a 72-hour window.
+
 Be precise about what a clean dry run does **not** prove. With no certificates in the repository
 the two signing steps do not sign: the Windows step locates `signtool.exe` and stops, and the
 macOS step ad-hoc-signs a copy in the runner's temp directory to show `codesign` accepts an
