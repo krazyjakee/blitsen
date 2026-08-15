@@ -110,7 +110,7 @@ Tauri 2.11.5 and this Blitsen checkout:
 | --- | ---: | ---: | ---: |
 | Electron | 339.4 MB | 0.2% | 284.3 MB |
 | Tauri | 4.7 MB | <0.1% | 191.9 MB |
-| Blitsen | 38.8 MB | 0.2% | 101.0 MB |
+| Blitsen | 38.8 MB | 0.1% | 101.0 MB |
 
 Figures are medians of five runs after a five-second warm-up; CPU is the whole process tree over
 ten seconds (100% is one core), and disk is the packaged app's apparent size. Tauri's CPU and

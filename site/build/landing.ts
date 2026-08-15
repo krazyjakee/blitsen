@@ -137,7 +137,7 @@ export function landingBody(crestSvg: string): string {
       <tbody>
         <tr><td>Electron</td><td class="num">339.4 MB</td><td class="num">0.2%</td><td class="num">284.3 MB</td></tr>
         <tr><td>Tauri</td><td class="num">4.7 MB</td><td class="num">&lt;0.1%</td><td class="num">191.9 MB</td></tr>
-        <tr class="mine"><td>Blitsen</td><td class="num">38.8 MB</td><td class="num">0.2%</td><td class="num">101.0 MB</td></tr>
+        <tr class="mine"><td>Blitsen</td><td class="num">38.8 MB</td><td class="num">0.1%</td><td class="num">101.0 MB</td></tr>
       </tbody>
     </table>
   </div>
