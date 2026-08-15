@@ -1,0 +1,65 @@
+name: Pages
+
+# Builds the documentation site and publishes it to GitHub Pages.
+#
+# The site is generated from docs/*.md, so it cannot describe a version of Blitsen
+# that the repository does not contain. Nothing is committed back: the build output
+# is uploaded as a Pages artifact and deployed from there.
+#
+# Requires Settings → Pages → Source: "GitHub Actions" to be selected once.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/**'
+      - 'site/**'
+      - 'assets/brand/**'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Let a running deploy finish rather than cancelling it midway.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.3.14'
+
+      - name: Build the site
+        env:
+          # Project pages are served from /<repo>, so assets need that prefix.
+          SITE_BASE: /${{ github.event.repository.name }}
+          SITE_ORIGIN: https://${{ github.repository_owner }}.github.io
+        run: bun run site:build
+
+      - name: Check links, anchors and rendering
+        run: bun run site:check
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
