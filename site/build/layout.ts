@@ -51,7 +51,9 @@ var next=dark?"light":"dark";r.setAttribute("data-theme",next);
 try{localStorage.setItem("blitsen-theme",next)}catch(err){}
 b.setAttribute("aria-pressed",String(next==="dark"))});
 document.addEventListener("click",function(e){
-if(e.target.closest("[data-nav-toggle]"))document.body.classList.toggle("nav-open")});`;
+var n=e.target.closest("[data-nav-toggle]");if(!n)return;
+var open=document.body.classList.toggle("nav-open");
+n.setAttribute("aria-expanded",String(open))});`;
 
 function sidebar(activeSlug?: string): string {
   const groups = GROUPS.map((group) => {
@@ -131,7 +133,8 @@ export function renderPage(options: PageOptions): string {
       <svg viewBox="0 0 24 24" aria-hidden="true" width="18" height="18"><path fill="currentColor"
         d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9Z"/></svg>
     </button>
-    <button type="button" class="icon-btn nav-only" data-nav-toggle aria-label="Toggle navigation">
+    <button type="button" class="icon-btn nav-only" data-nav-toggle aria-expanded="false"
+      aria-label="Toggle navigation">
       <svg viewBox="0 0 24 24" aria-hidden="true" width="18" height="18"><path fill="currentColor"
         d="M3 6h18v2H3V6Zm0 5h18v2H3v-2Zm0 5h18v2H3v-2Z"/></svg>
     </button>
