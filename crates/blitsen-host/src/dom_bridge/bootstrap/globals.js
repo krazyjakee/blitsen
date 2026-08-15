@@ -79,6 +79,7 @@
     __blitsenForcedLayoutsThisFrame: () => forcedLayoutsThisFrame,
     __blitsenEventInternals: eventInternals,
     __blitsenDispatchMouseEvent: dispatchMouseEvent,
+    __blitsenDispatchPointerEvent: dispatchPointerEvent,
     __blitsenDispatchKeyboardEvent: dispatchKeyboardEvent,
     __blitsenDispatchLifecycleEvent: dispatchLifecycleEvent,
     __blitsenDisposeContext: () => {
@@ -99,8 +100,10 @@
       liveWorkers.clear();
       dialogs.clear();
       // A press held across a reload would otherwise keep the old document's
-      // field alive to drag a selection in.
+      // field alive to drag a selection in, and a pointer captured by an element
+      // of the old document would retarget the new document's events at it.
       caretDragControl = null;
+      disposePointerState();
       secondInstanceHandler = null;
       __blitsenFetchDispose();
       __blitsenSocketDispose();
@@ -134,17 +137,28 @@
   // Injects at viewport coordinates the way the native window does: hit test the
   // laid-out tree first, then dispatch at whatever that resolves to. Harness-only,
   // so tests exercise the same path as real input rather than picking a target.
+  //
+  // A `pointer*` type goes through the pointer dispatcher and a `mouse*` type
+  // through the mouse one, because those are the two entry points the native
+  // window itself calls: the pointer one for every contact, the mouse one for
+  // the wheel. Injecting a mouse event directly is therefore *not* a shortcut
+  // to the pointer path — it is the wheel's path, and the compatibility mouse
+  // events a pointer synthesises are reached only through `pointerdown` and
+  // its siblings.
   if (testHarness) globals.__blitsenInjectPointerAt = (type, clientX, clientY, init = {}) => {
     const hit = call("hitTest", Number(clientX), Number(clientY));
     if (!hit) return null;
-    const allowed = dispatchMouseEvent(String(type), hit.target, {
+    const members = {
       bubbles: true, cancelable: true,
       clientX: Number(clientX), clientY: Number(clientY),
       screenX: Number(clientX), screenY: Number(clientY),
       offsetX: hit.offsetX, offsetY: hit.offsetY,
-      button: 0, buttons: type === "mousedown" ? 1 : 0,
-      ...init,
-    });
+      button: 0, ...init,
+    };
+    const allowed = String(type).startsWith("pointer")
+      ? dispatchPointerEvent(String(type), hit.target, members)
+      : dispatchMouseEvent(String(type), hit.target,
+        { buttons: type === "mousedown" ? 1 : 0, ...members });
     return { allowed, target: wrap(hit.target), path: hit.path.map(wrap) };
   };
   Object.assign(globalThis, globals);
