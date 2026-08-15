@@ -3,8 +3,9 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildManifest, generateApiManifest, loadApiManifest, readBootstrapScript, renderCompatibilityDoc } from "../src/api-manifest.mjs";
-import { main } from "../src/cli.mjs";
+import { main, parseArgs } from "../src/cli.mjs";
 import { doctorApplication } from "../src/doctor.mjs";
+import { checkNativeModuleTable } from "../src/native-modules.mjs";
 import { resolvePhase2Runtime } from "../src/runtime.mjs";
 import { capture } from "./cli-support.mjs";
 
@@ -198,6 +199,81 @@ describe("directory CLI", () => {
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
+  });
+
+  // Issue #147. The table is declared rather than derived — a `cfg` in the Rust
+  // is not readable from here — so the one thing that can be checked mechanically
+  // is that it has not drifted from the module list or from its own reasons.
+  test("keeps every native module absence paired with the reason for it", () => {
+    expect(checkNativeModuleTable()).toBeGreaterThan(0);
+  });
+
+  // A `native:` module the target does not have is a finding at export time
+  // rather than an `undefined` at run time (#147). Android is the reason the
+  // rule exists, but it is not the only column: `blitsen/dialog` has been absent
+  // on macOS and Windows since it shipped and nothing said so.
+  test("reports a native: module the target being built for does not have", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "blitsen-native-target-"));
+    try {
+      await writeFile(join(directory, "app.js"), [
+        `import clipboard from "blitsen/clipboard";`,
+        `import dialog from "blitsen/dialog";`,
+        `import os from "blitsen/os";`,
+        `const later = () => import("blitsen/app");`,
+        `export { clipboard, dialog, os, later };`,
+      ].join("\n"));
+      // The CLI resolves an application before it grades one, so the directory
+      // has to be one; `doctorApplication` on its own does not care.
+      await writeFile(join(directory, "index.html"),
+        `<!doctype html><script type="module" src="./app.js"></script>`);
+
+      const reported = async target => (await doctorApplication(directory, { target }))
+        .diagnostics.filter(entry => entry.code === "NATIVE_MODULE_ABSENT")
+        .map(entry => entry.message);
+
+      // Linux has all four, so the same file is silent there. Without this the
+      // test could pass against a rule that fires on everything.
+      expect(await reported("linux-x64")).toEqual([]);
+      expect(await reported("win32-x64")).toEqual(["blitsen/dialog does not exist on win32."]);
+      expect(await reported("darwin-arm64")).toEqual(["blitsen/dialog does not exist on darwin."]);
+      // Sorted by position in the file, which is why `app` — the dynamic import
+      // on the fourth line — comes last rather than first.
+      expect(await reported("android-arm64")).toEqual([
+        "blitsen/clipboard does not exist on android.",
+        "blitsen/dialog does not exist on android.",
+        "blitsen/app does not exist on android.",
+      ]);
+
+      // The reason travels with the finding: a user who is told a module is
+      // missing and not told why has nothing to decide with.
+      const android = (await doctorApplication(directory, { target: "android-arm64" }))
+        .diagnostics.find(entry => entry.code === "NATIVE_MODULE_ABSENT");
+      expect(android.severity).toBe("warning");
+      expect(android.guidance).toContain("`arboard` has no Android backend");
+      expect(android.guidance).toContain("holds focus");
+
+      // Absent modules are warnings, so an Android grading still exits 0 — the
+      // application degrades rather than failing to render.
+      const { lines, output } = capture();
+      expect(await main(["doctor", directory, "--target", "android-arm64"], output)).toBe(0);
+      expect(lines.some(([, line]) => line.includes("NATIVE_MODULE_ABSENT")
+        && line.includes("blitsen/clipboard does not exist on android"))).toBeTrue();
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  // Grading for a platform is not claiming to build for one: Android has no
+  // runtime package to resolve and `blitsen build` still refuses it (#148).
+  test("grades for a target it cannot build for, and refuses to build for it", () => {
+    expect(parseArgs(["doctor", "dist", "--target", "android-arm64"]).target).toBe("android-arm64");
+    expect(parseArgs(["doctor", "dist"]).target).toBeUndefined();
+    expect(() => parseArgs(["build", "dist", "--target", "android-arm64"]))
+      .toThrow("unknown --target android-arm64");
+    expect(() => parseArgs(["doctor", "dist", "--json", "--force"]))
+      .toThrow("--force is only valid with build");
+    expect(() => parseArgs(["doctor", "dist", "--out", "app"]))
+      .toThrow("--out is not valid with doctor");
   });
 
 });
