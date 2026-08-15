@@ -34,6 +34,7 @@ JavaScript comes from the [generated manifest](#capability-tiers) below.
 | Framework DOM | Stable node identity, standard node type/name/value/owner fields, `MutationObserver`, creation/insertion/removal, text and attributes, elements, comments, namespaced elements, fragments and `<template>` |
 | Selection and collections | `querySelector`, `querySelectorAll`, `getElementsByTagName` and `getElementsByClassName` on the document and on an element, `getElementById`, `closest`, `matches`, `children` and the element-traversal properties, `dataset`, `attributes`, static `NodeList`, `classList`, `link.relList` |
 | Events | Capture/target/bubble listeners, click, mouse, wheel, keyboard, focus, resize and lifecycle events, plus `beforeinput`/`input` from typing into a control |
+| Pointer input | `pointerdown`/`pointermove`/`pointerup`/`pointercancel` with `pointerType`, `pointerId`, `pressure` and `isPrimary`, for mouse, touch and pen; multi-touch with one pointer per contact; `setPointerCapture`/`releasePointerCapture`; the mouse events synthesised behind them — see [Pointer events](#pointer-events) |
 | Style read-back | `getComputedStyle`, `matchMedia`/`MediaQueryList`, `ResizeObserver`, `CSS.escape`/`CSS.supports` |
 | Geometry and text | `getBoundingClientRect`, `getClientRects`, the offset/client/scroll box properties, `clientTop`/`clientLeft`, `offsetParent`, `innerText`, `compareDocumentPosition`, `elementFromPoint` |
 | Ranges and selection | `Range` and `document.createRange` for boundary points, text and geometry — `getClientRects` over a run of characters — `caretRangeFromPoint`/`caretPositionFromPoint`, and a `Selection` a script sets and reads; not the tree-editing range methods, and not a selection the user can make by dragging |
@@ -879,6 +880,63 @@ Constraint validation (`validity`, `checkValidity`, `setCustomValidity`), `label
 absent rather than stubbed. Each is a surface of its own and each would be a wrong answer if
 guessed at: there is no file picker behind an input in this runtime, and no validity model either.
 
+## Pointer events
+
+Input arrives as `pointerdown`, `pointermove`, `pointerup` and `pointercancel`, carrying
+`pointerType` — `"mouse"`, `"touch"` or `"pen"` — a `pointerId`, `isPrimary`, and the `pressure`
+the device measured. A touchscreen, a stylus and a precision touchpad are all pointing devices to
+the platform underneath, so this is not a mobile feature: it is what a drawing surface reads to
+vary a stroke's width, and it works on all six shipping desktop targets.
+
+**A `MouseEvent` is still synthesised behind every pointer event**, in that order:
+`pointerdown` then `mousedown`, `pointerup` then `mouseup` then `click`. That is what browsers do
+and it is done here for the same reason — the installed base listens for mouse events. Every
+component already running on Blitsen was written against `mousedown`/`click`, and it has to keep
+working when the press came from a finger. Two rules keep the pair from becoming noise:
+
+- **Only the primary pointer synthesises them.** A second finger does not fire a second `mousedown`
+  at whatever it landed on.
+- **A cancelled `pointerdown` suppresses them for the rest of that contact**, `click` included.
+  This is how an application takes a gesture over: refuse the press, and the compatibility events —
+  along with the focus change and the activation that are their default actions — do not happen.
+
+**Every contact is its own pointer.** `pointerId` is stable for the life of one contact and is
+never reused: the platform renumbers a finger once it has lifted, and a new contact has to be a new
+pointer. Which buttons are held, and which node each of them went down on, is tracked per pointer,
+so two fingers pressing two controls are two independent presses and lifting one does not cancel
+the other's `click`.
+
+**`setPointerCapture`/`releasePointerCapture`/`hasPointerCapture`** are implemented on `Element`.
+Capture is *pending* until the next pointer event, exactly as the spec says: an element that
+captures from its own `pointerdown` handler is not retroactively that event's target, and
+`gotpointercapture` has not fired by the time the handler returns. From the next event on, every
+event from that pointer is retargeted at the capturing element — including the synthesised mouse
+events and the `click`, so a drag that ends outside its handle is still a click on the handle.
+Capture is released implicitly when the contact ends, and immediately if the capturing element
+leaves the document, which stops a re-render from swallowing the rest of a gesture.
+
+`width` and `height` are 1, and `tiltX`/`tiltY`/`twist`/`tangentialPressure` are 0 unless a tablet
+reported them: no platform underneath reports a touch ellipse, and a guessed one would be a
+measurement this runtime never made.
+
+### What is absent here, and why
+
+- **`pointerover`/`pointerout`/`pointerenter`/`pointerleave`, and their mouse twins.** Crossing
+  boundaries is a second piece of state — which element each pointer was last over — and neither
+  the mouse nor the pointer half of it exists today. `:hover` is resolved by the renderer and is
+  unaffected.
+- **`TouchEvent`, `TouchList` and `event.touches`.** The older, touch-only interface. Pointer
+  events supersede it and a library that wants it can build one from these; shipping both would be
+  two sources of truth for one gesture.
+- **`touch-action`.** The CSS property that tells the platform which gestures it may take over.
+  There are no platform-taken gestures to declare (below), so the property would describe nothing.
+- **Scroll and momentum from a touch drag.** A touchscreen has no wheel, so dragging a finger
+  scrolls nothing: `wheel` and the keyboard are still the only things that scroll. This is a
+  deliberate omission rather than an oversight — panning has to decide when a drag stops being a
+  tap, whether that decision belongs here or in the renderer, and whether momentum is worth a
+  per-frame animator — and none of that is settled. An application that wants a finger to scroll
+  can do it today from `pointermove` and `element.scrollTop`. Tracked in #145.
+
 ## Storage
 
 `localStorage` and `sessionStorage` exist, hold what is put in them, and **lose it when the
@@ -1025,7 +1083,7 @@ determinism gate instead.
 | --- | --- | --- |
 | WEB_DOM | `document`, `Document`, `Node`, `Element`, `NodeList`, `DOMTokenList`, `Attr`, `NamedNodeMap`, `CSSStyleDeclaration`, `MutationObserver`, `HTMLElement`, `HTMLIFrameElement`, `SVGElement`, `Text`, `Comment`, `DocumentFragment`, `HTMLLinkElement`, `HTMLTemplateElement`, `HTMLImageElement`, `Image`, `HTMLImageElement.src`, `HTMLImageElement.naturalWidth`, `HTMLImageElement.naturalHeight`, `HTMLImageElement.complete`, `HTMLImageElement.onload`, `HTMLImageElement.onerror`, `Element.querySelector`, `Element.querySelectorAll`, `Element.closest`, `Element.matches`, `Element.cloneNode`, `Element.contains`, `Element.children`, `Element.previousSibling`, `Element.lastChild`, `Element.parentElement`, `Element.dataset`, `Element.nodeValue`, `Element.before`, `Element.after`, `Element.getElementsByTagName`, `Element.outerHTML`, `Element.insertAdjacentHTML`, `Element.scrollIntoView`, `Element.getElementsByClassName`, `Element.firstElementChild`, `Element.lastElementChild`, `Element.nextElementSibling`, `Element.previousElementSibling`, `Element.childElementCount`, `Element.append`, `Element.prepend`, `Element.replaceChildren`, `Element.getAttributeNS`, `Element.setAttributeNS`, `Element.removeAttributeNS`, `Element.hasAttributes`, `Element.getAttributeNames`, `Element.toggleAttribute`, `Element.getClientRects`, `Element.getRootNode`, `Element.normalize`, `Element.attributes`, `Element.insertAdjacentElement`, `Element.innerText`, `Element.compareDocumentPosition`, `Element.offsetParent`, `Element.clientTop`, `Element.clientLeft`, `Element.hidden`, `Element.tabIndex`, `Element.title`, `Document.title`, `Document.dir`, `Document.getElementsByName`, `Document.elementFromPoint`, `Document.elementsFromPoint`, `Document.scrollingElement`, `Document.characterSet`, `Document.documentURI`, `Document.hasFocus`, `Document.adoptNode`, `HTMLLinkElement.relList`, `HTMLLinkElement.onload`, `HTMLLinkElement.onerror`, `HTMLTemplateElement.content`, `DOMTokenList.supports`, `Document.createElementNS`, `Document.createComment`, `Document.createDocumentFragment`, `Document.getElementsByTagName`, `Document.getElementsByClassName`, `Document.importNode`, `NodeList.item`, `NodeList.forEach` | `Element.attachShadow`, `Document.currentScript` |
 | WEB_FORM_CONTROLS | `HTMLInputElement`, `HTMLTextAreaElement`, `HTMLSelectElement`, `HTMLOptionElement`, `HTMLButtonElement`, `HTMLFormElement`, `HTMLInputElement.value`, `HTMLInputElement.defaultValue`, `HTMLInputElement.checked`, `HTMLInputElement.defaultChecked`, `HTMLInputElement.type`, `HTMLInputElement.name`, `HTMLInputElement.disabled`, `HTMLInputElement.form`, `HTMLInputElement.select`, `HTMLInputElement.setSelectionRange`, `HTMLInputElement.selectionStart`, `HTMLInputElement.selectionEnd`, `HTMLInputElement.selectionDirection`, `HTMLTextAreaElement.value`, `HTMLTextAreaElement.defaultValue`, `HTMLTextAreaElement.select`, `HTMLTextAreaElement.setSelectionRange`, `HTMLTextAreaElement.selectionStart`, `HTMLTextAreaElement.selectionEnd`, `HTMLTextAreaElement.selectionDirection`, `HTMLSelectElement.options`, `HTMLSelectElement.selectedIndex`, `HTMLSelectElement.value`, `HTMLSelectElement.length`, `HTMLSelectElement.selectedOptions`, `HTMLSelectElement.multiple`, `HTMLOptionElement.value`, `HTMLOptionElement.text`, `HTMLOptionElement.selected`, `HTMLOptionElement.index`, `HTMLOptionElement.label`, `HTMLOptionElement.defaultSelected`, `HTMLButtonElement.value`, `HTMLButtonElement.type`, `HTMLFormElement.elements`, `HTMLFormElement.requestSubmit` | `HTMLInputElement.files`, `HTMLInputElement.labels`, `HTMLInputElement.validity`, `HTMLInputElement.checkValidity`, `HTMLSelectElement.add`, `HTMLFormElement.submit`, `HTMLFormElement.reset`, `HTMLFormElement.action`, `HTMLFormElement.method`, `HTMLFormElement.checkValidity` |
-| WEB_EVENTS | `EventTarget`, `Event`, `CustomEvent`, `SubmitEvent`, `MouseEvent`, `KeyboardEvent`, `FocusEvent`, `InputEvent`, `PointerEvent`, `WheelEvent`, `addEventListener`, `removeEventListener`, `dispatchEvent`, `ErrorEvent` | — |
+| WEB_EVENTS | `EventTarget`, `Event`, `CustomEvent`, `SubmitEvent`, `MouseEvent`, `KeyboardEvent`, `FocusEvent`, `InputEvent`, `PointerEvent`, `WheelEvent`, `addEventListener`, `removeEventListener`, `dispatchEvent`, `ErrorEvent`, `Element.setPointerCapture`, `Element.releasePointerCapture`, `Element.hasPointerCapture` | — |
 | WEB_SCROLL | `scrollTo`, `scrollBy`, `scroll`, `scrollX`, `scrollY`, `pageXOffset`, `pageYOffset` | — |
 | WEB_SELECTION | `getSelection`, `Range`, `Selection`, `CaretPosition`, `Document.createRange`, `Document.getSelection`, `Document.caretRangeFromPoint`, `Document.caretPositionFromPoint`, `Range.setStart`, `Range.setEnd`, `Range.setStartBefore`, `Range.setStartAfter`, `Range.setEndBefore`, `Range.setEndAfter`, `Range.selectNode`, `Range.selectNodeContents`, `Range.collapse`, `Range.cloneRange`, `Range.startContainer`, `Range.startOffset`, `Range.endContainer`, `Range.endOffset`, `Range.collapsed`, `Range.commonAncestorContainer`, `Range.comparePoint`, `Range.compareBoundaryPoints`, `Range.intersectsNode`, `Range.isPointInRange`, `Range.toString`, `Range.getClientRects`, `Range.getBoundingClientRect`, `Selection.anchorNode`, `Selection.anchorOffset`, `Selection.focusNode`, `Selection.focusOffset`, `Selection.isCollapsed`, `Selection.rangeCount`, `Selection.type`, `Selection.direction`, `Selection.getRangeAt`, `Selection.addRange`, `Selection.removeAllRanges`, `Selection.setBaseAndExtent`, `Selection.collapse`, `Selection.extend`, `Selection.selectAllChildren`, `Selection.containsNode`, `Selection.toString`, `CaretPosition.offsetNode`, `CaretPosition.offset`, `CaretPosition.getClientRect` | `Range.deleteContents`, `Range.extractContents`, `Range.cloneContents`, `Range.insertNode`, `Range.surroundContents` |
 | WEB_SCHEDULING | `requestAnimationFrame`, `cancelAnimationFrame`, `setTimeout`, `clearTimeout`, `setInterval`, `clearInterval` | `requestIdleCallback`, `cancelIdleCallback` |

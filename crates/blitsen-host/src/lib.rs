@@ -21,6 +21,7 @@ pub mod harness;
 pub mod messaging;
 pub mod modules;
 pub mod native_window;
+mod pointer_input;
 pub mod ports;
 pub mod replay;
 pub mod runtime_services;

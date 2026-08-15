@@ -1390,6 +1390,33 @@
       "pattern": "(?<![.\\w$])ErrorEvent\\b"
     },
     {
+      "api": "Element.setPointerCapture",
+      "kind": "member",
+      "owner": "Element.prototype",
+      "member": "setPointerCapture",
+      "status": "implemented",
+      "code": "WEB_EVENTS",
+      "pattern": null
+    },
+    {
+      "api": "Element.releasePointerCapture",
+      "kind": "member",
+      "owner": "Element.prototype",
+      "member": "releasePointerCapture",
+      "status": "implemented",
+      "code": "WEB_EVENTS",
+      "pattern": null
+    },
+    {
+      "api": "Element.hasPointerCapture",
+      "kind": "member",
+      "owner": "Element.prototype",
+      "member": "hasPointerCapture",
+      "status": "implemented",
+      "code": "WEB_EVENTS",
+      "pattern": null
+    },
+    {
       "api": "scrollTo",
       "kind": "global",
       "status": "implemented",

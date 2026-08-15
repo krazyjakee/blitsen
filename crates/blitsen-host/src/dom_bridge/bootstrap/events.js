@@ -61,10 +61,12 @@
     }
   }
 
-  // A pointer is a mouse here: this runtime has one pointing device, it is
-  // always primary, and it reports no tilt or pressure. The members are present
-  // and truthful about that rather than absent, because a library reads
-  // `pointerType` unguarded once it has decided to use pointer events at all.
+  // Every member is filled from the device the host reported, so `pointerType`
+  // is "mouse", "touch" or "pen" as the platform saw it, `pointerId` is stable
+  // for the life of one contact, and `pressure` is the force a touchscreen or a
+  // tablet measured. `width` and `height` are the contact geometry, and stay 1:
+  // winit reports no touch-ellipse, and a guessed one would be a measurement
+  // this runtime never made.
   class PointerEvent extends MouseEvent {
     constructor(type, options = {}) {
       super(type, options);
@@ -360,9 +362,49 @@
       : (current < 0 || current === focusables.length - 1 ? 0 : current + 1);
     setFocus(focusables[index]);
   };
+  // The DOM `pointerId` the mouse always has, matching the host's constant. Not
+  // 0: the spec reserves that for a pointer of unknown identity.
+  const MOUSE_POINTER_ID = 1;
+  // `MouseEvent.buttons` is a bitmask in a different order from `button`:
+  // primary 1, secondary 2, auxiliary 4, then back and forward.
+  const DOM_BUTTON_MASKS = [1, 4, 2, 8, 16];
+  const buttonMask = button =>
+    DOM_BUTTON_MASKS[button] ?? (button >= 0 && button < 16 ? 1 << button : 0);
+
+  // One entry per pointer the platform is currently tracking. The host allocates
+  // the ids and says which device is behind each; what is held here is the state
+  // that only the DOM knows about — which buttons are down under this pointer,
+  // which node each of them went down on, and whether this contact's
+  // compatibility mouse events were refused.
+  //
+  // Per pointer rather than global, because that is the whole of multi-touch:
+  // two fingers pressing two different elements are two independent presses, and
+  // one shared "the mouse is down on X" would make the second lift click the
+  // first finger's target.
+  const activePointers = new Map();
+  // The capture in effect, and the one requested. Two maps because capture is
+  // *pending* until the next pointer event: an element that captures from a
+  // `pointerdown` handler is still not the target of that same event, and
+  // `gotpointercapture` has not fired yet when the handler returns.
+  const pointerCaptures = new Map();
+  const pendingPointerCaptures = new Map();
+
+  const pointerStateFor = pointerId => {
+    let state = activePointers.get(pointerId);
+    if (!state) {
+      state = { buttons: 0, downTargets: new Map(), compatibilitySuppressed: false };
+      activePointers.set(pointerId, state);
+    }
+    return state;
+  };
+
   const dispatchMouseEvent = (type, rawHandle, init) => {
     const target = wrap(String(rawHandle));
-    const event = new MouseEvent(String(type), { ...init, view: init.view ?? globalThis });
+    // `buttons` is the pointer's state rather than this event's, so an event
+    // that does not carry one — a wheel, which no pointer produced — reads it
+    // off the mouse pointer instead of reporting nothing held.
+    const event = new MouseEvent(String(type), { ...init, view: init.view ?? globalThis,
+      buttons: init.buttons ?? (activePointers.get(MOUSE_POINTER_ID)?.buttons ?? 0) });
     const allowed = target.dispatchEvent(event);
     // Focus is `mousedown`'s default action and activation is `click`'s. They
     // are two different events on purpose: a component that has focused
@@ -378,6 +420,133 @@
       __blitsenScrollDefault(String(target[handle]), String(-event.deltaX), String(-event.deltaY));
     return allowed;
   };
+
+  const pointerCaptureSet = (element, pointerId) => {
+    const id = Number(pointerId);
+    if (!activePointers.has(id))
+      throw new DOMException(`no active pointer with pointerId ${id}`, "NotFoundError");
+    if (!element.isConnected)
+      throw new DOMException("cannot capture a pointer on a disconnected element", "InvalidStateError");
+    pendingPointerCaptures.set(id, element);
+  };
+  const pointerCaptureRelease = (element, pointerId) => {
+    const id = Number(pointerId);
+    if (!activePointers.has(id))
+      throw new DOMException(`no active pointer with pointerId ${id}`, "NotFoundError");
+    if (pendingPointerCaptures.get(id) === element) pendingPointerCaptures.delete(id);
+  };
+  const pointerCaptureHas = (element, pointerId) =>
+    pendingPointerCaptures.get(Number(pointerId)) === element;
+
+  // Settles a requested capture, immediately before the pointer event that will
+  // be retargeted by it. `lostpointercapture` goes to the element that had it and
+  // `gotpointercapture` to the one taking it, in that order, and neither is
+  // cancelable — the transfer has already happened by the time they are seen.
+  //
+  // A captured element that has left the document releases here rather than
+  // holding the pointer for ever: a drag handle a re-render replaced would
+  // otherwise swallow every move for the rest of the gesture.
+  const processPendingPointerCapture = (pointerId, members) => {
+    const requested = pendingPointerCaptures.get(pointerId) ?? null;
+    const pending = requested !== null && requested.isConnected ? requested : null;
+    if (pending === null && requested !== null) pendingPointerCaptures.delete(pointerId);
+    const active = pointerCaptures.get(pointerId) ?? null;
+    if (pending === active) return;
+    const notify = (type, target) =>
+      target.dispatchEvent(new PointerEvent(type, { ...members, bubbles: true, cancelable: false }));
+    if (active !== null) { pointerCaptures.delete(pointerId); notify("lostpointercapture", active); }
+    if (pending !== null) { pointerCaptures.set(pointerId, pending); notify("gotpointercapture", pending); }
+  };
+
+  // The mouse event a browser still synthesises behind each pointer event.
+  const COMPATIBILITY_MOUSE_EVENT =
+    { pointerdown: "mousedown", pointermove: "mousemove", pointerup: "mouseup" };
+
+  // A pointer event, and the mouse event synthesised behind it.
+  //
+  // Both are dispatched, pointer first, and that is deliberate rather than
+  // transitional. Every browser does it, and the reason is that the mouse events
+  // are what the installed base listens for: a component written against
+  // `mousedown`/`click` — which is most of them, and all of the ones already
+  // running on Blitsen — must keep working when the press came from a finger.
+  // Dispatching only pointer events would make touch input work and break every
+  // application that already runs; dispatching only mouse events is what Blitsen
+  // did before, and it threw away the pointer's identity and pressure.
+  //
+  // Two rules keep the pair from being noise. Only the *primary* pointer
+  // synthesises them, so a second finger does not fire a second `mousedown` at
+  // whatever it landed on; and a cancelled `pointerdown` suppresses them for the
+  // rest of that contact, which is how an application takes over a gesture.
+  const dispatchPointerEvent = (type, rawHandle, init) => {
+    const pointerId = Number(init.pointerId ?? MOUSE_POINTER_ID);
+    const pointerType = String(init.pointerType ?? "mouse");
+    const isPrimary = init.isPrimary === undefined ? true : Boolean(init.isPrimary);
+    // `button` names the button that *changed*, which on a move or a
+    // cancellation is none of them. That is a property of the event type rather
+    // than of the input, so it is settled here and not left to the caller.
+    const button = type === "pointermove" || type === "pointercancel"
+      ? -1 : Number(init.button ?? 0);
+    const state = pointerStateFor(pointerId);
+    if (type === "pointerdown") {
+      state.buttons |= buttonMask(button);
+      state.compatibilitySuppressed = false;
+    } else if (type === "pointerup") {
+      state.buttons &= ~buttonMask(button);
+    } else if (type === "pointercancel") {
+      state.buttons = 0;
+      state.downTargets.clear();
+    }
+    // The force the device measured, or the value the spec substitutes for
+    // hardware that cannot measure one: 0.5 while a button is held and 0
+    // otherwise. A lift and a cancellation are 0 either way — nothing is
+    // pressing any more.
+    const pressure = type === "pointerup" || type === "pointercancel" ? 0
+      : init.force === undefined || init.force === null
+        ? (state.buttons === 0 ? 0 : 0.5)
+        : Number(init.force);
+    const members = { ...init, view: init.view ?? globalThis,
+      bubbles: true, cancelable: type !== "pointercancel",
+      pointerId, pointerType, isPrimary, pressure, button, buttons: state.buttons };
+    processPendingPointerCapture(pointerId, members);
+    const target = pointerCaptures.get(pointerId) ?? wrap(String(rawHandle));
+    const allowed = target.dispatchEvent(new PointerEvent(String(type), members));
+    if (type === "pointerdown" && !allowed) state.compatibilitySuppressed = true;
+    const compatibility = COMPATIBILITY_MOUSE_EVENT[type];
+    const synthesise = isPrimary && !state.compatibilitySuppressed;
+    if (compatibility && synthesise)
+      // `button` on a move is the button that changed, which is none of them:
+      // -1 to a pointer event and 0 to the mouse event, where the interfaces
+      // simply disagree and both spellings are the correct one.
+      dispatchMouseEvent(compatibility, String(target[handle]),
+        { ...members, button: type === "pointermove" ? 0 : button });
+    if (type === "pointerdown") state.downTargets.set(button, target);
+    if (type === "pointerup") {
+      const pressed = state.downTargets.get(button);
+      state.downTargets.delete(button);
+      // Activation, at the element the press and the lift agree on. Under
+      // capture that is the capturing element for both, which is what makes a
+      // drag that ends outside its handle still a click on it.
+      if (button === 0 && pressed === target && synthesise)
+        dispatchMouseEvent("click", String(target[handle]), members);
+    }
+    if (type === "pointerup" || type === "pointercancel") {
+      // Capture is released implicitly when the contact ends, after the event
+      // that ended it — so a `pointerup` handler still sees the captured target.
+      pendingPointerCaptures.delete(pointerId);
+      processPendingPointerCapture(pointerId, members);
+      // A finger that has lifted no longer exists; a mouse that released a
+      // button is still on the screen and can still capture.
+      if (pointerType !== "mouse") activePointers.delete(pointerId);
+    }
+    return allowed;
+  };
+
+  const disposePointerState = () => {
+    activePointers.clear();
+    pointerCaptures.clear();
+    pendingPointerCaptures.clear();
+  };
+
   const dispatchKeyboardEvent = (type, init) => {
     const event = new KeyboardEvent(String(type), init);
     const target = activeElement ?? document.body ?? document;

@@ -11,6 +11,7 @@
 await import("./native-harness/document-scripts.mjs");
 await import("./native-harness/bridge.mjs");
 await import("./native-harness/events.mjs");
+await import("./native-harness/pointer-events.mjs");
 await import("./native-harness/forms.mjs");
 await import("./native-harness/text-editing.mjs");
 await import("./native-harness/dom.mjs");

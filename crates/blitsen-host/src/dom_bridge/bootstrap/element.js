@@ -268,6 +268,15 @@
         parent.scrollLeft += scrollDelta(inline, box.left, box.right, container.left, container.right);
       }
     }
+    // Pointer capture: every event from this pointer is retargeted here until
+    // the contact ends or the capture is released, so a drag that leaves the
+    // handle keeps arriving at the handle. The state and the retargeting live
+    // beside the dispatcher in the events fragment; these are the DOM's names
+    // for them. `hasPointerCapture` answers about the *requested* capture, which
+    // is what a caller that has just set one expects to read back.
+    setPointerCapture(pointerId) { pointerCaptureSet(this, pointerId); }
+    releasePointerCapture(pointerId) { pointerCaptureRelease(this, pointerId); }
+    hasPointerCapture(pointerId) { return pointerCaptureHas(this, pointerId); }
     // One box per line box the element was broken across, which for anything
     // with a box of its own is the single border box `getBoundingClientRect`
     // returns. An inline element is not laid out as a box at all — it is a run

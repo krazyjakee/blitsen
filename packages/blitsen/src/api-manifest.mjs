@@ -78,9 +78,14 @@ const CATALOGUE = {
     "HTMLFormElement.elements", "HTMLFormElement.requestSubmit", "HTMLFormElement.submit",
     "HTMLFormElement.reset", "HTMLFormElement.action", "HTMLFormElement.method",
     "HTMLFormElement.checkValidity"],
+  // Pointer capture is declared here rather than with the rest of `Element`
+  // because it is the pointer-event surface: it means nothing without a
+  // `pointerId`, and an application that reaches for one reaches for both.
   WEB_EVENTS: ["EventTarget", "Event", "CustomEvent", "SubmitEvent", "MouseEvent",
     "KeyboardEvent", "FocusEvent", "InputEvent", "PointerEvent", "WheelEvent",
-    "addEventListener", "removeEventListener", "dispatchEvent", "ErrorEvent"],
+    "addEventListener", "removeEventListener", "dispatchEvent", "ErrorEvent",
+    "Element.setPointerCapture", "Element.releasePointerCapture",
+    "Element.hasPointerCapture"],
   // Document scrolling. `scroll` and `scrollTo` are the same function under two
   // names, as they are on Window. The patterns are qualified because the bare
   // words are far too ordinary to find in a bundle: `scroll` alone matches every

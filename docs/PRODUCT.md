@@ -305,7 +305,8 @@ HTML · CSS · DOM · JS/TS execution · events · `requestAnimationFrame` · `s
 `setInterval` · mouse · keyboard · one native viewport element backed by the GPU.
 
 **v1 — makes real apps possible** — *met, with three members partial*
-`fetch` · `WebSocket` · images · web fonts · audio playback · the first `blitsen/*` modules
+`fetch` · `WebSocket` · images · web fonts · audio playback · pointer events (mouse, touch and
+pen, with pressure, multi-touch and pointer capture) · the first `blitsen/*` modules
 (dialog, clipboard, window, app). The published profile is
 [v1](COMPATIBILITY.md), generated from the runtime, and `doctor` checks against it.
 
@@ -366,9 +367,14 @@ Stated precisely, so the claim is not read as more than it is:
   OS*, against a real Vulkan implementation.
 - **Not established.** That Vello holds up across *Android the hardware population* — Adreno and
   Mali are where it has historically been fragile, and only a physical device answers that (#151).
-- **Not started.** The entry point (#142), application files out of an APK (#144), touch and
-  PointerEvents (#145), lifecycle (#146), the `native:` matrix (#147) and packaging (#148) are
-  Blitsen's own desktop assumptions, not engine limits.
+- **Landed, and not for Android's sake.** Touch and PointerEvents (#145). The host no longer
+  discards a touch or a stylus, and the web surface behind them — `pointerType`, `pointerId`,
+  `pressure`, multi-touch and pointer capture — is a desktop feature that Android happens to need
+  too. Scroll and momentum from a touch drag are deliberately not part of it; see
+  [COMPATIBILITY.md](COMPATIBILITY.md#pointer-events).
+- **Not started.** The entry point (#142), application files out of an APK (#144), lifecycle
+  (#146), the `native:` matrix (#147) and packaging (#148) are Blitsen's own desktop assumptions,
+  not engine limits.
 
 Android does not join P5b. It is a cross-compiled APK/AAB with per-ABI builds and keystore
 signing, not a seventh npm platform package an install resolves — see P5c.
