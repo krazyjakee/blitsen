@@ -350,7 +350,10 @@ fn install_window<E: JsEngine + 'static>(_engine: &mut E) -> Result<(), JsError>
     Ok(())
 }
 
-#[cfg(all(unix, not(target_os = "macos")))]
+#[cfg(all(
+    unix,
+    not(any(target_os = "macos", target_os = "android", target_os = "ios"))
+))]
 fn install_dialog<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsError> {
     use blitsen_platform::dialog::{
         self, Buttons, FileKind, FileRequest, Filter, Level, MessageRequest, Outcome,
@@ -498,7 +501,10 @@ fn install_dialog<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsError> 
 // is the thread this design deliberately leaves free to keep painting, and a
 // Windows dialog was never verified here. Approximating either would be a
 // different design wearing this one's name.
-#[cfg(not(all(unix, not(target_os = "macos"))))]
+#[cfg(not(all(
+    unix,
+    not(any(target_os = "macos", target_os = "android", target_os = "ios"))
+)))]
 fn install_dialog<E: JsEngine + 'static>(_engine: &mut E) -> Result<(), JsError> {
     Ok(())
 }
