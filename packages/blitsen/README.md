@@ -1,8 +1,9 @@
 # Blitsen
 
 Blitsen is an experimental native runtime for applications built from static
-HTML, CSS, and JavaScript output. It combines JavaScriptCore with Blitz's native
-HTML/CSS renderer without embedding Chromium or an operating-system WebView.
+HTML, CSS, and JavaScript output. It combines a statically linked QuickJS-ng
+with Blitz's native HTML/CSS renderer, without embedding Chromium or an
+operating-system WebView.
 
 This package is **pre-alpha**. Directory mode is available for the first runtime
 milestone when a compatible native runtime package is installed:
@@ -144,13 +145,20 @@ on the build report and inside the executable:
 
 ```
 Built /home/me/MyApp (12 assets, 58720256 bytes)
-Runtime: @blitsen/linux-x64@0.0.1
+Runtime: @blitsen/linux-x64@0.1.0
 ```
 
-**No platform package is published yet, and only `linux-x64` is built at all.** Until they ship,
-Blitsen resolves the runtime from `BLITSEN_NATIVE_PATH`, or from an addon built inside a checkout
-of the repository, and otherwise refuses with the platform whose package it wanted rather than
-running against something else.
+**No platform package is published yet.** Until they ship, Blitsen resolves the runtime from
+`BLITSEN_NATIVE_PATH`, or from an addon built inside a checkout of the repository, and otherwise
+refuses with the platform whose package it wanted rather than running against something else.
+
+**The 0.1.0 runtimes are unsigned on every platform.** No Developer ID and no Windows
+code-signing certificate exist for this project yet, so what ships is what a build with no
+credentials produces — deliberately, and said here rather than discovered. Inside an npm package
+that mostly does not matter: neither Gatekeeper nor SmartScreen inspects a `.node` addon your
+package manager downloaded. Where it does matter is the executable an export links, because that
+is a binary your users launch by name. Sign the artifact `blitsen build` produces with `--sign`,
+on a host of that platform, and your users see your identity rather than Blitsen's absent one.
 
 ## Native modules
 

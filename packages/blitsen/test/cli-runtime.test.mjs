@@ -46,11 +46,14 @@ describe("runtime resolution", () => {
 
   test("names the platform, and says it is unpublished, when its package is absent", async () => {
     await withPlatformPackages({ "linux-x64": { version: cliVersion } }, async ({ require }) => {
-      const missing = resolveRuntime({ target: "win32-arm64", version: cliVersion, env: {}, require });
+      // Not this host's target: an absent package falls back to a checkout's own
+      // build, which a runner that just built one has (#134).
+      const absent = hostTarget() === "win32-arm64" ? "darwin-x64" : "win32-arm64";
+      const missing = resolveRuntime({ target: absent, version: cliVersion, env: {}, require });
       await expect(missing).rejects.toThrow(
-        "no Blitsen runtime for win32-arm64: @blitsen/win32-arm64 is not installed");
+        `no Blitsen runtime for ${absent}: @blitsen/${absent} is not installed`);
       await expect(missing)
-        .rejects.toThrow("no platform runtime package is published yet and only linux-x64 is built");
+        .rejects.toThrow("no platform runtime package is published yet");
       // A host outside the six is a different failure: nothing to install at all.
       await expect(resolveRuntime({ target: "freebsd-x64", version: cliVersion, env: {}, require }))
         .rejects.toThrow("Blitsen has no runtime for freebsd-x64: supported targets are darwin-arm64");
@@ -99,7 +102,12 @@ describe("runtime resolution", () => {
   });
 
   test("records the runtime an export linked against, in the artifact and the report", async () => {
-    const runtime = { target: "linux-x64", version: "1.2.3", package: "@blitsen/linux-x64",
+    // This host's target rather than a fixed one: the record is what the export
+    // links against, and the exporter refuses a runtime built for anything but
+    // the target being built for. Fixed at `linux-x64`, the test asserted the
+    // record on an x64 runner and asserted that refusal on an arm64 one (#133).
+    const target = hostTarget();
+    const runtime = { target, version: "1.2.3", package: `@blitsen/${target}`,
       source: "package" };
     await withStubbedExport(async ({ nativePath, outfile }) => {
       const result = await buildStandalone(
@@ -107,13 +115,13 @@ describe("runtime resolution", () => {
         { ...runtime, path: nativePath });
       expect(result.runtime).toEqual({ ...runtime, path: nativePath });
       // The stamp survives the link, so a shipped executable names its own runtime.
-      expect((await readFile(outfile)).includes(JSON.stringify(runtime))).toBeTrue();
+      expect((await readFile(result.outfile)).includes(JSON.stringify(runtime))).toBeTrue();
     });
     const { lines, output } = capture();
     expect(await main(["build", join(import.meta.dir, "../../../examples/pong"),
       "--outfile", "/tmp/blitsen-never"], output,
     { build: async () => ({ outfile: "/tmp/pong", assets: 3, bytes: 123, runtime }) })).toBe(0);
-    expect(lines.map(([, line]) => line)).toContain("Runtime: @blitsen/linux-x64@1.2.3");
+    expect(lines.map(([, line]) => line)).toContain(`Runtime: @blitsen/${target}@1.2.3`);
   });
 
   test("describes a runtime that came from a path as unversioned", () => {

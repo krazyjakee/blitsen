@@ -6,15 +6,27 @@ import { copyFile, cp, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, wr
   from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, extname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { packageVersion } from "../src/cli.mjs";
+import { hostTarget } from "../src/runtime.mjs";
+
+// What `blitsen build` names an export, given the path asked for: Windows
+// executes by extension, so a `win32-*` target is `.exe` whoever asked for what.
+// Tests that read the artifact back have to follow the same rule rather than
+// assuming the name they passed in (#134).
+export const exportedName = (outfile, target = hostTarget()) =>
+  (target.startsWith("win32-") && extname(outfile) !== ".exe" ? `${outfile}.exe` : outfile);
 
 export const viteBase = join(import.meta.dir, "fixtures/vite-base");
 export const configFixtures = join(import.meta.dir, "fixtures/config");
 export const addonFixtures = join(import.meta.dir, "fixtures/addons");
 export const icon = join(import.meta.dir, "fixtures/icons/app-256.png");
-export const signHook = `sh ${join(import.meta.dir, "fixtures/sign/record-artifact.sh")}`;
+// The hook is run as a command line, so it names the interpreter running these
+// tests rather than `sh`: Windows has none on PATH, and a signing step that
+// fails with exit code 127 is not evidence about signing (#134).
+export const signHook =
+  `${process.execPath} ${join(import.meta.dir, "fixtures/sign/record-artifact.mjs")}`;
 
 // Nothing about the addon path can be proven with a stand-in file: dlopen is what
 // decides. The fixtures are C, so a host compiler is what gates these tests, and

@@ -39,12 +39,17 @@ jobs:
   # evidence of anything. What that choice costs is measured per target in the
   # job summary rather than assumed (open question 11).
   #
-  # The two arm64 labels are overridable, because GitHub's free arm64 runners
-  # are **public repositories only**. This repository is private today, so
-  # `ubuntu-24.04-arm` and `windows-11-arm` will not schedule for it: set the
-  # repository variables LINUX_ARM64_RUNNER and WIN32_ARM64_RUNNER to larger or
-  # self-hosted labels, or make the repository public. Left as the free labels
-  # by default so that becomes true the moment either happens.
+  # Three labels are overridable by repository variable. The two arm64 ones
+  # because GitHub's free arm64 runners are **public repositories only**: this
+  # repository is public, so `ubuntu-24.04-arm` and `windows-11-arm` schedule
+  # for it and the defaults below are the ones that run — set
+  # LINUX_ARM64_RUNNER or WIN32_ARM64_RUNNER if that stops being true.
+  #
+  # `darwin-x64` is the third, and it is overridable because the Intel macOS
+  # image is the one that moves: `macos-13` queued indefinitely here — 40
+  # minutes without a runner across two dispatches, while every other label
+  # picked one up inside a minute — so the default is the current Intel image
+  # and DARWIN_X64_RUNNER is how it moves again without a commit.
   build:
     name: ${{ matrix.target }}
     runs-on: ${{ matrix.runner }}
@@ -62,7 +67,7 @@ jobs:
             library: libblitsen_node.so
             executable: blitsen-runtime
           - target: darwin-x64
-            runner: macos-13
+            runner: ${{ vars.DARWIN_X64_RUNNER || 'macos-15-intel' }}
             library: libblitsen_node.dylib
             executable: blitsen-runtime
           - target: darwin-arm64
@@ -135,6 +140,21 @@ jobs:
         run: |
           if [ -z "$CERTIFICATE" ] || [ -z "$IDENTITY" ]; then
             echo "::warning::APPLE_CERTIFICATE_P12/APPLE_SIGNING_IDENTITY absent — shipping an unsigned ${{ matrix.target }} runtime"
+            # A skip warning is not evidence that the step below works, and the
+            # step below is the one nothing has ever run (#132). What can be
+            # checked without a certificate is that `codesign` accepts artifacts
+            # of this shape at all: ad-hoc, on copies in the runner's temp
+            # directory, so nothing that ships carries a signature this release
+            # did not intend. What stays unexercised is the keychain import,
+            # which needs a real `.p12`.
+            for artifact in blitsen.node "${{ matrix.executable }}"; do
+              probe="$RUNNER_TEMP/unsigned-probe-$artifact"
+              cp "packages/platforms/${{ matrix.target }}/$artifact" "$probe"
+              codesign --force --options runtime --sign - "$probe"
+              codesign --verify --strict --verbose=2 "$probe"
+              rm -f "$probe"
+            done
+            echo "::notice::codesign accepts this target's artifacts ad-hoc; only the keychain import is untested"
             exit 0
           fi
           keychain="$RUNNER_TEMP/build.keychain"
@@ -162,13 +182,36 @@ jobs:
           CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE_PFX }}
           CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
         run: |
+          # Located before the secret check, not after it, so a run without a
+          # certificate still proves the path assumption this step is built on
+          # (#132, #134). Finding the tool is the half that can be tested for
+          # free; what stays untested is `sign` itself.
+          # The SDK's own architecture, not the target's: `signtool.exe` has to
+          # run on this runner, and the arm64 image carries an arm64 build. The
+          # x64 one is kept as a fallback because it runs under emulation there,
+          # and both Program Files roots are searched because the SDK is not
+          # always installed under the x86 one. An empty result used to reach
+          # `"" sign ...` and fail as `command not found`, which names nothing.
+          case "${RUNNER_ARCH:-X64}" in ARM64) architectures="arm64 x64";; *) architectures="x64";; esac
+          signtool=""
+          for architecture in $architectures; do
+            for root in "/c/Program Files (x86)/Windows Kits" "/c/Program Files/Windows Kits"; do
+              [ -d "$root" ] || continue
+              found=$(find "$root" -name signtool.exe -path "*/$architecture/*" | sort | tail -1)
+              if [ -n "$found" ]; then signtool="$found"; break 2; fi
+            done
+          done
+          if [ -z "$signtool" ]; then
+            echo "::error::no signtool.exe for $architectures under Windows Kits on ${{ matrix.runner }}"
+            exit 1
+          fi
+          echo "Found $signtool"
           if [ -z "$CERTIFICATE" ]; then
             echo "::warning::WINDOWS_CERTIFICATE_PFX absent — shipping an unsigned ${{ matrix.target }} runtime"
             exit 0
           fi
           echo "$CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/certificate.pfx"
-          signtool=$(find "/c/Program Files (x86)/Windows Kits/10/bin" -name signtool.exe \
-            -path '*x64*' | sort | tail -1)
+          echo "Signing with $signtool"
           for artifact in blitsen.node "${{ matrix.executable }}"; do
             "$signtool" sign -f "$RUNNER_TEMP/certificate.pfx" -p "$CERTIFICATE_PASSWORD" \
               -fd SHA256 -tr http://timestamp.digicert.com -td SHA256 \
@@ -189,12 +232,20 @@ jobs:
         shell: bash
         run: npm pack --pack-destination "$RUNNER_TEMP" "./packages/platforms/${{ matrix.target }}"
 
+      # The notices travel with the binaries, because the publish job is a fresh
+      # checkout and `NOTICES.txt`/`NOTICES.json` are generated, not committed
+      # (.gitignore). Uploading only the two binaries published six packages
+      # whose manifests declare notices they do not carry — and `blitsen build`
+      # reads `NOTICES.txt` from beside the installed runtime, so every export a
+      # user made would have silently shipped none (#121).
       - uses: actions/upload-artifact@v4
         with:
           name: runtime-${{ matrix.target }}
           path: |
             packages/platforms/${{ matrix.target }}/blitsen.node
             packages/platforms/${{ matrix.target }}/${{ matrix.executable }}
+            packages/platforms/${{ matrix.target }}/NOTICES.txt
+            packages/platforms/${{ matrix.target }}/NOTICES.json
           if-no-files-found: error
           retention-days: 7
 
@@ -247,11 +298,22 @@ jobs:
         run: |
           for target in darwin-arm64 darwin-x64 linux-arm64 linux-x64 win32-arm64 win32-x64; do
             case "$target" in win32-*) executable=blitsen-runtime.exe;; *) executable=blitsen-runtime;; esac
-            for artifact in blitsen.node "$executable"; do
+            # Every file the manifest's `files` array names: the two binaries and
+            # the notices its build job generated for this target. A missing one
+            # is an error here rather than a package that installs and then
+            # fails at whichever half it lacks — or, for the notices, publishes
+            # quietly incomplete, which is worse because nothing then fails.
+            for artifact in blitsen.node "$executable" NOTICES.txt NOTICES.json; do
               source="$RUNNER_TEMP/runtimes/runtime-$target/$artifact"
               test -f "$source" || { echo "::error::missing $artifact for $target"; exit 1; }
               cp "$source" "packages/platforms/$target/$artifact"
             done
+            # A GitHub artifact is a zip and the download does not restore the
+            # executable bit, so the runtime arrives here as 0644 no matter what
+            # mode the build job left it in. npm packs the mode it finds, so
+            # without this every non-Windows user installs a runtime their
+            # machine refuses to launch.
+            case "$target" in win32-*) ;; *) chmod +x "packages/platforms/$target/$executable";; esac
           done
 
       # The version pin is the release's integrity: every platform package must
@@ -260,6 +322,55 @@ jobs:
       # because publishing a mismatched set cannot be taken back.
       - run: bun install --frozen-lockfile
       - run: bun test packages/blitsen
+
+      # What a tarball actually contains, asked of npm rather than of the
+      # directory: `files` is a filter, so a manifest can name a file that is
+      # not there and pack a package that is quietly missing it. This is the
+      # check that catches a staging gap, and it costs one dry pack per package.
+      - name: Check what each package will contain
+        shell: bash
+        run: |
+          contents() {
+            npm pack --dry-run --json "$1" \
+              | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>
+                  console.log(JSON.parse(s)[0].files.map(f=>f.path).join('\n')))"
+          }
+          missing=0
+          for target in darwin-arm64 darwin-x64 linux-arm64 linux-x64 win32-arm64 win32-x64; do
+            case "$target" in win32-*) executable=blitsen-runtime.exe;; *) executable=blitsen-runtime;; esac
+            list=$(contents "./packages/platforms/$target")
+            for required in blitsen.node "$executable" NOTICES.txt NOTICES.json; do
+              printf '%s\n' "$list" | grep -qxF "$required" \
+                || { echo "::error::@blitsen/$target would publish without $required"; missing=1; }
+            done
+          done
+          list=$(contents ./packages/blitsen)
+          for required in bin/blitsen.mjs index.mjs index.d.ts LICENSE README.md; do
+            printf '%s\n' "$list" | grep -qxF "$required" \
+              || { echo "::error::blitsen would publish without $required"; missing=1; }
+          done
+          exit $missing
+
+      # Issue #131: the `@blitsen` scope has to exist and be owned by whoever
+      # this token belongs to, and npm answers that question in a second. Asked
+      # before the first publish rather than discovered at it, because the six
+      # platform packages go out before `blitsen` does — a scope that refuses
+      # them leaves a release stopped halfway with a version burned.
+      - name: Check the registry will take this
+        if: inputs.publish
+        shell: bash
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          who=$(npm whoami 2>&1) || {
+            echo "::error::NPM_TOKEN does not authenticate: $who"
+            exit 1
+          }
+          echo "Publishing as $who"
+          if ! npm access list packages @blitsen >/dev/null 2>&1; then
+            echo "::error::the @blitsen scope is not readable by this token — create the organisation and give the token write access to it (#131)"
+            exit 1
+          fi
 
       - name: Check the version is not already published
         shell: bash

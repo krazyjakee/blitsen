@@ -86,7 +86,11 @@ if (displayed) {
   clipboard.writeText(text);
   assert.equal(clipboard.readText(), text);
   clipboard.writeHtml("<b>bold</b>", "bold");
-  assert.equal(clipboard.readHtml(), "<b>bold</b>");
+  // The markup survives; the document around it is the pasteboard's own. macOS
+  // hands back a full `<html>` wrapping the fragment that was written, and a
+  // paste target reads the same rendered result either way — so this asserts
+  // the fragment arrived, not that the host declined to normalise it.
+  assert.match(clipboard.readHtml(), /<b>bold<\/b>/);
   assert.equal(clipboard.readText(), "bold",
     "HTML carries the plain text a paste that cannot read it receives");
   const pixels = new Uint8Array([255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255]);
@@ -114,7 +118,21 @@ if (displayed) {
 const processor = os.cpu();
 assert.equal(processor.logicalCores, cpus().length, "the bridge counts the cores node:os counts");
 assert.equal(processor.logicalCores, processor.cores.length);
-assert.equal(processor.brand, cpus()[0].model.trim(), "and names the same processor");
+// Neither library invents a name, and they read different sources — so on two
+// of the six targets one of them has nothing to say. node reads
+// /proc/cpuinfo, which carries no `model name` on arm64 Linux, and answers
+// "unknown" where the bridge reads the implementer and part registers and
+// answers "Neoverse-N2"; the bridge reads the registry through sysinfo, which
+// is empty on arm64 Windows, where node answers "Cobalt 100" (#137).
+//
+// What holds on all six is that they never name *different* processors, which
+// is the failure this pair exists to rule out: plausible strings about the
+// wrong machine. Silence from either side is a platform fact, not a mismatch.
+const nodeBrand = cpus()[0].model.trim();
+const bridgeBrand = processor.brand.trim();
+const unnamed = bridgeBrand === "" || nodeBrand === "" || nodeBrand === "unknown";
+assert(unnamed || bridgeBrand === nodeBrand,
+  `the bridge says ${JSON.stringify(bridgeBrand)} and node:os says ${JSON.stringify(nodeBrand)}`);
 // `x86_64` against node's `x64`: the same architecture in two vocabularies, so
 // the check is a translation rather than an equality.
 assert.equal(processor.architecture, { x64: "x86_64", arm64: "aarch64" }[arch()] ?? arch());

@@ -10,17 +10,23 @@
 // so the extraction is exercised against npm's actual output rather than a
 // hand-written archive that might agree with a hand-written reader.
 import { describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { main } from "../src/cli.mjs";
 import {
-  extractFromTarball, fetchRuntime, resolveRuntime, runtimeCacheDir, TARGETS,
+  extractFromTarball, fetchRuntime, hostTarget, resolveRuntime, runtimeCacheDir, TARGETS,
 } from "../src/runtime.mjs";
 import { capture, executableStub, nativeStub, phase2Name } from "./cli-support.mjs";
 
 const VERSION = "9.9.9";
 const npm = Bun.which("npm");
+
+// A published target this host is not. `--target` naming the host is not a
+// cross-target build — it takes the host path, which resolves and *opens* the
+// host runtime — so every test here that means "another platform" has to ask
+// for one rather than name a favourite (#134).
+const elsewhere = () => (hostTarget() === "win32-x64" ? "linux-x64" : "win32-x64");
 
 const withWork = async run => {
   const directory = await mkdtemp(join(tmpdir(), "blitsen-cross-target-"));
@@ -49,7 +55,10 @@ describe("cross-target export", () => {
   test("caches per version and target, so one ABI cannot occupy another's slot", () => {
     const cache = runtimeCacheDir({ BLITSEN_CACHE_DIR: "/tmp/explicit" });
     expect(cache).toBe("/tmp/explicit");
-    expect(runtimeCacheDir({ XDG_CACHE_HOME: "/xdg" }, "linux")).toBe("/xdg/blitsen");
+    // `join` is this host's, and the cache directory is built with it whichever
+    // platform is named — so the expectation is spelled the same way rather
+    // than asserting that this host is not Windows (#134).
+    expect(runtimeCacheDir({ XDG_CACHE_HOME: "/xdg" }, "linux")).toBe(join("/xdg", "blitsen"));
     expect(runtimeCacheDir({ LOCALAPPDATA: "C:\\Users\\a\\AppData\\Local" }, "win32"))
       .toContain("blitsen");
     expect(runtimeCacheDir({}, "darwin")).toContain(join("Library", "Caches", "blitsen"));
@@ -81,7 +90,48 @@ describe("cross-target export", () => {
       expect(Buffer.from(extracted).equals(addon)).toBeTrue();
       expect(extractFromTarball(bytes, "package/absent.node")).toBeNull();
     });
-  });
+    // `npm pack` on a cold Windows runner takes longer than the default 5s, and
+    // a timeout there reads as a broken tarball reader (#134).
+  }, 120_000);
+
+  // Issue #121, on the one path that links a runtime this machine never
+  // installed: an export reads its notices from beside the runtime, so a fetch
+  // that brings back the binary alone produces an artifact that reports itself
+  // uncleared for redistribution — the only export shape that could not legally
+  // be shipped, and the one a `--target` build always takes.
+  test("brings the target's notices back with its binary", async () => {
+    if (!npm) return;
+    await withWork(async work => {
+      const source = join(work, "package");
+      await mkdir(source, { recursive: true });
+      await writeFile(join(source, "package.json"), JSON.stringify({
+        name: "@blitsen/win32-x64", version: VERSION,
+        files: ["blitsen.node", "NOTICES.txt", "NOTICES.json"],
+      }));
+      await writeFile(join(source, "blitsen.node"), nativeStub("win32-x64"));
+      await writeFile(join(source, "NOTICES.txt"), "THIRD-PARTY NOTICES\n\nstub\n");
+      await writeFile(join(source, "NOTICES.json"), '{"packages":[]}');
+      const packed = Bun.spawnSync({
+        cmd: [npm, "pack", source, "--pack-destination", work], cwd: work,
+        stdout: "pipe", stderr: "pipe",
+      });
+      expect(packed.exitCode).toBe(0);
+      const tarball = join(work, (await readdir(work)).find(file => file.endsWith(".tgz")));
+      // Stands in for `npm pack` against a registry: it leaves a tarball where
+      // the downloader looks for one.
+      const run = async (_cmd, cwd) => {
+        await copyFile(tarball, join(cwd, "fetched.tgz"));
+        return { code: 0, stdout: "", stderr: "" };
+      };
+      const resolved = await fetchRuntime({
+        target: "win32-x64", version: VERSION, cacheDir: join(work, "cache"), run,
+      });
+      expect(resolved.source).toBe("fetched");
+      const beside = dirname(resolved.path);
+      expect(await Bun.file(join(beside, "NOTICES.txt")).text()).toContain("THIRD-PARTY NOTICES");
+      expect(await Bun.file(join(beside, "NOTICES.json")).exists()).toBeTrue();
+    });
+  }, 120_000);
 
   test("uses the cached runtime rather than downloading again", async () => {
     await withWork(async work => {
@@ -132,7 +182,7 @@ describe("cross-target export", () => {
       // Default: no fetch. A host build must not start downloading because a
       // checkout happens to be missing its own addon.
       await expect(resolveRuntime({
-        target: "win32-arm64", version: VERSION, env: {}, require: resolver, run, cacheDir: work,
+        target: elsewhere(), version: VERSION, env: {}, require: resolver, run, cacheDir: work,
       })).rejects.toThrow();
       expect(downloads).toBe(0);
     });
@@ -150,14 +200,23 @@ describe("cross-target export", () => {
       const cache = join(work, "cache");
       const previousCache = process.env.BLITSEN_CACHE_DIR;
       const previousNative = process.env.BLITSEN_NATIVE_PATH;
+      const previousRuntime = process.env.BLITSEN_RUNTIME_PATH;
       process.env.BLITSEN_CACHE_DIR = cache;
       // An addon named in the environment outranks everything, which would
-      // quietly make all three builds link this host's runtime.
+      // quietly make all three builds link this host's runtime. So does a Phase
+      // 2 runtime named there — the half that was missed, and the half that
+      // decides what the artifact *is*: with BLITSEN_RUNTIME_PATH set, this
+      // test asked for win32-x64 and got an ELF, and only said so on a runner
+      // whose ELF was the wrong architecture as well (#134).
       delete process.env.BLITSEN_NATIVE_PATH;
+      delete process.env.BLITSEN_RUNTIME_PATH;
 
       const formats = {
         "win32-x64": /PE32\+ executable.*x86-64/,
-        "darwin-arm64": /Mach-O 64-bit arm64/,
+        // `file` words this differently per host — macOS says "64-bit executable
+        // arm64" where Linux says "64-bit arm64" — so the pattern reads the
+        // format and the architecture and not the sentence between them.
+        "darwin-arm64": /Mach-O 64-bit.*arm64/,
         "linux-arm64": /ELF 64-bit.*(aarch64|ARM)/,
       };
       for (const [target, expected] of Object.entries(formats)) {
@@ -177,6 +236,7 @@ describe("cross-target export", () => {
       if (previousCache === undefined) delete process.env.BLITSEN_CACHE_DIR;
       else process.env.BLITSEN_CACHE_DIR = previousCache;
       if (previousNative !== undefined) process.env.BLITSEN_NATIVE_PATH = previousNative;
+      if (previousRuntime !== undefined) process.env.BLITSEN_RUNTIME_PATH = previousRuntime;
     }, 240_000);
   }, 240_000);
 
@@ -185,22 +245,71 @@ describe("cross-target export", () => {
       const application = join(work, "dist");
       await mkdir(application, { recursive: true });
       await writeFile(join(application, "index.html"), "<!doctype html><html><body>x</body></html>");
-      // A host addon reached through BLITSEN_NATIVE_PATH, with a Windows target:
-      // it links, ships, and then fails at dlopen in front of whoever runs it.
+      // A host addon reached through BLITSEN_NATIVE_PATH, with another
+      // platform's target: it links, ships, and then fails at dlopen in front of
+      // whoever runs it. Both halves are derived from this host, because a
+      // `--target` naming *this* host is not a cross-target build at all — it
+      // resolves the host runtime and opens it, and on Windows that failed at
+      // LoadLibrary before reaching the check under test (#134).
       const host = join(work, "host.node");
-      await writeFile(host, nativeStub("linux-x64"));
+      await writeFile(host, nativeStub(hostTarget()));
       const { output, lines } = capture();
       const previous = process.env.BLITSEN_NATIVE_PATH;
       process.env.BLITSEN_NATIVE_PATH = host;
       try {
         const code = await main(
-          ["build", application, "--target", "win32-x64", "--outfile", join(work, "App")], output);
+          ["build", application, "--target", elsewhere(), "--outfile", join(work, "App")], output);
         expect(code).toBe(1);
         expect(lines.map(([, line]) => line).join("\n"))
-          .toContain("the linked runtime is built for linux-x64");
+          .toContain(`the linked runtime is built for ${hostTarget()}`);
       } finally {
         if (previous === undefined) delete process.env.BLITSEN_NATIVE_PATH;
         else process.env.BLITSEN_NATIVE_PATH = previous;
+      }
+    });
+  });
+
+  // The other half of the same refusal, and the one that decides what the
+  // artifact is rather than what it loads: a Phase 2 export *is* the runtime
+  // executable with the application appended. `BLITSEN_RUNTIME_PATH` outranks
+  // the target's own runtime, so without this check a build that named another
+  // platform produced this host's executable under that platform's file name —
+  // a `.exe` that is an ELF, reported as a success (#134).
+  test("refuses a Phase 2 runtime built for a platform other than the target", async () => {
+    await withWork(async work => {
+      const application = join(work, "dist");
+      await mkdir(application, { recursive: true });
+      await writeFile(join(application, "index.html"), "<!doctype html><html><body>x</body></html>");
+      const cache = join(work, "cache");
+      const target = elsewhere();
+      const addon = join(work, "target.node");
+      const runtime = join(work, "host-runtime");
+      await writeFile(addon, nativeStub(target));
+      await writeFile(runtime, executableStub(hostTarget()));
+      const { output, lines } = capture();
+      const previous = {
+        native: process.env.BLITSEN_NATIVE_PATH,
+        runtime: process.env.BLITSEN_RUNTIME_PATH,
+        cache: process.env.BLITSEN_CACHE_DIR,
+      };
+      // The addon matches the target, so the only thing wrong is the executable
+      // underneath it — which is what this is about.
+      process.env.BLITSEN_NATIVE_PATH = addon;
+      process.env.BLITSEN_RUNTIME_PATH = runtime;
+      process.env.BLITSEN_CACHE_DIR = cache;
+      try {
+        const code = await main(
+          ["build", application, "--target", target, "--outfile", join(work, "App")], output);
+        expect(code).toBe(1);
+        const said = lines.map(([, line]) => line).join("\n");
+        expect(said).toContain(`the linked Phase 2 runtime is built for ${hostTarget()}`);
+        expect(said).toContain("BLITSEN_RUNTIME_PATH");
+      } finally {
+        for (const [name, value] of [["BLITSEN_NATIVE_PATH", previous.native],
+          ["BLITSEN_RUNTIME_PATH", previous.runtime], ["BLITSEN_CACHE_DIR", previous.cache]]) {
+          if (value === undefined) delete process.env[name];
+          else process.env[name] = value;
+        }
       }
     });
   });

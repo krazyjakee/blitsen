@@ -1,3 +1,5 @@
+import { spawnSync } from "node:child_process";
+import { setTimeout } from "node:timers/promises";
 import { access, copyFile, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile }
   from "node:fs/promises";
 import { gunzipSync } from "node:zlib";
@@ -10,9 +12,6 @@ import { fileURLToPath } from "node:url";
 // found through ordinary package resolution — never by walking node_modules.
 export const TARGETS = ["darwin-arm64", "darwin-x64", "linux-arm64", "linux-x64",
   "win32-arm64", "win32-x64"];
-// The targets whose runtime is actually built. The rest have a manifest and no
-// binary until CI can build them; see issue #70.
-export const BUILT_TARGETS = ["linux-x64"];
 export const RUNTIME_BINARY = "blitsen.node";
 // What `cargo build -p blitsen-node` leaves behind, for a checkout that built its own.
 const CARGO_LIBRARIES = {
@@ -53,10 +52,12 @@ function missingRuntime(target) {
     return new Error(`Blitsen has no runtime for ${target}: `
       + `supported targets are ${TARGETS.join(", ")}`);
   }
+  // All six targets build now — the release workflow builds each on its own
+  // runner — so what stands between a user and a runtime is publication alone,
+  // and the message says that rather than naming one buildable target (#131).
   return new Error(`no Blitsen runtime for ${target}: ${runtimePackage(target)} is not installed. `
     + "It installs as an optional dependency of blitsen for a matching host, but no platform "
-    + `runtime package is published yet and only ${BUILT_TARGETS.join(", ")} is built today `
-    + "(see issue #70). From a checkout, build one with "
+    + "runtime package is published yet (see issue #131). From a checkout, build one with "
     + "`cargo build --release -p blitsen-node`, or set BLITSEN_NATIVE_PATH to an addon.");
 }
 
@@ -160,11 +161,11 @@ async function downloadRuntimePackage(name, version, run) {
 }
 
 const npmRun = async (cmd, cwd) => {
-  const spawned = Bun.spawnSync({ cmd, cwd, stdout: "pipe", stderr: "pipe" });
+  const spawned = spawnSync(cmd[0], cmd.slice(1), { cwd });
   return {
-    code: spawned.exitCode,
-    stdout: spawned.stdout.toString(),
-    stderr: spawned.stderr.toString(),
+    code: spawned.status ?? 1,
+    stdout: spawned.stdout?.toString() ?? "",
+    stderr: spawned.stderr?.toString() ?? spawned.error?.message ?? "",
   };
 };
 
@@ -200,6 +201,15 @@ export async function fetchRuntime({
   }
   await mkdir(directory, { recursive: true });
   await writeFile(cached, addon);
+  // The notices travel with the binary, because an export reads them from
+  // beside the runtime it links (#121). This is the one path that links a
+  // runtime the machine never installed, and without them a cross-target build
+  // produced an artifact that correctly reported itself uncleared for
+  // redistribution — the only export shape that could not be shipped.
+  for (const notices of ["NOTICES.txt", "NOTICES.json"]) {
+    const bytes = extractFromTarball(tarball, `package/${notices}`);
+    if (bytes !== null) await writeFile(join(directory, notices), bytes);
+  }
   return { path: cached, target, version, package: name, source: "fetched" };
 }
 
@@ -364,6 +374,6 @@ export function openRuntime(resolved) {
     reloadCSS: engine.reloadCSS ? file => engine.reloadCSS(file) : null,
     reloadDirectory: engine.reloadDirectory ? () => engine.reloadDirectory() : null,
     pumpWindow: engine.pumpWindow ? () => engine.pumpWindow() : null,
-    waitForNextFrame: globalThis.Bun ? delay => Bun.sleep(delay) : null,
+    waitForNextFrame: delay => setTimeout(delay),
   };
 }

@@ -4,3 +4,8 @@
 /packages/platforms/*/NOTICES.txt
 /packages/platforms/*/NOTICES.json
 /packages/platforms/*/addon/
+# Staged into the platform package by the release job, and by anyone rehearsing
+# a publish locally. 77 MB of binaries one `git add -A` away from the history.
+/packages/platforms/*/blitsen.node
+/packages/platforms/*/blitsen-runtime
+/packages/platforms/*/blitsen-runtime.exe

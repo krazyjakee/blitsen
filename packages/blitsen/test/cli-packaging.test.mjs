@@ -2,10 +2,10 @@ import { describe, expect, test } from "bun:test";
 import { copyFile, cp, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
-import { buildStandalone, describeNativeBinary } from "../src/export.mjs";
+import { basename, dirname, join } from "node:path";
+import { buildStandalone, describeExecutableBinary, describeNativeBinary } from "../src/export.mjs";
 import { packageBuild, signArgv, signArtifact } from "../src/packaging.mjs";
-import { viteBase, addonFixtures, icon, signHook, compiler, engineAddon, engineBuilt, compileAddon, elfHeader, withStubbedExport, withArtifact } from "./cli-support.mjs";
+import { viteBase, addonFixtures, icon, signHook, compiler, engineAddon, engineBuilt, compileAddon, elfHeader, executableStub, exportedName, nativeStub, withStubbedExport, withArtifact } from "./cli-support.mjs";
 
 describe("directory CLI", () => {
   test("reads the container header a .node must have to load on this host", () => {
@@ -18,15 +18,38 @@ describe("directory CLI", () => {
     expect(describeNativeBinary(Buffer.from("// placeholder addon\n"))).toBeNull();
   });
 
+  test("reads an executable's header as an executable, not as a library", () => {
+    // The Phase 2 runtime is the other question the same headers answer, and the
+    // two must not be interchangeable: an addon where the runtime belongs would
+    // link into an artifact that cannot start.
+    for (const target of ["linux-x64", "darwin-arm64", "win32-x64"]) {
+      const platform = target.slice(0, target.lastIndexOf("-"));
+      const architecture = target.slice(target.lastIndexOf("-") + 1);
+      expect(describeExecutableBinary(executableStub(target)))
+        .toMatchObject({ platform, architectures: [architecture] });
+      // A shared library is not an executable — except on ELF, where a
+      // position-independent executable is the same type as one.
+      expect(describeNativeBinary(executableStub(target))).toBeNull();
+      if (platform !== "linux") expect(describeExecutableBinary(nativeStub(target))).toBeNull();
+    }
+  });
+
   test("refuses a .node it cannot load instead of exporting a launch crash", async () => {
     await withStubbedExport(async ({ directory, nativePath, outfile }) => {
       const build = addons => buildStandalone({
         root: viteBase, width: 800, height: 600, title: "Base", outfile, force: true, addons,
       }, nativePath);
       const foreign = join(directory, "foreign.node");
-      await writeFile(foreign, elfHeader({ machine: 0xb7 }));
+      // Foreign to *this* host: 0xb7 is aarch64 and 0x3e is x86-64, so an arm64
+      // runner gets the x86-64 fixture and the addon is refused there too. It
+      // was fixed at aarch64, which made this a pass on x64 and a silent
+      // no-op-turned-failure on the arm64 targets a release publishes (#133).
+      const [machine, foreignTarget] = process.arch === "arm64"
+        ? [0x3e, "linux-x64"]
+        : [0xb7, "linux-arm64"];
+      await writeFile(foreign, elfHeader({ machine }));
       await expect(build([foreign])).rejects.toThrow("native addon foreign.node is built for "
-        + `linux-arm64 (ELF), but this export runs on ${process.platform}-${process.arch}`);
+        + `${foreignTarget} (ELF), but this export runs on ${process.platform}-${process.arch}`);
       const text = join(directory, "notes.node");
       await writeFile(text, "not a library\n");
       await expect(build([text]))
@@ -140,26 +163,36 @@ describe("directory CLI", () => {
         root: viteBase, width: 800, height: 600, title: "Pong Deluxe", outfile,
         icon, sign: signHook, platform: "linux", progress: event => events.push(event),
       }, nativePath);
-      expect(result.outfile).toBe(outfile);
+      // The artifact, not the path asked for: a Windows target is named `.exe`,
+      // and every name below is derived from the executable rather than assumed.
+      const artifact = exportedName(outfile);
+      const stem = basename(artifact);
+      expect(result.outfile).toBe(artifact);
       // Steps ③–⑤ announce themselves as they finish, with what they produced.
       expect(events.map(event => event.step)).toEqual(["collect", "link", "package"]);
       expect(events[0].detail).toBe("9 embedded assets");
       expect(events[0].notes[0]).toBe("dropped 2 files unreachable from index.html "
         + "(--include <glob> keeps them): assets/index-BASE.js.map, assets/orphan.txt");
-      expect(events[1].detail).toBe(outfile);
+      expect(events[1].detail).toBe(artifact);
       expect(events[2].detail).toBe(`linux: ${result.packaging.artifacts.join(", ")}`);
-      expect(events[2].notes).toEqual([`signed ${outfile} with: ${signHook}`]);
+      expect(events[2].notes).toEqual([`signed ${artifact} with: ${signHook}`]);
       expect(result.packaging.artifacts)
-        .toEqual([join(directory, "App.desktop"), join(directory, "App.png")]);
-      const entry = await readFile(join(directory, "App.desktop"), "utf8");
+        .toEqual([join(directory, `${stem}.desktop`), join(directory, `${stem}.png`)]);
+      const entry = await readFile(join(directory, `${stem}.desktop`), "utf8");
       expect(entry).toContain("[Desktop Entry]\nType=Application\n");
       expect(entry).toContain("Name=Pong Deluxe\n");
-      expect(entry).toContain(`Exec=${outfile}\n`);
-      expect(entry).toContain(`Icon=${join(directory, "App.png")}\n`);
+      // Read back through the desktop-entry quoting rules rather than compared
+      // to a raw path: backslashes are reserved, so a Windows path arrives
+      // quoted and escaped. The rules themselves are the next test's subject.
+      const exec = /^Exec=(.*)$/m.exec(entry)[1];
+      expect(exec.startsWith('"') ? exec.slice(1, -1).replace(/\\(.)/g, "$1") : exec)
+        .toBe(artifact);
+      expect(entry).toContain(`Icon=${join(directory, `${stem}.png`)}\n`);
       // Linux takes the PNG as it is; only Windows and macOS need a container.
-      expect(Buffer.compare(await readFile(join(directory, "App.png")), await readFile(icon))).toBe(0);
-      expect(result.signed).toEqual({ command: signHook, artifact: outfile });
-      expect(await readFile(`${outfile}.signed`, "utf8")).toBe(`${outfile}\n`);
+      expect(Buffer.compare(await readFile(join(directory, `${stem}.png`)), await readFile(icon)))
+        .toBe(0);
+      expect(result.signed).toEqual({ command: signHook, artifact });
+      expect(await readFile(`${artifact}.signed`, "utf8")).toBe(`${artifact}\n`);
     });
   });
 
@@ -167,7 +200,9 @@ describe("directory CLI", () => {
     await withArtifact(async ({ directory, executable }) => {
       await packageBuild({ platform: "linux", executable, title: "Pong & Co" });
       const entry = await readFile(join(directory, "Pong Deluxe.desktop"), "utf8");
-      expect(entry).toContain(`Exec="${executable}"\n`);
+      // `\` is an escape character in a desktop entry, so a Windows path is
+      // written doubled. The expectation reads the format rather than the host.
+      expect(entry).toContain(`Exec="${executable.replaceAll("\\", "\\\\")}"\n`);
       expect(entry).toContain("Name=Pong & Co\n");
       expect(entry).not.toContain("Icon=");
     }, "Pong Deluxe");
@@ -195,7 +230,11 @@ describe("directory CLI", () => {
       // Side-loaded assets resolve from the executable's directory, so they move
       // into the bundle with it.
       expect(await readdir(result.assetDirectory)).toEqual(["index.html"]);
-      expect((await stat(result.executable)).mode & 0o111).toBeGreaterThan(0);
+      // A mode is POSIX: Windows reports none, and the bundle is being built
+      // for macOS from whatever host happens to run the test.
+      if (process.platform !== "win32") {
+        expect((await stat(result.executable)).mode & 0o111).toBeGreaterThan(0);
+      }
       expect(await readFile(join(bundle, "Contents/PkgInfo"), "utf8")).toBe("APPL????");
 
       const plist = await readFile(join(bundle, "Contents/Info.plist"), "utf8");
@@ -270,19 +309,20 @@ describe("directory CLI", () => {
   });
 
   test("hands the signing hook the artifact and fails the build when it rejects it", async () => {
-    expect(signArgv("darwin", "codesign -s ID", "/out/My App.app"))
-      .toEqual(["sh", "-c", 'codesign -s ID "$@"', "sh", "/out/My App.app"]);
-    expect(signArgv("win32", "signtool sign", "C:\\out\\App.exe"))
-      .toEqual(["cmd", "/c", 'signtool sign "C:\\out\\App.exe"']);
+    // The interpreter is this machine's: the hook runs here, whatever platform
+    // the artifact is for.
+    expect(signArgv("codesign -s ID", "/out/My App.app")).toEqual(process.platform === "win32"
+      ? ["cmd", "/c", 'codesign -s ID "/out/My App.app"']
+      : ["sh", "-c", 'codesign -s ID "$@"', "sh", "/out/My App.app"]);
     await withArtifact(async ({ executable }) => {
       // The hook is a command, not a shell fragment we interpolate into: the
       // artifact arrives as one positional argument however it is spelled.
       const bundle = `${executable} Deluxe.app`;
       await writeFile(bundle, "");
-      expect(await signArtifact({ platform: "linux", command: signHook, artifact: bundle }))
+      expect(await signArtifact({ command: signHook, artifact: bundle }))
         .toEqual({ command: signHook, artifact: bundle });
       expect(await readFile(`${bundle}.signed`, "utf8")).toBe(`${bundle}\n`);
-      await expect(signArtifact({ platform: "linux", command: "false", artifact: executable }))
+      await expect(signArtifact({ command: "false", artifact: executable }))
         .rejects.toThrow("signing command failed with exit code 1: false");
     });
   });

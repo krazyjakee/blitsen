@@ -159,13 +159,31 @@ pub fn cpu() -> Cpu {
             vendor: first
                 .map(|cpu| cpu.vendor_id().to_owned())
                 .unwrap_or_default(),
-            architecture: System::cpu_arch(),
+            architecture: normalized_architecture(System::cpu_arch()),
             physical_cores: System::physical_core_count(),
             logical_cores: cores.len(),
             usage: system.global_cpu_usage(),
             cores,
         }
     })
+}
+
+/// Normalises an instruction set name to the one vocabulary `Cpu::architecture`
+/// documents.
+///
+/// `sysinfo` answers with whatever the platform calls the machine, and the
+/// platforms disagree about the same silicon: macOS says `arm64` where Linux
+/// says `aarch64`, and Windows says `AMD64` where both say `x86_64`. An
+/// application that branches on this should not have to know which host it is
+/// reading, so the spelling is chosen here — Rust's own `cfg(target_arch)`
+/// names, because they are the ones the rest of the codebase is written in.
+fn normalized_architecture(arch: String) -> String {
+    match arch.to_ascii_lowercase().as_str() {
+        "arm64" => "aarch64".to_owned(),
+        "amd64" | "x64" => "x86_64".to_owned(),
+        "x86" | "i386" | "i686" => "x86".to_owned(),
+        _ => arch,
+    }
 }
 
 /// Reads memory and swap.
@@ -233,6 +251,29 @@ mod tests {
     // than about a fixture, so each one is chosen to hold on any machine that
     // can run a test at all: something is mounted, memory is installed, and at
     // least one core is executing this.
+    // The vocabulary, not the machine: `sysinfo` reports the platform's own
+    // spelling and the platforms disagree about identical silicon, so this is
+    // the check that an application reading `architecture` gets one answer per
+    // instruction set rather than one per operating system.
+    #[test]
+    fn the_architecture_is_reported_in_one_vocabulary() {
+        for (reported, expected) in [
+            ("arm64", "aarch64"),
+            ("aarch64", "aarch64"),
+            ("AMD64", "x86_64"),
+            ("x86_64", "x86_64"),
+            ("i686", "x86"),
+        ] {
+            assert_eq!(normalized_architecture(reported.to_owned()), expected);
+        }
+        // An unfamiliar architecture is passed through rather than blanked: a
+        // name this does not recognise is still better than an empty string.
+        assert_eq!(normalized_architecture("riscv64".to_owned()), "riscv64");
+        // And what this host actually answers agrees with what it was compiled
+        // for, which is the claim the mapping exists to make true.
+        assert_eq!(cpu().architecture, std::env::consts::ARCH);
+    }
+
     #[test]
     fn the_processor_reports_at_least_one_core() {
         let cpu = cpu();

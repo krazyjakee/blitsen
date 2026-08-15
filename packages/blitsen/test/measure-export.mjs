@@ -88,47 +88,55 @@ function steadyResident(resident) {
   return Math.round(median(tail));
 }
 
+// Level 9 in process rather than a `gzip -9` subprocess: `gzip` is not on PATH
+// on a Windows runner, and the old code returned null there, so the download
+// figure silently went missing on the platform it was added to measure (#123).
+// Bun's deflate is ~0.3% tighter than GNU gzip at the same level, so this is a
+// step in the recorded series and not a comparison against docs/PRODUCT.md §9.
 async function compressedBytes(outfile) {
-  if (!Bun.which("gzip")) return null;
-  // gzip -9 for comparability with the sizes recorded in docs/PRODUCT.md §9.
-  const result = Bun.spawnSync({
-    cmd: ["gzip", "-9", "-c", outfile],
-    stdout: "pipe",
-    stderr: "pipe",
-    maxBuffer: 1024 * 1024 * 1024,
-  });
-  if (result.exitCode !== 0) throw new Error(`gzip exited ${result.exitCode}`);
-  return result.stdout.length;
+  return Bun.gzipSync(new Uint8Array(await Bun.file(outfile).arrayBuffer()), { level: 9 }).length;
 }
 
 // Windowed measurement is opt-in rather than display-detected: it is the only
 // real (non-proxy) reading of P2 and P3, but it needs a live desktop session,
 // so CI and unattended runs must never depend on it.
 export async function measureExport({ runs = 5, windowed = false } = {}) {
-  if (process.platform !== "linux") throw new Error("resident memory sampling requires /proc");
   if (windowed && !(process.env.DISPLAY || process.env.WAYLAND_DISPLAY)) {
     throw new Error("--windowed needs DISPLAY or WAYLAND_DISPLAY");
+  }
+  // Size and startup are portable; resident memory is read out of /proc, which
+  // is Linux alone. P1 is one size budget across six platforms (#123), so the
+  // absence of a memory reading must not cost the size reading its target —
+  // this reports `memory: null` off Linux rather than refusing to measure.
+  const canSampleResident = process.platform === "linux";
+  if (windowed && !canSampleResident) {
+    throw new Error("--windowed reads resident memory, which needs /proc");
   }
 
   const directory = await mkdtemp(join(tmpdir(), "blitsen-measure-"));
   try {
     const addon = await buildAddon({ purpose: "measurement target", release: true, into: directory });
-    const outfile = join(directory, "pong");
     const root = join(repository, "examples/pong");
     const result = await buildStandalone({
-      root, width: 720, height: 520, title: "Blitsen Pong", outfile,
+      root, width: 720, height: 520, title: "Blitsen Pong", outfile: join(directory, "pong"),
     }, addon);
+    // What was written, not what was asked for: `bun build --compile` appends
+    // `.exe` on Windows, so the requested name is a path to nothing there.
+    // Spawning the requested one failed with ENOENT on Windows alone.
+    const outfile = result.outfile;
 
     // A do-nothing compiled entrypoint isolates what the Bun runtime itself
     // costs, in bytes and in process start, from what Blitsen adds to it.
     const floorSource = join(directory, "floor.mjs");
-    const floorExecutable = join(directory, "floor");
+    const requestedFloor = join(directory, "floor");
     await writeFile(floorSource, "process.exitCode = 0;\n");
     const floorBuild = await Bun.build({
       entrypoints: [floorSource],
-      compile: { outfile: floorExecutable },
+      compile: { outfile: requestedFloor },
     });
     if (!floorBuild.success) throw new Error("failed to compile the Bun runtime floor");
+    const floorExecutable = await stat(requestedFloor)
+      .then(() => requestedFloor, () => `${requestedFloor}.exe`);
 
     let applicationBytes = 0;
     for (const asset of result.manifest) {
@@ -149,10 +157,12 @@ export async function measureExport({ runs = 5, windowed = false } = {}) {
 
     // A longer delay keeps the process alive past the raster so the sampler is
     // guaranteed a read; peak comes from VmHWM, so the delay does not inflate it.
-    const headlessMemory = await sampleResident([outfile], {
-      cwd: directory,
-      env: { ...checkEnvironment, BLITSEN_STANDALONE_CHECK_DELAY: "150" },
-    });
+    const headlessMemory = canSampleResident
+      ? await sampleResident([outfile], {
+        cwd: directory,
+        env: { ...checkEnvironment, BLITSEN_STANDALONE_CHECK_DELAY: "150" },
+      })
+      : null;
 
     let windowedFirstFrameMs = null;
     let windowedMemory = null;
@@ -202,7 +212,9 @@ export async function measureExport({ runs = 5, windowed = false } = {}) {
         headlessFirstPaintMs: headless,
         windowedFirstFrameMs,
       },
-      memory: {
+      // Null, not zero: this platform has no /proc, so idle RAM was not read
+      // here. A zero would average into the series as a measurement.
+      memory: headlessMemory && {
         headlessPeakBytes: headlessMemory.peak,
         windowedPeakBytes: windowedMemory?.peak ?? null,
         windowedSteadyBytes: windowedMemory ? steadyResident(windowedMemory.resident) : null,

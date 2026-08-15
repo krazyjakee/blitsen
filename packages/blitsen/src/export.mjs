@@ -1,4 +1,7 @@
-import { access, copyFile, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { spawnSync } from "node:child_process";
+import { createReadStream } from "node:fs";
+import { access, copyFile, mkdir, open, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, join, posix, relative, resolve, sep } from "node:path";
 import { gzipSync } from "node:zlib";
 import { linkBundle } from "./bundle.mjs";
@@ -202,14 +205,23 @@ const PE_MACHINES = { 0x014c: "ia32", 0x01c4: "arm", 0x8664: "x64", 0xaa64: "arm
 const architecture = (table, code) => table[code] ?? `0x${code.toString(16)}`;
 
 // Only the container header is read, and only far enough to name the machine a
-// shared library was built for. Returns null when the bytes are not a dynamic
-// object at all, which covers both a text file renamed .node and an executable.
-export function describeNativeBinary(bytes) {
+// binary was built for. `kind` decides which containers count: a `.node` must be
+// a dynamic object, and the Phase 2 runtime must be an executable — so a text
+// file renamed `.node`, and an addon handed to the linker where the runtime
+// belongs, are both rejected rather than described.
+//
+// ELF is the one format that cannot tell the two apart: a position-independent
+// executable is `ET_DYN` exactly as a shared library is, and every runtime this
+// project builds is one. So an executable accepts both types there, and Mach-O
+// and PE, which do name the difference, are held to it.
+function describeContainer(bytes, kind) {
   if (bytes.byteLength < 64) return null;
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   if (view.getUint32(0, false) === 0x7f454c46) {
     const little = bytes[5] === 1;
-    if (view.getUint16(16, little) !== 3) return null; // ET_DYN
+    const type = view.getUint16(16, little);
+    const acceptable = kind === "library" ? type === 3 : type === 2 || type === 3; // ET_EXEC, ET_DYN
+    if (!acceptable) return null;
     return {
       format: "ELF",
       platform: "linux",
@@ -219,7 +231,10 @@ export function describeNativeBinary(bytes) {
   const magic = view.getUint32(0, true);
   if (magic === 0xfeedfacf || magic === 0xfeedface) {
     const filetype = view.getUint32(12, true);
-    if (filetype !== 6 && filetype !== 8) return null; // MH_DYLIB, MH_BUNDLE
+    const acceptable = kind === "library"
+      ? filetype === 6 || filetype === 8 // MH_DYLIB, MH_BUNDLE
+      : filetype === 2; // MH_EXECUTE
+    if (!acceptable) return null;
     return {
       format: "Mach-O",
       platform: "darwin",
@@ -242,7 +257,8 @@ export function describeNativeBinary(bytes) {
     const header = view.getUint32(0x3c, true);
     if (bytes.byteLength < header + 24) return null;
     if (view.getUint32(header, true) !== 0x00004550) return null; // "PE\0\0"
-    if ((view.getUint16(header + 22, true) & 0x2000) === 0) return null; // IMAGE_FILE_DLL
+    const library = (view.getUint16(header + 22, true) & 0x2000) !== 0; // IMAGE_FILE_DLL
+    if (library !== (kind === "library")) return null;
     return {
       format: "PE",
       platform: "win32",
@@ -250,6 +266,30 @@ export function describeNativeBinary(bytes) {
     };
   }
   return null;
+}
+
+/** Names the platform a `.node` shared library was built for, or `null`. */
+export function describeNativeBinary(bytes) {
+  return describeContainer(bytes, "library");
+}
+
+/** Names the platform an executable was built for, or `null`. */
+export function describeExecutableBinary(bytes) {
+  return describeContainer(bytes, "executable");
+}
+
+// Enough of a file to read its container header, rather than the whole of it:
+// the Phase 2 runtime is tens of megabytes and every byte past the PE header is
+// noise for this question.
+async function readContainerHeader(path) {
+  const handle = await open(path, "r");
+  try {
+    const buffer = Buffer.alloc(8192);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.byteLength, 0);
+    return buffer.subarray(0, bytesRead);
+  } finally {
+    await handle.close();
+  }
 }
 
 // Every other asset in an export is portable bytes; a .node is a host shared
@@ -312,9 +352,9 @@ async function planAddons(root, addons) {
 }
 
 async function hashFile(absolute) {
-  const hasher = new Bun.CryptoHasher("sha256");
-  for await (const chunk of Bun.file(absolute).stream()) hasher.update(chunk);
-  return hasher.digest("hex");
+  const hash = createHash("sha256");
+  for await (const chunk of createReadStream(absolute)) hash.update(chunk);
+  return hash.digest("hex");
 }
 
 // The runtime is either the descriptor the resolver produced (src/runtime.mjs) or a
@@ -500,10 +540,8 @@ async function phase2LoadsModules(target) {
   const runtime = await resolvePhase2Runtime({ target }).catch(() => null);
   if (runtime === null) return true;
   try {
-    const report = Bun.spawnSync({
-      cmd: [runtime.path, "--engine-report"], stdout: "pipe", stderr: "pipe",
-    });
-    if (report.exitCode !== 0) return true;
+    const report = spawnSync(runtime.path, ["--engine-report"]);
+    if (report.status !== 0) return true;
     const parsed = JSON.parse(report.stdout.toString());
     // A statically linked engine is inside the executable and has no library to
     // be missing; only a runtime that loads one at run time can come back with
@@ -592,7 +630,16 @@ export async function buildStandalone(
       + `${runtimeBinary.platform}-${runtimeBinary.architectures.join("/")} `
       + `(${runtimeBinary.format}), but this build targets ${buildTarget}: ${nativePath}`);
   }
-  const destination = resolve(outfile ?? defaultOutfile(root));
+  // Windows executes by extension, so a Windows export is named `.exe` whoever
+  // asked for what. `bun build --compile` already appends it on the Phase 1
+  // path; the Phase 2 path links the bundle to exactly the name it is given, so
+  // an unsuffixed one produced a `win32` artifact that Windows will not run and
+  // that nothing could spawn. Decided from the build target rather than the host,
+  // because `--target win32-x64` from Linux owes the same name.
+  const requestedDestination = resolve(outfile ?? defaultOutfile(root));
+  const destination = buildTarget.startsWith("win32-") && extname(requestedDestination) !== ".exe"
+    ? `${requestedDestination}.exe`
+    : requestedDestination;
   const assetDirectory = `${basename(destination)}.assets`;
   const sideLoaded = join(dirname(destination), assetDirectory);
   if (!force) {
@@ -700,6 +747,28 @@ export async function buildStandalone(
       ? await resolvePhase2Runtime({ target: buildTarget, fetch: buildTarget !== hostTarget() })
       : null;
     if (host === "blitsen") {
+      // The same check the addon gets above, on the artifact the export is
+      // literally made of: a Phase 2 export is this executable with the
+      // application appended, so a runtime for the wrong platform is not a
+      // dlopen failure later — it is the whole product, built for the wrong
+      // machine and named as though it were not. `BLITSEN_RUNTIME_PATH` reaches
+      // here ahead of everything, including under `--target`, which is exactly
+      // how a release job that sets it for its own tests silently produced an
+      // ELF called `App.exe` (#134).
+      const linked = describeExecutableBinary(await readContainerHeader(phase2Runtime.path));
+      if (!linked) {
+        throw new Error("the linked Phase 2 runtime is not an executable for any supported "
+          + `platform: ${phase2Runtime.path}`);
+      }
+      if (linked.platform !== targetPlatform
+        || !linked.architectures.includes(targetArchitecture)) {
+        throw new Error("the linked Phase 2 runtime is built for "
+          + `${linked.platform}-${linked.architectures.join("/")} (${linked.format}), `
+          + `but this build targets ${buildTarget}: ${phase2Runtime.path}`
+          + (phase2Runtime.source === "environment"
+            ? " — BLITSEN_RUNTIME_PATH names it, and it outranks the target's own runtime"
+            : ""));
+      }
       // Phase 2 step ④: the application is appended to Blitsen's own runtime
       // as a binary section (TECH.md §10, issue #88). No launcher and no Bun —
       // the executable reads its own bundle at startup.
@@ -728,6 +797,16 @@ export async function buildStandalone(
       await writeFile(launcher, launcherSource(manifest, {
         width, height, title, layout: assets, assetDirectory, runtime: linkedRuntime,
       }));
+      // The Bun host is the one thing here that only Bun can build: `Bun.build`
+      // is what links the launcher into that target's Bun. The CLI otherwise
+      // runs anywhere Node does, and an export that needs this path says which
+      // half is missing rather than dying on an undefined global (#131).
+      if (globalThis.Bun === undefined) {
+        throw new Error("this export links the Bun host, which only Bun can build: "
+          + "run the same command with `bun` on PATH, or remove the .node addon that "
+          + "asked for it — an application without one links Blitsen's own runtime, "
+          + "which needs nothing but this package");
+      }
       const result = await Bun.build({
         entrypoints: [launcher],
         // Bun downloads the target's own runtime to compile against, which is what
@@ -768,7 +847,7 @@ export async function buildStandalone(
     // The signing hook runs last, over the bundle on macOS and the executable
     // elsewhere, so it sees exactly what ships.
     const signed = sign
-      ? await signArtifact({ platform: buildPlatform, command: sign, artifact: packaged?.bundle ?? executable })
+      ? await signArtifact({ command: sign, artifact: packaged?.bundle ?? executable })
       : null;
     progress({
       step: "package",

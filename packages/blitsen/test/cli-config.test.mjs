@@ -6,6 +6,12 @@ import { main } from "../src/cli.mjs";
 import { CONFIG_SCHEMA, defineConfig, loadConfig, runBuildCommand, validateConfig } from "../src/config.mjs";
 import { configFixtures, capture } from "./cli-support.mjs";
 
+// macOS's temporary directory is a symlink — `/var` is `/private/var` — and
+// every path the CLI reports has been through `process.cwd()` or `realpath`.
+// A test that keeps `mkdtemp`'s spelling compares two names for one directory,
+// which is a pass on Linux and Windows and a failure on macOS (#134).
+const temporaryDirectory = async prefix => realpath(await mkdtemp(join(tmpdir(), prefix)));
+
 describe("directory CLI", () => {
   test("publishes the schema it validates against", async () => {
     const published = join(import.meta.dir, "../src/config.schema.json");
@@ -65,7 +71,7 @@ describe("directory CLI", () => {
   });
 
   test("runs the configured build and ingests the directory it wrote", async () => {
-    const workspace = await mkdtemp(join(tmpdir(), "blitsen-wrapped-"));
+    const workspace = await temporaryDirectory("blitsen-wrapped-");
     const project = join(workspace, "app");
     await cp(join(configFixtures, "wrapped"), project, { recursive: true });
     const cwd = process.cwd();
@@ -94,10 +100,14 @@ describe("directory CLI", () => {
       process.chdir(cwd);
       await rm(workspace, { recursive: true, force: true });
     }
-  });
+    // These two spawn a real `node` against a copied fixture, and the default
+    // 5s was not enough on the arm64 Windows runner: the test timed out, the
+    // `finally` above deleted the workspace, and the process that was still
+    // starting reported the build script as missing (#133).
+  }, 60_000);
 
   test("runs the configured build and opens the directory it wrote", async () => {
-    const workspace = await mkdtemp(join(tmpdir(), "blitsen-wrapped-run-"));
+    const workspace = await temporaryDirectory("blitsen-wrapped-run-");
     const project = join(workspace, "app");
     await cp(join(configFixtures, "wrapped"), project, { recursive: true });
     const cwd = process.cwd();
@@ -121,10 +131,10 @@ describe("directory CLI", () => {
       process.chdir(cwd);
       await rm(workspace, { recursive: true, force: true });
     }
-  });
+  }, 60_000);
 
   test("still opens the directory you are standing in when it has no config", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "blitsen-unconfigured-run-"));
+    const directory = await temporaryDirectory("blitsen-unconfigured-run-");
     const cwd = process.cwd();
     try {
       process.chdir(directory);
@@ -145,7 +155,7 @@ describe("directory CLI", () => {
   });
 
   test("asks for a directory or a config when there is nothing here to build", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "blitsen-unconfigured-"));
+    const directory = await temporaryDirectory("blitsen-unconfigured-");
     const cwd = process.cwd();
     try {
       process.chdir(directory);

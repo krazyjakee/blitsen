@@ -36,7 +36,7 @@ Status values: **open** (reproduced, unfiled), **filed** (upstream issue exists)
 | G12 | Blitz has no `[hidden]` user-agent rule | withdrawn | `docs/COMPATIBILITY.md`, "Rendered text, box reads and scrolling" | It has the rule. The probe that said otherwise put an author `display: block` on the element, which correctly wins the cascade |
 | G13 | Link-ness never reaches `ElementState`, so the style-sharing cache hands one anchor's style to another | open | `crates/blitsen-blitz/src/tests/ua.rs::only_an_anchor_with_an_href_is_painted_as_a_link` | stylo's cascade layer: `:any-link` and `:link` are matched ad hoc in `blitz-dom`'s `stylo.rs`, so two sibling anchors of opposite kinds are sharing candidates. Same shape as G10. See below |
 
-| G14 | A replaced element panics in layout the moment it carries a custom widget | filed | `crates/blitsen-blitz/src/tests/canvas.rs::canvas_survives_carrying_a_custom_widget` | [blitz#706](https://github.com/DioxusLabs/blitz/issues/706); patched in a local checkout rather than worked around, because there is nothing to work around it with. See below |
+| G14 | A replaced element panics in layout the moment it carries a custom widget | filed | `crates/blitsen-blitz/src/tests/canvas.rs::canvas_survives_carrying_a_custom_widget` | [blitz#706](https://github.com/DioxusLabs/blitz/issues/706); patched in a fork rather than worked around, because there is nothing to work around it with. See below |
 | G15 | `pointer-events` accepts only `auto` and `none`, so `all` is dropped and the element inherits | open | `crates/blitsen-blitz/src/tests/stylesheets.rs::an_element_that_declares_it_takes_hits_inside_one_that_does_not_is_hit` | stylo's cascade layer: the other nine values are `#[cfg(feature = "gecko")]`, which needs Gecko's bindings and cannot be enabled by an embedder. Worked around in `pointer_events.rs`; see below |
 
 Broad Tailwind/renderer work has an upstream collection in
@@ -369,10 +369,12 @@ with an intrinsic aspect ratio that only `<canvas>` gets. Measured through Blits
 50×25.
 
 Filed as [blitz#706](https://github.com/DioxusLabs/blitz/issues/706). Until it is resolved upstream,
-the workspace `[patch]` points `blitz*` at a local checkout at the pinned revision carrying one
-change: the existing sizing body factored into a `default_object_size` helper, called from a new
-`CustomWidget` arm. **A fresh clone of Blitsen does not build without that checkout**, which is the
-cost of the decision and the reason it is recorded here as well as in `Cargo.toml`.
+the workspace `[patch]` points `blitz*` at
+[a fork](https://github.com/krazyjakee/blitz/tree/custom-widget-replaced-layout) at the pinned
+revision carrying one change: the existing sizing body factored into a `default_object_size` helper,
+called from a new `CustomWidget` arm. The fork is a git source rather than a path, so a fresh clone,
+CI and a release all build without anything alongside them; retire the `[patch]` when the fix lands
+upstream and the pin moves past it.
 
 ## G15 — `pointer-events: all` is not an invalid value, but the cascade drops it as one
 
