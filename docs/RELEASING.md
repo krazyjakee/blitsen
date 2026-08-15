@@ -171,17 +171,19 @@ evidence those steps have.
 - [x] Confirm `blitsen` and all six `@blitsen/*` manifests carry the same version — asserted by
       the package tests, and again by the publish job before it publishes anything
 - [x] Rehearse the install against a local registry — see below; it found two release blockers
-- [ ] **Create the `blitsen` npm organisation and confirm who owns it** (\#131)
+- [x] Create the `blitsen` npm organisation and confirm who owns it (\#131) — created on the free
+      plan, one member: `krazyjakee`, owner, the same account that owns the package `blitsen`
+- [x] Merge to `main` — npm provenance records the ref it published from (\#130, 2026-08-15)
 - [ ] **Add `NPM_TOKEN`** — granular, write on the package `blitsen` and on the `@blitsen`
       scope (\#132). A classic token fails at the sixth package if 2FA-for-publishing is on,
       with a version already burned.
-- [ ] Merge to `main` — npm provenance records the ref it published from
-- [ ] Publish, then install `blitsen` from the registry on a machine that has never built it
+- [ ] Dispatch Release from `main` with `publish: true`
+- [ ] Install `blitsen` from the registry on a machine that has never built it
 
-Only the two bold ones need an account rather than a commit, and nothing else can proceed without
-them: `npm` has no command that creates an organisation, so it is a web action on npmjs.com, and
-the token cannot exist before the scope does. The publish job asks the registry about both before
-it publishes anything, so a wrong token fails the run rather than stopping it half way.
+The bold one is the only step left that needs an account rather than a commit, and nothing else can
+proceed without it. The publish job asks the registry two questions — `npm whoami` and
+`npm access list packages @blitsen` — before it publishes anything, so a wrong token fails the run
+rather than stopping it half way.
 
 ### Rehearsing the install without the registry
 

@@ -196,10 +196,18 @@ export interface CpuCore {
 
 /** The processor: a spec sheet, plus a sample taken when `cpu()` was called. */
 export interface Cpu {
-  /** Marketing name, such as `"AMD Ryzen 9 5900X 12-Core Processor"`. */
-  readonly brand: string;
-  /** Vendor string as the silicon reports it: `"GenuineIntel"`, `"AuthenticAMD"`. */
-  readonly vendor: string;
+  /**
+   * Marketing name, such as `"AMD Ryzen 9 5900X 12-Core Processor"`, or `null`
+   * where the platform does not carry one. Reported on Linux, macOS and x64
+   * Windows; arm64 Windows has no processor name in the registry to read.
+   */
+  readonly brand: string | null;
+  /**
+   * Vendor string as the silicon reports it: `"GenuineIntel"`,
+   * `"AuthenticAMD"`, or `null` where the platform does not report one — Apple
+   * silicon and arm64 Windows commonly do not.
+   */
+  readonly vendor: string | null;
   /** Instruction set architecture: `"x86_64"`, `"aarch64"`. */
   readonly architecture: string;
   /** Physical cores, or `null` where the platform will not say — which is not 1. */

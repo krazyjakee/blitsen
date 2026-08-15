@@ -47,10 +47,14 @@ pub struct Core {
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Cpu {
-    /// Marketing name: "AMD Ryzen 9 5950X 16-Core Processor".
-    pub brand: String,
-    /// Vendor string as the silicon reports it: "GenuineIntel", "AuthenticAMD".
-    pub vendor: String,
+    /// Marketing name: "AMD Ryzen 9 5950X 16-Core Processor", or `None` where
+    /// the platform does not carry one — arm64 Windows has no
+    /// `ProcessorNameString` in the registry, and reads as nothing rather than
+    /// as an empty name (#137).
+    pub brand: Option<String>,
+    /// Vendor string as the silicon reports it: "GenuineIntel", "AuthenticAMD",
+    /// or `None` where the platform does not report one.
+    pub vendor: Option<String>,
     /// Instruction set architecture: "x86_64", "aarch64".
     pub architecture: String,
     /// Physical cores, or `None` where the platform will not say — which is not
@@ -155,10 +159,8 @@ pub fn cpu() -> Cpu {
         // list would otherwise have to invent a brand.
         let first = system.cpus().first();
         Cpu {
-            brand: first.map(|cpu| cpu.brand().to_owned()).unwrap_or_default(),
-            vendor: first
-                .map(|cpu| cpu.vendor_id().to_owned())
-                .unwrap_or_default(),
+            brand: first.and_then(|cpu| reported(cpu.brand())),
+            vendor: first.and_then(|cpu| reported(cpu.vendor_id())),
             architecture: normalized_architecture(System::cpu_arch()),
             physical_cores: System::physical_core_count(),
             logical_cores: cores.len(),
@@ -166,6 +168,18 @@ pub fn cpu() -> Cpu {
             cores,
         }
     })
+}
+
+/// A string the platform actually answered with, or `None`.
+///
+/// `sysinfo` fills a field it could not read with an empty string, which is a
+/// third state this module does not have: everything else it cannot answer is
+/// an `Option` that reaches JavaScript as `null`. An application showing the
+/// processor name needs to tell "this machine does not report one" from "the
+/// bridge has not read it yet", and `""` says neither (#137).
+fn reported(value: &str) -> Option<String> {
+    let value = value.trim();
+    (!value.is_empty()).then(|| value.to_owned())
 }
 
 /// Normalises an instruction set name to the one vocabulary `Cpu::architecture`
@@ -289,6 +303,13 @@ mod tests {
             assert!((0.0..=100.0).contains(&core.usage), "{core:?}");
         }
         assert!((0.0..=100.0).contains(&super::cpu().usage));
+        // A name the platform does not carry is absent rather than empty, so a
+        // caller never has to treat `""` as a third state (#137). Which hosts
+        // have one is not something a test can require — arm64 Windows does
+        // not — so the claim is about the shape, not the presence.
+        for name in [&cpu.brand, &cpu.vendor] {
+            assert!(name.as_deref() != Some(""), "{cpu:?}");
+        }
     }
 
     #[test]
