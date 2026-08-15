@@ -9,7 +9,10 @@ pub mod app;
 pub mod clipboard;
 // Absent off the XDG portal platforms rather than approximated there; the
 // module's own documentation says why.
-#[cfg(all(unix, not(target_os = "macos")))]
+#[cfg(all(
+    unix,
+    not(any(target_os = "macos", target_os = "android", target_os = "ios"))
+))]
 pub mod dialog;
 pub mod os;
 
