@@ -412,7 +412,13 @@ fn parse_index(
 /// Enforced when the index is read rather than when a file is asked for, so a
 /// bundle that could serve something outside the application is refused before
 /// anything reads from it.
-fn is_safe_path(path: &str) -> bool {
+///
+/// Public because a container that has no index to check up front needs the same
+/// rule at the moment a file is asked for: an APK's `assets/` is read through
+/// `AAssetManager`, which has no canonicalisation to fall back on the way a
+/// directory does (issue #144). One spelling of "inside the application" rather
+/// than two that agree on most inputs.
+pub fn is_safe_path(path: &str) -> bool {
     !path.is_empty()
         && !path.starts_with('/')
         && !path.contains('\\')

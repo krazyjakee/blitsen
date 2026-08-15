@@ -64,8 +64,11 @@ pub const APP_ORIGIN: &str = "blitsen://app/";
 
 /// Where a running application's files come from.
 ///
-/// Two implementations, and the resolver cannot tell them apart: a directory
-/// being run during development, and the section appended to the executable.
+/// Four implementations, and the resolver cannot tell them apart: a directory
+/// being run during development, the section appended to the executable, a dev
+/// server answering over HTTP (#67), and an APK's `assets/` read in place
+/// (#144). A path in, bytes out, is the whole of it — which is what let the
+/// fourth be added without anything downstream learning a new shape.
 pub trait AppSource: Send + Sync {
     /// Reads one application-relative path, or `None` when it is not there.
     fn read(&self, path: &str) -> Option<Vec<u8>>;

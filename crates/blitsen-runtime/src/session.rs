@@ -187,7 +187,7 @@ fn run(files: AppFiles, arguments: &[String]) -> Result<ExitCode, String> {
     let options = OpenDirectoryOptions {
         root: match &files {
             AppFiles::Directory { root, .. } => root.to_string_lossy().into_owned(),
-            AppFiles::Bundle { .. } | AppFiles::Server { .. } => {
+            AppFiles::Bundle { .. } | AppFiles::Server { .. } | AppFiles::Assets { .. } => {
                 blitsen_host::modules::APP_ORIGIN.to_owned()
             }
         },

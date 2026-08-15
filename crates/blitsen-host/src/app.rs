@@ -1,11 +1,12 @@
 //! Where a running application's files come from, and how the rest of the host
 //! stops caring which.
 //!
-//! Three shapes reach the same window session: a directory of built output being
-//! run, the section appended to an exported executable (issue #88), and a
-//! development server answering over HTTP (issue #67). The difference is
-//! confined to this module — everything downstream sees an entrypoint, a base
-//! URL, a subresource provider and a script loader.
+//! Four shapes reach the same window session: a directory of built output being
+//! run, the section appended to an exported executable (issue #88), a
+//! development server answering over HTTP (issue #67), and the `assets/` of an
+//! APK read in place (issue #144). The difference is confined to this module —
+//! everything downstream sees an entrypoint, a base URL, a subresource provider
+//! and a script loader.
 
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
@@ -22,13 +23,14 @@ use blitz::traits::net::{Bytes, NetHandler, NetProvider, Request};
 use blitz::traits::shell::{ColorScheme, Viewport};
 use url::Url;
 
+use crate::apk::ApkAssets;
 use crate::dev_server::DevServer;
 use crate::modules::{APP_ORIGIN, AppSource, DirectorySource, path_of, url_of};
 
 /// What a served URL with no filename asks for.
 const DEFAULT_DOCUMENT: &str = "index.html";
 
-/// The application's files, and which of the three shapes they came in.
+/// The application's files, and which of the four shapes they came in.
 #[derive(Clone)]
 pub enum AppFiles {
     /// A directory of built output, run in place.
@@ -50,6 +52,18 @@ pub enum AppFiles {
         /// The server, shared with the subresource provider.
         server: Arc<DevServer>,
         /// The path the document is served at, relative to the server's root.
+        entrypoint: String,
+    },
+    /// The `assets/` of an APK, read in place (issue #144).
+    ///
+    /// The one shape with no exec'd binary behind it: on Android the code is a
+    /// `.so` and `current_exe()` means nothing, so there is nothing to append a
+    /// bundle to. See [`crate::apk`] for why the files are read where they lie
+    /// rather than extracted on first run.
+    Assets {
+        /// The opened assets, shared with the subresource provider.
+        assets: Arc<ApkAssets>,
+        /// Application-relative entrypoint, conventionally `index.html`.
         entrypoint: String,
     },
 }
@@ -111,6 +125,25 @@ impl AppFiles {
         })
     }
 
+    /// Runs the application packaged into an APK's `assets/` (issue #144).
+    ///
+    /// The entrypoint is checked by opening it, not by consulting an index: an
+    /// APK carries a listing only if the packaging step wrote one, and a
+    /// document that is there must open whether or not it was listed.
+    pub fn assets(assets: ApkAssets, entrypoint: &str) -> Result<Self, JsError> {
+        if !assets.contains(entrypoint) {
+            return Err(JsError::new(format!(
+                "this package has no {entrypoint} under assets/{}: an application needs an \
+                 HTML entrypoint",
+                assets.root()
+            )));
+        }
+        Ok(Self::Assets {
+            assets: Arc::new(assets),
+            entrypoint: entrypoint.to_owned(),
+        })
+    }
+
     /// The entrypoint's source text.
     pub fn entrypoint_source(&self) -> Result<String, JsError> {
         match self {
@@ -122,6 +155,19 @@ impl AppFiles {
             Self::Bundle { bundle, entrypoint } => bundle
                 .read_to_string(entrypoint)
                 .map_err(|error| JsError::new(error.to_string())),
+            Self::Assets { assets, entrypoint } => {
+                let bytes = assets.read(entrypoint).ok_or_else(|| {
+                    JsError::new(format!(
+                        "this package has no {entrypoint} under assets/{}",
+                        assets.root()
+                    ))
+                })?;
+                String::from_utf8(bytes).map_err(|_| {
+                    JsError::new(format!(
+                        "{entrypoint} is not UTF-8, so it is not a document"
+                    ))
+                })
+            }
             Self::Server { server, entrypoint } => {
                 let bytes = server.read(entrypoint).ok_or_else(|| {
                     JsError::new(format!(
@@ -146,8 +192,9 @@ impl AppFiles {
     pub fn entrypoint_name(&self) -> String {
         match self {
             Self::Directory { entrypoint, .. } => entrypoint.to_string_lossy().into_owned(),
-            Self::Bundle { entrypoint, .. } => url_of(entrypoint),
-            Self::Server { entrypoint, .. } => url_of(entrypoint),
+            Self::Bundle { entrypoint, .. }
+            | Self::Server { entrypoint, .. }
+            | Self::Assets { entrypoint, .. } => url_of(entrypoint),
         }
     }
 
@@ -162,8 +209,11 @@ impl AppFiles {
             // Served, but still addressed as an application: the document, its
             // modules and its assets are on the application origin here exactly
             // as they are inside an export, and only the bytes come from
-            // somewhere else (issue #67).
-            Self::Bundle { .. } | Self::Server { .. } => APP_ORIGIN.to_owned(),
+            // somewhere else (issue #67). An APK's assets are the same case —
+            // an asset has no path a `file:` URL could name (issue #144).
+            Self::Bundle { .. } | Self::Server { .. } | Self::Assets { .. } => {
+                APP_ORIGIN.to_owned()
+            }
         }
     }
 
@@ -179,6 +229,16 @@ impl AppFiles {
                 .paths()
                 .filter(|path| *path != RUNTIME_CONFIG && *path != NOTICES)
                 .count(),
+            // The index, when the package carries one. Zero without it — and
+            // that is a package built with no listing rather than an
+            // application with no files, because `AAssetManager` cannot walk a
+            // directory tree and so cannot be asked (issue #144).
+            Self::Assets { assets, .. } => assets
+                .paths()
+                .filter(|path| {
+                    *path != RUNTIME_CONFIG && *path != NOTICES && *path != crate::apk::ASSET_INDEX
+                })
+                .count(),
             // Unknowable, and not worth guessing: a server has no list of what
             // it would serve if asked.
             Self::Server { .. } => 0,
@@ -191,7 +251,7 @@ impl AppFiles {
             source: self.source(),
             root: match self {
                 Self::Directory { root, .. } => Some(root.clone()),
-                Self::Bundle { .. } | Self::Server { .. } => None,
+                Self::Bundle { .. } | Self::Server { .. } | Self::Assets { .. } => None,
             },
         }
     }
@@ -202,6 +262,7 @@ impl AppFiles {
             Self::Directory { root, .. } => Arc::new(DirectorySource::new(root.clone())),
             Self::Bundle { bundle, .. } => Arc::clone(bundle) as Arc<dyn AppSource>,
             Self::Server { server, .. } => Arc::clone(server) as Arc<dyn AppSource>,
+            Self::Assets { assets, .. } => Arc::clone(assets) as Arc<dyn AppSource>,
         }
     }
 
@@ -222,7 +283,9 @@ impl AppFiles {
                 .strip_prefix(root)
                 .map(|relative| relative.to_string_lossy().replace('\\', "/"))
                 .unwrap_or_else(|_| "index.html".to_owned()),
-            Self::Bundle { entrypoint, .. } | Self::Server { entrypoint, .. } => entrypoint.clone(),
+            Self::Bundle { entrypoint, .. }
+            | Self::Server { entrypoint, .. }
+            | Self::Assets { entrypoint, .. } => entrypoint.clone(),
         }
     }
 
@@ -243,8 +306,34 @@ impl AppFiles {
             Self::Server { server, .. } => Some(Arc::new(ServerResources {
                 server: Arc::clone(server),
             }) as Arc<dyn NetProvider>),
+            Self::Assets { assets, .. } => Some(Arc::new(AssetResources {
+                assets: Arc::clone(assets),
+            }) as Arc<dyn NetProvider>),
         }
     }
+}
+
+/// The third-party notices an application carries, decompressed (issue #121).
+///
+/// Taken over [`AppSource`] rather than over a bundle, because the notices were
+/// never a property of the trailer: they are a file at a known path, and every
+/// shape an application arrives in can be asked for one. That is what makes the
+/// obligation survive onto Android, where an APK is launched with no argv and
+/// `--licenses` cannot be typed at it — the file still travels inside the signed
+/// archive, and the entry point can print or display it (see [`crate::apk`]).
+///
+/// `None` when the artifact carries none, or carries something that is not the
+/// gzipped text it should be. Both mean the same thing to a caller: this is not
+/// an artifact cleared for redistribution.
+pub fn notices(source: &dyn AppSource) -> Option<String> {
+    use std::io::Read as _;
+
+    let compressed = source.read(NOTICES)?;
+    let mut text = String::new();
+    flate2::read::GzDecoder::new(compressed.as_slice())
+        .read_to_string(&mut text)
+        .ok()?;
+    Some(text)
 }
 
 /// Reads the files an application shipped, addressed the way JavaScript sees
@@ -359,7 +448,7 @@ pub fn load_document<E: JsEngine + Clone + 'static>(
     APPLICATION_ROOT.with(|current| {
         *current.borrow_mut() = match files {
             AppFiles::Directory { root, .. } => Some(root.clone()),
-            AppFiles::Bundle { .. } | AppFiles::Server { .. } => None,
+            AppFiles::Bundle { .. } | AppFiles::Server { .. } | AppFiles::Assets { .. } => None,
         };
     });
     let source = files.entrypoint_source()?;
@@ -568,6 +657,31 @@ impl NetProvider for ServerResources {
     }
 }
 
+/// Serves a document's subresources out of an APK's `assets/` (issue #144).
+///
+/// The same shape as [`BundleResources`], because it is the same problem: no
+/// other provider can read a file that exists only as an entry inside the
+/// installed package, and a stylesheet is a pending critical resource until its
+/// handler completes, so one the package does not carry is answered with no
+/// bytes rather than left hanging.
+struct AssetResources {
+    assets: Arc<ApkAssets>,
+}
+
+impl NetProvider for AssetResources {
+    fn fetch(&self, doc_id: usize, request: Request, handler: Box<dyn NetHandler>) {
+        let url = request.url.as_str().to_owned();
+        if let Some(path) = path_of(&url) {
+            let bytes = self.assets.read(path).unwrap_or_default();
+            handler.bytes(url, Bytes::from(bytes));
+            return;
+        }
+        // `data:` subresources, and anything else the ordinary local provider
+        // understands, still work inside a package.
+        blitsen_blitz::resources::LocalResources.fetch(doc_id, request, handler);
+    }
+}
+
 /// Turns a document-relative `src` into a specifier the resolver accepts.
 fn relative(src: &str) -> String {
     if src.starts_with('/') || src.starts_with("./") || src.starts_with("../") {
@@ -579,7 +693,33 @@ fn relative(src: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use blitz::traits::net::Request;
+    use std::sync::Mutex;
+
     use super::*;
+
+    /// Collects what a subresource provider answered, so a test can ask how
+    /// many bytes a URL was served rather than whether a handler was called.
+    #[derive(Clone, Default)]
+    struct Collector(Arc<Mutex<Vec<(String, usize)>>>);
+
+    impl NetHandler for Collector {
+        fn bytes(self: Box<Self>, resolved_url: String, bytes: Bytes) {
+            self.0.lock().unwrap().push((resolved_url, bytes.len()));
+        }
+    }
+
+    impl Collector {
+        /// How many bytes `provider` answered `url` with.
+        fn served(&self, provider: &Arc<dyn NetProvider>, url: &str) -> usize {
+            provider.fetch(
+                0,
+                Request::get(Url::parse(url).unwrap()),
+                Box::new(self.clone()),
+            );
+            self.0.lock().unwrap().last().unwrap().1
+        }
+    }
 
     #[test]
     fn a_bundle_addresses_its_files_by_the_application_origin() {
@@ -626,17 +766,6 @@ mod tests {
     /// application root is what it meant.
     #[test]
     fn a_directory_serves_a_server_root_subresource_from_the_application_root() {
-        use blitz::traits::net::Request;
-        use std::sync::Mutex;
-
-        #[derive(Clone, Default)]
-        struct Collector(Arc<Mutex<Vec<(String, usize)>>>);
-        impl NetHandler for Collector {
-            fn bytes(self: Box<Self>, resolved_url: String, bytes: Bytes) {
-                self.0.lock().unwrap().push((resolved_url, bytes.len()));
-            }
-        }
-
         let root = std::env::temp_dir().join(format!("blitsen-dir-net-{}", std::process::id()));
         std::fs::create_dir_all(root.join("assets")).unwrap();
         std::fs::write(root.join("index.html"), b"<p>hi").unwrap();
@@ -647,14 +776,7 @@ mod tests {
             .expect("a directory serves its own files");
 
         let collector = Collector::default();
-        let served = |url: &str| {
-            provider.fetch(
-                0,
-                Request::get(Url::parse(url).unwrap()),
-                Box::new(collector.clone()),
-            );
-            collector.0.lock().unwrap().last().unwrap().1
-        };
+        let served = |url: &str| collector.served(&provider, url);
         // What Blitz asks for after resolving `href="/assets/app.css"`.
         assert_eq!(served("file:///assets/app.css"), 14);
         // An ordinary relative reference still reads where it points. Built
@@ -666,6 +788,125 @@ mod tests {
         // And a server-root path the application does not ship stays empty, so
         // the document paints without it rather than waiting on it.
         assert_eq!(served("file:///assets/nothing.css"), 0);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// The fourth shape reaching the same session as the other three: same
+    /// application origin, same script identifiers, same subresource contract.
+    /// Run against a directory standing in for the APK's `assets/`, which is
+    /// what the platform mounts one as (issue #144).
+    #[test]
+    fn an_apk_addresses_its_files_by_the_application_origin_exactly_as_a_bundle_does() {
+        let root = std::env::temp_dir().join(format!("blitsen-apk-app-{}", std::process::id()));
+        std::fs::remove_dir_all(&root).ok();
+        let application = root.join(crate::apk::DEFAULT_ASSET_ROOT);
+        std::fs::create_dir_all(application.join("assets")).unwrap();
+        std::fs::write(application.join("index.html"), b"<p>hi").unwrap();
+        std::fs::write(application.join("assets/app.js"), b"globalThis.ran = 1").unwrap();
+        std::fs::write(application.join("assets/app.css"), b"body{margin:0}").unwrap();
+        std::fs::write(
+            application.join(crate::apk::ASSET_INDEX),
+            serde_json::to_vec(&serde_json::json!({
+                "version": 1,
+                "files": [
+                    { "path": "assets/app.css", "bytes": 14 },
+                    { "path": "assets/app.js", "bytes": 18 },
+                    { "path": "index.html", "bytes": 5 },
+                    { "path": RUNTIME_CONFIG, "bytes": 2 },
+                ],
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let assets = ApkAssets::open_directory(&root, crate::apk::DEFAULT_ASSET_ROOT);
+        let files = AppFiles::assets(assets, "index.html").unwrap();
+        assert_eq!(files.entrypoint_source().unwrap(), "<p>hi");
+        assert_eq!(files.base_url(), APP_ORIGIN);
+        assert_eq!(files.entrypoint_name(), "blitsen://app/index.html");
+        assert_eq!(
+            files
+                .script_loader()
+                .load(Path::new("."), "assets/app.js")
+                .unwrap(),
+            (
+                "globalThis.ran = 1".to_owned(),
+                "blitsen://app/assets/app.js".to_owned()
+            )
+        );
+        assert_eq!(
+            files.source().read("assets/app.js").unwrap(),
+            b"globalThis.ran = 1"
+        );
+        // The runtime's own record is not one of the application's assets, the
+        // same way it is not counted inside a bundle.
+        assert_eq!(files.asset_count(), 3);
+        // A directory being run is the only shape whose files are also `file:`
+        // URLs; an asset has no path, so only the application origin reaches it.
+        assert_eq!(
+            files
+                .reader()
+                .read_url(&Url::parse("blitsen://app/assets/app.css").unwrap())
+                .ok()
+                .unwrap(),
+            b"body{margin:0}"
+        );
+
+        // And the subresource provider answers on the application origin, with
+        // an empty body for what the package does not carry — the contract that
+        // keeps a missing stylesheet from hanging the frame.
+        let provider = files.net_provider().expect("an APK serves its own files");
+        let collector = Collector::default();
+        let served = |url: &str| collector.served(&provider, url);
+        assert_eq!(served("blitsen://app/assets/app.css"), 14);
+        assert_eq!(served("blitsen://app/assets/nothing.css"), 0);
+        // Nothing outside the application is reachable through the provider.
+        assert_eq!(served("blitsen://app/../secret.txt"), 0);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn an_apk_without_an_entrypoint_says_so_rather_than_opening_a_blank_window() {
+        let root = std::env::temp_dir().join(format!("blitsen-apk-empty-{}", std::process::id()));
+        std::fs::remove_dir_all(&root).ok();
+        let application = root.join(crate::apk::DEFAULT_ASSET_ROOT);
+        std::fs::create_dir_all(&application).unwrap();
+        std::fs::write(application.join("readme.txt"), b"x").unwrap();
+        let assets = ApkAssets::open_directory(&root, crate::apk::DEFAULT_ASSET_ROOT);
+        let error = AppFiles::assets(assets, "index.html")
+            .err()
+            .expect("no entrypoint");
+        assert!(error.message().contains("no index.html"), "{error}");
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// The notices are a file at a known path, not a property of the trailer,
+    /// which is what lets them survive onto a container with no trailer (#121,
+    /// #144).
+    #[test]
+    fn the_third_party_notices_are_read_from_an_apk_the_same_way_as_from_a_bundle() {
+        use std::io::Write as _;
+
+        let root = std::env::temp_dir().join(format!("blitsen-apk-notices-{}", std::process::id()));
+        std::fs::remove_dir_all(&root).ok();
+        let application = root.join(crate::apk::DEFAULT_ASSET_ROOT);
+        std::fs::create_dir_all(&application).unwrap();
+        std::fs::write(application.join("index.html"), b"<p>hi").unwrap();
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder.write_all(b"THIRD-PARTY NOTICES\n").unwrap();
+        std::fs::write(application.join(NOTICES), encoder.finish().unwrap()).unwrap();
+
+        let assets = ApkAssets::open_directory(&root, crate::apk::DEFAULT_ASSET_ROOT);
+        let files = AppFiles::assets(assets, "index.html").unwrap();
+        assert_eq!(
+            notices(files.source().as_ref()).unwrap(),
+            "THIRD-PARTY NOTICES\n"
+        );
+
+        // An artifact that carries none says so, which is the whole of the
+        // acceptance gate: it has to be answerable by the thing that ships.
+        let bare = ApkAssets::open_directory(root.join("nowhere"), "");
+        assert!(notices(&bare).is_none());
         std::fs::remove_dir_all(&root).ok();
     }
 

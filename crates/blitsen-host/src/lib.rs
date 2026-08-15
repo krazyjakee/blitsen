@@ -11,6 +11,8 @@
 //! embedded JavaScriptCore for the Phase 2 executable. Neither appears below.
 
 mod alloc;
+// An application packaged into an APK's `assets/`, read in place (#144).
+pub mod apk;
 pub mod app;
 // Proxy mode (#67): an application the user's own dev server is serving.
 mod assets;

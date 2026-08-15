@@ -24,6 +24,11 @@ blitz = { git = "https://github.com/DioxusLabs/blitz", rev = "1efe22d2524d71ede5
 # not compile at this pin.
 blitz-paint = { git = "https://github.com/DioxusLabs/blitz", rev = "1efe22d2524d71ede5b94592204c21f0de644219", default-features = false, features = ["custom-widget"] }
 data-url = "0.3.2"
+# The third-party notices an artifact carries are gzipped inside it (#121), and
+# reading them belongs to the application's files rather than to the appended
+# section: an APK carries the same file under `assets/` (#144). Already in the
+# tree behind `blitsen-runtime`, so this links no new crate.
+flate2 = "1"
 futures-util = { version = "0.3", default-features = false, features = ["std", "sink"] }
 # `crypto.getRandomValues`, and nothing else. The platform generator itself
 # rather than a PRNG seeded from it: this is the entropy an application's UUIDs
@@ -51,6 +56,12 @@ url = "2"
 # feature selection collapses them.
 web-audio-api = "1.7"
 winit = "=0.31.0-beta.2"
+
+# An APK's `assets/`, read through `AAssetManager` (#144). Android only: the
+# other six targets have no asset manager, and the same provider reads a
+# directory standing in for one, which is what the tests run against.
+[target.'cfg(target_os = "android")'.dependencies]
+ndk = { version = "0.9", default-features = false }
 
 [lints]
 workspace = true

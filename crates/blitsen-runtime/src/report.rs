@@ -4,7 +4,6 @@
 //! executable carries what the CLI thinks it wrote, and `--engine-report` says
 //! which JavaScriptCore this binary found and what that library can do.
 
-use std::io::Read as _;
 use std::path::Path;
 use std::process::ExitCode;
 
@@ -48,6 +47,11 @@ pub fn print(bundle: Option<&AppBundle>, executable: &Path) {
 /// An artifact with none says so and fails, which is the whole point of the
 /// gate: "the notices are there" has to be answerable by the thing that ships,
 /// not by the build that produced it.
+///
+/// The reading itself is `blitsen_host::app::notices`, over the application's
+/// files rather than over a trailer, because an artifact with no trailer still
+/// owes the notices — an APK carries the same file under `assets/` and is
+/// launched with no argv to type this flag at (issue #144).
 pub fn print_licenses(bundle: Option<&AppBundle>) -> Result<ExitCode, String> {
     let Some(bundle) = bundle else {
         return Err(
@@ -56,15 +60,11 @@ pub fn print_licenses(bundle: Option<&AppBundle>) -> Result<ExitCode, String> {
                 .to_owned(),
         );
     };
-    let compressed = bundle.read(blitsen_host::app::NOTICES).map_err(|_| {
+    let text = blitsen_host::app::notices(bundle).ok_or_else(|| {
         "this export carries no third-party notices, so it is not cleared for redistribution \
              (docs/LICENSING.md)"
             .to_owned()
     })?;
-    let mut text = String::new();
-    flate2::read::GzDecoder::new(compressed.as_slice())
-        .read_to_string(&mut text)
-        .map_err(|error| format!("the embedded notices could not be read: {error}"))?;
     print!("{text}");
     Ok(ExitCode::SUCCESS)
 }
