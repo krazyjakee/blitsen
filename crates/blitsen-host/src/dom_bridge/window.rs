@@ -19,15 +19,28 @@
 //! including the scale factor of the ones the window is not on.
 
 use std::cell::{Cell, RefCell};
-use std::str::FromStr;
 use std::sync::Arc;
 
+use winit::dpi::PhysicalSize;
+use winit::window::Window;
+
+// Everything a `native:window` or `native:dialog` call reaches is compiled off
+// Android; see the note above `with`. What is left is the slot itself, which the
+// session publishes into and reads back whatever the platform.
+#[cfg(not(target_os = "android"))]
+use std::str::FromStr;
+#[cfg(not(target_os = "android"))]
 use blitsen_js::JsError;
+#[cfg(not(target_os = "android"))]
 use serde_json::{Value, json};
+#[cfg(not(target_os = "android"))]
 use winit::cursor::CursorIcon;
-use winit::dpi::{LogicalSize, PhysicalSize};
+#[cfg(not(target_os = "android"))]
+use winit::dpi::LogicalSize;
+#[cfg(not(target_os = "android"))]
 use winit::monitor::{Fullscreen, MonitorHandle};
-use winit::window::{CursorGrabMode, Window, WindowLevel};
+#[cfg(not(target_os = "android"))]
+use winit::window::{CursorGrabMode, WindowLevel};
 
 thread_local! {
     static CURRENT: RefCell<Option<Arc<dyn Window>>> = const { RefCell::new(None) };
@@ -52,6 +65,32 @@ pub(crate) fn take_applied_resize() -> Option<PhysicalSize<u32>> {
 }
 
 /// Runs `operation` against the window, or reports that there is not one yet.
+///
+/// This half of the module is compiled off Android, because winit's window there
+/// answers every question below and none of the answers are true. Read from its
+/// source at the pinned version rather than assumed: `set_fullscreen` logs
+/// "Cannot set fullscreen on Android" and returns, while `fullscreen()` answers
+/// `None` — so `isFullscreen()` reports false on a surface that fills the
+/// screen. `set_decorations` is empty and `is_decorated()` returns `true`, so
+/// `setDecorations(false)` is followed by `isDecorated()` saying it is decorated,
+/// on a platform with no decorations to remove. `request_surface_size` ignores
+/// the size and hands back the current one, which this module would record as a
+/// resize that was applied. `set_window_level`, `set_cursor` and
+/// `set_cursor_visible` are all empty bodies, and the cursor is not a thing the
+/// device has.
+///
+/// The monitors go with them, and that one is worth naming because it looks like
+/// the survivor: `available_monitors()` on Android is `iter::empty()` and both
+/// `primary_monitor()` and `current_monitor()` are `None`. So `monitors()` would
+/// return `[]` — an application reading that learns the device has no display,
+/// which is a wrong answer rather than a missing one. The scale factor is
+/// reachable there, but it is already `devicePixelRatio` and is not this
+/// module's to spell a second time.
+///
+/// So `native:window` is absent whole on Android rather than trimmed. The
+/// capabilities that *are* real — immersive mode, orientation, the cutout inset
+/// — are not these under another name (#146, #147).
+#[cfg(not(target_os = "android"))]
 pub(super) fn with<T>(
     operation: impl FnOnce(&dyn Window) -> Result<T, JsError>,
 ) -> Result<T, JsError> {
@@ -67,6 +106,7 @@ pub(super) fn with<T>(
 }
 
 /// A property of the window, already parsed and range-checked.
+#[cfg(not(target_os = "android"))]
 enum Setting {
     Fullscreen(bool),
     Decorations(bool),
@@ -76,6 +116,7 @@ enum Setting {
     CursorGrab(CursorGrabMode),
 }
 
+#[cfg(not(target_os = "android"))]
 fn boolean(property: &str, value: &str) -> Result<bool, JsError> {
     match value {
         "true" => Ok(true),
@@ -88,6 +129,7 @@ fn boolean(property: &str, value: &str) -> Result<bool, JsError> {
 
 /// Parses a property before anything is asked of the window, so a mistyped
 /// value is a rejection rather than a window left half-configured.
+#[cfg(not(target_os = "android"))]
 fn setting(property: &str, value: &str) -> Result<Setting, JsError> {
     Ok(match property {
         "fullscreen" => Setting::Fullscreen(boolean(property, value)?),
@@ -113,6 +155,7 @@ fn setting(property: &str, value: &str) -> Result<Setting, JsError> {
 }
 
 /// Applies `property`.
+#[cfg(not(target_os = "android"))]
 pub(super) fn set(property: &str, value: &str) -> Result<(), JsError> {
     let setting = setting(property, value)?;
     with(|window| {
@@ -137,6 +180,7 @@ pub(super) fn set(property: &str, value: &str) -> Result<(), JsError> {
 }
 
 /// Reads back a property winit can be asked for.
+#[cfg(not(target_os = "android"))]
 pub(super) fn get(property: &str) -> Result<bool, JsError> {
     match property {
         "fullscreen" | "decorations" => {}
@@ -151,6 +195,7 @@ pub(super) fn get(property: &str) -> Result<bool, JsError> {
 }
 
 /// Asks for a new surface size, in CSS pixels.
+#[cfg(not(target_os = "android"))]
 pub(super) fn resize(width: f64, height: f64) -> Result<(), JsError> {
     let valid = |value: f64| value.is_finite() && value >= 1.0 && value <= f64::from(u32::MAX);
     if !valid(width) || !valid(height) {
@@ -167,6 +212,7 @@ pub(super) fn resize(width: f64, height: f64) -> Result<(), JsError> {
 }
 
 /// Enumerates the monitors, each with its own scale factor.
+#[cfg(not(target_os = "android"))]
 pub(super) fn monitors() -> Result<Value, JsError> {
     with(|window| {
         let current = window.current_monitor().map(|monitor| monitor.id());
@@ -183,6 +229,7 @@ pub(super) fn monitors() -> Result<Value, JsError> {
     })
 }
 
+#[cfg(not(target_os = "android"))]
 fn describe(monitor: &MonitorHandle, current: bool, primary: bool) -> Value {
     let mode = monitor.current_video_mode();
     let size = mode.as_ref().map(|mode| mode.size());

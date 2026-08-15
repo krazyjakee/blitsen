@@ -367,11 +367,30 @@ Stated precisely, so the claim is not read as more than it is:
 - **Not established.** That Vello holds up across *Android the hardware population* — Adreno and
   Mali are where it has historically been fragile, and only a physical device answers that (#151).
 - **Not started.** The entry point (#142), application files out of an APK (#144), touch and
-  PointerEvents (#145), lifecycle (#146), the `native:` matrix (#147) and packaging (#148) are
-  Blitsen's own desktop assumptions, not engine limits.
+  PointerEvents (#145), lifecycle (#146) and packaging (#148) are Blitsen's own desktop
+  assumptions, not engine limits.
+- **Settled.** The `native:` matrix (#147). Each module has a decision below.
 
 Android does not join P5b. It is a cross-compiled APK/AAB with per-ABI builds and keystore
 signing, not a seventh npm platform package an install resolves — see P5c.
+
+**The `native:` modules on Android.** §7's rule — absent rather than approximated — decides most
+of them, and "absent" here is a position rather than a gap in the port. What makes it a usable
+position is that an absent module's members are `undefined` rather than throwing, so
+`if (clipboard.writeText)` selects a fallback; and `blitsen doctor --target android-arm64` reports
+every module an application imports that the target does not have, with the reason.
+
+| Module | On Android | Why |
+| --- | --- | --- |
+| `os` | **Present, whole** | `sysinfo` reads the same `/proc` there, and it is the only one that survives. The facts a platform will not give already arrive as `null` by design, so nothing had to change. |
+| `window` | **Absent** | winit accepts every setter on Android and discards it, then answers the getter as though the request had never been made: `setDecorations(false)`, then `isDecorated()` saying true, on a platform with no decorations. The monitor list is the one worth naming, because it looks like the survivor — winit enumerates no monitors there, so `monitors()` would report a device with no display. Immersive mode and orientation are the real capabilities and are not these under another name (#146). |
+| `clipboard` | **Absent** | `arboard` has no Android backend and does not compile. `ClipboardManager` would not settle it either: Android refuses a read to an unfocused application, and these readers report an empty clipboard as `null`, so the refusal and the empty clipboard would arrive as the same value. A module shaped for that, over JNI. |
+| `app` | **Absent** | The directories are the Activity's `filesDir`/`cacheDir`; the XDG variables Android does not set would resolve to a path nothing can write to. `relaunch` has no executable to spawn inside an APK. Single-instance ownership is the platform's own — a second launch is an `Intent` to the process already running, not a command line to hand over. |
+| `dialog` | **Absent** | No XDG portal. Already absent off the portal platforms, for its own reasons (#141). |
+| `tray`, `notify`, `input` | **Absent, as everywhere** | None of the three is implemented on any platform, so Android changes nothing about them. `notify` is the one with an obvious Android shape — `NotificationManager` over JNI, plus a runtime permission on API 33+ — and it would arrive on every platform at once or not at all. |
+
+The two that were load-bearing are `clipboard` and `app`: they are what stood between the
+workspace and a clean `cargo ndk check` without scaffolding.
 
 ### Non-goals
 

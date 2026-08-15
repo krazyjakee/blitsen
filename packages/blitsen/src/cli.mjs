@@ -4,12 +4,13 @@ import { extname, join, normalize, resolve } from "node:path";
 import { loadConfig, runBuildCommand } from "./config.mjs";
 import { doctorApplication, formatDiagnostic } from "./doctor.mjs";
 import { buildStandalone } from "./export.mjs";
+import { ANDROID_TARGETS } from "./native-modules.mjs";
 import { describeRuntime, hostTarget, openRuntime, packageVersion, resolveRuntime, TARGETS }
   from "./runtime.mjs";
 
 const HELP = `Usage: blitsen [directory|url] [options]
        blitsen build [directory] [options]
-       blitsen doctor <directory> [--json]
+       blitsen doctor <directory> [--target <triple>] [--json]
 
 Open <directory>/index.html in a native Blitsen window. Given an http(s) URL —
 blitsen http://localhost:5173 — the window reads the document and its modules
@@ -21,7 +22,8 @@ its output directory — or, where there is no config, the directory you are
 standing in.
 Build creates a single-file executable: Blitsen's own runtime with the
 application appended to it.
-Doctor checks built static output against the v1 compatibility profile.
+Doctor checks built static output against the v1 compatibility profile, and
+against the native: modules the target it is grading for actually has.
 
 Options:
   --width <pixels>   Initial logical width (default: 800)
@@ -30,7 +32,8 @@ Options:
   --name <text>      Application name: window title and default output name
   --out <path>       Build output path (default: the application name)
   --outfile <path>   Alias of --out
-  --target <triple>  Build for another platform; its runtime is fetched and cached
+  --target <triple>  Build for another platform; its runtime is fetched and cached.
+                     With doctor, grade against that platform instead of this one
   --include <glob>   Keep an unreferenced output file (repeatable)
   --addon <path>     Carry a .node addon into the export (repeatable)
   --accept-errors    Export despite compatibility errors, accepting what they cost
@@ -54,13 +57,24 @@ const BUILD_OPTIONS = ["--out", "--outfile", "--name", "--target", "--include", 
 const VALUE_OPTIONS = ["--width", "--height", "--title", ...BUILD_OPTIONS];
 // A build-only switch: doctor's own exit code must keep meaning what it says.
 const BUILD_FLAGS = ["--accept-errors"];
+// The one build option doctor also takes, because doctor grades against a
+// target rather than for one: which `native:` modules exist is a property of the
+// platform, and asking about a platform is not the same as claiming to build for
+// it (#147).
+const DOCTOR_OPTIONS = ["--target"];
 // TECH.md §11: one binary package per target (src/runtime.mjs). A cross-target
 // build links that target's runtime, fetched on demand (#72), and compiles the
 // launcher for that target's Bun. What it cannot do is sign or notarise for a
 // platform it is not running on — see the note in the build path.
-function checkTarget(value) {
-  if (!TARGETS.includes(value)) {
-    throw new Error(`unknown --target ${value} (expected one of: ${TARGETS.join(", ")})`);
+//
+// Doctor accepts more than build does, and deliberately: it reads files and
+// links nothing, so it can answer for Android, which has no runtime package to
+// resolve and is not a P5b row at all (PRODUCT.md P5c, #148). Building for one
+// is a different claim and is still refused.
+function checkTarget(value, command) {
+  const allowed = command === "doctor" ? [...TARGETS, ...ANDROID_TARGETS] : TARGETS;
+  if (!allowed.includes(value)) {
+    throw new Error(`unknown --target ${value} (expected one of: ${allowed.join(", ")})`);
   }
 }
 
@@ -78,16 +92,19 @@ export function parseArgs(args) {
     if (VALUE_OPTIONS.includes(argument)) {
       const value = args[++index];
       if (value === undefined) throw new Error(`${argument} requires a value`);
-      if (command === "doctor") throw new Error(`${argument} is not valid with doctor`);
-      if (BUILD_OPTIONS.includes(argument) && command !== "build") {
-        throw new Error(`${argument} is only valid with build`);
+      if (command === "doctor" && !DOCTOR_OPTIONS.includes(argument)) {
+        throw new Error(`${argument} is not valid with doctor`);
+      }
+      if (BUILD_OPTIONS.includes(argument) && command === "run") {
+        throw new Error(`${argument} is only valid with build`
+          + `${DOCTOR_OPTIONS.includes(argument) ? " or doctor" : ""}`);
       }
       if (PACKAGE_OPTIONS[argument]) options[PACKAGE_OPTIONS[argument]] = value;
       else if (argument === "--title") options.title = value;
       else if (argument === "--name") options.name = value;
       else if (argument === "--out" || argument === "--outfile") options.outfile = value;
       else if (argument === "--target") {
-        checkTarget(value);
+        checkTarget(value, command);
         options.target = value;
       }
       else if (argument === "--include") options.include = [...options.include ?? [], value];
@@ -316,7 +333,7 @@ export async function main(args, output = console, runtime = null) {
         + "Run your build and point it at the output.");
     }
     if (options.command === "doctor") {
-      const report = await doctorApplication(application.root);
+      const report = await doctorApplication(application.root, { target: options.target });
       if (options.json) output.log(JSON.stringify(report, null, 2));
       else {
         for (const diagnostic of report.diagnostics) {
@@ -329,7 +346,7 @@ export async function main(args, output = console, runtime = null) {
     }
     if (options.command === "build") {
       reportStep(output, { step: "ingest", detail: application.entrypoint });
-      const report = await doctorApplication(application.root);
+      const report = await doctorApplication(application.root, { target: options.target });
       reportStep(output, {
         step: "scan",
         detail: `${report.files} files, ${report.errors} errors, ${report.warnings} warnings`,

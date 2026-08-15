@@ -5,16 +5,30 @@
 //! honest: the bootstrap drops any member whose host function is missing, so a
 //! capability this build does not have reads as `undefined` and feature
 //! detection selects a fallback (COMPATIBILITY.md, "Capability tiers").
+//!
+//! Android is where that sentence stops being a formality, because the platform
+//! answers "no" to most of it. What survives there is `os`, which reads the same
+//! `/proc` a Linux desktop does. What does not is `app`, `clipboard`, `dialog`
+//! and `window` — each absent for a reason its own module or `cfg` states, and
+//! none of them absent merely because the port has not been written (#147).
 
-use blitsen_js::{JsEngine, JsError, TypedArray, TypedArrayKind};
+use blitsen_js::{JsEngine, JsError};
+#[cfg(not(target_os = "android"))]
+use blitsen_js::{TypedArray, TypedArrayKind};
+#[cfg(not(target_os = "android"))]
 use blitsen_platform::PlatformError;
+#[cfg(not(target_os = "android"))]
 use blitsen_platform::app::{self, Directory};
+#[cfg(not(target_os = "android"))]
 use blitsen_platform::clipboard::{self, Image};
 use blitsen_platform::os;
 use serde_json::json;
 
-use super::{argument, json_value, window};
+use super::json_value;
+#[cfg(not(target_os = "android"))]
+use super::{argument, window};
 
+#[cfg(not(target_os = "android"))]
 fn failed(error: PlatformError) -> JsError {
     JsError::new(error.message().to_owned())
 }
@@ -67,6 +81,7 @@ fn install_os<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsError> {
     )
 }
 
+#[cfg(not(target_os = "android"))]
 fn install_app<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsError> {
     engine.define_global_function(
         "__blitsenNativeAppDirectory",
@@ -95,7 +110,10 @@ fn install_app<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsError> {
     install_single_instance(engine)
 }
 
-#[cfg(unix)]
+// Android is a unix and this would compile there, which is exactly why the
+// predicate names it: the module it reaches into is absent on Android, and a
+// lock nobody is racing for is not a capability. See the no-op `install_app`.
+#[cfg(all(unix, not(target_os = "android")))]
 fn install_single_instance<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsError> {
     use blitsen_platform::app::{Instance, Invocation, single_instance};
 
@@ -146,6 +164,18 @@ fn install_single_instance<E: JsEngine + 'static>(_engine: &mut E) -> Result<(),
     Ok(())
 }
 
+// Nothing to install. Android is a unix, so the socket above would bind and the
+// lock would be taken — and it would be answering a question nobody asked: an
+// Android application is one process by construction, and a second launch is an
+// `Intent` delivered to the instance already running rather than a command line
+// to hand over. The directories are the Activity's and relaunch has no
+// executable to spawn; `blitsen_platform::app` states the case for all three.
+#[cfg(target_os = "android")]
+fn install_app<E: JsEngine + 'static>(_engine: &mut E) -> Result<(), JsError> {
+    Ok(())
+}
+
+#[cfg(not(target_os = "android"))]
 fn install_clipboard<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsError> {
     engine.define_global_function(
         "__blitsenNativeClipboardRead",
@@ -247,9 +277,18 @@ fn install_clipboard<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsErro
     )
 }
 
+// Nothing to install: `arboard` has no Android backend, and the service it would
+// wrap answers a background read with a refusal these signatures cannot report
+// apart from an empty clipboard. `blitsen_platform::clipboard` makes the case.
+#[cfg(target_os = "android")]
+fn install_clipboard<E: JsEngine + 'static>(_engine: &mut E) -> Result<(), JsError> {
+    Ok(())
+}
+
 /// The window this session already owns, never a second one: creating windows
 /// waits on the shared-versus-isolated JavaScript context decision, and the
 /// members that would need it are declared absent instead.
+#[cfg(not(target_os = "android"))]
 fn install_window<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsError> {
     engine.define_global_function(
         "__blitsenNativeWindowSet",
@@ -295,6 +334,20 @@ fn install_window<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsError> 
             json_value(&mut engine, &window::monitors()?)
         }),
     )
+}
+
+// Nothing to install. Not because winit refuses any of this on Android — it
+// accepts every setter and answers every getter — but because none of the
+// answers are true, and a wrong answer is worse than a missing one. The monitor
+// list is the one that had to be checked rather than assumed, because it looks
+// like the survivor: winit's Android `available_monitors()` is `iter::empty()`,
+// so `monitors()` would report a device with no display. `dom_bridge/window.rs`
+// reads off the rest of the backend, line by line. Immersive mode and
+// orientation are the real capabilities here and are not these under another
+// name (#146, #147).
+#[cfg(target_os = "android")]
+fn install_window<E: JsEngine + 'static>(_engine: &mut E) -> Result<(), JsError> {
+    Ok(())
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]

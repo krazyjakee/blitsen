@@ -1,6 +1,8 @@
 import { readFile, readdir } from "node:fs/promises";
 import { extname, join, relative, sep } from "node:path";
 import { loadApiManifest } from "./api-manifest.mjs";
+import { absentNativeModules } from "./native-modules.mjs";
+import { hostTarget } from "./runtime.mjs";
 
 // Every rule below comes from the generated manifest, so `doctor` and the
 // runtime cannot describe the same API differently. See COMPATIBILITY.md.
@@ -26,6 +28,39 @@ async function compatibilityRules() {
 
 let loaded;
 const compatibility = () => (loaded ??= compatibilityRules());
+
+// A `native:` module the target being built for does not have (#147).
+//
+// Not from the manifest, and the reason is worth stating: the manifest is
+// generated from one bootstrap script shared by every build, so it can say a
+// module has no members anywhere but not that a module exists on Linux and not
+// on Android — that is decided by `cfg` in the Rust, which nothing on this side
+// can read. `native-modules.mjs` carries the table and the reasoning.
+//
+// A rule per module rather than one rule with a capture, because the whole value
+// of the finding is the sentence that says why the module is not there, and that
+// sentence is different for every row.
+//
+// A warning, on the same argument as every other diagnostic here: an absent
+// module's members are `undefined` rather than throwing, so
+// `if (clipboard.writeText)` selects a fallback and the application survives.
+// What it does not do is the thing the user thought it did, which is what the
+// finding is for.
+//
+// The specifier is matched as a string literal because that is what survives
+// bundling: `blitsen/*` stays external — nothing in the export can inline the
+// runtime behind it — so `from "blitsen/clipboard"`, `import("blitsen/clipboard")`
+// and `require("blitsen/clipboard")` all leave the same quoted specifier behind.
+function nativeModuleRules(target) {
+  return absentNativeModules(target).map(({ module, platform, reason }) => [
+    "NATIVE_MODULE_ABSENT",
+    "warning",
+    new RegExp(`["'\`]blitsen/${module}["'\`]`, "g"),
+    `blitsen/${module} does not exist on ${platform}.`,
+    `${reason} Every member reads as undefined, so feature-detect the ones you use `
+      + `— if (${module}.x) selects a fallback — or build for a target that has the module.`,
+  ]);
+}
 
 function position(source, index) {
   const before = source.slice(0, index);
@@ -103,10 +138,20 @@ async function collectScannableFiles(root, directory = root) {
   return files.sort((left, right) => left.relative.localeCompare(right.relative));
 }
 
-export async function doctorApplication(root) {
+/**
+ * Grades built output against the v1 profile, and against `target`'s own
+ * `native:` surface.
+ *
+ * `target` defaults to the host because that is what an unqualified `blitsen
+ * doctor` is asking about, and it is what `blitsen build` without `--target`
+ * goes on to produce. A cross-target build passes the target it is building
+ * for, so the modules graded are the ones that will actually be there.
+ */
+export async function doctorApplication(root, { target = hostTarget() } = {}) {
   const files = await collectScannableFiles(root);
   const shipped = await collectShippedPaths(root);
   const { javascript, css, html } = await compatibility();
+  const scripts = [...javascript, ...nativeModuleRules(target)];
   const diagnostics = [];
   for (const file of files) {
     const source = await readFile(file.absolute, "utf8");
@@ -116,7 +161,7 @@ export async function doctorApplication(root) {
     } else if (extension === ".css") {
       diagnostics.push(...scanRules(source, file.relative, css));
     } else {
-      diagnostics.push(...scanRules(source, file.relative, javascript));
+      diagnostics.push(...scanRules(source, file.relative, scripts));
     }
   }
   // Reported only for what the export does not carry: reading a file the
@@ -128,6 +173,7 @@ export async function doctorApplication(root) {
     || left.line - right.line || left.column - right.column || left.code.localeCompare(right.code));
   return {
     profile: "v1-strict",
+    target,
     files: files.length,
     diagnostics: reported,
     errors: reported.filter(item => item.severity === "error").length,

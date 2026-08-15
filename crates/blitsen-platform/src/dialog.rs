@@ -15,6 +15,20 @@
 //! Absent off the XDG portal platforms. macOS requires a file dialog on the main
 //! thread, which is the thread this design deliberately leaves running; that is
 //! a different design rather than this one with the backend swapped out.
+//!
+//! Android is off them too, and not only because there is no portal to speak to.
+//! Its file chooser is an `Intent` handed to the system and answered by a
+//! different activity, so the answer arrives through the lifecycle rather than
+//! through a queue this process drains. The shape above — start the dialog
+//! elsewhere, let the frame loop keep turning, collect the outcome on a later
+//! turn — is the right shape for that, which is worth recording rather than
+//! rediscovering; what is missing is an entry point holding an `AndroidApp` to
+//! route the result back through (#142). Absent until there is one (#147).
+//!
+//! The predicate that keeps this module off a platform is spelled in more than
+//! one place and they have to move together. #139 is what happens when they do
+//! not: `all(unix, not(target_os = "macos"))` claimed to name the portal
+//! platforms and matched Android as well.
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
