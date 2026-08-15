@@ -407,13 +407,40 @@ main.home { max-width: 62rem; margin: 0 auto; padding: 0 1.5rem 5rem; }
 @media (max-width: 52rem) {
   .nav-only { display: grid; }
   .top { display: none; }
-  body.with-rail { grid-template-columns: minmax(0, 1fr); grid-template-areas: "mast" "main" "foot"; }
-  .rail {
-    display: none; grid-area: main;
-    position: static; max-height: none; border-right: 0;
+
+  /* Each page type has exactly one nav surface, and the button opens whichever
+     one that page has. Documentation pages have the rail, which already lists
+     everything the top bar does; the landing and 404 pages have no rail, so
+     there the top links themselves become the panel. */
+
+  body.landing .top {
+    position: absolute; top: 100%; left: 0; right: 0;
+    flex-direction: column; gap: 0;
+    margin-left: 0;
+    padding: .35rem 1.25rem .9rem;
+    background: var(--raised);
     border-bottom: 1px solid var(--rule);
+    box-shadow: 0 8px 20px rgb(0 0 0 / 14%);
+  }
+  body.landing.nav-open .top { display: flex; }
+  body.landing .top a { padding: .7rem 0; border-bottom: 1px solid var(--rule-soft); }
+  body.landing .top a:last-child { border-bottom: 0; }
+
+  /* The rail gets its own grid row. It previously shared "main" with the
+     article, so opening it drew the nav on top of the page content. */
+  body.with-rail {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "mast" "rail" "main" "foot";
+  }
+  .rail {
+    display: none; grid-area: rail;
+    position: static; max-height: none;
+    padding: 1.1rem 1.25rem 1.4rem;
+    border-right: 0; border-bottom: 1px solid var(--rule);
+    background: var(--raised);
   }
   body.nav-open .rail { display: block; }
+
   main.doc { padding: 2rem 1.25rem 3.5rem; }
   .hero { padding-top: 3rem; }
   .hero-crest { width: 5rem; height: 5rem; }
