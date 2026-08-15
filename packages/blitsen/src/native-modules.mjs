@@ -89,11 +89,12 @@ const REASONS = {
     + "clipboard would be indistinguishable. It needs a module shaped for that, over JNI.",
   "android.dialog": "There is no XDG desktop portal on Android. The system's own choosers are "
     + "Intents answered by another activity, which is a different shape from a call that resolves.",
-  "android.window": "An activity is fullscreen and undecorated at a size the system chose. winit "
-    + "accepts every one of these setters there and discards them, and reads them back as though "
-    + "the request had never been made — an approximation with a return value. Immersive mode and "
-    + "orientation are real Android capabilities and belong in a module named for them. The "
-    + "monitor list is not part of this: it describes a display that exists, so it stays.",
+  "android.window": "winit accepts every setter on Android and discards it, then answers the "
+    + "getter as though the request had never been made: `setDecorations(false)` is followed by "
+    + "`isDecorated()` saying true, on a platform with no decorations. The monitor list goes too, "
+    + "and it is the one worth naming because it looks like the survivor — winit enumerates no "
+    + "monitors there, so `monitors()` would report a device with no display. Immersive mode and "
+    + "orientation are the real capabilities here and are not these under another name.",
 };
 
 /// The `native:` modules that do not exist on `target`, each with its reason.

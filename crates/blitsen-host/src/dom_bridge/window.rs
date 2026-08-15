@@ -21,21 +21,24 @@
 use std::cell::{Cell, RefCell};
 use std::sync::Arc;
 
-use blitsen_js::JsError;
-use serde_json::{Value, json};
 use winit::dpi::PhysicalSize;
-use winit::monitor::MonitorHandle;
 use winit::window::Window;
 
-// The property half is compiled off Android; see the note above `set`.
+// Everything a `native:window` or `native:dialog` call reaches is compiled off
+// Android; see the note above `with`. What is left is the slot itself, which the
+// session publishes into and reads back whatever the platform.
 #[cfg(not(target_os = "android"))]
 use std::str::FromStr;
+#[cfg(not(target_os = "android"))]
+use blitsen_js::JsError;
+#[cfg(not(target_os = "android"))]
+use serde_json::{Value, json};
 #[cfg(not(target_os = "android"))]
 use winit::cursor::CursorIcon;
 #[cfg(not(target_os = "android"))]
 use winit::dpi::LogicalSize;
 #[cfg(not(target_os = "android"))]
-use winit::monitor::Fullscreen;
+use winit::monitor::{Fullscreen, MonitorHandle};
 #[cfg(not(target_os = "android"))]
 use winit::window::{CursorGrabMode, WindowLevel};
 
@@ -62,6 +65,32 @@ pub(crate) fn take_applied_resize() -> Option<PhysicalSize<u32>> {
 }
 
 /// Runs `operation` against the window, or reports that there is not one yet.
+///
+/// This half of the module is compiled off Android, because winit's window there
+/// answers every question below and none of the answers are true. Read from its
+/// source at the pinned version rather than assumed: `set_fullscreen` logs
+/// "Cannot set fullscreen on Android" and returns, while `fullscreen()` answers
+/// `None` — so `isFullscreen()` reports false on a surface that fills the
+/// screen. `set_decorations` is empty and `is_decorated()` returns `true`, so
+/// `setDecorations(false)` is followed by `isDecorated()` saying it is decorated,
+/// on a platform with no decorations to remove. `request_surface_size` ignores
+/// the size and hands back the current one, which this module would record as a
+/// resize that was applied. `set_window_level`, `set_cursor` and
+/// `set_cursor_visible` are all empty bodies, and the cursor is not a thing the
+/// device has.
+///
+/// The monitors go with them, and that one is worth naming because it looks like
+/// the survivor: `available_monitors()` on Android is `iter::empty()` and both
+/// `primary_monitor()` and `current_monitor()` are `None`. So `monitors()` would
+/// return `[]` — an application reading that learns the device has no display,
+/// which is a wrong answer rather than a missing one. The scale factor is
+/// reachable there, but it is already `devicePixelRatio` and is not this
+/// module's to spell a second time.
+///
+/// So `native:window` is absent whole on Android rather than trimmed. The
+/// capabilities that *are* real — immersive mode, orientation, the cutout inset
+/// — are not these under another name (#146, #147).
+#[cfg(not(target_os = "android"))]
 pub(super) fn with<T>(
     operation: impl FnOnce(&dyn Window) -> Result<T, JsError>,
 ) -> Result<T, JsError> {
@@ -126,15 +155,6 @@ fn setting(property: &str, value: &str) -> Result<Setting, JsError> {
 }
 
 /// Applies `property`.
-///
-/// This half of the module is compiled off Android, and the reason is the one
-/// case where winit's cross-platform surface is misleading rather than merely
-/// thin: every setter below is accepted there and quietly discarded, and
-/// [`get`] then reports the state as though the request had never been made. An
-/// activity is fullscreen and undecorated at a size the system chose, so
-/// `fullscreen()` answering `None` is not "not fullscreen" — it is winit having
-/// nothing to ask. The cursor properties name a pointer the device does not
-/// have. The bridge installs none of it there; see `native.rs` (#147).
 #[cfg(not(target_os = "android"))]
 pub(super) fn set(property: &str, value: &str) -> Result<(), JsError> {
     let setting = setting(property, value)?;
@@ -192,6 +212,7 @@ pub(super) fn resize(width: f64, height: f64) -> Result<(), JsError> {
 }
 
 /// Enumerates the monitors, each with its own scale factor.
+#[cfg(not(target_os = "android"))]
 pub(super) fn monitors() -> Result<Value, JsError> {
     with(|window| {
         let current = window.current_monitor().map(|monitor| monitor.id());
@@ -208,6 +229,7 @@ pub(super) fn monitors() -> Result<Value, JsError> {
     })
 }
 
+#[cfg(not(target_os = "android"))]
 fn describe(monitor: &MonitorHandle, current: bool, primary: bool) -> Value {
     let mode = monitor.current_video_mode();
     let size = mode.as_ref().map(|mode| mode.size());

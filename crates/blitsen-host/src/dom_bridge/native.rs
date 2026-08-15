@@ -8,10 +8,9 @@
 //!
 //! Android is where that sentence stops being a formality, because the platform
 //! answers "no" to most of it. What survives there is `os`, which reads the same
-//! `/proc` a Linux desktop does, and the monitor list, which describes a display
-//! that genuinely exists. What does not is `app`, `clipboard` and every window
-//! property — each absent for a reason its own module or `cfg` states, and none
-//! of them absent merely because the port has not been written (#147).
+//! `/proc` a Linux desktop does. What does not is `app`, `clipboard`, `dialog`
+//! and `window` — each absent for a reason its own module or `cfg` states, and
+//! none of them absent merely because the port has not been written (#147).
 
 use blitsen_js::{JsEngine, JsError};
 #[cfg(not(target_os = "android"))]
@@ -25,9 +24,9 @@ use blitsen_platform::clipboard::{self, Image};
 use blitsen_platform::os;
 use serde_json::json;
 
-use super::{json_value, window};
+use super::json_value;
 #[cfg(not(target_os = "android"))]
-use super::argument;
+use super::{argument, window};
 
 #[cfg(not(target_os = "android"))]
 fn failed(error: PlatformError) -> JsError {
@@ -289,26 +288,8 @@ fn install_clipboard<E: JsEngine + 'static>(_engine: &mut E) -> Result<(), JsErr
 /// The window this session already owns, never a second one: creating windows
 /// waits on the shared-versus-isolated JavaScript context decision, and the
 /// members that would need it are declared absent instead.
-///
-/// Split in two because Android keeps one half and not the other. The monitor
-/// list describes a display that exists and answers about it truthfully; the
-/// properties do not, and that is worse than them doing nothing. See
-/// [`install_window_properties`].
-fn install_window<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsError> {
-    install_window_properties(engine)?;
-
-    engine.define_global_function(
-        "__blitsenNativeWindowMonitors",
-        Box::new(move |call| {
-            let mut engine = E::from_value(&call.this);
-            json_value(&mut engine, &window::monitors()?)
-        }),
-    )
-}
-
-/// Size, fullscreen, decorations, window level and the cursor.
 #[cfg(not(target_os = "android"))]
-fn install_window_properties<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsError> {
+fn install_window<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsError> {
     engine.define_global_function(
         "__blitsenNativeWindowSet",
         Box::new(move |call| {
@@ -344,21 +325,28 @@ fn install_window_properties<E: JsEngine + 'static>(engine: &mut E) -> Result<()
             window::resize(width, height)?;
             Ok(call.this)
         }),
+    )?;
+
+    engine.define_global_function(
+        "__blitsenNativeWindowMonitors",
+        Box::new(move |call| {
+            let mut engine = E::from_value(&call.this);
+            json_value(&mut engine, &window::monitors()?)
+        }),
     )
 }
 
-// Nothing to install. Not because winit refuses these on Android — it accepts
-// every one of them — but because it accepts them and then does nothing, and
-// reads them back as though the answer were no. An activity is fullscreen and
-// undecorated, at a size the system chose; `isFullscreen()` would return false,
-// `setSize` would be discarded, and `setCursor` would name a pointer that is not
-// on the device. A silent no-op is an approximation with a return value, which
-// is the one thing `docs/PRODUCT.md` §7 rules out — and unlike the modules
-// above, nothing here is waiting on JNI. Immersive mode and orientation are real
-// Android capabilities and belong in a module shaped for them, not in setters
-// named after a desktop window (#146, #147).
+// Nothing to install. Not because winit refuses any of this on Android — it
+// accepts every setter and answers every getter — but because none of the
+// answers are true, and a wrong answer is worse than a missing one. The monitor
+// list is the one that had to be checked rather than assumed, because it looks
+// like the survivor: winit's Android `available_monitors()` is `iter::empty()`,
+// so `monitors()` would report a device with no display. `dom_bridge/window.rs`
+// reads off the rest of the backend, line by line. Immersive mode and
+// orientation are the real capabilities here and are not these under another
+// name (#146, #147).
 #[cfg(target_os = "android")]
-fn install_window_properties<E: JsEngine + 'static>(_engine: &mut E) -> Result<(), JsError> {
+fn install_window<E: JsEngine + 'static>(_engine: &mut E) -> Result<(), JsError> {
     Ok(())
 }
 

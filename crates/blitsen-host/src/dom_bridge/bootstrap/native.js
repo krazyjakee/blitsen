@@ -84,11 +84,11 @@
   // already answer those, and a second answer that could disagree is worse than
   // none. What is new is the monitors — including the ones the window is not on.
   //
-  // The monitors and the properties are hosted separately because Android keeps
-  // one and not the other: the display it reports is real and its answers are
-  // true, while a size, a window level and a cursor are requests an activity
-  // accepts and discards. That split is `dom_bridge/native.rs`'s to make; this
-  // side only has to not assume the two arrive together.
+  // Each member is hosted separately rather than the module as a whole, because
+  // which of them exists is `dom_bridge/native.rs`'s decision and not this
+  // side's to anticipate. Android currently takes all of them — the monitor list
+  // included, which looks like the survivor and is not: winit enumerates no
+  // monitors there, so it would report a device with no display.
   const windowProperty = hosted("__blitsenNativeWindowSet");
   const windowReadback = hosted("__blitsenNativeWindowGet");
   const nativeWindow = {
@@ -117,7 +117,9 @@
     setCursorGrab: windowProperty
       ? mode => { __blitsenNativeWindowSet("cursorGrab", String(mode)); }
       : undefined,
-    monitors: () => JSON.parse(__blitsenNativeWindowMonitors()),
+    monitors: hosted("__blitsenNativeWindowMonitors")
+      ? () => JSON.parse(__blitsenNativeWindowMonitors())
+      : undefined,
   };
 
   // What machine this is. `navigator.hardwareConcurrency` is the only thing the
