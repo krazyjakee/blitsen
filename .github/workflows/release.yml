@@ -351,11 +351,24 @@ jobs:
           done
           exit $missing
 
-      # Issue #131: the `@blitsen` scope has to exist and be owned by whoever
-      # this token belongs to, and npm answers that question in a second. Asked
-      # before the first publish rather than discovered at it, because the six
-      # platform packages go out before `blitsen` does — a scope that refuses
-      # them leaves a release stopped halfway with a version burned.
+      # Issue #131: the token has to authenticate before the first publish
+      # rather than at it, because the six platform packages go out before
+      # `blitsen` does and a token the registry rejects leaves a release
+      # stopped halfway.
+      #
+      # Authentication is the part that can be settled up front, and `whoami`
+      # settles it. Whether the *scope* will accept a package cannot be:
+      # `npm access list packages @blitsen` reads the organisation, which is a
+      # different permission from writing to the scope, and a granular token
+      # scoped to publish — package `blitsen` and scope `@blitsen`, read and
+      # write, no organisation access — is refused by it with a 403. A token
+      # that passed that check could still fail to publish, and the one that
+      # publishes fails the check, so it was answering a question nobody asked.
+      # It stays as a note in the log rather than a gate.
+      #
+      # What protects the release is the ordering: a scope that refuses this
+      # token refuses the *first* platform package, so the run stops with
+      # nothing published and no version burned on `blitsen` itself.
       - name: Check the registry will take this
         if: inputs.publish
         shell: bash
@@ -367,9 +380,10 @@ jobs:
             exit 1
           }
           echo "Publishing as $who"
-          if ! npm access list packages @blitsen >/dev/null 2>&1; then
-            echo "::error::the @blitsen scope is not readable by this token — create the organisation and give the token write access to it (#131)"
-            exit 1
+          if npm access list packages @blitsen >/dev/null 2>&1; then
+            echo "This token can read the @blitsen organisation."
+          else
+            echo "::notice::@blitsen is not readable by this token, which is expected for a token with no organisation permissions — the first platform package is what proves the scope accepts it (#131)"
           fi
 
       - name: Check the version is not already published
