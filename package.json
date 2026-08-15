@@ -6,6 +6,9 @@
     "packages/*"
   ],
   "scripts": {
-    "check": "bun test packages/blitsen"
+    "check": "bun test packages/blitsen",
+    "site:build": "bun run site/build/main.ts",
+    "site:check": "bun run site/build/check.ts",
+    "site:serve": "SITE_BASE= bun run site/build/main.ts && bunx serve site/dist"
   }
 }
