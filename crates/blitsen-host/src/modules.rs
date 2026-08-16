@@ -141,7 +141,14 @@ pub fn resolve(referrer: &str, specifier: &str) -> Result<String, JsError> {
         .or_else(|| specifier.strip_prefix("bun:"))
     {
         return Err(JsError::new(format!(
-            "the shipped Blitsen runtime implements no {specifier}. Node and Bun builtins are              the toolchain's, not the runtime's; use the `blitsen/*` native modules for system              access, or bundle a browser-targeted replacement for {builtin}."
+            concat!(
+                "the shipped Blitsen runtime implements no {specifier}. ",
+                "Node and Bun builtins are the toolchain's, not the runtime's; ",
+                "use the `blitsen/*` native modules for system access, or bundle ",
+                "a browser-targeted replacement for {builtin}."
+            ),
+            specifier = specifier,
+            builtin = builtin,
         )));
     }
     if !specifier.starts_with("./") && !specifier.starts_with("../") && !specifier.starts_with('/')
@@ -337,6 +344,8 @@ impl ModuleRegistry {
 
 #[cfg(test)]
 mod tests {
+    use blitsen_quickjs::QuickJs;
+
     use super::*;
 
     struct Fixture(Vec<&'static str>);
@@ -397,17 +406,37 @@ mod tests {
     #[test]
     fn a_node_or_bun_builtin_is_told_it_is_not_implemented() {
         let entry = url_of("assets/index.js");
-        for specifier in ["node:fs", "bun:sqlite"] {
+        for (specifier, builtin) in [("node:fs", "fs"), ("bun:sqlite", "sqlite")] {
             let error = resolve(&entry, specifier).unwrap_err();
-            assert!(
-                error.message().contains("implements no"),
-                "{specifier}: {error}"
-            );
-            assert!(
-                error.message().contains("blitsen/*"),
-                "{specifier}: {error}"
+            assert_eq!(
+                error.message(),
+                format!(
+                    "the shipped Blitsen runtime implements no {specifier}. Node and Bun builtins \
+                     are the toolchain's, not the runtime's; use the `blitsen/*` native modules \
+                     for system access, or bundle a browser-targeted replacement for {builtin}."
+                )
             );
         }
+    }
+
+    #[test]
+    fn the_builtin_diagnostic_survives_the_public_module_loader_path_exactly() {
+        let mut engine = QuickJs::new().expect("a QuickJS runtime");
+        registry(Vec::new())
+            .install(&mut engine)
+            .expect("the application registry installs");
+        engine.install_module_loader();
+
+        let error = engine
+            .evaluate_module(r#"import "node:fs";"#, &url_of("index.js"))
+            .err()
+            .expect("the unsupported builtin rejects module evaluation");
+        assert_eq!(
+            error.message(),
+            "Error: the shipped Blitsen runtime implements no node:fs. Node and Bun builtins are \
+             the toolchain's, not the runtime's; use the `blitsen/*` native modules for system \
+             access, or bundle a browser-targeted replacement for fs."
+        );
     }
 
     #[test]
