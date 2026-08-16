@@ -25,6 +25,7 @@ use url::Url;
 
 use crate::apk::ApkAssets;
 use crate::dev_server::DevServer;
+use crate::dom_bridge::DocumentMode;
 use crate::modules::{APP_ORIGIN, AppSource, DirectorySource, path_of, url_of};
 
 /// What a served URL with no filename asks for.
@@ -429,6 +430,32 @@ pub struct LoadedDocument {
     pub window_state: Rc<RefCell<WindowState>>,
 }
 
+/// Viewport and JavaScript environment for loading one document.
+pub struct LoadOptions {
+    width: u32,
+    height: u32,
+    viewport: Option<Viewport>,
+    mode: DocumentMode,
+}
+
+impl LoadOptions {
+    /// Creates options for an initial viewport in the selected environment.
+    pub fn new(width: u32, height: u32, mode: DocumentMode) -> Self {
+        Self {
+            width,
+            height,
+            viewport: None,
+            mode,
+        }
+    }
+
+    /// Preserves a live native viewport while reloading its document.
+    pub fn with_viewport(mut self, viewport: Viewport) -> Self {
+        self.viewport = Some(viewport);
+        self
+    }
+}
+
 thread_local! {
     static APPLICATION_ROOT: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
 }
@@ -451,16 +478,18 @@ pub fn application_root() -> Option<PathBuf> {
 /// not a window is involved, so opening a window, reloading one, and the
 /// headless standalone check cannot drift apart in what they install or in what
 /// order.
-#[allow(clippy::too_many_arguments)]
 pub fn load_document<E: JsEngine + Clone + 'static>(
     engine: &mut E,
     files: &AppFiles,
     net_provider: Arc<dyn NetProvider>,
-    width: u32,
-    height: u32,
-    viewport: Option<Viewport>,
-    test_harness: bool,
+    options: LoadOptions,
 ) -> Result<LoadedDocument, JsError> {
+    let LoadOptions {
+        width,
+        height,
+        viewport,
+        mode,
+    } = options;
     APPLICATION_ROOT.with(|current| {
         *current.borrow_mut() = match files {
             AppFiles::Directory { root, .. } => Some(root.clone()),
@@ -494,16 +523,20 @@ pub fn load_document<E: JsEngine + Clone + 'static>(
         .borrow()
         .document_scripts()
         .map_err(crate::dom_error)?;
+    let entrypoint = files.entrypoint_name();
+    let loader = files.script_loader();
     let window_state = crate::harness::execute_window_scripts_from(
         engine,
         dom_runtime,
         scripts,
-        &files.entrypoint_name(),
-        width,
-        height,
-        test_harness,
-        files.script_loader().as_ref(),
-        Some(files.reader()),
+        crate::harness::WindowScriptOptions {
+            entrypoint: &entrypoint,
+            width,
+            height,
+            mode,
+            loader: loader.as_ref(),
+            reader: Some(files.reader()),
+        },
     )?;
     document
         .borrow_mut()
@@ -721,6 +754,18 @@ mod tests {
     use std::sync::Mutex;
 
     use super::*;
+
+    #[test]
+    fn load_options_make_both_document_modes_explicit() {
+        let application = LoadOptions::new(800, 600, DocumentMode::Application);
+        assert_eq!(application.mode, DocumentMode::Application);
+        assert!(application.viewport.is_none());
+
+        let viewport = Viewport::new(320, 240, 2.0, ColorScheme::Dark);
+        let harness = LoadOptions::new(320, 240, DocumentMode::TestHarness).with_viewport(viewport);
+        assert_eq!(harness.mode, DocumentMode::TestHarness);
+        assert!(harness.viewport.is_some());
+    }
 
     /// Collects what a subresource provider answered, so a test can ask how
     /// many bytes a URL was served rather than whether a handler was called.

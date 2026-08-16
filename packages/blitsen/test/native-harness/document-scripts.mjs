@@ -94,3 +94,14 @@ assert.match(String(scriptError.stack ?? scriptError), /broken\.js/);
 await Bun.sleep(15);
 assert.equal(globalThis.__blitsenDisposedTimerRan, undefined,
   "document reload cancels timers owned by the previous context");
+
+const harnessMode = JSON.parse(native.runBridgeHarness(
+  `<p id="mode"></p>`,
+  `{ if (typeof __blitsenInjectMouseEvent !== "function" ||
+         typeof __blitsenInjectPointerAt !== "function" ||
+         typeof __blitsenDomCallCount !== "function")
+       throw new Error("test harness mode did not install its test-only globals");
+     document.getElementById("mode").setAttribute("data-mode", "test-harness"); }`,
+));
+assert.equal(harnessMode.nodes.find(node => node.attributes.id === "mode")
+  .attributes["data-mode"], "test-harness");

@@ -228,7 +228,13 @@ pub fn replay<E: JsEngine + Clone + 'static>(
     record_frames: &[u32],
 ) -> Result<ReplayReport, JsError> {
     let (width, height) = (trace.width, trace.height);
-    let (engine, document) = load_document_harness(engine, entrypoint, width, height, true)?;
+    let (engine, document) = load_document_harness(
+        engine,
+        entrypoint,
+        width,
+        height,
+        crate::dom_bridge::DocumentMode::TestHarness,
+    )?;
     let trace = Rc::new(trace);
     let mut frame_loop = FrameLoop::new(
         engine,

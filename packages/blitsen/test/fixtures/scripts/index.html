@@ -7,7 +7,8 @@
       globalThis.__blitsenReloadLeak = true;
       setTimeout(() => { globalThis.__blitsenDisposedTimerRan = true; }, 5);
       {
-        if ("__blitsenInjectMouseEvent" in globalThis) {
+        if (["__blitsenInjectMouseEvent", "__blitsenInjectPointerAt", "__blitsenDomCallCount"]
+            .some(name => name in globalThis)) {
           throw new Error("test-only event injection leaked into a shipped window");
         }
         const target = document.getElementById("script-target");
