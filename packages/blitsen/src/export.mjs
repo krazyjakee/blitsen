@@ -7,6 +7,7 @@ import { linkBundle } from "./bundle.mjs";
 import {
   HTML_EXTENSIONS, REWRITTEN_EXTENSIONS, SCRIPT_EXTENSIONS, walkFiles,
 } from "./files.mjs";
+import { frameDelay } from "./frame-pacing.mjs";
 import { packageBuild, signArtifact } from "./packaging.mjs";
 import { describeRuntime, hostTarget, requestedHost, resolvePhase2Runtime } from "./runtime.mjs";
 
@@ -361,7 +362,7 @@ export function runtimeRecord(runtime) {
   };
 }
 
-function launcherSource(assets, options) {
+export function launcherSource(assets, options) {
   const embedded = options.layout === "embedded";
   const imports = embedded
     ? assets.map((asset, index) =>
@@ -391,6 +392,8 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 ${imports}
+
+${frameDelay.toString()}
 
 // Issue #73: an export names the runtime it was built against, in the binary and at
 // run time. Parsed from one string so the record survives bundling as a contiguous
@@ -444,17 +447,13 @@ try {
     const frameLimit = Number(process.env.BLITSEN_STANDALONE_FRAMES || 0);
     const warmupFrames = Number(process.env.BLITSEN_STANDALONE_WARMUP_FRAMES || 0);
     let started = performance.now();
-    const frameInterval = 1000 / 60;
-    let nextFrame = started;
+    const pacing = { nextFrame: started };
     let frames = 0;
     while (engine.pumpWindow()) {
       frames += 1;
       if (frames === warmupFrames) started = performance.now();
       if (frameLimit > 0 && frames >= frameLimit + warmupFrames) break;
-      nextFrame += frameInterval;
-      const now = performance.now();
-      if (nextFrame < now - frameInterval) nextFrame = now;
-      await Bun.sleep(Math.max(0, nextFrame - now));
+      await Bun.sleep(frameDelay(pacing, performance.now()));
     }
     if (frameLimit > 0) {
       const cadence = frameLimit * 1000 / Math.max(1, performance.now() - started);
