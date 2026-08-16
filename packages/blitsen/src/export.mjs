@@ -3,6 +3,10 @@ import { createReadStream } from "node:fs";
 import { access, copyFile, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, join, posix, relative, resolve, sep } from "node:path";
 import { gzipSync } from "node:zlib";
+import {
+  CSS_REFERENCE_PATTERNS, CSS_ROOT_REFERENCE_PATTERNS,
+  HTML_REFERENCE_PATTERNS, HTML_ROOT_REFERENCE_PATTERNS,
+} from "./asset-references.mjs";
 import { describeExecutableBinary, describeNativeBinary, readContainerHeader } from "./binary.mjs";
 import { linkBundle } from "./bundle.mjs";
 import {
@@ -24,16 +28,6 @@ const BUN_TARGETS = {
   "win32-arm64": "bun-windows-arm64", "win32-x64": "bun-windows-x64",
 };
 
-const HTML_REFERENCES = [
-  /<(?:script|img|source|audio|video|track|embed|input)\b[^>]*?\bsrc\s*=\s*["']([^"']*)["']/gi,
-  /<link\b[^>]*?\bhref\s*=\s*["']([^"']*)["']/gi,
-  /<video\b[^>]*?\bposter\s*=\s*["']([^"']*)["']/gi,
-  /<object\b[^>]*?\bdata\s*=\s*["']([^"']*)["']/gi,
-];
-const CSS_REFERENCES = [
-  /url\(\s*["']?([^"')]*)["']?\s*\)/gi,
-  /@import\s+["']([^"']*)["']/gi,
-];
 // Statically analysable module-graph edges only. Computed specifiers are not
 // followed; --include is the escape hatch for those.
 const SCRIPT_REFERENCES = [
@@ -55,8 +49,8 @@ const SCRIPT_LITERALS = [
 
 function referencePatterns(file) {
   const extension = extname(file).toLowerCase();
-  if (HTML_EXTENSIONS.includes(extension)) return HTML_REFERENCES;
-  if (extension === ".css") return CSS_REFERENCES;
+  if (HTML_EXTENSIONS.includes(extension)) return HTML_REFERENCE_PATTERNS;
+  if (extension === ".css") return CSS_REFERENCE_PATTERNS;
   if (SCRIPT_EXTENSIONS.includes(extension)) return [...SCRIPT_REFERENCES, ...SCRIPT_LITERALS];
   return null;
 }
@@ -100,16 +94,12 @@ export function rewriteRootRelativeReferences(source, sourceFile, resolveTarget 
     return `${prefix}${relativeAssetUrl(target, sourceFile)}${reference.suffix}${suffix}`;
   };
   if (HTML_EXTENSIONS.includes(extname(sourceFile).toLowerCase())) {
-    const patterns = [
-      /(<(?:script|img|source|audio|video|track|embed|input)\b[^>]*\bsrc\s*=\s*["'])(\/(?!\/)[^"']*)(["'])/gi,
-      /(<link\b[^>]*\bhref\s*=\s*["'])(\/(?!\/)[^"']*)(["'])/gi,
-      /(<video\b[^>]*\bposter\s*=\s*["'])(\/(?!\/)[^"']*)(["'])/gi,
-      /(<object\b[^>]*\bdata\s*=\s*["'])(\/(?!\/)[^"']*)(["'])/gi,
-    ];
-    return patterns.reduce((rewritten, pattern) => rewritten.replace(pattern, rewrite), source);
+    return HTML_ROOT_REFERENCE_PATTERNS
+      .reduce((rewritten, pattern) => rewritten.replace(pattern, rewrite), source);
   }
   if (extname(sourceFile).toLowerCase() === ".css") {
-    return source.replace(/(url\(\s*["']?)(\/(?!\/)[^"')]*)(["']?\s*\))/gi, rewrite);
+    return CSS_ROOT_REFERENCE_PATTERNS
+      .reduce((rewritten, pattern) => rewritten.replace(pattern, rewrite), source);
   }
   return source;
 }
