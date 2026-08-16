@@ -107,6 +107,14 @@ fn local_completion(id: u64, url: &Url, bytes: Vec<u8>, shared: &Shared) -> Valu
     })
 }
 
+/// Explains why a URL cannot be served by either fetch transport.
+fn outside_application(url: &Url) -> String {
+    format!(
+        "fetch reaches http, https, and the files this application shipped; \
+         {url} is none of them"
+    )
+}
+
 /// What a path's extension says its bytes are.
 ///
 /// Enough to answer `response.json()`, an `ArrayBuffer` for `decodeAudioData`,
@@ -253,12 +261,7 @@ impl FetchHost {
     /// application observes — a promise settling at the animation-frame drain —
     /// is the same for a file as for a response off the network.
     fn start_local(&self, url: &Url) -> Result<u64, JsError> {
-        let no_server = || {
-            JsError::new(format!(
-                "fetch reaches http, https, and the files this application shipped; \
-                 {url} is none of them"
-            ))
-        };
+        let no_server = || JsError::new(outside_application(url));
         let reader = self.reader.clone().ok_or_else(no_server)?;
         // A file has no verbs. Answering 405 would be the server-shaped reply,
         // and there is no server: posting to a bundled file is a mistake in the
@@ -292,10 +295,7 @@ impl FetchHost {
                     "id": id,
                     "error": {
                         "name": "TypeError",
-                        "message": format!(
-                            "fetch reaches http, https, and the files this application \
-                             shipped; {url} is none of them"
-                        ),
+                        "message": outside_application(&url),
                     },
                 }),
             };
@@ -505,6 +505,32 @@ mod tests {
         }
         let files = crate::app::AppFiles::directory(root.join("index.html")).unwrap();
         (root, FetchHost::new(Some(files.reader())).unwrap())
+    }
+
+    #[test]
+    fn outside_application_diagnostic_is_identical_with_or_without_a_reader() {
+        let url = "blitsen://other/data.json";
+        let bare = FetchHost::new(None).unwrap();
+        let synchronous = bare
+            .start(&spec(url, "GET", &[]), None)
+            .unwrap_err()
+            .message()
+            .to_owned();
+
+        let (root, application) = application("outside-message", &[("index.html", b"<p>hi")]);
+        application.start(&spec(url, "GET", &[]), None).unwrap();
+        let asynchronous = drain(&application)["completed"][0]["error"]["message"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+
+        assert_eq!(synchronous, asynchronous);
+        assert_eq!(
+            synchronous,
+            "fetch reaches http, https, and the files this application shipped; \
+             blitsen://other/data.json is none of them"
+        );
+        std::fs::remove_dir_all(&root).ok();
     }
 
     #[test]
