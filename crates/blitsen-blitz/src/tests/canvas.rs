@@ -18,6 +18,8 @@ use blitz::dom::Widget;
 use kurbo::{Affine, Rect};
 use peniko::{Color, Fill};
 
+use crate::surface::Surface as _;
+
 /// A widget that draws nothing, so what is under test is the attachment.
 struct Probe;
 
@@ -33,14 +35,14 @@ fn backing_store(dom: &BlitzDom, id: &str) -> (u32, u32) {
         .size()
 }
 
-/// How many times the canvas's backing store has been replaced.
-fn generation(dom: &BlitzDom, id: &str) -> u64 {
+/// The revision of an attached canvas's contents.
+fn revision(dom: &BlitzDom, id: &str) -> u64 {
     let node = dom.get_element_by_id(id).unwrap().unwrap();
     dom.canvases
         .get(&node)
         .expect("attached canvas")
         .borrow()
-        .generation()
+        .revision()
 }
 
 #[test]
@@ -110,12 +112,12 @@ fn canvas_backing_stores_follow_their_content_attributes() {
     );
 
     let sized = dom.get_element_by_id("sized").unwrap().unwrap();
-    let before = generation(&dom, "sized");
+    let before = revision(&dom, "sized");
     dom.set_attribute(sized, &DomName::attribute("width"), "400")
         .unwrap();
     assert_eq!(backing_store(&dom, "sized"), (400, 100));
     assert_eq!(
-        generation(&dom, "sized"),
+        revision(&dom, "sized"),
         before + 1,
         "a resize replaces the backing store"
     );
@@ -123,7 +125,7 @@ fn canvas_backing_stores_follow_their_content_attributes() {
     dom.set_attribute(sized, &DomName::attribute("width"), "400")
         .unwrap();
     assert_eq!(
-        generation(&dom, "sized"),
+        revision(&dom, "sized"),
         before + 1,
         "an attribute written with the size it already had replaces nothing"
     );

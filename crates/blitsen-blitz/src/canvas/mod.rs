@@ -11,8 +11,9 @@
 //! frame as the DOM at the element's own paint position — z-order, ancestor
 //! `overflow` and `border-radius` come from that position rather than from a
 //! second pass. This is what `<blitsen-view>` pays a full-frame RGBA upload for
-//! (see [`crate::viewport`]), and the difference is that an application writes
-//! that surface from JavaScript while a canvas's ops are recorded here.
+//! (see [`crate::viewport`]). Issue #99 tracks connecting this tested
+//! compositing seam to JavaScript through `getContext("2d")`; until then canvas
+//! remains an explicitly unsupported API.
 //!
 //! Rasterisation is still needed, but only where the specification demands a
 //! readback — `getImageData`, `toDataURL` — and not once per frame.
@@ -57,7 +58,6 @@ fn dimension(value: Option<&str>, default: u32) -> u32 {
 pub(crate) struct CanvasState {
     width: u32,
     height: u32,
-    generation: u64,
     revision: u64,
     scene: Scene,
 }
@@ -67,7 +67,6 @@ impl Default for CanvasState {
         Self {
             width: DEFAULT_SIZE.0,
             height: DEFAULT_SIZE.1,
-            generation: 0,
             revision: 0,
             scene: Scene::new(),
         }
@@ -85,15 +84,13 @@ impl CanvasState {
     ///
     /// Contents recorded for the previous size are dropped. That is not an
     /// optimisation — HTML says assigning either dimension clears the canvas to
-    /// transparent black — and it is why `generation` exists separately from
-    /// `revision`: a resize replaces the surface, an ordinary draw does not.
+    /// transparent black.
     pub(crate) fn resize(&mut self, width: u32, height: u32) -> bool {
         if self.width == width && self.height == height {
             return false;
         }
         self.width = width;
         self.height = height;
-        self.generation += 1;
         self.clear();
         true
     }
@@ -104,10 +101,8 @@ impl CanvasState {
         self.revision += 1;
     }
 
-    /// Records drawing commands into the canvas's own coordinate space.
-    // Called by the DOM bridge once the 2D context lands; until then the
-    // tests are the only caller, and a warning here would be noise.
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// Records test drawing commands into the canvas's own coordinate space.
+    #[cfg(test)]
     pub(crate) fn record(&mut self, ops: impl FnOnce(&mut Scene)) {
         ops(&mut self.scene);
         self.revision += 1;
@@ -116,14 +111,6 @@ impl CanvasState {
     /// Reports the backing store size in canvas pixels.
     pub(crate) fn size(&self) -> (u32, u32) {
         (self.width, self.height)
-    }
-
-    /// Reports how many times the backing store has been replaced.
-    // Called by the DOM bridge once the 2D context lands; until then the
-    // tests are the only caller, and a warning here would be noise.
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) fn generation(&self) -> u64 {
-        self.generation
     }
 }
 
