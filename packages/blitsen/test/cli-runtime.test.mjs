@@ -5,10 +5,61 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { main } from "../src/cli.mjs";
 import { buildStandalone, runtimeRecord } from "../src/export.mjs";
-import { describeRuntime, hostTarget, resolveRuntime, TARGETS } from "../src/runtime.mjs";
+import { describeRuntime, hostTarget, openRuntime, resolveRuntime, TARGETS }
+  from "../src/runtime.mjs";
 import { viteBase, engineBuilt, platformPackages, cliVersion, withPlatformPackages, withStubbedExport, capture } from "./cli-support.mjs";
 
 describe("runtime resolution", () => {
+  test("adapts an engine with its resolved metadata and the caller's wait strategy", async () => {
+    const calls = [];
+    class Engine {
+      openDirectory(options) {
+        calls.push(["open", options]);
+        return "opened";
+      }
+      reloadCSS(file) {
+        calls.push(["css", file]);
+        return true;
+      }
+      reloadDirectory() {
+        calls.push(["reload"]);
+      }
+      pumpWindow() {
+        calls.push(["pump"]);
+        return false;
+      }
+    }
+    const resolved = { path: "/runtime/blitsen.node", source: "test" };
+    const waits = [];
+    const waitForNextFrame = async delay => waits.push(delay);
+    const runtime = openRuntime(resolved, {
+      loadAddon(path) {
+        expect(path).toBe(resolved.path);
+        return { Engine };
+      },
+      waitForNextFrame,
+    });
+
+    expect(runtime.resolved).toBe(resolved);
+    expect(runtime.openDirectory({ root: "/app" })).toBe("opened");
+    expect(runtime.reloadCSS("app.css")).toBeTrue();
+    runtime.reloadDirectory();
+    expect(runtime.pumpWindow()).toBeFalse();
+    await runtime.waitForNextFrame(12);
+    expect(calls).toEqual([
+      ["open", { root: "/app" }], ["css", "app.css"], ["reload"], ["pump"],
+    ]);
+    expect(waits).toEqual([12]);
+  });
+
+  test("the bin entry point delegates engine adaptation and keeps Bun's wait strategy", async () => {
+    const entrypoint = await readFile(join(import.meta.dir, "../bin/blitsen.mjs"), "utf8");
+    expect(entrypoint).toContain("openRuntime(resolved");
+    expect(entrypoint).toContain("waitForNextFrame: delay => Bun.sleep(delay)");
+    expect(entrypoint).toContain("buildStandalone(options, resolved)");
+    expect(entrypoint).not.toContain("new native.Engine");
+  });
+
   test("declares one platform package per target, pinned to this version exactly", async () => {
     const manifest = JSON.parse(await readFile(join(import.meta.dir, "../package.json"), "utf8"));
     expect(Object.keys(manifest.optionalDependencies))
