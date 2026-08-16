@@ -143,6 +143,46 @@ const OFFLINE_CHANNELS: usize = 2;
 const OFFLINE_SAMPLE_RATE: f32 = 48_000.0;
 const OFFLINE_FRAMES: usize = 48_000;
 
+/// The string arguments supplied by the JavaScript bridge.
+///
+/// Keeping the positional protocol behind named readers makes each operation's
+/// wire shape explicit without changing that protocol or its error messages.
+#[derive(Clone, Copy)]
+struct AudioArguments<'a>(&'a [String]);
+
+impl<'a> AudioArguments<'a> {
+    fn number(self, index: usize) -> Result<f64, JsError> {
+        self.0
+            .get(index)
+            .ok_or_else(|| JsError::new(format!("missing audio argument {index}")))?
+            .parse::<f64>()
+            .map_err(|_| JsError::new(format!("invalid audio argument {index}")))
+    }
+
+    fn id(self, index: usize) -> Result<u64, JsError> {
+        Ok(self.number(index)? as u64)
+    }
+
+    fn text(self, index: usize) -> Result<&'a str, JsError> {
+        self.0
+            .get(index)
+            .map(String::as_str)
+            .ok_or_else(|| JsError::new(format!("missing audio argument {index}")))
+    }
+}
+
+/// A group's answer: `None` when the operation belongs to another group.
+type DispatchAnswer = Result<Option<Value>, JsError>;
+type DispatchGroup = for<'a> fn(&AudioHost, &str, AudioArguments<'a>) -> DispatchAnswer;
+
+const DISPATCH_GROUPS: [DispatchGroup; 5] = [
+    AudioHost::dispatch_context,
+    AudioHost::dispatch_nodes,
+    AudioHost::dispatch_params,
+    AudioHost::dispatch_sources,
+    AudioHost::dispatch_buffers,
+];
+
 impl AudioHost {
     pub(super) fn new(offline: bool, reader: Option<crate::app::AppReader>) -> Self {
         let mode = if offline { Mode::Offline } else { Mode::Device };
@@ -249,6 +289,21 @@ impl AudioHost {
             .get(&id)
             .ok_or_else(|| JsError::new("the audio node has been released"))?;
         Ok(run(node))
+    }
+
+    /// Mutates a buffer source while retaining the operation-specific error
+    /// used when the id is absent or names another kind of node.
+    fn with_source<T>(
+        &self,
+        id: u64,
+        wrong_kind: &'static str,
+        run: impl FnOnce(&mut AudioBufferSourceNode) -> Result<T, JsError>,
+    ) -> Result<T, JsError> {
+        let mut nodes = lock(&self.nodes);
+        match nodes.get_mut(&id) {
+            Some(Node::Source(source)) => run(source),
+            _ => Err(JsError::new(wrong_kind)),
+        }
     }
 
     /// Connects one node to another, or to the destination when `to` is zero.
@@ -397,142 +452,22 @@ impl AudioHost {
         }
     }
 
-    /// Every operation the bootstrap can name, dispatched by string.
+    /// Every operation the bootstrap can name, dispatched by domain.
     pub(super) fn dispatch(&self, operation: &str, arguments: &[String]) -> Result<Value, JsError> {
-        let number = |index: usize| -> Result<f64, JsError> {
-            arguments
-                .get(index)
-                .ok_or_else(|| JsError::new(format!("missing audio argument {index}")))?
-                .parse::<f64>()
-                .map_err(|_| JsError::new(format!("invalid audio argument {index}")))
-        };
-        let id = |index: usize| -> Result<u64, JsError> { Ok(number(index)? as u64) };
-        let text = |index: usize| -> Result<&str, JsError> {
-            arguments
-                .get(index)
-                .map(String::as_str)
-                .ok_or_else(|| JsError::new(format!("missing audio argument {index}")))
-        };
+        let arguments = AudioArguments(arguments);
+        for group in DISPATCH_GROUPS {
+            if let Some(value) = group(self, operation, arguments)? {
+                return Ok(value);
+            }
+        }
+        Err(JsError::new(format!(
+            "unknown audio operation: {operation}"
+        )))
+    }
+
+    fn dispatch_context(&self, operation: &str, arguments: AudioArguments<'_>) -> DispatchAnswer {
         match operation {
-            "context" => self.context_state(),
-            "create" => Ok(json!(self.create(text(0)?)?)),
-            "release" => {
-                lock(&self.nodes).remove(&id(0)?);
-                Ok(Value::Null)
-            }
-            "connect" => {
-                self.connect(id(0)?, id(1)?)?;
-                Ok(Value::Null)
-            }
-            "disconnect" => {
-                self.with_node(id(0)?, |node| node.as_audio_node().disconnect())?;
-                Ok(Value::Null)
-            }
-            "paramValue" => self.with_node(id(0)?, |node| {
-                node.param(text(1)?).map(|param| json!(param.value()))
-            })?,
-            "paramSet" => {
-                let value = number(2)? as f32;
-                self.with_node(id(0)?, |node| {
-                    node.param(text(1)?).map(|param| {
-                        param.set_value(value);
-                        Value::Null
-                    })
-                })?
-            }
-            // The scheduling half of AudioParam. Ramps are what a game uses for
-            // a fade, and are the reason `volume = x` is not the whole surface.
-            "paramSchedule" => self.with_node(id(0)?, |node| {
-                let param = node.param(text(1)?)?;
-                let value = number(3)? as f32;
-                let when = number(4)?;
-                match text(2)? {
-                    "setValueAtTime" => {
-                        param.set_value_at_time(value, when);
-                    }
-                    "linearRampToValueAtTime" => {
-                        param.linear_ramp_to_value_at_time(value, when);
-                    }
-                    "exponentialRampToValueAtTime" => {
-                        param.exponential_ramp_to_value_at_time(value, when);
-                    }
-                    "setTargetAtTime" => {
-                        param.set_target_at_time(value, when, number(5)?);
-                    }
-                    "cancelScheduledValues" => {
-                        param.cancel_scheduled_values(when);
-                    }
-                    other => {
-                        return Err(JsError::new(format!("unknown parameter schedule: {other}")));
-                    }
-                }
-                Ok(Value::Null)
-            })?,
-            "sourceBuffer" => {
-                let buffer = self.buffer(id(1)?)?;
-                self.with_node(id(0)?, |node| match node {
-                    Node::Source(_) => Ok(()),
-                    _ => Err(JsError::new("only a buffer source has a buffer")),
-                })??;
-                let mut nodes = lock(&self.nodes);
-                match nodes.get_mut(&id(0)?) {
-                    Some(Node::Source(source)) => {
-                        source.set_buffer(buffer);
-                        Ok(Value::Null)
-                    }
-                    _ => Err(JsError::new("only a buffer source has a buffer")),
-                }
-            }
-            "sourceLoop" => {
-                let mut nodes = lock(&self.nodes);
-                match nodes.get_mut(&id(0)?) {
-                    Some(Node::Source(source)) => {
-                        source.set_loop(number(1)? != 0.0);
-                        Ok(Value::Null)
-                    }
-                    _ => Err(JsError::new("only a buffer source loops")),
-                }
-            }
-            // `start` takes ownership of the schedule in this crate, so a source
-            // that has been started cannot be started again — which is also what
-            // the specification says about an `AudioBufferSourceNode`.
-            "sourceStart" => {
-                let node = id(0)?;
-                let shared = Arc::clone(&self.shared);
-                let mut nodes = lock(&self.nodes);
-                match nodes.get_mut(&node) {
-                    Some(Node::Source(source)) => {
-                        let when = number(1)?;
-                        let offset = number(2)?;
-                        // Registered before the start, so a source short enough
-                        // to finish immediately cannot end before anything is
-                        // listening for it.
-                        source.set_onended(move |_| lock(&shared.ended).push(node));
-                        source.start_at_with_offset(when, offset);
-                        self.playing.fetch_add(1, Ordering::Relaxed);
-                        Ok(Value::Null)
-                    }
-                    _ => Err(JsError::new("only a buffer source can be started")),
-                }
-            }
-            "sourceStop" => {
-                let mut nodes = lock(&self.nodes);
-                match nodes.get_mut(&id(0)?) {
-                    Some(Node::Source(source)) => {
-                        source.stop_at(number(1)?);
-                        Ok(Value::Null)
-                    }
-                    _ => Err(JsError::new("only a buffer source can be stopped")),
-                }
-            }
-            "bufferInfo" => {
-                let buffer = self.buffer(id(0)?)?;
-                Ok(buffer_record(id(0)?, &buffer))
-            }
-            "releaseBuffer" => {
-                lock(&self.buffers).remove(&id(0)?);
-                Ok(Value::Null)
-            }
+            "context" => Ok(Some(self.context_state()?)),
             "resume" | "suspend" | "close" => {
                 self.with_backend(|backend| {
                     if let Backend::Live(context) = backend {
@@ -543,9 +478,9 @@ impl AudioHost {
                         }
                     }
                 })?;
-                self.context_state()
+                Ok(Some(self.context_state()?))
             }
-            "render" => self.render(),
+            "render" => Ok(Some(self.render()?)),
             // Harness only, and refused once a context exists: the mode decides
             // what gets opened, so changing it afterwards would describe
             // something other than what is playing.
@@ -553,15 +488,161 @@ impl AudioHost {
                 if lock(&self.backend).is_some() {
                     return Err(JsError::new("the audio context is already open"));
                 }
-                *lock(&self.mode) = match text(0)? {
+                *lock(&self.mode) = match arguments.text(0)? {
                     "offline" => Mode::Offline,
                     "silent" => Mode::Silent,
                     "device" => Mode::Device,
                     other => return Err(JsError::new(format!("unknown audio mode: {other}"))),
                 };
-                Ok(Value::Null)
+                Ok(Some(Value::Null))
             }
-            other => Err(JsError::new(format!("unknown audio operation: {other}"))),
+            _ => Ok(None),
+        }
+    }
+
+    fn dispatch_nodes(&self, operation: &str, arguments: AudioArguments<'_>) -> DispatchAnswer {
+        match operation {
+            "create" => Ok(Some(json!(self.create(arguments.text(0)?)?))),
+            "release" => {
+                lock(&self.nodes).remove(&arguments.id(0)?);
+                Ok(Some(Value::Null))
+            }
+            "connect" => {
+                self.connect(arguments.id(0)?, arguments.id(1)?)?;
+                Ok(Some(Value::Null))
+            }
+            "disconnect" => {
+                self.with_node(arguments.id(0)?, |node| node.as_audio_node().disconnect())?;
+                Ok(Some(Value::Null))
+            }
+            _ => Ok(None),
+        }
+    }
+
+    fn dispatch_params(&self, operation: &str, arguments: AudioArguments<'_>) -> DispatchAnswer {
+        match operation {
+            "paramValue" => Ok(Some(self.with_node(arguments.id(0)?, |node| {
+                node.param(arguments.text(1)?)
+                    .map(|param| json!(param.value()))
+            })??)),
+            "paramSet" => {
+                let value = arguments.number(2)? as f32;
+                Ok(Some(self.with_node(arguments.id(0)?, |node| {
+                    node.param(arguments.text(1)?).map(|param| {
+                        param.set_value(value);
+                        Value::Null
+                    })
+                })??))
+            }
+            // The scheduling half of AudioParam. Ramps are what a game uses for
+            // a fade, and are the reason `volume = x` is not the whole surface.
+            "paramSchedule" => Ok(Some(self.with_node(arguments.id(0)?, |node| {
+                let param = node.param(arguments.text(1)?)?;
+                let value = arguments.number(3)? as f32;
+                let when = arguments.number(4)?;
+                match arguments.text(2)? {
+                    "setValueAtTime" => {
+                        param.set_value_at_time(value, when);
+                    }
+                    "linearRampToValueAtTime" => {
+                        param.linear_ramp_to_value_at_time(value, when);
+                    }
+                    "exponentialRampToValueAtTime" => {
+                        param.exponential_ramp_to_value_at_time(value, when);
+                    }
+                    "setTargetAtTime" => {
+                        param.set_target_at_time(value, when, arguments.number(5)?);
+                    }
+                    "cancelScheduledValues" => {
+                        param.cancel_scheduled_values(when);
+                    }
+                    other => {
+                        return Err(JsError::new(format!("unknown parameter schedule: {other}")));
+                    }
+                }
+                Ok(Value::Null)
+            })??)),
+            _ => Ok(None),
+        }
+    }
+
+    fn dispatch_sources(&self, operation: &str, arguments: AudioArguments<'_>) -> DispatchAnswer {
+        match operation {
+            "sourceBuffer" => {
+                let buffer = self.buffer(arguments.id(1)?)?;
+                self.with_node(arguments.id(0)?, |node| match node {
+                    Node::Source(_) => Ok(()),
+                    _ => Err(JsError::new("only a buffer source has a buffer")),
+                })??;
+                let source = arguments.id(0)?;
+                Ok(Some(self.with_source(
+                    source,
+                    "only a buffer source has a buffer",
+                    |source| {
+                        source.set_buffer(buffer);
+                        Ok(Value::Null)
+                    },
+                )?))
+            }
+            "sourceLoop" => {
+                let source = arguments.id(0)?;
+                Ok(Some(self.with_source(
+                    source,
+                    "only a buffer source loops",
+                    |source| {
+                        source.set_loop(arguments.number(1)? != 0.0);
+                        Ok(Value::Null)
+                    },
+                )?))
+            }
+            // `start` takes ownership of the schedule in this crate, so a source
+            // that has been started cannot be started again — which is also what
+            // the specification says about an `AudioBufferSourceNode`.
+            "sourceStart" => {
+                let node = arguments.id(0)?;
+                let shared = Arc::clone(&self.shared);
+                Ok(Some(self.with_source(
+                    node,
+                    "only a buffer source can be started",
+                    |source| {
+                        let when = arguments.number(1)?;
+                        let offset = arguments.number(2)?;
+                        // Registered before the start, so a source short enough
+                        // to finish immediately cannot end before anything is
+                        // listening for it.
+                        source.set_onended(move |_| lock(&shared.ended).push(node));
+                        source.start_at_with_offset(when, offset);
+                        self.playing.fetch_add(1, Ordering::Relaxed);
+                        Ok(Value::Null)
+                    },
+                )?))
+            }
+            "sourceStop" => {
+                let source = arguments.id(0)?;
+                Ok(Some(self.with_source(
+                    source,
+                    "only a buffer source can be stopped",
+                    |source| {
+                        source.stop_at(arguments.number(1)?);
+                        Ok(Value::Null)
+                    },
+                )?))
+            }
+            _ => Ok(None),
+        }
+    }
+
+    fn dispatch_buffers(&self, operation: &str, arguments: AudioArguments<'_>) -> DispatchAnswer {
+        match operation {
+            "bufferInfo" => {
+                let buffer = self.buffer(arguments.id(0)?)?;
+                Ok(Some(buffer_record(arguments.id(0)?, &buffer)))
+            }
+            "releaseBuffer" => {
+                lock(&self.buffers).remove(&arguments.id(0)?);
+                Ok(Some(Value::Null))
+            }
+            _ => Ok(None),
         }
     }
 
@@ -700,5 +781,176 @@ fn state_name(state: AudioContextState) -> &'static str {
         AudioContextState::Suspended => "suspended",
         AudioContextState::Running => "running",
         AudioContextState::Closed => "closed",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn dispatch(host: &AudioHost, operation: &str, arguments: &[&str]) -> Result<Value, JsError> {
+        let arguments = arguments
+            .iter()
+            .map(|argument| (*argument).to_owned())
+            .collect::<Vec<_>>();
+        host.dispatch(operation, &arguments)
+    }
+
+    fn id(value: &Value) -> String {
+        value.as_u64().expect("node id").to_string()
+    }
+
+    fn error(host: &AudioHost, operation: &str, arguments: &[&str]) -> String {
+        dispatch(host, operation, arguments)
+            .expect_err("operation should fail")
+            .message()
+            .to_owned()
+    }
+
+    #[test]
+    fn dispatch_routes_each_audio_operation_family() {
+        let host = AudioHost::new(true, None);
+        assert_eq!(dispatch(&host, "mode", &["offline"]), Ok(Value::Null));
+
+        let gain = id(&dispatch(&host, "create", &["gain"]).unwrap());
+        let panner = id(&dispatch(&host, "create", &["panner"]).unwrap());
+        let source = id(&dispatch(&host, "create", &["source"]).unwrap());
+        assert_eq!(
+            dispatch(&host, "connect", &[&gain, &panner]),
+            Ok(Value::Null)
+        );
+
+        assert_eq!(
+            dispatch(&host, "paramSet", &[&gain, "gain", "0.25"]),
+            Ok(Value::Null)
+        );
+        assert_eq!(
+            dispatch(&host, "paramValue", &[&gain, "gain"]),
+            Ok(json!(0.25))
+        );
+        for arguments in [
+            vec![&gain, "gain", "setValueAtTime", "0.5", "0"],
+            vec![&gain, "gain", "linearRampToValueAtTime", "0.75", "0.1"],
+            vec![&gain, "gain", "exponentialRampToValueAtTime", "0.5", "0.2"],
+            vec![&gain, "gain", "setTargetAtTime", "0.25", "0.3", "0.1"],
+            vec![&gain, "gain", "cancelScheduledValues", "0", "0.4"],
+        ] {
+            assert_eq!(
+                dispatch(&host, "paramSchedule", &arguments),
+                Ok(Value::Null)
+            );
+        }
+
+        let buffer_id = 500;
+        lock(&host.buffers).insert(
+            buffer_id,
+            AudioBuffer::from(vec![vec![0.0f32; 16]], OFFLINE_SAMPLE_RATE),
+        );
+        let buffer_id = buffer_id.to_string();
+        assert_eq!(
+            dispatch(&host, "sourceBuffer", &[&source, &buffer_id]),
+            Ok(Value::Null)
+        );
+        assert_eq!(
+            dispatch(&host, "sourceLoop", &[&source, "1"]),
+            Ok(Value::Null)
+        );
+        assert_eq!(
+            dispatch(&host, "sourceStart", &[&source, "0", "0"]),
+            Ok(Value::Null)
+        );
+        assert_eq!(
+            dispatch(&host, "sourceStop", &[&source, "0.2"]),
+            Ok(Value::Null)
+        );
+
+        let record = dispatch(&host, "bufferInfo", &[&buffer_id]).unwrap();
+        assert_eq!(record["id"], json!(500));
+        assert_eq!(record["length"], json!(16));
+        assert_eq!(
+            dispatch(&host, "releaseBuffer", &[&buffer_id]),
+            Ok(Value::Null)
+        );
+        assert_eq!(dispatch(&host, "disconnect", &[&gain]), Ok(Value::Null));
+        assert_eq!(dispatch(&host, "release", &[&panner]), Ok(Value::Null));
+    }
+
+    #[test]
+    fn dispatch_preserves_context_and_protocol_errors() {
+        let host = AudioHost::new(true, None);
+        assert_eq!(
+            error(&host, "notAnAudioOperation", &[]),
+            "unknown audio operation: notAnAudioOperation"
+        );
+        assert_eq!(error(&host, "create", &[]), "missing audio argument 0");
+        assert_eq!(
+            error(&host, "release", &["not-a-number"]),
+            "invalid audio argument 0"
+        );
+        assert_eq!(
+            error(&host, "mode", &["impossible"]),
+            "unknown audio mode: impossible"
+        );
+        assert_eq!(
+            error(&host, "create", &["oscillator"]),
+            "unknown audio node: oscillator"
+        );
+
+        dispatch(&host, "context", &[]).unwrap();
+        assert_eq!(
+            error(&host, "mode", &[]),
+            "the audio context is already open"
+        );
+    }
+
+    #[test]
+    fn dispatch_preserves_param_source_and_buffer_error_order() {
+        let host = AudioHost::new(true, None);
+        let gain = id(&dispatch(&host, "create", &["gain"]).unwrap());
+
+        // `paramSet` validates the assigned value before looking up the node.
+        assert_eq!(
+            error(&host, "paramSet", &["bad-id", "gain", "bad-value"]),
+            "invalid audio argument 2"
+        );
+        assert_eq!(
+            error(&host, "paramValue", &[&gain, "frequency"]),
+            "no audio parameter named frequency"
+        );
+        assert_eq!(
+            error(
+                &host,
+                "paramSchedule",
+                &[&gain, "gain", "unknownSchedule", "1", "0"],
+            ),
+            "unknown parameter schedule: unknownSchedule"
+        );
+        assert_eq!(
+            error(
+                &host,
+                "paramSchedule",
+                &[&gain, "gain", "setTargetAtTime", "1", "0"],
+            ),
+            "missing audio argument 5"
+        );
+
+        // A wrong node kind is diagnosed before source-only arguments are read.
+        assert_eq!(
+            error(&host, "sourceLoop", &[&gain, "bad-loop"]),
+            "only a buffer source loops"
+        );
+        assert_eq!(
+            error(&host, "sourceStart", &[&gain, "bad-when", "bad-offset"]),
+            "only a buffer source can be started"
+        );
+        // Buffer lookup precedes the source-kind check for assignment.
+        assert_eq!(
+            error(&host, "sourceBuffer", &[&gain, "999"]),
+            "the audio buffer has been released"
+        );
+        assert_eq!(
+            error(&host, "bufferInfo", &["999"]),
+            "the audio buffer has been released"
+        );
     }
 }
