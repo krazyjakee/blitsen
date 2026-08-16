@@ -47,13 +47,16 @@ export const cliVersion = await packageVersion();
 export async function withPlatformPackages(installed, run) {
   const directory = await mkdtemp(join(tmpdir(), "blitsen-runtime-"));
   try {
-    for (const [target, { version, binary = true }] of Object.entries(installed)) {
+    for (const [target, { version, binary = true, phase2 = false }] of Object.entries(installed)) {
       const packaged = join(directory, "node_modules/@blitsen", target);
       await mkdir(packaged, { recursive: true });
       const manifest = JSON.parse(
         await readFile(join(platformPackages, target, "package.json"), "utf8"));
       await writeFile(join(packaged, "package.json"), JSON.stringify({ ...manifest, version }));
       if (binary) await writeFile(join(packaged, "blitsen.node"), "// placeholder addon\n");
+      if (phase2) {
+        await writeFile(join(packaged, phase2Name(target)), executableStub(target));
+      }
     }
     return await run({ directory, require: createRequire(join(directory, "resolve.mjs")) });
   } finally {
