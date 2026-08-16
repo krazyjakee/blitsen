@@ -311,7 +311,13 @@ describe("the archive, which is written here because no tool will store every en
 async function fakeSdk(directory, { ndk = "27.2.12479018",
   tools = ["aapt2", "zipalign", "apksigner"], buildTools = "34.0.0" } = {}) {
   const sdk = join(directory, "Sdk");
-  if (ndk) await mkdir(join(sdk, "ndk", ndk), { recursive: true });
+  if (ndk) {
+    // The C toolchain the detector reads back out. An NDK ships exactly one
+    // `toolchains/llvm/prebuilt/<host>`, which is what makes finding it by
+    // reading the directory correct rather than a table of host names.
+    await mkdir(join(sdk, "ndk", ndk, "toolchains", "llvm", "prebuilt", "linux-x86_64", "bin"),
+      { recursive: true });
+  }
   await mkdir(join(sdk, "build-tools", buildTools), { recursive: true });
   for (const tool of tools) await writeFile(join(sdk, "build-tools", buildTools, tool), "");
   await mkdir(join(sdk, "platforms", "android-33"), { recursive: true });
@@ -375,8 +381,24 @@ describe("the toolchain is detected, never installed", () => {
     await withWork(async directory => {
       const sdk = await fakeSdk(directory);
       const elsewhere = join(directory, "ndk-r99");
-      await mkdir(elsewhere, { recursive: true });
-      expect((await detected(sdk, { ANDROID_NDK_HOME: elsewhere })).ndk).toBe(elsewhere);
+      await mkdir(join(elsewhere, "toolchains", "llvm", "prebuilt", "darwin-x86_64"),
+        { recursive: true });
+      const toolchain = await detected(sdk, { ANDROID_NDK_HOME: elsewhere });
+      expect(toolchain.ndk).toBe(elsewhere);
+      // And the C toolchain follows it, rather than staying with the SDK's.
+      expect(toolchain.llvm)
+        .toBe(join(elsewhere, "toolchains", "llvm", "prebuilt", "darwin-x86_64"));
+      expect(toolchain.sysroot).toBe(join(toolchain.llvm, "sysroot"));
+    });
+  });
+
+  test("an NDK with no C toolchain in it is refused, not used", async () => {
+    await withWork(async directory => {
+      const sdk = await fakeSdk(directory);
+      const hollow = join(directory, "not-an-ndk");
+      await mkdir(hollow, { recursive: true });
+      await expect(detected(sdk, { ANDROID_NDK_HOME: hollow }))
+        .rejects.toThrow("no C toolchain");
     });
   });
 
@@ -428,9 +450,12 @@ describe("where cargo will leave the shared objects", () => {
 });
 
 describe("the build plan", () => {
+  const llvm = "/sdk/ndk/27/toolchains/llvm/prebuilt/linux-x86_64";
   const toolchain = {
     sdk: "/sdk",
     ndk: "/sdk/ndk/27",
+    llvm,
+    sysroot: `${llvm}/sysroot`,
     platform: "/sdk/platforms/android-33/android.jar",
     libclang: "/llvm/lib",
     tools: { aapt2: "/sdk/bt/aapt2", zipalign: "/sdk/bt/zipalign", apksigner: "/sdk/bt/apksigner" },
@@ -457,6 +482,40 @@ describe("the build plan", () => {
     expect(compile.command).not.toContain(String(TARGET_SDK));
     expect(compile.environment.ANDROID_NDK_HOME).toBe("/sdk/ndk/27");
     expect(compile.environment.LIBCLANG_PATH).toBe("/llvm/lib");
+  });
+
+  // The two variables this graph needs beyond a compiler and an archiver, both
+  // found by building an APK against Blitsen's own dependencies for the first
+  // time (#149) rather than by reading. Asserted per ABI, because they are per
+  // target triple and an ABI that is named but unconfigured fails an hour in.
+  test("names the two variables this graph needs beyond CC and AR", () => {
+    const { environment } = plan().compile;
+    for (const triple of ["aarch64_linux_android", "x86_64_linux_android"]) {
+      // openssl-sys builds OpenSSL vendored on Android, and its makefile runs a
+      // `ranlib` the NDK stopped shipping under that name in r23.
+      expect(environment[`RANLIB_${triple}`]).toBe(`${llvm}/bin/llvm-ranlib`);
+      // rquickjs-sys generates its own Android bindings and hands bindgen no
+      // sysroot, so libclang reads Android's headers as the host's.
+      expect(environment[`BINDGEN_EXTRA_CLANG_ARGS_${triple}`])
+        .toContain(`--sysroot=${llvm}/sysroot`);
+    }
+    expect(environment.BINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android)
+      .toContain(`-I${llvm}/sysroot/usr/include/aarch64-linux-android`);
+    // Only the ABIs asked for: naming one configures one.
+    expect(environment.RANLIB_armv7_linux_androideabi).toBeUndefined();
+  });
+
+  test("names the sysroot headers for the ABI, which 32-bit ARM spells differently", () => {
+    const { environment } = plan({
+      project: androidProject({ name: "Pong", applicationId: "com.blitsen.pong",
+        version: "1.2.3", abis: ["armeabi-v7a"] }),
+    }).compile;
+    // The Rust triple is `armv7-linux-androideabi`; the include directory is
+    // `arm-linux-androideabi`, and using the first finds nothing.
+    expect(environment.BINDGEN_EXTRA_CLANG_ARGS_armv7_linux_androideabi)
+      .toContain("/sysroot/usr/include/arm-linux-androideabi");
+    expect(environment.BINDGEN_EXTRA_CLANG_ARGS_armv7_linux_androideabi)
+      .not.toContain("include/armv7-linux-androideabi");
   });
 
   test("takes the shared objects from where cargo left them", () => {
@@ -585,6 +644,7 @@ describe("the debug keystore", () => {
 describe("an Android build, with every subprocess stubbed", () => {
   const stubToolchain = () => async () => ({
     sdk: "/sdk", ndk: "/sdk/ndk/27", buildTools: "/sdk/bt", buildToolsVersion: "34.0.0",
+    llvm: "/sdk/ndk/27/llvm", sysroot: "/sdk/ndk/27/llvm/sysroot",
     platform: "/sdk/p", packager: "cargo-ndk", libclang: "/llvm/lib",
     tools: { aapt2: "aapt2", zipalign: "zipalign", apksigner: "apksigner" },
   });

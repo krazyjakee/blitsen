@@ -23,7 +23,9 @@ import {
 import {
   ASSET_INDEX, ASSET_ROOT, INDEX_VERSION, assetIndex, stageAndroidAssets,
 } from "../src/android-assets.mjs";
+import { MIN_SDK } from "../src/android-toolchain.mjs";
 import { main, parseArgs } from "../src/cli.mjs";
+import { changed, decodeFrame, describe as describeFrame } from "./run-android-smoke.mjs";
 import { capture } from "./cli-support.mjs";
 
 const apkSource = join(import.meta.dir, "../../../crates/blitsen-host/src/apk.rs");
@@ -352,5 +354,86 @@ describe("the command line", () => {
       // one never asks for one.
       expect(said).not.toContain("native build runtime");
     });
+  });
+});
+
+// The one piece of the emulator smoke test (#149) that can be measured without
+// an emulator, and the one most worth measuring. `screencap`'s raw header grew
+// a field in Android 9, so the reader tries both sizes; if it ever picked the
+// wrong one the pixels would be shifted by four bytes and every frame would
+// decode as noise — which has thousands of distinct colours and would sail
+// through the blankness check. A green Android job that measured nothing is
+// precisely the outcome #149 exists to avoid, so the decoder is held to frames
+// whose contents are known.
+describe("the frame the Android smoke test reads back", () => {
+  /// A raw `screencap` buffer: header, then width x height little-endian pixels.
+  const frame = (width, height, pixel, header = 16) => {
+    const bytes = Buffer.alloc(header + width * height * 4);
+    bytes.writeUInt32LE(width, 0);
+    bytes.writeUInt32LE(height, 4);
+    bytes.writeUInt32LE(1, 8);
+    for (let at = 0; at < width * height; at += 1) {
+      bytes.writeUInt32LE(pixel(at % width, Math.floor(at / width)), header + at * 4);
+    }
+    return bytes;
+  };
+
+  test("decodes both header sizes, and reads the pixels in the right places", () => {
+    for (const header of [12, 16]) {
+      const decoded = decodeFrame(frame(4, 3, (x, y) => 0x1000 * y + x, header));
+      expect(decoded.header).toBe(header);
+      expect([decoded.width, decoded.height]).toEqual([4, 3]);
+      // The corner pixels, which is where an off-by-four in the header shows.
+      expect(decoded.pixels[0]).toBe(0);
+      expect(decoded.pixels[3]).toBe(3);
+      expect(decoded.pixels[11]).toBe(0x2003);
+    }
+  });
+
+  test("refuses a buffer whose arithmetic does not work out", () => {
+    const truncated = frame(4, 3, () => 0).subarray(0, 40);
+    expect(() => decodeFrame(truncated)).toThrow("not a frame this understands");
+    expect(() => decodeFrame(Buffer.alloc(0))).toThrow("not a frame");
+  });
+
+  test("a flat frame is blank and a varied one is not", () => {
+    expect(describeFrame(decodeFrame(frame(64, 64, () => 0xff000000))).blank).toBe(true);
+    const varied = describeFrame(decodeFrame(frame(64, 64, (x, y) => (x << 8) | y)));
+    expect(varied.blank).toBe(false);
+    expect(varied.colours).toBe(64 * 64);
+    // A frame that is one colour with a handful of pixels of another is still
+    // blank: the launcher's clock must not count as an application painting.
+    const nearlyFlat = describeFrame(decodeFrame(frame(64, 64, (x, y) => (x < 1 && y < 4 ? y : 0))));
+    expect(nearlyFlat.blank).toBe(true);
+  });
+
+  test("change is measured against the control, not against nothing", () => {
+    const before = decodeFrame(frame(10, 10, () => 7));
+    expect(changed(before, decodeFrame(frame(10, 10, () => 7)))).toBe(0);
+    expect(changed(before, decodeFrame(frame(10, 10, () => 9)))).toBe(1);
+    // Half the rows repainted.
+    expect(changed(before, decodeFrame(frame(10, 10, (x, y) => (y < 5 ? 9 : 7))))).toBe(0.5);
+    // A different size is a different screen, and comparing them pixelwise
+    // would be meaningless rather than zero.
+    expect(changed(before, decodeFrame(frame(10, 12, () => 7)))).toBe(1);
+  });
+});
+
+// The CI job cross-compiles at an API level spelled in YAML, and `MIN_SDK` is
+// spelled in JavaScript, and nothing links the two. That is the shape of thing
+// this file already guards for `apk.rs`: two languages holding the same number
+// with no build step between them. It matters here because the number is not
+// cosmetic — `cpal` links `libaaudio`, which the NDK first ships at 26, so a
+// job that built below it would fail at the linker, and a job that built above
+// it would be testing an artifact the packager does not produce.
+describe("the Android CI job and the packager agree on the API floor", () => {
+  test("ci.yml cross-compiles at MIN_SDK", async () => {
+    const workflow = await readFile(join(import.meta.dir, "../../../.github/workflows/ci.yml"),
+      "utf8");
+    const platform = /cargo ndk[^\n]*-P (\d+)/.exec(workflow);
+    expect(platform).not.toBe(null);
+    expect(Number(platform[1])).toBe(MIN_SDK);
+    // And it builds the ABIs an APK would carry, not a subset of them.
+    for (const abi of DEFAULT_ABIS) expect(workflow).toContain(`-t ${abi}`);
   });
 });

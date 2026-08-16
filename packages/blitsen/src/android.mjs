@@ -418,6 +418,46 @@ export function apkPlan({
     ANDROID_NDK_ROOT: toolchain.ndk,
     LIBCLANG_PATH: toolchain.libclang,
   };
+  // The two variables this graph needs beyond a compiler and an archiver.
+  // Neither is visible from reading; both were found by building an APK against
+  // Blitsen's own dependencies for the first time (#149), when the compile was
+  // still driven by a packager that set `CC_`, `CFLAGS_`, `AR_` and a linker
+  // per target and stopped there — enough for a crate whose C is one
+  // `cc::Build`, and not enough for this one.
+  //
+  //   * `RANLIB_<triple>` — `openssl-sys` builds OpenSSL vendored on Android
+  //     (blitz-net asks reqwest for `native-tls-vendored` there), and OpenSSL's
+  //     makefile runs `$(CROSS_COMPILE)ranlib`. The `cc` crate answers with
+  //     `aarch64-linux-android-ranlib`, which NDK r23 removed along with the
+  //     rest of the GNU binutils wrappers; what exists is `llvm-ranlib`. Without
+  //     this the build dies in `make install_dev` with `ranlib: not found`.
+  //   * `BINDGEN_EXTRA_CLANG_ARGS_<triple>` — `rquickjs-sys` ships no Android
+  //     bindings, so `crates/blitsen-quickjs/Cargo.toml` turns on `bindgen`
+  //     there, and that crate's build script hands bindgen no target and no
+  //     sysroot. libclang then reads Android's headers as the host's and emits
+  //     a `JSValue` that does not match the one the crate's own inline
+  //     functions expect, so `rquickjs-sys` fails to compile against bindings
+  //     it generated itself.
+  //
+  // Underscored triples, because that is the spelling both readers agree on:
+  // the `cc` crate takes either and bindgen takes only this one.
+  //
+  // Decision 4 then replaced that packager with `cargo ndk`, which sets both
+  // itself, to these same two paths, and wins where the two disagree — so on
+  // the path the CLI takes today these are belt and braces rather than the
+  // difference between building and not. They stay because this plan is the
+  // record of what the compile needs, and a record that leaves out the two
+  // things a person would spend a day rediscovering is not one.
+  for (const abi of project.abis) {
+    const triple = ANDROID_ABIS[abi];
+    const key = triple.replace(/-/g, "_");
+    environment[`RANLIB_${key}`] = join(toolchain.llvm, "bin", "llvm-ranlib");
+    // The sysroot's per-target include directory is named for the ABI rather
+    // than the Rust triple, and 32-bit ARM is the one place the two differ.
+    const headers = triple === "armv7-linux-androideabi" ? "arm-linux-androideabi" : triple;
+    environment[`BINDGEN_EXTRA_CLANG_ARGS_${key}`] =
+      `--sysroot=${toolchain.sysroot} -I${join(toolchain.sysroot, "usr", "include", headers)}`;
+  }
   // A release build is unsigned unless a key is named, and an unsigned APK
   // installs nowhere. The debug key is the default so that the first run
   // produces something runnable; the build prints what it signed with.
@@ -443,7 +483,7 @@ export function apkPlan({
     // `-P` is the API level the NDK toolchain compiles against, and it is
     // MIN_SDK rather than TARGET_SDK on purpose: it decides which libc symbols
     // the shared object may bind, and a library built against 33 while the
-    // manifest claims 24 fails to `dlopen` on every device in between, with no
+    // manifest claims 26 fails to `dlopen` on every device in between, with no
     // diagnostic beyond a linker line in logcat.
     compile: {
       command: ["cargo", "ndk", ...project.abis.flatMap(abi => ["-t", abi]),
