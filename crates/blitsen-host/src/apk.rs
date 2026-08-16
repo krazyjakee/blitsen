@@ -47,9 +47,14 @@
 //! the archive rather than a mapping the kernel shares, and an asset Gradle
 //! chose to deflate is inflated on each read rather than once. Both are
 //! answerable at package time by storing the application's assets uncompressed,
-//! which is the one packaging instruction this design asks of issue #142 —
-//! `androidResources { noCompress += ... }`, or `cargo apk`'s equivalent — and
+//! which is the one packaging instruction this design asks of the build, and
 //! neither is answerable at all once a first-run extraction is in the way.
+//!
+//! That instruction is now kept, and it took the packager with it. No tool in
+//! the chain would express it — Gradle's `androidResources { noCompress += .. }`
+//! would have, but `cargo apk` ties compression to the debug profile with no
+//! override — so `blitsen build --android` writes the archive itself, every
+//! entry stored. See `packages/blitsen/src/android-apk.mjs` (#148).
 //!
 //! # What the trailer did, and what does it instead
 //!

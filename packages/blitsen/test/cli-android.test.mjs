@@ -1,15 +1,11 @@
-// `blitsen build --android` (issue #148).
+// `blitsen build --android`: what the application becomes (issue #148).
 //
-// Two things here are worth knowing before reading the assertions.
-//
-// **Nothing in this file builds an APK.** The packager is a subprocess and the
-// NDK is a prerequisite, so every test that would need one injects the runner
-// and asserts the *plan* — the argv, the environment, the generated project and
-// the staged tree. That is deliberate rather than a shortcut: an argv is the
-// whole of what this package decides, and a test that shelled out to cargo-apk
-// would be measuring the NDK's presence on whichever machine ran it. What was
-// actually built, when, and against what is recorded in the issue rather than
-// claimed by a green test here.
+// The half of the Android build that is about the *application* — the files
+// that go under `assets/`, the listing that travels with them, the identity
+// the artifact is keyed by, and the command line that asks for all of it. The
+// other half, which is about the artifact and the machine that produces it, is
+// in `cli-android-apk.test.mjs`; the two are split because the file was over
+// this repository's length ceiling, and this is the seam it wanted.
 //
 // **The constants are checked against the Rust that reads them.** `apk.rs` is
 // the reader for the index this writes, and there is no build step that could
@@ -19,11 +15,10 @@
 import { describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import {
-  ANDROID_ABIS, ANDROID_NOTICES_FILE, androidNotices, androidProject, apkPlan, applicationId,
-  buildAndroid, DEFAULT_ABIS, detectAndroidToolchain, resolveAbis, resolveEntryCrate,
-  versionCode, workspacePatches,
+  ANDROID_ABIS, ANDROID_NOTICES_FILE, androidNotices, androidProject, applicationId, DEFAULT_ABIS,
+  resolveAbis, versionCode,
 } from "../src/android.mjs";
 import {
   ASSET_INDEX, ASSET_ROOT, INDEX_VERSION, assetIndex, stageAndroidAssets,
@@ -144,14 +139,17 @@ describe("staging an application into an APK's assets/", () => {
 });
 
 describe("the third-party notices an APK owes", () => {
-  test("are staged uncompressed, under the name aapt leaves alone", async () => {
+  test("are staged uncompressed, under the name the host reads", async () => {
     await withWork(async directory => {
       const source = join(directory, "NOTICES.txt");
       await writeFile(source, "THIRD-PARTY NOTICES\n");
       const notices = await androidNotices({ BLITSEN_NOTICES_PATH: source });
-      // Measured, not chosen: `aapt` strips `.gz` from an asset name and
-      // inflates the contents, so a `.gz` here would arrive under a name
-      // nothing looks for and every APK would report itself uncleared.
+      // Forced before it was chosen. `aapt` v1 strips `.gz` from an asset name
+      // and inflates the contents — measured on a real APK — so every artifact
+      // built through it reported itself uncleared while carrying the notices
+      // it owes. That packager is gone, and the name stays for a reason rather
+      // than a workaround: every entry in the archive is stored, so a gzip
+      // inside it compresses nothing and costs an inflate on the one read.
       expect(notices.file).toBe(ANDROID_NOTICES_FILE);
       expect(notices.file.endsWith(".gz")).toBe(false);
       expect(notices.contents.toString()).toBe("THIRD-PARTY NOTICES\n");
@@ -207,289 +205,47 @@ describe("the application ID", () => {
 });
 
 describe("the version code", () => {
-  // This is the packager's scheme, not one Blitsen chose — `cargo apk` panics
-  // if the manifest carries a version code at all. The assertions are here so
-  // that what `blitsen build` prints is what the APK carries; the argument for
-  // why Blitsen does not get to pick is in android.mjs.
-  test("is the packed form the packager will write", () => {
-    expect(versionCode("1.2.3")).toBe((1 << 24) | (1 << 16) | (2 << 8) | 3);
-    expect(versionCode("1.2.3")).toBe(16843267);
-    expect(versionCode("0.1.0")).toBe(16777472);
+  // This scheme is Blitsen's again. It was abandoned once because `cargo apk`
+  // panics if the manifest carries a version code at all and imposed a byte per
+  // component; this build writes the manifest, so the number in it is the one
+  // chosen here and `1.0.256` ships.
+  test("is the semver, in decimal places that read back", () => {
+    expect(versionCode("1.2.3")).toBe(1_002_003);
+    expect(versionCode("0.1.0")).toBe(1_000);
+    expect(versionCode("12.34.56")).toBe(12_034_056);
   });
 
-  test("orders the way semver does, inside the range it can express", () => {
-    expect(versionCode("1.0.0")).toBeGreaterThan(versionCode("0.255.255"));
-    expect(versionCode("0.2.0")).toBeGreaterThan(versionCode("0.1.255"));
+  test("orders the way semver does", () => {
+    expect(versionCode("1.0.0")).toBeGreaterThan(versionCode("0.999.999"));
+    expect(versionCode("0.2.0")).toBeGreaterThan(versionCode("0.1.999"));
+    // The ceiling the packager imposed is gone, and this is the version that
+    // could not previously be expressed at all.
+    expect(versionCode("1.0.256")).toBe(1_000_256);
   });
 
   test("drops what Android has nowhere to put", () => {
     expect(versionCode("1.2.3-beta.1+build9")).toBe(versionCode("1.2.3"));
   });
 
-  test("refuses a version the packager cannot pack, before the cross-compile", () => {
-    expect(() => versionCode("1.0.256")).toThrow("patch must be below 256");
-    expect(() => versionCode("300.400.0")).toThrow("major and minor must be below 256");
+  test("refuses a version the places cannot hold, before the cross-compile", () => {
+    expect(() => versionCode("1.0.1000")).toThrow("patch must be below 1000");
+    expect(() => versionCode("1.1000.1000")).toThrow("minor and patch must be below 1000");
     expect(() => versionCode("1.2.3.4")).toThrow("major.minor.patch");
     expect(() => versionCode("v1.2.3")).toThrow("major.minor.patch");
     expect(() => versionCode("1.2")).toThrow("major.minor.patch");
-    // And it is refused where the project is generated, not only where the code
-    // is reported — that is the call the packager would have panicked on.
-    expect(() => androidProject({ name: "P", applicationId: "com.a.b", version: "1.0.256" }))
-      .toThrow("below 256");
-  });
-});
-
-describe("the generated Cargo project", () => {
-  const project = () => androidProject({
-    name: "Pong Deluxe",
-    applicationId: "com.example.pong",
-    version: "1.2.3",
-    abis: ["arm64-v8a", "x86_64"],
-    entryCrate: "/checkout/crates/blitsen-android",
+    // And it is refused where the project is described, not only where the code
+    // is reported.
+    expect(() => androidProject({ name: "P", applicationId: "com.a.b", version: "1.0.1000" }))
+      .toThrow("below 1000");
   });
 
-  test("is a cdylib whose one statement is the entry point", () => {
-    const generated = project();
-    expect(generated.cargoToml).toContain('crate-type = ["cdylib"]');
-    expect(generated.libRs.trim().split("\n").at(-1)).toBe("blitsen_android::android_main!();");
-    expect(generated.cargoToml)
-      .toContain('blitsen-android = { path = "/checkout/crates/blitsen-android" }');
-  });
-
-  test("carries the manifest fields Android is keyed by", () => {
-    const generated = project();
-    expect(generated.cargoToml).toContain('package = "com.example.pong"');
-    expect(generated.cargoToml).toContain('label = "Pong Deluxe"');
-    expect(generated.cargoToml)
-      .toContain('build_targets = ["aarch64-linux-android", "x86_64-linux-android"]');
-    // The version reaches the manifest through the crate's own version and
-    // nowhere else: cargo-apk 0.10 panics if the metadata names either the
-    // version code or the version name, which was measured rather than read.
-    expect(generated.cargoToml).toContain('version = "1.2.3"');
-    expect(generated.cargoToml).not.toContain("version_code");
-    expect(generated.cargoToml).not.toContain("version_name");
-  });
-
-  test("names the artifact something a filesystem accepts", () => {
-    expect(project().apkName).toBe("Pong-Deluxe");
-    expect(project().library).toBe("com_example_pong");
-    expect(androidProject({ name: "!!", applicationId: "com.a.b" }).apkName).toBe("app");
-  });
-
-  test("builds only what was asked for", () => {
-    const one = androidProject({ name: "P", applicationId: "com.a.b", abis: ["armeabi-v7a"] });
-    expect(one.cargoToml).toContain('build_targets = ["armv7-linux-androideabi"]');
-    expect(one.cargoToml).not.toContain("aarch64");
-  });
-});
-
-describe("the workspace's dependency pins travel with the generated project", () => {
-  test("the [patch] tables are copied verbatim", async () => {
-    const patches = await workspacePatches(join(import.meta.dir, "../../../crates/blitsen-host"));
-    expect(patches).toContain("[patch.crates-io]");
-    expect(patches).toContain('[patch."https://github.com/DioxusLabs/blitz"]');
-    // Copied as text, so the reasoning above each pin survives the move.
-    expect(patches).toContain("# A fork of Blitz at the pinned revision");
-    expect(patches).not.toContain("[profile.release]");
-  });
-
-  test("a patch that names a local path is refused rather than relocated", async () => {
-    await withWork(async directory => {
-      await writeFile(join(directory, "Cargo.toml"),
-        "[workspace]\nmembers = []\n\n[patch.crates-io]\nblitz = { path = \"../blitz\" }\n");
-      await expect(workspacePatches(directory)).rejects.toThrow("local path");
-    });
-  });
-});
-
-/** A minimal SDK tree: enough for the detector, nothing that could build. */
-async function fakeSdk(directory, { ndk = "27.2.12479018", tools = ["aapt", "zipalign", "apksigner"],
-  buildTools = "34.0.0" } = {}) {
-  const sdk = join(directory, "Sdk");
-  if (ndk) await mkdir(join(sdk, "ndk", ndk), { recursive: true });
-  await mkdir(join(sdk, "build-tools", buildTools), { recursive: true });
-  for (const tool of tools) await writeFile(join(sdk, "build-tools", buildTools, tool), "");
-  await mkdir(join(sdk, "platforms", "android-33"), { recursive: true });
-  await writeFile(join(sdk, "platforms", "android-33", "android.jar"), "");
-  return sdk;
-}
-
-const detected = (sdk, overrides = {}) => detectAndroidToolchain({
-  env: { ANDROID_HOME: sdk, ...overrides },
-  which: () => "/somewhere/cargo-apk",
-});
-
-describe("the toolchain is detected, never installed", () => {
-  test("finds the SDK, the newest NDK and the newest build-tools", async () => {
-    await withWork(async directory => {
-      const sdk = await fakeSdk(directory);
-      await mkdir(join(sdk, "ndk", "9.0.0"), { recursive: true });
-      await mkdir(join(sdk, "build-tools", "9.0.0"), { recursive: true });
-      const toolchain = await detected(sdk);
-      expect(toolchain.sdk).toBe(sdk);
-      // Numeric, not lexicographic: "9.0.0" sorts after "27..." as a string.
-      expect(toolchain.ndk).toBe(join(sdk, "ndk", "27.2.12479018"));
-      expect(toolchain.buildToolsVersion).toBe("34.0.0");
-    });
-  });
-
-  test("names what is missing and the command that installs it", async () => {
-    await withWork(async directory => {
-      await expect(detected(join(directory, "nowhere"))).rejects.toThrow("nothing is there");
-      const noNdk = await fakeSdk(join(directory, "a"), { ndk: null });
-      await expect(detected(noNdk)).rejects.toThrow("sdkmanager \"ndk;");
-      // And it says why it will not fetch one itself.
-      await expect(detected(noNdk)).rejects.toThrow("Blitsen does not download it");
-      const noAapt = await fakeSdk(join(directory, "b"), { tools: ["zipalign", "apksigner"] });
-      await expect(detected(noAapt)).rejects.toThrow("has no aapt");
-      const sdk = await fakeSdk(join(directory, "c"));
-      await expect(detectAndroidToolchain({ env: { ANDROID_HOME: sdk }, which: () => null }))
-        .rejects.toThrow("cargo-apk is not on PATH");
-    });
-  });
-
-  test("ANDROID_NDK_HOME outranks the SDK's own", async () => {
-    await withWork(async directory => {
-      const sdk = await fakeSdk(directory);
-      const elsewhere = join(directory, "ndk-r99");
-      await mkdir(elsewhere, { recursive: true });
-      expect((await detected(sdk, { ANDROID_NDK_HOME: elsewhere })).ndk).toBe(elsewhere);
-    });
-  });
-});
-
-describe("the packager invocation", () => {
-  const plan = (overrides = {}) => apkPlan({
-    project: { apkName: "Pong" },
-    directory: "/build/.Pong.apk.blitsen-android",
-    toolchain: { sdk: "/sdk", ndk: "/sdk/ndk/27" },
-    ...overrides,
-  });
-
-  test("is one command, with the SDK and NDK in the environment", () => {
-    const release = plan();
-    expect(release.command).toEqual(["cargo-apk", "apk", "build", "--release", "--lib"]);
-    expect(release.environment.ANDROID_HOME).toBe("/sdk");
-    expect(release.environment.ANDROID_NDK_HOME).toBe("/sdk/ndk/27");
-    expect(release.artifact)
-      .toBe(join("/build/.Pong.apk.blitsen-android", "target", "release", "apk", "Pong.apk"));
-  });
-
-  test("signs a release with the debug key until a real one is named", () => {
-    const release = plan();
-    expect(release.debugSigned).toBe(true);
-    expect(release.environment.CARGO_APK_RELEASE_KEYSTORE).toBe(release.keystore);
-    expect(release.environment.CARGO_APK_RELEASE_KEYSTORE_PASSWORD).toBe("android");
-    const signed = plan({ keystore: "/keys/release.jks", keystorePassword: "hunter2" });
-    expect(signed.debugSigned).toBe(false);
-    expect(signed.environment.CARGO_APK_RELEASE_KEYSTORE).toBe("/keys/release.jks");
-    expect(signed.environment.CARGO_APK_RELEASE_KEYSTORE_PASSWORD).toBe("hunter2");
-  });
-
-  test("refuses a keystore whose password was not put in the environment", () => {
-    expect(() => plan({ keystore: "/keys/release.jks" }))
-      .toThrow("BLITSEN_ANDROID_KEYSTORE_PASSWORD");
-  });
-
-  test("a debug build is the debug profile and carries no release key", () => {
-    const debug = plan({ release: false });
-    expect(debug.command).toEqual(["cargo-apk", "apk", "build", "--lib"]);
-    expect(debug.artifact).toContain(join("target", "debug", "apk"));
-    expect(debug.environment.CARGO_APK_RELEASE_KEYSTORE).toBeUndefined();
-  });
-});
-
-describe("the entry point crate", () => {
-  test("is taken from the environment when it is named", async () => {
-    await withWork(async directory => {
-      await writeFile(join(directory, "Cargo.toml"), "[package]\nname = \"blitsen-android\"\n");
-      expect(await resolveEntryCrate({ BLITSEN_ANDROID_CRATE: directory })).toBe(directory);
-      await expect(resolveEntryCrate({ BLITSEN_ANDROID_CRATE: join(directory, "gone") }))
-        .rejects.toThrow("has no Cargo.toml");
-    });
-  });
-
-  test("says it is issue #142's rather than failing inside cargo", async () => {
-    // Written against the tree as it stands: crates/blitsen-android does not
-    // exist yet, and this is the message a user gets today. It becomes a test
-    // that the checkout path resolves the moment #142 lands, which is the point
-    // — either way the assertion is about something real.
-    const inTree = join(import.meta.dir, "../../../crates/blitsen-android/Cargo.toml");
-    const present = await Bun.file(inTree).exists();
-    if (present) expect(await resolveEntryCrate({})).toContain("blitsen-android");
-    else await expect(resolveEntryCrate({})).rejects.toThrow("issue #142's");
-  });
-});
-
-describe("an Android build, with the packager stubbed", () => {
-  test("stages, generates and invokes, then reports the APK", async () => {
-    await withWork(async directory => {
-      const root = await application(directory);
-      const crate = join(directory, "blitsen-android");
-      await mkdir(crate, { recursive: true });
-      await writeFile(join(crate, "Cargo.toml"), "[package]\nname = \"blitsen-android\"\n");
-      const commands = [];
-      const run = async (command, options = {}) => {
-        commands.push(command);
-        if (command[0] === "rustup") {
-          return { code: 0, stdout: "aarch64-linux-android\nx86_64-linux-android\n", stderr: "" };
-        }
-        // Stand in for cargo-apk: leave an artifact exactly where the plan says.
-        const artifact = join(options.cwd, "target", "release", "apk", "Pong.apk");
-        await mkdir(dirname(artifact), { recursive: true });
-        await writeFile(artifact, "PKstub");
-        return { code: 0, stdout: "", stderr: "" };
-      };
-      const steps = [];
-      const result = await buildAndroid({
-        root,
-        name: "Pong",
-        outfile: join(directory, "Pong.apk"),
-        appVersion: "1.2.3",
-        env: { BLITSEN_ANDROID_CRATE: crate },
-        run,
-        detect: async () => ({ sdk: "/sdk", ndk: "/sdk/ndk/27", buildTools: "/sdk/bt",
-          buildToolsVersion: "34.0.0", platform: "/sdk/p", packager: "cargo-apk" }),
-        progress: event => steps.push(event),
-      });
-      expect(commands.at(-1)).toEqual(["cargo-apk", "apk", "build", "--release", "--lib"]);
-      expect(result.applicationId).toBe("com.blitsen.pong");
-      expect(result.versionCode).toBe(versionCode("1.2.3"));
-      expect(result.abis).toEqual(["arm64-v8a", "x86_64"]);
-      expect(result.assets).toBe(3);
-      expect(result.debugSigned).toBe(true);
-      expect((await stat(result.outfile)).size).toBeGreaterThan(0);
-      const staging = join(directory, ".Pong.apk.blitsen-android");
-      expect(await readFile(join(staging, "Cargo.toml"), "utf8"))
-        .toContain('package = "com.blitsen.pong"');
-      expect(await readFile(join(staging, "assets", ASSET_ROOT, "index.html"), "utf8"))
-        .toContain("./assets/app.css");
-      // The three notes a reader has to see: what was signed, that it is not an
-      // AAB, and that release assets are deflated (#144's noCompress).
-      const notes = steps.flatMap(step => step.notes ?? []).join("\n");
-      expect(notes).toContain("debug key");
-      expect(notes).toContain("App Bundle");
-      expect(notes).toContain("noCompress");
-    });
-  });
-
-  test("refuses to cross-compile for a Rust target that is not installed", async () => {
-    await withWork(async directory => {
-      const root = await application(directory);
-      const crate = join(directory, "blitsen-android");
-      await mkdir(crate, { recursive: true });
-      await writeFile(join(crate, "Cargo.toml"), "[package]\nname = \"blitsen-android\"\n");
-      await expect(buildAndroid({
-        root,
-        name: "Pong",
-        outfile: join(directory, "Pong.apk"),
-        env: { BLITSEN_ANDROID_CRATE: crate },
-        run: async command => (command[0] === "rustup"
-          ? { code: 0, stdout: "x86_64-unknown-linux-gnu\n", stderr: "" }
-          : { code: 0, stdout: "", stderr: "" }),
-        detect: async () => ({ sdk: "/sdk", ndk: "/sdk/ndk/27", buildToolsVersion: "34.0.0" }),
-      })).rejects.toThrow("rustup target add aarch64-linux-android x86_64-linux-android");
-    });
+  test("refuses a code above what Google Play will accept", () => {
+    // The field is a signed 32-bit integer, so this is not the format's limit;
+    // it is the limit of the one place the number has consequences, and a
+    // version code cannot be walked back once published.
+    expect(versionCode("2100.0.0")).toBe(2_100_000_000);
+    expect(() => versionCode("2101.0.0")).toThrow("2100000000");
+    expect(() => versionCode("2100.0.1")).toThrow("Google Play refuses");
   });
 });
 

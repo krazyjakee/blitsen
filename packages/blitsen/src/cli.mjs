@@ -59,11 +59,14 @@ resolves, so it is a flag rather than a --target value):
   --android-package <id> Application ID (default: com.blitsen.<name>)
   --android-keystore <p> Sign with this keystore; its password is read from
                          BLITSEN_ANDROID_KEYSTORE_PASSWORD, never from a flag.
-                         Without one the APK is signed with the Android debug
-                         key: installable, not distributable
-  --android-debug        Build the debug profile — unoptimised, and the only
-                         profile in which the packager stores assets
-                         uncompressed`;
+                         BLITSEN_ANDROID_KEY_ALIAS and
+                         BLITSEN_ANDROID_KEY_PASSWORD name the key inside it
+                         when the store holds more than one. Without a keystore
+                         the APK is signed with the Android debug key:
+                         installable, not distributable
+  --android-debug        Build the debug profile — unoptimised Rust, and a
+                         manifest marked debuggable. Every entry in the APK is
+                         stored uncompressed on both profiles`;
 
 // The resolver owns it now, because the version pin is checked there; still on this
 // module's surface, which is where callers ask for it.
@@ -396,6 +399,13 @@ async function buildAndroidArtifact(options, application, output) {
     appVersion: options.appVersion ?? "0.1.0",
     keystore: options.androidKeystore ?? null,
     keystorePassword: process.env.BLITSEN_ANDROID_KEYSTORE_PASSWORD ?? null,
+    // The two the keystore's own password does not cover: a store holding more
+    // than one key, and a key whose password differs from the store's. Both in
+    // the environment for the reason the keystore password is (android.mjs
+    // decision 3), and both optional because neither is true of a keystore made
+    // for one application.
+    keyAlias: process.env.BLITSEN_ANDROID_KEY_ALIAS ?? null,
+    keyPassword: process.env.BLITSEN_ANDROID_KEY_PASSWORD ?? null,
     release: !options.androidDebug,
     include: options.include ?? [],
     force: options.force ?? false,
