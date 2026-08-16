@@ -7,8 +7,8 @@
 //! host change a swap rather than a rewrite (TECH.md §16.1).
 //!
 //! Two crates supply that engine. `blitsen-node` implements it over Node-API
-//! for the Bun-hosted Phase 1 addon; `blitsen-runtime` implements it over
-//! embedded JavaScriptCore for the Phase 2 executable. Neither appears below.
+//! for the Bun-hosted Phase 1 addon; `blitsen-quickjs` implements it over the
+//! statically linked engine the Phase 2 executable hosts. Neither appears below.
 
 mod alloc;
 // An application packaged into an APK's `assets/`, read in place (#144).

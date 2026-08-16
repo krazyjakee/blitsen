@@ -1,8 +1,8 @@
-//! The Phase 2 executable: Blitsen hosts JavaScriptCore.
+//! The Phase 2 executable: Blitsen hosts its own JavaScript engine.
 //!
 //! Same job as the Phase 1 pair of a Bun launcher and a `.node` addon, with
 //! nothing of Bun in it. This process owns the outer event loop, the timers and
-//! the module graph; JavaScriptCore is a library it loads (`docs/JSC.md`).
+//! the module graph; QuickJS-ng is linked into it (`LICENSING.md`).
 //!
 //! Two ways to start, and they run the same code:
 //!

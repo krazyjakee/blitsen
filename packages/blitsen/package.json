@@ -15,7 +15,7 @@
     "desktop",
     "html",
     "css",
-    "javascriptcore",
+    "quickjs",
     "blitz"
   ],
   "bin": {

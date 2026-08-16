@@ -8,7 +8,7 @@
     "Nothing here is Blitsen-specific machinery. It says the few things",
     "TypeScript cannot work out on its own:",
     "",
-    "lib/target — JavaScriptCore in a current Blitsen runs ES2023. The DOM",
+    "lib/target — the engine in a current Blitsen runs ES2023. The DOM",
     "entries are what makes `document` and friends resolve. Blitsen implements a",
     "subset of the DOM, and `blitsen doctor` is what checks a build against that",
     "subset; types cannot express it, so they do not try to.",

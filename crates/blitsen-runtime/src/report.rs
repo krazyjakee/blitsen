@@ -2,7 +2,7 @@
 //!
 //! These back the build-time checks: `--bundle-report` proves an exported
 //! executable carries what the CLI thinks it wrote, and `--engine-report` says
-//! which JavaScriptCore this binary found and what that library can do.
+//! which engine this binary hosts and what it can do.
 
 use std::path::Path;
 use std::process::ExitCode;

@@ -82,24 +82,21 @@ Resolution and source are the host's. **Linking** — instantiating records, wir
 ordering evaluation, breaking cycles — is the engine's, and no JavaScript engine exposes it to be
 reimplemented from outside.
 
-Measured against the system JavaScriptCore this repository builds and tests with:
+QuickJS-ng exposes that seam in its stock public API: `JS_SetModuleLoaderFunc` takes a normaliser
+and a loader, which is exactly the pair this design needs — the host answers "what does this
+specifier mean" and "what is the source", and the engine does the rest. The runtime links the
+engine statically, so the hook is a property of the build and cannot be missing at run time.
 
-- A context from `JSGlobalContextCreate` *has* dynamic `import()`, and it rejects with
-  `Error: Could not import the module './x.js'` — the default loader cannot fetch.
-- `JSLoadAndEvaluateModuleFromSource` is absent. So is any module hook in the GLib API: the only
-  evaluation entry points are `jsc_context_evaluate`, `jsc_context_evaluate_in_object` and
-  `jsc_context_evaluate_with_source_uri`.
-
-The public C API has no module loader hook at all. This is one of the reasons the acquisition
-decision in [`JSC.md`](JSC.md) builds the engine rather than taking one: Blitsen owns a narrow ABI
-layer over its pinned WebKit, and that layer is where the hook lives. The contract is recorded in
-JSC.md under "Module loader contract".
-
-**Consequence, stated plainly:** built against a JavaScriptCore without that hook — which includes
-every system library — an application whose scripts are classic runs normally, and the first
-`<script type="module">` fails with a message naming the missing symbol. The M3b React drop-in is
-in that second category. Producing the pinned engine artifact is the remaining work for module
-support; everything above it is implemented and tested.
+**This was the hard part under the previous engine, and the decision that changed it.** The public
+JavaScriptCore C API has no module loader hook at all — measured against the system library this
+repository used to build against, `JSGlobalContextCreate` gives a context whose dynamic `import()`
+rejects with `Error: Could not import the module './x.js'`, `JSLoadAndEvaluateModuleFromSource` is
+absent, and the GLib API offers only `jsc_context_evaluate` and its two variants. That is why the
+acquisition decision in [`JSC.md`](JSC.md) built the engine rather than taking one: the hook lived
+in a patch, so an application whose scripts were classic ran normally while the first
+`<script type="module">` failed on a missing symbol. Producing that pinned artifact was the
+remaining work for module support. [`spikes/s8`](../spikes/s8/README.md) removed the requirement
+instead of meeting it, and the JSC host has since been deleted.
 
 ## What is implemented
 
@@ -109,4 +106,4 @@ support; everything above it is implemented and tested.
 | Registry, source reading, reload eviction | same | `modules::tests` |
 | Host entry points the loader calls | `ModuleRegistry::install` | `modules::tests` |
 | Files from a directory or an appended bundle | `crates/blitsen-host/src/app.rs` | `app::tests` |
-| Engine binding and capability check | `crates/blitsen-jsc/src/engine.rs` | `--engine-report` |
+| Engine binding and capability check | `crates/blitsen-quickjs/src/modules.rs` | `--engine-report` |

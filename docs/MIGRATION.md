@@ -69,5 +69,6 @@ they ignore the locale they are given, so `(1234.5).toLocaleString('de-DE')` is 
 missed one is wrong output rather than an error, which is why doctor names them.
 
 **Your export is one file.** There is no engine library to keep beside it, no replacement override
-to preserve, and no relinking material to ship. That was true of the JavaScriptCore design and is
-not true any more; see [`LICENSING.md`](LICENSING.md) for what an export does still have to carry.
+to preserve, and no relinking material to ship. All three were required by the JavaScriptCore
+design this replaced; see [`LICENSING.md`](LICENSING.md) for what an export does still have to
+carry.

@@ -40,8 +40,8 @@ pub(crate) struct Inner {
 
 impl Drop for Inner {
     fn drop(&mut self) {
-        // The context is process-lived, which is the same call `blitsen-jsc`
-        // makes for JavaScriptCore and for the same reason (S0: releasing the
+        // The context is process-lived, which is the same choice the
+        // JavaScriptCore host made and for the same reason (S0: releasing the
         // global context asserts during teardown when the host still holds
         // values). Here the symptom is QuickJS's own
         // `JS_FreeRuntime: Assertion 'list_empty(&rt->gc_obj_list)' failed`,

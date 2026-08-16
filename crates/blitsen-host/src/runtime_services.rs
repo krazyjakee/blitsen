@@ -2,7 +2,7 @@
 //!
 //! Phase 1 runs inside Bun, which supplies timers, a microtask checkpoint, a
 //! console, a clock and the Web IDL globals the DOM bootstrap throws. Phase 2
-//! drops Bun's runtime entirely, so a bare JavaScriptCore context has an
+//! drops Bun's runtime entirely, so the engine context it starts has an
 //! ECMAScript heap and nothing else. This module is the difference, and it is
 //! deliberately no larger than that difference: the compatibility policy in
 //! `COMPATIBILITY.md` still applies, so nothing is added merely because some

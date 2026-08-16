@@ -40,8 +40,9 @@ The pieces to fill that gap now exist independently and have not been joined:
   engine, DOM, Taffy layout, painting, windowing. Its plain HTML frontend already accepts an
   HTML string directly. What it lacks is interactivity: it has no JavaScript bindings, and the
   interactive path currently runs through Dioxus/RSX instead.
-- **JavaScriptCore**, as shipped and driven by **Bun**, provides JS/TS execution, the module
-  system, npm resolution, async, timers, and a native-addon interface.
+- **A JavaScript engine** provides execution, the module system, async and timers. The shipped
+  runtime links **QuickJS-ng** statically; the Phase 1 addon gets the same services from **Bun**,
+  which additionally supplies npm resolution and the native-addon interface.
 
 Blitsen is principally **the layer that joins them**: the DOM ↔ JS bridge, the web API
 compatibility surface, and the packaging story.
@@ -67,7 +68,7 @@ That distinction drives every scoping decision:
 | --- | --- | --- | --- | --- |
 | Renderer you control & ship | ✗ | ✓ | ✗ | ✓ |
 | Consistent across OS versions | ✗ | ✓ | ✗ | ✓ |
-| Bare app size | n/a | ~150–250 MB | ~5–15 MB | **budget pending full-host measurement** |
+| Bare app size | n/a | ~150–250 MB | ~5–15 MB | **38.1 MB, measured on Linux x64** (§9) |
 | Full OS access | ✗ | ✓ | ✓ | ✓ |
 | npm ecosystem | ✓ | ✓ | ✓ | ✓ |
 | Adopt without restructuring the project | n/a | partial | partial | compatible apps: one dev dependency |
@@ -511,9 +512,9 @@ pixel digests at 60 fps, so it is a measurement rather than a hope. A public num
 waits on the two outstanding items.
 
 The key architectural consequence, which belongs in the product spec because it defines what
-the user installs: **Bun is the toolchain; JavaScriptCore is the runtime.** The exported app
+the user installs: **Bun is the toolchain; Blitsen's own runtime is what ships.** The exported app
 does not need Bun's package manager, test runner, bundler, transpiler, CLI, dev server or
-installer. It needs JavaScript execution.
+installer. It needs JavaScript execution, and it carries an engine that does nothing else.
 
 ---
 
@@ -582,10 +583,11 @@ dashboard) is built by someone who is not us.
    the project is built on, but it should never be allowed to imply that Blitsen is an official
    DioxusLabs project — worth a line in the README, and worth care if the two are ever
    discussed together upstream.
-2. ~~Licence and JSC constraints~~ — **settled:** Blitsen is `MIT OR Apache-2.0` and
-   closed-source applications are supported subject to JSC's LGPL-family distribution terms.
-   Phase 2 production exports dynamically load a user-replaceable JSC library; static linking is
-   reserved for spikes or an export that supplies a complete relinking kit. See `LICENSING.md`.
+2. ~~Licence and engine constraints~~ — **settled, and then settled more cheaply:** Blitsen is
+   `MIT OR Apache-2.0` and closed-source applications are supported. The first answer accepted
+   JavaScriptCore's LGPL-family terms, which meant a dynamically loaded, user-replaceable engine
+   library and a relink flow; QuickJS-ng is MIT, so the shipped runtime links it statically and
+   the most demanding term left in the tree is Stylo's file-level MPL-2.0. See `LICENSING.md`.
 3. ~~Distribution~~ — **settled**: npm dev dependency with per-platform runtime packages
    (§6, TECH.md §11).
 4. **Do multiple windows share one JS context** or get isolated ones?

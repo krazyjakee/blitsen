@@ -168,24 +168,16 @@ export const phase2Name = target => `blitsen-runtime${target.startsWith("win32-"
 // including these. Stubbing the Phase 2 runtime rather than reaching for the
 // one this checkout built also keeps these tests off a 37 MB copy per export.
 //
-// `engineReport` replaces that placeholder with something that answers
-// `--engine-report`, for the one export decision that reads it: a runtime that
-// loads its engine at run time can come back saying the library it found cannot
-// link a module graph, and the export links Bun rather than shipping an
-// application that will not start. It has to produce the report rather than
-// contain it, so it is a shell script — and a caller that asks for one skips
-// itself on Windows, where an `.exe` that is a script does not run.
-export async function withStubbedExport(run, { engineReport = null } = {}) {
+// Nothing in the export pipeline runs the stub any more: the host decision that
+// used to interrogate a runtime with `--engine-report` — asking a dynamically
+// loaded JavaScriptCore whether it could link a module graph — went with that
+// engine, and what is left reads the file rather than executing it.
+export async function withStubbedExport(run) {
   const directory = await mkdtemp(join(tmpdir(), "blitsen-export-test-"));
   const nativePath = join(directory, "blitsen.node");
   const runtimePath = join(directory, phase2Name(`${process.platform}-${process.arch}`));
   await writeFile(nativePath, nativeStub());
-  if (engineReport === null) await writeFile(runtimePath, executableStub());
-  else {
-    await writeFile(runtimePath,
-      `#!/bin/sh\n[ "$1" = "--engine-report" ] && echo '${JSON.stringify(engineReport)}'\nexit 0\n`,
-      { mode: 0o755 });
-  }
+  await writeFile(runtimePath, executableStub());
   const previous = process.env.BLITSEN_RUNTIME_PATH;
   process.env.BLITSEN_RUNTIME_PATH = runtimePath;
   try {

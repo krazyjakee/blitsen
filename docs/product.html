@@ -970,7 +970,7 @@ figure.fig figcaption b { color: var(--ink); font-weight: 500; }
 
     <dl class="colophon">
       <div><dt>Status</dt><dd>Draft v0.1</dd></div>
-      <div><dt>Date</dt><dd>2026-08-10</dd></div>
+      <div><dt>Date</dt><dd>2026-08-10 · figures resynced 2026-08-16</dd></div>
       <div><dt>npm package</dt><dd>blitsen</dd></div>
       <div><dt>CLI</dt><dd>blitsen</dd></div>
       <div><dt>Platform scope</dt><dd>@blitsen/*</dd></div>
@@ -1071,10 +1071,11 @@ figure.fig figcaption b { color: var(--ink); font-weight: 500; }
             </span>
           </div>
           <div class="cap">
-            <span class="k">JavaScriptCore</span>
+            <span class="k">A JavaScript engine</span>
             <span class="v">
-              As shipped and driven by Bun. Provides JS/TS execution, the module system, npm
-              resolution, async, timers, and a native-addon interface.
+              Provides execution, the module system, async and timers. The shipped runtime links
+              QuickJS-ng statically; the Phase 1 addon gets the same services from Bun, which
+              additionally supplies npm resolution and the native-addon interface.
             </span>
           </div>
         </div>
@@ -1141,7 +1142,7 @@ figure.fig figcaption b { color: var(--ink); font-weight: 500; }
                 <td class="num">n/a</td>
                 <td class="num">~150–250 MB</td>
                 <td class="num">~5–15 MB</td>
-                <td class="col-us num"><strong>target ~30–50 MB</strong></td>
+                <td class="col-us num"><strong>38.1 MB</strong> <span style="color:var(--ink-faint)">measured, Linux x64 (§9)</span></td>
               </tr>
               <tr>
                 <th scope="row">Full OS access</th>
@@ -1396,7 +1397,7 @@ bun build &amp;&amp; <span class="c-key">blitsen</span> build dist
 
               <rect class="svg-box" x="560" y="176" width="140" height="52" rx="2"></rect>
               <text class="svg-label" x="630" y="200" text-anchor="middle">native runtime</text>
-              <text class="svg-label-sm" x="630" y="216" text-anchor="middle">JSC + Blitz</text>
+              <text class="svg-label-sm" x="630" y="216" text-anchor="middle">QuickJS-ng + Blitz</text>
               <line class="svg-line-accent" x1="630" y1="170" x2="630" y2="130" marker-end="url(#ar-a)"></line>
               <text class="svg-label-sm" x="644" y="154">shipped by us</text>
             </svg>
@@ -1670,8 +1671,8 @@ requestAnimationFrame(<span class="c-key">function</span> update(t) {
               <tr>
                 <td class="id">P1</td>
                 <th scope="row">Bare exported app size</th>
-                <td class="num">≤ 50 MB installed<br>≤ 30 MB compressed</td>
-                <td>Prototype may be 80–120 MB; see §9.</td>
+                <td class="num">38.1 MB<br>and that is the whole download</td>
+                <td>Measured on Linux x64, against 131.6 MB for the same app on Phase 1. S0 disproved the original ≤50 MB target against a design that shipped an engine library alongside; statically linking QuickJS-ng put the shipped total back inside it. Five targets unmeasured, and no measured Electron or Tauri comparison yet; see §9.</td>
               </tr>
               <tr>
                 <td class="id">P2</td>
@@ -1701,7 +1702,13 @@ requestAnimationFrame(<span class="c-key">function</span> update(t) {
                 <td class="id">P5b</td>
                 <th scope="row">Platforms, full matrix</th>
                 <td class="num">win32 x64/arm64<br>linux x64/arm64<br>darwin x64/arm64</td>
-                <td>One npm platform package each (TECH.md §11).</td>
+                <td>One npm platform package each (TECH.md §11). Two tiers of evidence: <code>linux-x64</code>, <code>darwin-arm64</code> and <code>win32-x64</code> run the whole suite in CI; <code>linux-arm64</code>, <code>darwin-x64</code> and <code>win32-arm64</code> run a smoke tier — release artifacts built, package tests against them, a frame through the native harness, a standalone export and the layout corpus — with the product-behaviour suites and the size gate left to the first three.</td>
+              </tr>
+              <tr>
+                <td class="id">P5c</td>
+                <th scope="row">Platforms, Android</th>
+                <td class="num">arm64-v8a shipping<br>x86_64 for emulators</td>
+                <td>A distinct artifact, not a P5b row: a cross-compiled APK/AAB with keystore signing, produced by <code>blitsen build</code>, not a runtime an install resolves from npm. Its size budget is its own — P1 is a desktop figure and does not transfer.</td>
               </tr>
               <tr>
                 <td class="id">P6</td>
@@ -1731,7 +1738,7 @@ requestAnimationFrame(<span class="c-key">function</span> update(t) {
                 <td class="id">P10</td>
                 <th scope="row">Adoption cost</th>
                 <td class="num">1 dependency<br>1 script line<br>0 source changes</td>
-                <td>For an app already building to static output. The core adoption claim; measured against real React/Vue/Svelte projects.</td>
+                <td>For an app already building to static output <strong>and inside the published compatibility profile</strong>. <code>blitsen doctor</code> must identify unsupported web APIs and renderer features.</td>
               </tr>
             </tbody>
           </table>
@@ -1743,54 +1750,50 @@ requestAnimationFrame(<span class="c-key">function</span> update(t) {
         <h2 class="sec"><span class="n">09</span><span>Size budget as a product commitment</span></h2>
         <p>
           Size is the headline claim, so it is tracked as a product metric, not left to the build.
+          Every figure below comes from a measured build. The tracked baseline lives in
+          <span class="mono">packages/blitsen/test/metrics/size-baseline.json</span> and CI fails on
+          growth beyond 2%.
         </p>
 
         <div class="chart">
           <div class="chart-head">
-            <p class="chart-title">Bare app size by phase · megabytes</p>
+            <p class="chart-title">Bare app, Linux x64 · megabytes · measured 2026-08-13</p>
             <ul class="legend">
-              <li><span class="sw sw1"></span>JS runtime</li>
-              <li><span class="sw sw2"></span>Renderer</li>
-              <li><span class="sw sw3"></span>Bridge / compat layer</li>
+              <li><span class="sw sw1"></span>JavaScript engine and its host</li>
+              <li><span class="sw sw2"></span>Renderer, platform layer and bridge</li>
               <li><span class="sw sw4"></span>App code</li>
             </ul>
           </div>
 
           <div class="plot">
             <div class="grid-lines" aria-hidden="true">
-              <span style="left:19.23%"></span>
-              <span style="left:38.46%"></span>
-              <span style="left:57.69%"></span>
-              <span style="left:76.92%"></span>
-              <span style="left:96.15%"></span>
+              <span style="left:17.86%"></span>
+              <span style="left:35.71%"></span>
+              <span style="left:53.57%"></span>
+              <span style="left:71.43%"></span>
+              <span style="left:89.29%"></span>
             </div>
 
             <!-- Phase 1 -->
             <div class="row">
               <div class="row-head">
                 <span class="phase">Phase 1</span>
-                <span class="phase-note">Prototype — full Bun runtime embedded</span>
-                <span class="total">70–120 MB</span>
+                <span class="phase-note">Export carrying a copy of Bun — still what a .node addon gets</span>
+                <span class="total">131.6 MB</span>
               </div>
               <div class="bar">
-                <div class="seg seg1" style="width:61.54%" tabindex="0" role="img" aria-label="Bun / JSC runtime, 60 to 100 megabytes">
-                  <span class="tip">Bun / JSC runtime · 60–100 MB</span>
+                <div class="seg seg1" style="width:67.86%" tabindex="0" role="img" aria-label="Bun runtime, about 95 megabytes">
+                  <span class="tip">Bun runtime (statically contains JSC) · ~95 MB</span>
                 </div>
-                <div class="seg seg2" style="width:7.69%" tabindex="0" role="img" aria-label="Blitz, Stylo, Taffy and windowing, 5 to 15 megabytes">
-                  <span class="tip">Blitz + Stylo + Taffy + window · 5–15 MB</span>
-                </div>
-                <div class="seg seg3" style="width:2.31%" tabindex="0" role="img" aria-label="Bridge, 1 to 5 megabytes">
-                  <span class="tip">bridge · 1–5 MB</span>
-                </div>
-                <div class="seg seg4" style="width:0.77%" tabindex="0" role="img" aria-label="App code, tiny">
-                  <span class="tip">app code · tiny</span>
+                <div class="seg seg2" style="width:26.14%" tabindex="0" role="img" aria-label="Blitz, Stylo, Taffy, wgpu, winit and the bridge, about 36.6 megabytes">
+                  <span class="tip">Blitz + Stylo + Taffy + wgpu + winit + bridge · ~36.6 MB</span>
                 </div>
               </div>
               <div class="whisker" aria-hidden="true">
-                <span class="span" style="left:53.85%;width:38.46%"></span>
-                <span class="cap" style="left:53.85%"></span>
-                <span class="cap" style="left:92.31%"></span>
-                <span class="rng" style="left:92.31%">stated range</span>
+                <span class="span" style="left:0;width:35.86%"></span>
+                <span class="cap" style="left:0"></span>
+                <span class="cap" style="left:35.86%"></span>
+                <span class="rng" style="left:35.86%">50.2 MB gzip -9</span>
               </div>
             </div>
 
@@ -1798,27 +1801,25 @@ requestAnimationFrame(<span class="c-key">function</span> update(t) {
             <div class="row">
               <div class="row-head">
                 <span class="phase">Phase 2</span>
-                <span class="phase-note">Bun becomes toolchain only; purpose-built JSC runtime</span>
-                <span class="total">25–50 MB</span>
+                <span class="phase-note">What a build produces now — engine linked in, nothing beside it</span>
+                <span class="total">38.1 MB</span>
               </div>
               <div class="bar">
-                <div class="seg seg1" style="width:17.31%" tabindex="0" role="img" aria-label="JSC and required runtime, 15 to 30 megabytes, unmeasured">
-                  <span class="tip">JSC + required runtime · 15–30 MB</span>
+                <div class="seg seg1" style="width:1.07%" tabindex="0" role="img" aria-label="QuickJS-ng, about 1.5 megabytes, linked into the executable">
+                  <span class="tip">QuickJS-ng, linked in · ~1.5 MB</span>
                 </div>
-                <div class="seg seg2" style="width:7.69%" tabindex="0" role="img" aria-label="Blitz and native rendering, 5 to 15 megabytes, unmeasured">
-                  <span class="tip">Blitz + native rendering · 5–15 MB</span>
+                <div class="seg seg2" style="width:26.14%" tabindex="0" role="img" aria-label="Blitz, Stylo, Taffy, wgpu, winit and the bridge, about 36.6 megabytes">
+                  <span class="tip">Blitz + Stylo + Taffy + wgpu + winit + bridge · ~36.6 MB</span>
                 </div>
-                <div class="seg seg3" style="width:2.31%" tabindex="0" role="img" aria-label="Web compatibility layer, 1 to 5 megabytes">
-                  <span class="tip">web compatibility layer · 1–5 MB</span>
-                </div>
-                <div class="seg seg4" style="width:1.92%" tabindex="0" role="img" aria-label="App HTML, CSS and JS, usually under 5 megabytes">
-                  <span class="tip">app HTML/CSS/JS · usually &lt;5 MB</span>
+                <div class="seg seg4" style="width:0.5%" tabindex="0" role="img" aria-label="App code, 640 bytes for the bare app">
+                  <span class="tip">appended application · 640 B</span>
                 </div>
               </div>
               <div class="whisker" aria-hidden="true">
-                <span class="span" style="left:19.23%;width:19.23%"></span>
-                <span class="cap" style="left:19.23%"></span>
-                <span class="cap" style="left:38.46%"></span>
+                <span class="span" style="left:0;width:10.71%"></span>
+                <span class="cap" style="left:0"></span>
+                <span class="cap" style="left:10.71%"></span>
+                <span class="rng" style="left:10.71%">15.0 MB gzip -9 · 3.46× smaller than Phase 1</span>
               </div>
             </div>
 
@@ -1826,35 +1827,31 @@ requestAnimationFrame(<span class="c-key">function</span> update(t) {
             <div class="row">
               <div class="row-head">
                 <span class="phase">Phase 3</span>
-                <span class="phase-note">LTO, stripping, feature gating</span>
-                <span class="total">20–40 MB</span>
+                <span class="phase-note">release-min profile — measured, not adopted</span>
+                <span class="total">20.8 MB</span>
               </div>
               <div class="bar">
-                <div class="seg segN" style="width:23.08%" tabindex="0" role="img" aria-label="Bare app total, 20 to 40 megabytes; composition not yet apportioned">
-                  <span class="tip">bare app · 20–40 MB · composition not apportioned</span>
+                <div class="seg segN" style="width:14.86%" tabindex="0" role="img" aria-label="Runtime executable under the release-min profile, 20.8 megabytes">
+                  <span class="tip">fat LTO + one CGU + opt-level=z + strip · 20.8 MB</span>
                 </div>
-              </div>
-              <div class="whisker" aria-hidden="true">
-                <span class="span" style="left:15.38%;width:15.38%"></span>
-                <span class="cap" style="left:15.38%"></span>
-                <span class="cap" style="left:30.77%"></span>
               </div>
             </div>
 
             <div class="axis" aria-hidden="true">
               <span style="left:0">0</span>
-              <span style="left:19.23%">25</span>
-              <span style="left:38.46%">50</span>
-              <span style="left:57.69%">75</span>
-              <span style="left:76.92%">100</span>
-              <span style="left:96.15%">125 MB</span>
+              <span style="left:17.86%">25</span>
+              <span style="left:35.71%">50</span>
+              <span style="left:53.57%">75</span>
+              <span style="left:71.43%">100</span>
+              <span style="left:89.29%">125 MB</span>
             </div>
           </div>
         </div>
 
         <p class="mono" style="font-size:.72rem;color:var(--ink-faint);max-width:58rem;margin:-.6rem 0 1.6rem">
-          Bars are drawn at the midpoint of each component's estimate; the rule beneath each bar marks
-          the stated low–high range for the bare app. Exact figures below.
+          Totals are measured; the split inside each bar is apportioned from the component
+          breakdown that <span class="mono">size:phase2</span> reports. Rules beneath the bars mark
+          the same artifact compressed with gzip -9. Exact figures below.
         </p>
 
         <div class="tablewrap">
@@ -1867,29 +1864,53 @@ requestAnimationFrame(<span class="c-key">function</span> update(t) {
               </tr>
             </thead>
             <tbody>
-              <tr><td class="mono">S3 · Phase 1</td><th scope="row">prototype, full Bun runtime</th><td class="num">105,814,144 B</td></tr>
-              <tr><td class="mono">M3 · Phase 1</td><th scope="row">standalone Pong, optimized Rust host</th><td class="num">132,184,192 B</td></tr>
-              <tr><td class="mono">S0 · Phase 2</td><th scope="row">JSC + Blitz floor, stripped + LTO</th><td class="num">52,480,904 B</td></tr>
-              <tr><td class="mono">S0 · gzip -9</td><th scope="row">compressed Phase 2 floor</th><td class="num">24,076,701 B</td></tr>
+              <tr><td class="mono">S3 · Phase 1</td><th scope="row">prototype, full Bun runtime embedded</th><td class="num">105,814,144 B</td></tr>
+              <tr><td class="mono">S0 · Phase 2</td><th scope="row">JSC + Blitz floor, stripped + LTO — the design that was abandoned</th><td class="num">52,480,904 B</td></tr>
+              <tr><td class="mono">S0 · gzip -9</td><th scope="row">compressed JSC + Blitz floor</th><td class="num">24,076,701 B</td></tr>
+              <tr><td class="mono">bare · Phase 1</td><th scope="row">export carrying Bun, same app</th><td class="num">131,631,232 B</td></tr>
+              <tr><td class="mono">bare · Phase 2</td><th scope="row">Blitsen runtime export — <strong>the whole download</strong></th><td class="num">38,090,586 B</td></tr>
+              <tr><td class="mono">bare · gzip -9</td><th scope="row">compressed Phase 2 export</th><td class="num">15,005,053 B</td></tr>
+              <tr><td class="mono">component</td><th scope="row">appended application, bare app</th><td class="num">640 B</td></tr>
+              <tr><td class="mono">component</td><th scope="row">engine library shipped alongside</th><td class="num">0 B</td></tr>
+              <tr><td class="mono">phase 3</td><th scope="row">release-min runtime executable (not adopted)</th><td class="num">20,763,000 B</td></tr>
             </tbody>
           </table>
+        </div>
+
+        <div class="callout">
+          <span class="tag">The engine line is zero because the engine is inside the executable</span>
+          <p>
+            That is the whole of the QuickJS-ng decision: MIT rather than LGPL, so it can be
+            statically linked and dead-stripped instead of shipped beside the binary as a
+            replaceable library. It is worth recording what the alternative cost, because the
+            comparison is what justified the swap. JavaScriptCore’s shipped total was
+            <strong>68.9 MB</strong> on the measuring machine — and that understated it, because the
+            32 MB system library carries no ICU and links it dynamically. A self-contained JSC has
+            to fold that in, and S0 measured <strong>37,980,984 B</strong> for the engine alone.
+            QuickJS-ng contributes about <strong>1.5 MB</strong> and brings no ICU at all — which is
+            also why <span class="mono">Intl</span> is absent from the compatibility profile.
+          </p>
         </div>
 
         <div class="callout warn">
           <span class="tag">Read this before quoting a number</span>
           <p>
-            <strong>The original 25–50 MB Phase 2 estimate is withdrawn.</strong> The S0 floor
-            already exceeds it before the host, bridge, loader, GPU services, or application are
-            included. Installed and compressed sizes are reported separately; no production size
-            claim exists until the complete Phase 2 host is measured.
+            <strong>The original 25–50 MB Phase 2 estimate was withdrawn</strong> when S0 showed the
+            floor already exceeded it against a design that shipped an engine library alongside. The
+            shipped total is now inside that range again, but that is a result of the engine choice
+            rather than a walk-back of the measurement. <strong>Only Linux x64 is measured</strong> —
+            the other five targets have no runner yet — and no Electron or Tauri build has been
+            measured with the same application on the same machine. Installed and compressed sizes
+            are always reported separately.
           </p>
         </div>
 
         <p>
           The key architectural consequence, which belongs in the product spec because it defines what
-          the user installs: <strong>Bun is the toolchain; JavaScriptCore is the runtime.</strong> The
-          exported app does not need Bun's package manager, test runner, bundler, transpiler, CLI, dev
-          server or installer. It needs JavaScript execution.
+          the user installs: <strong>Bun is the toolchain; Blitsen’s own runtime is what ships.</strong>
+          The exported app does not need Bun’s package manager, test runner, bundler, transpiler, CLI,
+          dev server or installer. It needs JavaScript execution, and it carries an engine that does
+          nothing else.
         </p>
       </section>
 
@@ -1901,10 +1922,12 @@ requestAnimationFrame(<span class="c-key">function</span> update(t) {
           <div class="ms">
             <span class="code-id">M0</span>
             <div>
-              <h4>Feasibility spike</h4>
+              <h4>Feasibility spike <span class="chip ok">Complete · go / re-scope</span></h4>
               <p>
-                JSC and Blitz compile and link into one binary; measured size recorded. This either
-                confirms or kills the Phase 2 budget.
+                JSC and Blitz compiled and linked into one binary, and the measured size decided the
+                budget rather than confirming it. The core Linux architecture survived; the 25–50 MB
+                target and the unrestricted drop-in claim did not. See the
+                <a href="M0.md">M0 decision</a>.
               </p>
             </div>
           </div>
@@ -1922,11 +1945,12 @@ requestAnimationFrame(<span class="c-key">function</span> update(t) {
           <div class="ms">
             <span class="code-id">M2</span>
             <div>
-              <h4>Interactive <span class="chip ok">Complete</span></h4>
+              <h4>Interactive <span class="chip ok">Complete · Linux x64</span></h4>
               <p>
                 Click and keyboard events dispatch to JS listeners with correct propagation;
                 <code>requestAnimationFrame</code> drives a smooth animation; style and class mutation
-                from JS relayouts correctly.
+                from JS relayouts correctly. Input enters through the same hit test the native window
+                uses. See the <a href="M2.md">M2 acceptance evidence</a>.
               </p>
             </div>
           </div>
@@ -1938,20 +1962,24 @@ requestAnimationFrame(<span class="c-key">function</span> update(t) {
                 A complete playable Pong exists as nothing but <code>index.html</code>,
                 <code>style.css</code> and <code>game.js</code>, holds 60 fps, and runs from a single
                 exported executable on a machine with no toolchain installed. This is the point at
-                which the project is demonstrably real. See the
-                <a href="M3.md">M3 acceptance evidence</a>.
+                which the project is demonstrably real: headless frame cost is p50 0.809 ms against a
+                16.7 ms budget with zero frames over, and the windowed export sustains 60 fps on a
+                real display. See the <a href="M3.md">M3 acceptance evidence</a>.
               </p>
             </div>
           </div>
           <div class="ms proof">
             <span class="code-id">M3b</span>
             <div>
-              <h4>Drop-in <span class="chip ok">Complete · Linux x64</span></h4>
+              <h4>Drop-in <span class="chip ok">Met · Linux x64</span></h4>
               <p>
-                An unmodified, existing Vite + React app is exported with nothing but
-                <code>npm i -D blitsen</code> and <code>blitsen build dist</code>, and runs. This
-                proves the adoption claim (P10) independently of the architecture claim, and is the
-                milestone most likely to attract users. See the
+                Six applications nobody here wrote — a React admin dashboard using Tailwind 4, Radix,
+                TanStack and Recharts, a Vue 3 app, a Svelte game and the three stock
+                <code>create-vite</code> templates — build and render from their own unmodified
+                <code>vite build</code> output, with zero source changes and no flags. All six failed
+                when first measured, which is what makes this the adoption claim (P10) rather than a
+                test of the export pipeline. Remote scripts are still never fetched: they are skipped
+                and reported as a warning. See the
                 <a href="M3B.md">M3b acceptance evidence</a> and
                 <a href="COMPATIBILITY.md">published v0 profile</a>.
               </p>
@@ -2002,9 +2030,9 @@ requestAnimationFrame(<span class="c-key">function</span> update(t) {
                 <td><code>blitsen doctor</code> reports unsupported API usage before the user hits it at runtime; capability tiers published prominently.</td>
               </tr>
               <tr>
-                <th scope="row">Phase 2 size target proves unreachable; JSC alone is bigger than hoped</th>
-                <td><span class="chip high">High</span><br><span class="mono" style="color:var(--ink-faint)">weakens the headline claim</span></td>
-                <td>M0 measures it before anything is promised. Fallback positioning: still far below Electron.</td>
+                <th scope="row">The original Phase 2 size target is unreachable; the measured floor is already 52.48 MB</th>
+                <td><span class="chip high">High</span><br><span class="mono" style="color:var(--ink-faint)">removes the numeric headline</span></td>
+                <td>Withdraw the 25–50 MB claim. Measure the complete host, set a platform budget, and use only the fallback positioning: materially below Electron.</td>
               </tr>
               <tr>
                 <th scope="row">Partial web platform frustrates users who expect browser parity</th>
@@ -2050,11 +2078,16 @@ requestAnimationFrame(<span class="c-key">function</span> update(t) {
               </p>
             </div>
           </li>
-          <li>
+          <li class="settled">
             <div>
-              <h4>Licence <span class="chip open">Open</span></h4>
+              <h4><span class="t">Licence and engine constraints</span> <span class="chip ok">Settled — twice</span></h4>
               <p>
-                And whether JSC's licensing constrains the export model for closed-source apps.
+                Blitsen is <code>MIT OR Apache-2.0</code> and closed-source applications are
+                supported. The first answer accepted JavaScriptCore's LGPL-family terms, which meant
+                a dynamically loaded, user-replaceable engine library and a relink flow that had to
+                survive packaging and signing. QuickJS-ng is MIT, so the shipped runtime links it
+                statically and the most demanding term left in the tree is Stylo's file-level
+                MPL-2.0. See <a href="LICENSING.md">LICENSING.md</a>.
               </p>
             </div>
           </li>

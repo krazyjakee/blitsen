@@ -64,10 +64,9 @@ async function exportWith(host, directory, addon) {
 }
 
 // What the Phase 2 executable is made of, before an application is appended.
-// The engine is deliberately absent from this list: production loads a
-// replaceable JavaScriptCore shared library (LICENSING.md), so its size is
-// beside the executable rather than inside it, and reporting a total that
-// quietly omits it would overstate the result.
+// The engine has no line of its own here because it has no bytes of its own:
+// QuickJS-ng is linked into the executable (LICENSING.md), so it is already
+// inside the figure this reports rather than something to add to it.
 async function componentBreakdown(runtimePath) {
   const stripped = `${runtimePath}.stripped`;
   await cp(runtimePath, stripped);
@@ -95,32 +94,24 @@ async function componentBreakdown(runtimePath) {
   return { bytes: await bytes(runtimePath), stripped: strippedBytes, sections };
 }
 
-// The engine an exported application has to carry. On a development machine
-// this is the system library the loader found; a release carries Blitsen's
 // What the engine costs *beside* the executable, which since the QuickJS swap
 // is nothing: the engine is linked in. Asked of the runtime rather than assumed
 // — `--engine-report` says how it is linked — because this table asserting a
-// library that is not there is exactly the failure it exists to prevent.
+// library that is not there is exactly the failure it exists to prevent. A
+// runtime that answers anything but `static` is a build this repository no
+// longer produces, so it is reported rather than measured around.
 async function engineLibrary() {
   const runtime = await resolvePhase2Runtime();
   const { stdout } = await run(runtime.path, ["--engine-report"]);
   const report = JSON.parse(stdout);
   if (!report.loaded) return { loaded: false, error: report.error };
-  if (report.linkage === "static") {
-    return { loaded: true, linkage: "static", engine: report.engine, path: null, bytes: 0 };
-  }
-  const candidates = [
-    process.env.BLITSEN_JSC_LIBRARY,
-    "/lib/x86_64-linux-gnu/libjavascriptcoregtk-6.0.so.1",
-    "/usr/lib/x86_64-linux-gnu/libjavascriptcoregtk-6.0.so.1",
-  ].filter(Boolean);
-  for (const path of candidates) {
-    const size = await stat(path).then(entry => entry.size, () => null);
-    if (size !== null) {
-      return { loaded: true, linkage: "dynamic", engine: report.engine, path, bytes: size };
-    }
-  }
-  return { loaded: true, linkage: "dynamic", engine: report.engine, path: null, bytes: null };
+  return {
+    loaded: true,
+    linkage: report.linkage,
+    engine: report.engine,
+    path: null,
+    bytes: report.linkage === "static" ? 0 : null,
+  };
 }
 
 const directory = await bareApp();
@@ -179,13 +170,9 @@ try {
   if (engine.linkage === "static") {
     console.log(`    ${engine.engine.padEnd(22)} linked in, so nothing ships beside the executable`);
     console.log(`    shipped total          ${mb(phase2.bytes)}  the executable, and that is all`);
-  } else if (engine.bytes !== null) {
-    console.log(`    ${engine.engine.padEnd(22)} ${mb(engine.bytes)}  `
-      + `(${engine.path}; loaded dynamically, so beside the binary and not in it)`);
-    console.log(`    shipped total          ${mb(phase2.bytes + engine.bytes)}  `
-      + "executable + engine library");
   } else {
-    console.log(`    ${engine.engine.padEnd(22)} unmeasured on this machine`);
+    console.log(`    ${engine.engine.padEnd(22)} reports linkage "${engine.linkage}", `
+      + "so the shipped total is not the executable alone and is unmeasured here");
   }
   if (measurements.phase3.releaseMin !== null) {
     const saved = breakdown.bytes - measurements.phase3.releaseMin;

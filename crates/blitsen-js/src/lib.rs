@@ -1,8 +1,8 @@
 //! JavaScript-engine-independent interfaces.
 //!
-//! The types in this crate deliberately contain no Node-API, Bun, or
-//! JavaScriptCore handles.  Bridge crates can therefore be compiled and tested
-//! without selecting a JavaScript host.
+//! The types in this crate deliberately contain no Node-API, Bun, or QuickJS
+//! handles.  Bridge crates can therefore be compiled and tested without
+//! selecting a JavaScript host.
 
 pub mod timers;
 
@@ -237,8 +237,9 @@ pub enum LoopTurn {
 
 /// Boundary implemented by every JavaScript host.
 ///
-/// Phase 1 implements this over Bun/Node-API. Phase 2 implements it over an
-/// embedded JavaScriptCore host. Bridge code depends only on this trait.
+/// Phase 1 implements this over Bun/Node-API. Phase 2 implements it over the
+/// engine it links itself. Bridge code depends only on this trait, which is what
+/// let the Phase 2 engine be swapped without touching anything above it.
 pub trait JsEngine {
     /// Opaque, engine-owned JavaScript value handle.
     type Value: Clone;

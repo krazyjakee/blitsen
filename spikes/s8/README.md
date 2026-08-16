@@ -95,9 +95,9 @@ Not settled, and deliberately so:
 
 ## The gate
 
-`spikes/s8` ended by wiring the engine into `blitsen-runtime` behind
-`--features quickjs`, so the committed golden-frame comparison could run against
-it. That took one new file — `crates/blitsen-runtime/src/engine.rs`, which holds
+`spikes/s8` ended by wiring the engine into `blitsen-runtime` behind a
+`quickjs` feature, so the committed golden-frame comparison could run against it
+while JavaScriptCore was still the default. That took one new file — `crates/blitsen-runtime/src/engine.rs`, which holds
 the two things that differ between engines: how one is obtained, and how its
 module loader is pointed at the registry. Nothing else in the executable, and
 nothing at all in `blitsen-host`, changed.
@@ -156,26 +156,32 @@ downloads falls by 45%.
 ./run.sh
 ```
 
-Needs a C toolchain, `libclang` for bindgen, and a JavaScriptCore for the
-comparison arms (`libjavascriptcoregtk-6.0` on Ubuntu, or `BLITSEN_JSC_LIBRARY`).
-Machine-readable results are in [`results/linux-x64.tsv`](results/linux-x64.tsv).
+Needs a C toolchain and `libclang` for bindgen. Machine-readable results are in
+[`results/linux-x64.tsv`](results/linux-x64.tsv).
 
 | binary | what it answers |
 |---|---|
 | `s8-quickjs` | does the trait hold, and does bytecode round-trip |
 | `floor` | the engine-only size number |
-| `compare` | synthetic throughput, both engines, same machine |
-| `frame` | pong's actual frame cost on both engines |
-| `crossover` | crossing cost vs work cost, and where the winner changes |
+
+**The JavaScriptCore arms are gone.** This spike won its own argument: the
+recommendation was taken, and `crates/blitsen-jsc` — the dynamically loaded JSC
+host every comparison here measured against — was removed from the repository
+once nothing shipped it. The four binaries that drove it (`compare`, `frame`,
+`crossover`, `init`) went with it, so the two-engine numbers above are a record
+rather than a command you can re-run. They were last reproducible at commit
+`531b3c7`; check it out to rebuild both arms.
 
 The gate itself is run from the repository root, not from here:
 
 ```sh
-cargo build --release -p blitsen-runtime --no-default-features --features quickjs \
-  --target-dir target/quickjs
-target/quickjs/release/blitsen-runtime --replay \
+cargo build --release -p blitsen-runtime
+target/release/blitsen-runtime --replay \
   "$PWD/examples/pong/index.html" "$PWD/packages/blitsen/test/replay/pong.trace.json"
 ```
+
+(The feature selected an engine only while there were two. QuickJS-ng is now the
+one the runtime links, so an ordinary release build is the gate.)
 
 Use absolute paths. A relative entrypoint resolves the stylesheet differently,
 which leaves the DOM digests matching and every layout and pixel digest

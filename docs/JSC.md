@@ -6,9 +6,10 @@
 > decided it, LGPL forcing a dynamically replaceable library, is exactly the constraint the
 > replacement removes. What is no longer true: the pinned WebKit revision, the six-target engine
 > build matrix, `BLITSEN_JSC_LIBRARY`, and the patched `JSLoadAndEvaluateModuleFromSource` that a
-> stock system JavaScriptCore does not have. The JavaScriptCore host still builds
-> (`cargo build -p blitsen-runtime --no-default-features --features javascriptcore`) because it is
-> the other half of the dual-host conformance suite, not because an export links it.
+> stock system JavaScriptCore does not have. The JavaScriptCore host itself is gone: `crates/
+> blitsen-jsc` and the `javascriptcore` feature that selected it were removed once nothing shipped
+> them, so nothing in this document describes code that still exists. It was last buildable at
+> commit `531b3c7`.
 
 **Decision date:** 2026-08-10
 **Decision:** build a pinned Bun WebKit revision in Blitsen's release matrix, own the small Rust

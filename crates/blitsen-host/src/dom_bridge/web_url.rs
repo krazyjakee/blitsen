@@ -2,7 +2,7 @@
 //!
 //! Parsing lives in Rust rather than in the bootstrap because `URL` is a Web
 //! IDL API, not an ECMAScript one: the Phase 1 host happens to provide it and a
-//! bare JavaScriptCore does not. Keeping it here means the Phase 2 swap does not
+//! bare engine context does not. Keeping it here means the Phase 2 swap does not
 //! change how an application's router reads its own address.
 
 use serde_json::{Value, json};

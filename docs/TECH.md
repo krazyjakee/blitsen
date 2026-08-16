@@ -16,8 +16,8 @@
    ────────────────────┼────────────────────────────
                        ▼
         ┌──────────────────────────────┐
-        │        JavaScriptCore        │   JS/TS execution, modules,
-        │      (hosted by Bun, P1)     │   async, timers, npm
+        │  QuickJS-ng (linked in, P2)  │   JS execution, modules,
+        │  or Bun/JavaScriptCore (P1)  │   async, timers, npm
         └──────────────┬───────────────┘
                        │
                   ┌────▼─────┐
@@ -42,15 +42,15 @@
                   Native window
 ```
 
-The project **is the bridge**. Blitz supplies rendering; JSC supplies execution; the Rust
-platform layer supplies the OS. Everything novel lives between them.
+The project **is the bridge**. Blitz supplies rendering; the JavaScript engine supplies
+execution; the Rust platform layer supplies the OS. Everything novel lives between them.
 
 ### Component ownership
 
 | Layer | Source | We own |
 | --- | --- | --- |
 | HTML parsing, DOM tree, CSS cascade, layout, paint | Blitz (Stylo, Taffy) | Upstream; patches where needed |
-| JS/TS execution, modules, npm resolution, event loop primitives | Bun / JavaScriptCore | Upstream; consumed via Node-API |
+| JS execution, modules, event loop primitives | QuickJS-ng (P2, linked in); Bun / JavaScriptCore (P1, via Node-API) | Upstream; consumed through the `JsEngine` trait |
 | DOM ↔ JS bindings, event system, web API shims, `native:` modules | — | **Entirely ours** |
 | Windowing, GPU surface, input, audio, filesystem, networking | winit, wgpu, rodio/cpal, tokio | Thin Rust wrappers, ours |
 | Application bundling, transpilation, module resolution | The user's own tool (Vite, Webpack, Bun, …) | **Nothing. Deliberately not ours** (§16.6) |
@@ -95,20 +95,26 @@ written an embedding layer.
 
 ### Phase 2 — Blitsen is the host
 
-Bun demotes to toolchain. We load JSC directly (`rusty_jsc`-style bindings or our own) and
-supply the runtime services the app actually needs — module loading against a pre-bundled
-graph, timers, microtask draining — dropping the package manager, test runner, bundler,
-transpiler, CLI, dev server and installer from the shipped binary.
+Bun demotes to toolchain. The runtime links **QuickJS-ng** statically and supplies the runtime
+services the app actually needs — module loading against the application's own files, timers,
+microtask draining — dropping the package manager, test runner, bundler, transpiler, CLI, dev
+server and installer from the shipped binary.
 
-Production exports dynamically load a user-replaceable JSC shared library to keep
-closed-source distribution on the clean LGPL path. A one-file wrapper may carry and extract the
-default library, but must allow an ABI-compatible replacement. Static JSC is for internal spikes
-or a future mode that emits complete relinking materials. See `LICENSING.md`.
+An export is therefore one file: the engine is inside the executable, nothing ships beside it,
+and the only terms it carries are MIT ones. That is a reversal of what this section originally
+specified. The engine chosen here was JavaScriptCore, and because it is LGPL the design required
+a dynamically loaded, user-replaceable shared library, a relink flow, and 32 MB alongside every
+export. [`spikes/s8`](../spikes/s8/README.md) measured a permissively licensed engine behind the
+same trait — 120 golden frames pixel-identical, 59.6 fps windowed, 25× smaller — and the JSC host
+was removed once nothing shipped it. [`JSC.md`](JSC.md) keeps the record of that decision and
+`LICENSING.md` records what the swap removed.
 
 **The bridge API must not change between phases.** Everything in §5–§9 is specified against a
-`JsEngine` trait with two implementations (Node-API-over-Bun, embedded-JSC). If Phase 1 code
-reaches for Bun-specific behaviour outside that trait, Phase 2 becomes a rewrite instead of a
-swap. This is the single most important structural constraint in the project.
+`JsEngine` trait with two implementations (Node-API-over-Bun, and the engine the Phase 2
+executable links). If Phase 1 code reaches for Bun-specific behaviour outside that trait, Phase 2
+becomes a rewrite instead of a swap. This is the single most important structural constraint in
+the project — and the engine swap above is what proved it was worth holding: it changed one file
+in `blitsen-runtime` and nothing at all in `blitsen-host`.
 
 The constraint held. Everything between the DOM and the application lives in `blitsen-host`,
 generic over `JsEngine` and naming no engine at all; `blitsen-node` is the Node-API implementation
@@ -123,7 +129,7 @@ cache the host has.
 ## 3. Threading and event loop
 
 One OS thread owns the window, the DOM, and the JS context. Blitz's DOM is not thread-safe and
-JSC contexts are not freely shareable; fighting either is not worth it.
+JavaScript contexts are not freely shareable; fighting either is not worth it.
 
 ```
 main thread
@@ -569,9 +575,9 @@ no Node spelling left to keep and `native:os` is the whole API — which is what
 Phase 1 → Phase 2 table already routes `node:os` facts to. This is the rule applied, not waived:
 the test is whether the *shipped runtime* has another word for the thing.
 
-The rule also has a Phase 2 cost argument behind it. When the embedded-JSC host replaces Bun
-(§3), every Node module the design leans on becomes ours to supply — deferred work, not avoided
-work. A `native:` module that duplicates one is that work done twice.
+The rule also has a Phase 2 cost argument behind it. Once the embedded host replaces Bun (§3),
+every Node module the design leans on becomes ours to supply — deferred work, not avoided work.
+A `native:` module that duplicates one is that work done twice.
 
 **The escape hatch is a first-class feature.** `.node` addons load at runtime — in development
 and from an exported executable — so users write Rust/C/C++ extensions and reach them from
@@ -670,13 +676,14 @@ that, and duplicating it would make Blitsen a competitor to Vite instead of a ta
   and reported in step ③ along with what the copy of Bun costs, because an executable that is
   smaller and does not start is not smaller.
 
-  The exporter also refuses to link the small host to an application whose module scripts the
-  engine cannot evaluate — established by asking the runtime, `--engine-report`, rather than by
-  assuming. Against the shipping engine that probe always answers yes, because QuickJS-ng loads
-  modules through its stock public API; it earns its keep against a JavaScriptCore build, where
-  the module entry point is a patch a stock library does not carry. `BLITSEN_HOST` overrides the
-  decision in either direction and refuses the combination that cannot work; it is deliberately
-  not a CLI flag or a config key, so the npm surface is identical across the swap (§16.7).
+  Module scripts do not enter that decision. They used to: while the Phase 2 runtime loaded
+  JavaScriptCore at run time, the library it found might lack the module entry point — a patch a
+  stock JSC does not carry — so the exporter asked it with `--engine-report` and fell back to the
+  Bun host when the answer was no. QuickJS-ng loads modules through its stock public API and is
+  linked in, so there is no longer a build whose engine could turn up without one, and the probe
+  went with the engine that needed it. `BLITSEN_HOST` overrides the decision in either direction
+  and refuses the combination that cannot work; it is deliberately not a CLI flag or a config key,
+  so the npm surface is identical across the swap (§16.7).
 
 Step ② keeps the compatibility promise honest. Blitsen will be handed output it cannot run; the
 failure must arrive at build time with a named API and file, not as a blank window at runtime.
@@ -902,7 +909,7 @@ note rather than as a surprise in a user's window.
 ### Consequence for the Phase 1 → Phase 2 transition
 
 This packaging boundary is what makes the host-model change (§2) invisible to users. In Phase 1
-the platform package contains Bun-plus-addon; in Phase 2 it contains our own JSC-based runtime.
+the platform package contains Bun-plus-addon; in Phase 2 it contains our own runtime.
 It now contains both — `blitsen.node` for `blitsen run` and the Phase 1 export path, and
 `blitsen-runtime` for the ordinary export — built, signed and published together, because a package
 carrying one without the other fails at whichever command needs the missing half. Neither carries a
@@ -1009,10 +1016,14 @@ Rules that, if broken, cost a rewrite rather than a refactor:
 
 ## 17. Open technical questions
 
-1. **JSC acquisition for Phase 2: decided.** Build a pinned Bun WebKit revision in Blitsen's
-   native release matrix, own the narrow Rust ABI layer, and dynamically load the replaceable
-   production library. Existing Rust bindings do not cover the six targets or the required
-   dynamic distribution model. See [`JSC.md`](JSC.md).
+1. **Engine acquisition for Phase 2: decided, then reversed, and closed.** The first answer was
+   JavaScriptCore: build a pinned Bun WebKit revision in Blitsen's native release matrix, own the
+   narrow Rust ABI layer, and dynamically load the replaceable production library
+   ([`JSC.md`](JSC.md)). [`spikes/s8`](../spikes/s8/README.md) then measured QuickJS-ng behind the
+   same trait and it won on every axis that mattered — MIT rather than LGPL, 25× smaller, no
+   library to ship, no patch needed for module loading, and the golden frames unchanged. The
+   runtime links it statically and the JSC host has been removed; there is no release-matrix
+   engine build and no acquisition problem left.
 2. **Module resolution in the shipped binary: decided.** A runtime resolver over the
    application's own files, addressed by an internal `blitsen://app/` origin, with linking left to
    the engine's module loader. A pre-bundled single graph was rejected because real framework

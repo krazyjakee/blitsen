@@ -285,7 +285,7 @@ const NATIVE_ABSENT = {
 // Globals the *engine* supplies rather than the bridge, so their status cannot
 // be read out of `dom_bridge.rs` like everything else here.
 //
-// Blitsen hosts QuickJS-ng (docs/JSC.md, superseded by spikes/s8), which ships
+// Blitsen hosts QuickJS-ng (spikes/s8), which ships
 // no `Intl` and no `WebAssembly`. Nothing in Blitsen deletes them — they were
 // never installed — so the bootstrap-deletion invariants below do not apply and
 // these are declared here instead. `cli-doctor.test.mjs` runs the built runtime

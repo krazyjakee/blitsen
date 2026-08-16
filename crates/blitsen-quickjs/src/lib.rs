@@ -1,10 +1,10 @@
 //! Statically linked QuickJS-ng behind the engine-neutral [`JsEngine`] trait.
 //!
-//! The counterpart to `blitsen-jsc`: same boundary, different engine, and the
-//! reason for having it is what the two do *not* share. JavaScriptCore is LGPL,
-//! so an export loads it dynamically and ships it alongside (`LICENSING.md`);
-//! QuickJS-ng is MIT, so it links into the executable and nothing ships beside
-//! it. `spikes/s8` measured what that is worth and what it costs.
+//! The engine an export links, and the reason it is this one: QuickJS-ng is
+//! MIT, so it goes inside the executable and nothing ships beside it
+//! (`LICENSING.md`). The JavaScriptCore host it replaced was LGPL, which forced
+//! a dynamically loaded, replaceable library alongside every export.
+//! `spikes/s8` measured what the swap was worth and what it costs.
 //!
 //! Three parts of the contract drive the design:
 //!

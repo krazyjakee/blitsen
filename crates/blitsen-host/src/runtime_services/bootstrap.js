@@ -14,27 +14,28 @@
       configurable: true,
     });
   // Everything below this is absent from a bare context, so defining it can
-  // only add. `console` is the exception and is installed over the engine's own
-  // (see below), which is why the two are separate operations.
+  // only add. `console` is the exception and is installed outright (see below),
+  // which is why the two are separate operations.
   const define = (name, value) => {
     if (name in globalThis) return;
     install(name, value);
   };
 
-  // Console. Replaced rather than deferred to: a bare JavaScriptCore context
-  // already has a `console`, but it is the Web Inspector's, and with no
-  // debugger attached every call is silently discarded — which reads exactly
-  // like an application whose logging is broken. Formatting is deliberately
-  // shallow: the host writes lines to the standard streams, and a full
-  // inspector belongs to a devtools story that does not exist yet.
+  // Console. Installed rather than deferred to, so it is this one or none: an
+  // engine's own `console` is whatever its embedder wired up, and a host that
+  // inherited one reads exactly like an application whose logging is broken.
+  // QuickJS-ng's is in its `libc` helpers, which this host does not install, so
+  // today the bare context has none at all. Formatting is deliberately shallow:
+  // the host writes lines to the standard streams, and a full inspector belongs
+  // to a devtools story that does not exist yet.
   const format = value => {
     if (typeof value === "string") return value;
     if (value instanceof Error) {
       // The name and message first, then the frames. Not `stack` alone: V8
-      // begins it with "Name: message" and both engines Blitsen hosts do not,
-      // so an error logged under QuickJS printed its frames and never said what
-      // went wrong. Checked rather than assumed, so a host whose stack already
-      // carries the header does not repeat it.
+      // begins it with "Name: message" and QuickJS does not, so an error logged
+      // here printed its frames and never said what went wrong. Checked rather
+      // than assumed, so a host whose stack already carries the header does not
+      // repeat it.
       const heading = `${value.name}: ${value.message}`;
       const stack = value.stack ?? "";
       if (!stack) return heading;

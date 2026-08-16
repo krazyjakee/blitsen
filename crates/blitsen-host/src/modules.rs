@@ -41,12 +41,12 @@
 //!
 //! Resolution and source are the host's. *Linking* — instantiating the records,
 //! wiring live bindings, ordering evaluation, breaking cycles — is the engine's,
-//! and no JavaScript engine exposes it to be reimplemented from outside. JSC's
-//! public C API has no module loader hook at all: a bare context's dynamic
-//! `import()` rejects with "Could not import the module", and
-//! `JSLoadAndEvaluateModuleFromSource` is absent from system builds. Blitsen's
-//! pinned build supplies both, which is why the engine is built rather than
-//! taken (`JSC.md`); the resolver below is what that loader calls back into.
+//! and no JavaScript engine exposes it to be reimplemented from outside. The
+//! shipped engine exposes the seam instead: `JS_SetModuleLoaderFunc` takes a
+//! normaliser and a loader, and the resolver below is what that pair calls back
+//! into. That it is stock public API rather than a patch is part of why the
+//! engine was swapped — JavaScriptCore's public C API has no module loader hook
+//! at all, which is what `MODULES.md` and `JSC.md` record.
 
 use std::cell::RefCell;
 use std::collections::HashMap;

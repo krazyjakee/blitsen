@@ -185,9 +185,9 @@ impl QuickJs {
     /// Points QuickJS's module loader at the registry already installed on the
     /// global object.
     ///
-    /// The JavaScriptCore host needs a patched engine for this (`docs/JSC.md`);
-    /// here it is the stock public API, which is one of the reasons this engine
-    /// is interesting at all.
+    /// This is the stock public API. The JavaScriptCore host it replaced needed
+    /// a patched engine to expose the same hook at all (`docs/JSC.md`), which is
+    /// one of the reasons the swap was worth making.
     pub fn install_module_loader(&mut self) {
         unsafe {
             q::JS_SetModuleLoaderFunc(

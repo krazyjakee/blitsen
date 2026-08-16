@@ -1,8 +1,9 @@
 # Blitsen
 
 Blitsen is an experimental native runtime for applications built from static
-HTML, CSS, and JavaScript output. It combines JavaScriptCore with Blitz's native
-HTML/CSS renderer without embedding Chromium or an operating-system WebView.
+HTML, CSS, and JavaScript output. It combines a statically linked QuickJS-ng
+with Blitz's native HTML/CSS renderer, without embedding Chromium or an
+operating-system WebView.
 
 This crate is a **pre-alpha name-reservation release**. The runtime is not
 implemented yet. Follow development and read the feasibility results at

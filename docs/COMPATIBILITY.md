@@ -1191,7 +1191,7 @@ The tables are generated from the same runtime source as the tiers above, by the
 Phase 1 ran inside Bun, so `process`, `node:os` and `node:fs` came free with the host. **The Phase 2
 runtime implements none of them, and this is a decision rather than a gap** (issue #87).
 
-Blitsen hosts JavaScriptCore itself and supplies only what the DOM and the application actually
+Blitsen hosts its own JavaScript engine and supplies only what the DOM and the application actually
 rely on: timers, a microtask checkpoint, `performance`, `console`, `reportError`, `DOMException`,
 `crypto`, `TextEncoder`/`TextDecoder`, and the web surface in the tables above. Implementing Node's module surface on top of that would
 mean reimplementing a large, under-specified API with no conformance corpus, to serve applications

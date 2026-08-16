@@ -1,5 +1,4 @@
 import { createHash } from "node:crypto";
-import { spawnSync } from "node:child_process";
 import { createReadStream } from "node:fs";
 import { access, copyFile, mkdir, open, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, join, posix, relative, resolve, sep } from "node:path";
@@ -497,66 +496,6 @@ function summarize(paths, limit = 5) {
   return paths.length > limit ? `${shown}, and ${paths.length - limit} more` : shown;
 }
 
-const MODULE_SCRIPT = /<script\b[^>]*\btype\s*=\s*["']module["']/i;
-// What only a module can contain. `import(` is here because a classic script
-// that dynamically imports needs the same loader the static form does.
-const MODULE_SYNTAX = /^\s*(?:import|export)\s|[\s;}]import\s*[({"'`]|\bimport\.meta\b/m;
-
-/**
- * Whether this file needs a JavaScript module loader to run.
- *
- * Deliberately generous: a false positive costs an export the bytes of the
- * bigger host, a false negative ships an application that refuses to start in
- * front of whoever runs it. `source` is the text, or a thunk for a file that
- * has not been read — most assets are neither HTML nor script and are never
- * opened for this.
- */
-async function needsModuleLoader(path, source) {
-  const extension = extname(path).toLowerCase();
-  if (extension === ".mjs") return true;
-  const html = HTML_EXTENSIONS.includes(extension);
-  if (!html && !SCRIPT_EXTENSIONS.includes(extension)) return false;
-  const text = typeof source === "function" ? await source() : source;
-  return html ? MODULE_SCRIPT.test(text) : MODULE_SYNTAX.test(text);
-}
-
-/**
- * Whether the engine a Phase 2 export would host can evaluate modules.
- *
- * The shipped runtime links QuickJS-ng statically, so the answer is a property
- * of the build rather than of the machine, and every published platform package
- * carries such a build. That is why an unanswerable question — a cross-target
- * build, which cannot run the target's executable — counts as **yes**: saying no
- * there would silently link 95 MB of Bun into an export whose runtime loads
- * modules perfectly well, which is the pitch turned off by accident (#122).
- *
- * The question is still asked wherever it can be answered, because a runtime
- * built with the `javascriptcore` feature loads its engine at run time and the
- * library it finds may lack the module entry point (docs/JSC.md). A report that
- * says so is the one "no" this returns, and it is measured rather than assumed.
- */
-async function phase2LoadsModules(target) {
-  if (target !== hostTarget()) return true;
-  const runtime = await resolvePhase2Runtime({ target }).catch(() => null);
-  if (runtime === null) return true;
-  try {
-    const report = spawnSync(runtime.path, ["--engine-report"]);
-    if (report.status !== 0) return true;
-    const parsed = JSON.parse(report.stdout.toString());
-    // A statically linked engine is inside the executable and has no library to
-    // be missing; only a runtime that loads one at run time can come back with
-    // an engine that cannot link a module graph.
-    if (parsed.linkage === "static") return true;
-    return parsed.loaded === true && parsed.modules === true;
-  } catch {
-    // Not runnable, or it answered with something that is not the report. The
-    // export is about to link this runtime either way, and the failure that
-    // matters — a dynamic engine without the module entry point — reports
-    // itself rather than throwing.
-    return true;
-  }
-}
-
 /** What the runtime carries the notices as, inside an export's bundle. */
 export const NOTICES_BUNDLE_FILE = "blitsen.notices.txt.gz";
 
@@ -667,7 +606,6 @@ export async function buildStandalone(
   await rm(staging, { recursive: true, force: true });
   try {
     const manifest = [];
-    let usesModules = false;
     let notices = null;
     for (const [path, absolute] of [...carried].sort(([left], [right]) => left.localeCompare(right))) {
       const staged = join(staging, "app", ...path.split("/"));
@@ -680,10 +618,8 @@ export async function buildStandalone(
           reference => resolutions?.get(reference) ?? null,
         );
         await writeFile(staged, source);
-        usesModules ||= await needsModuleLoader(path, source);
       } else {
         await copyFile(absolute, staged);
-        usesModules ||= await needsModuleLoader(path, () => readFile(absolute, "utf8"));
       }
       // Checked however it arrived: declared, reached from a script, or kept by
       // --include. A carried addon that cannot load is worse than an absent one.
@@ -692,24 +628,19 @@ export async function buildStandalone(
       manifest.push({ path, hash: await hashFile(staged), ...native ? { native: true } : {} });
     }
     const carriedAddons = manifest.filter(asset => asset.native).map(asset => asset.path);
-    // The host, now that the application is known. Small by default, and the two
-    // things that override that are capabilities rather than preferences:
+    // The host, now that the application is known. Small by default, and one
+    // thing overrides that — a capability rather than a preference: a `.node`
+    // addon is Node-API, and `createRequire` is Bun's, so the Phase 2 host has
+    // no way to load one (TECH.md §12). That export links Phase 1 and pays a
+    // copy of Bun for it, because a smaller executable that cannot run the
+    // application is not smaller.
     //
-    //   - A `.node` addon is Node-API, and `createRequire` is Bun's. The Phase 2
-    //     host has no way to load one (TECH.md §12).
-    //   - A module script needs a module loader. The shipped runtime has one —
-    //     QuickJS-ng, statically linked — so this only bites a runtime built
-    //     with the `javascriptcore` feature against a library that lacks the
-    //     module entry point (docs/JSC.md), and it is measured on the machine
-    //     that can measure it rather than assumed anywhere else.
-    //
-    // Either way the export links Phase 1 and pays a copy of Bun for it, because
-    // a smaller executable that cannot run the application is not smaller.
-    const engineLoadsModules = requested !== null || carriedAddons.length > 0 || !usesModules
-      ? null
-      : await phase2LoadsModules(buildTarget);
-    const host = requested
-      ?? (carriedAddons.length > 0 || engineLoadsModules === false ? "bun" : "blitsen");
+    // Module scripts used to be a second override, back when the Phase 2 host
+    // loaded JavaScriptCore at run time and the library it found might have no
+    // module entry point. The shipped runtime links QuickJS-ng statically and
+    // its module loader is stock, so there is no longer a build whose engine
+    // could turn up without one.
+    const host = requested ?? (carriedAddons.length > 0 ? "bun" : "blitsen");
     if (host === "blitsen" && carriedAddons.length > 0) {
       throw new Error(`BLITSEN_HOST=blitsen cannot load a carried native addon `
         + `(${summarize(carriedAddons)}): the Phase 2 host has no Node-API. `
@@ -729,12 +660,6 @@ export async function buildStandalone(
           + "(load one from a module script with createRequire(import.meta.url))",
           "linked the Bun host, which is the one that can load a Node-API addon: "
           + "this export carries a copy of Bun and is roughly 95 MB larger than one without",
-        ],
-        ...engineLoadsModules !== false ? [] : [
-          "this application uses module scripts and the JavaScriptCore available here cannot "
-          + "load them, so the export linked the Bun host and is roughly 95 MB larger: "
-          + "point BLITSEN_JSC_LIBRARY at a build with JSLoadAndEvaluateModuleFromSource "
-          + "(docs/JSC.md) and it links the small one",
         ],
       ],
     });
