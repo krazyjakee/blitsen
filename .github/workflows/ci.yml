@@ -5,7 +5,7 @@ on:
     branches: [main]
   pull_request:
 
-# Nine jobs across six runner labels is enough that two runs of the same branch
+# Ten jobs across six runner labels is enough that two runs of the same branch
 # queue behind each other, and the older one is answering a question nobody is
 # asking any more. Superseded runs are cancelled — except on `main`, where every
 # commit's result is the record of that commit.
@@ -362,3 +362,157 @@ jobs:
         with:
           name: metrics-${{ matrix.target }}-${{ github.sha }}
           path: ${{ github.workspace }}/measurements.json
+
+  # Issue #149: the seventh target, and the first that is not a row in the
+  # release matrix at all (P5c). It gets a smoke tier, and the split follows
+  # #133's precedent rather than inventing a new one — build exactly what the
+  # target's artifact is, then exercise the things that change with the target
+  # and nothing that does not.
+  #
+  # What changes on Android is the whole bottom of the graph: two cross-compiles
+  # instead of a native build, QuickJS bindings generated rather than shipped,
+  # OpenSSL built from source under the NDK, an audio backend that is neither
+  # ALSA nor CoreAudio, and an entry point that is a `.so` the platform loads
+  # rather than a program it execs. Every one of those is a thing that can break
+  # without a single desktop job noticing. What does *not* change is product
+  # behaviour, so m2, m3b, layout conformance, determinism and the size gate
+  # stay on the targets that already run them — the same line #133 drew.
+  #
+  # ## What this job stops short of, and why it is not here yet
+  #
+  # It does not package an APK and it does not boot an emulator. Not a choice
+  # about tiers: `blitsen build --android` cannot produce an APK containing
+  # Blitsen's engine today. The project it generates is a cdylib whose one line
+  # is `blitsen_android::android_main!()`, and `blitsen-android` exports no such
+  # macro — it is itself a `cdylib`, so there is nothing to link it from. #148
+  # is open on exactly this and says so; #143's spike settled which linking
+  # approach works by building the `.so` directly. Until that lands there is no
+  # artifact to install, and a job that installed nothing and passed would be
+  # the one outcome this file is careful to avoid.
+  #
+  # Three prerequisites *were* found by trying, and are fixed rather than
+  # documented: `RANLIB_<triple>` and `BINDGEN_EXTRA_CLANG_ARGS_<triple>`, which
+  # `cargo apk` does not set and this graph needs (see `apkPlan`), and a
+  # `min_sdk_version` of 26, which is where the NDK first ships the `libaaudio`
+  # that `cpal` links. So what remains between here and an emulator tier is
+  # #148's entry point and nothing else.
+  #
+  # The emulator half is written and runnable — `bun run --cwd packages/blitsen
+  # test:android --apk <path> --package <id>` installs, launches, captures the
+  # framebuffer and asserts against a control frame taken before the install.
+  # Two things about the tier it will join, recorded here because they are the
+  # decisions and not the plumbing:
+  #
+  #   * **The GPU mode is `-gpu lavapipe`, not `swiftshader_indirect`.** #139
+  #     measured `swiftshader_indirect` reproducibly *killing the emulator* the
+  #     moment the application initialised wgpu, including for a build that
+  #     rasterised entirely on the CPU and used wgpu only to present — so the
+  #     variable was SwiftShader's Vulkan, not the rasteriser. A hosted runner
+  #     has no GPU, so `-gpu host` is not available and `swangle` is the same
+  #     Vulkan under another name. Lavapipe is a different implementation
+  #     entirely, and emulator 36.4.9 (10 Feb 2026) made it "the default
+  #     graphics software renderer to improve Vulkan compatibility across all
+  #     platforms". That is the one software path #139 did not try, and it is
+  #     the reason to think a hosted emulator tier is possible at all. It is a
+  #     hypothesis, not a result: nobody has yet run Vello's compute pipelines
+  #     on lavapipe under the emulator's Vulkan translation.
+  #   * **A hosted runner may not be enough.** GitHub's own changelog announced
+  #     hardware-accelerated Android virtualisation for *larger* runners; that
+  #     `/dev/kvm` works on the standard ones with a udev rule is user-reported
+  #     and not documented by GitHub. Without KVM the emulator falls back to
+  #     interpretation, which the action's own README warns "might not work at
+  #     all" on newer API levels. If the tier turns out to need real hardware,
+  #     the lever is a repository variable naming a self-hosted runner, exactly
+  #     as the `architectures` job above takes its three labels.
+  android:
+    name: android (smoke)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android, x86_64-linux-android
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: android
+      # `rquickjs-sys` ships pre-generated bindings for sixteen triples and none
+      # is `*-linux-android`, so `crates/blitsen-quickjs/Cargo.toml` turns on its
+      # `bindgen` feature for that target — which makes libclang a build-time
+      # requirement Android alone has. The runner image's manifest lists Clang
+      # 16, 17 and 18 under its tools and names no libclang package at all, so
+      # this is installed rather than assumed: bindgen loads `libclang.so`, not
+      # the `clang` driver, and the two are different packages.
+      - name: Install libclang, which the Android QuickJS bindings need
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libclang-dev
+      # No Blitz system libraries here, unlike every other Linux job in this
+      # file: fontconfig, xkbcommon, wayland and X11 are the *host* platform's,
+      # and nothing in an Android cross-compile links them. If a step below ever
+      # starts wanting them, something has stopped being a cross-compile.
+      #
+      # The NDK is not installed either — the image carries one and sets
+      # ANDROID_NDK_HOME to it, which is the whole of the prerequisite
+      # `android-toolchain.mjs` refuses to provision. Asserted rather than
+      # trusted, because an image that drops it would otherwise fail much later.
+      - name: Check the NDK the image carries
+        run: |
+          test -n "$ANDROID_NDK_HOME" || { echo "ANDROID_NDK_HOME is unset"; exit 1; }
+          test -d "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt" \
+            || { echo "$ANDROID_NDK_HOME has no C toolchain"; exit 1; }
+          grep Pkg.Revision "$ANDROID_NDK_HOME/source.properties"
+      # `cargo-ndk` rather than `cargo-apk`, and the difference is deliberate:
+      # this step builds the *graph*, and cargo-apk's job starts after that with
+      # a project it cannot generate yet (see the note above). cargo-ndk is also
+      # what #142 measured the graph against, so a failure here is comparable
+      # with the result that issue recorded.
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk --locked
+      # Both default ABIs, in one invocation, because that is what one APK
+      # carries (#148's decision 2) and because arm64 alone would leave the
+      # emulator ABI unbuilt — which is precisely the one an emulator tier needs.
+      - name: Cross-compile the Android entry point for both default ABIs
+        run: cargo ndk -t arm64-v8a -t x86_64 -P 26 build --release -p blitsen-android
+      # A `.so` that links and does not export `android_main` is a crash inside
+      # `dlopen` with nothing to read, so the symbol is checked rather than
+      # assumed — it is the entire contract between the platform and this crate.
+      # The ELF machine is checked too: a build that silently produced two copies
+      # of the same architecture would satisfy every other assertion here.
+      - name: The artifacts are what Android would load
+        run: |
+          set -euo pipefail
+          nm="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm"
+          readelf="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
+          for pair in "aarch64-linux-android:AArch64" "x86_64-linux-android:X86-64"; do
+            triple="${pair%%:*}"
+            machine="${pair##*:}"
+            so="target/$triple/release/libblitsen_android.so"
+            test -f "$so" || { echo "$so was not built"; exit 1; }
+            "$readelf" -h "$so" | grep -q "$machine" \
+              || { echo "$so is not $machine"; "$readelf" -h "$so"; exit 1; }
+            "$nm" --dynamic --defined-only "$so" | grep -qw android_main \
+              || { echo "$so exports no android_main, so NativeActivity cannot start it"; exit 1; }
+            echo "$so: $machine, exports android_main, $(stat -c%s "$so") bytes"
+          done
+      # Issue #121: an artifact carries the notices it owes, and Android has no
+      # platform package to take them from — `blitsen build --android` reads
+      # `BLITSEN_NOTICES_PATH` and reports the APK uncleared for redistribution
+      # when it is unset. Nothing had ever resolved that graph for an Android
+      # triple, and the generator exits non-zero when a package's terms cannot
+      # be honoured, so this is a real gate on a real dependency set rather than
+      # a staging step for an artifact this job does not yet produce.
+      - run: bun install --frozen-lockfile
+      - name: The notices an Android artifact owes resolve
+        run: |
+          bun run --cwd packages/blitsen notices --target android-arm64 \
+            --root blitsen-android --out ${{ runner.temp }}/android-notices
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: android-notices-${{ github.sha }}
+          path: ${{ runner.temp }}/android-notices
+          if-no-files-found: ignore

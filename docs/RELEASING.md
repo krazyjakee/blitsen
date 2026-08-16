@@ -159,7 +159,16 @@ comparing. Revisit cross-compilation when there are numbers from a few real rele
 `ci.yml` runs the full suite on `linux-x64`, `darwin-arm64` and `win32-x64`, and a smoke tier on the
 other three published targets — build both artifacts, package tests against them, the native
 acceptance harness, a standalone export, the layout corpus and a report-only size measurement
-(issue \#133). What no CI job covers on any target is the release path itself: staging, signing,
+(issue \#133).
+
+Android is a thinner tier again, because it is not one of the six and `release.yml` does not build
+it: the `android` job cross-compiles `blitsen-android` for `arm64-v8a` and `x86_64`, checks each
+`.so` is the architecture it claims and exports `android_main`, and resolves the notices an APK
+owes (issue \#149). It stops before packaging, and not because packaging is out of tier — an APK
+carrying the engine cannot be built yet at all (\#148). The emulator smoke test is written
+(`bun run --cwd packages/blitsen test:android`) and joins the job when it can.
+
+What no CI job covers on any target is the release path itself: staging, signing,
 packing and publish ordering. That is what a `publish: false` dispatch is for, and it is the only
 evidence those steps have.
 

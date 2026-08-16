@@ -28,6 +28,7 @@ import {
 import {
   ASSET_INDEX, ASSET_ROOT, INDEX_VERSION, assetIndex, stageAndroidAssets,
 } from "../src/android-assets.mjs";
+import { MIN_SDK } from "../src/android-toolchain.mjs";
 import { main, parseArgs } from "../src/cli.mjs";
 import { changed, decodeFrame, describe as describeFrame } from "./run-android-smoke.mjs";
 import { capture } from "./cli-support.mjs";
@@ -721,5 +722,24 @@ describe("the frame the Android smoke test reads back", () => {
     // A different size is a different screen, and comparing them pixelwise
     // would be meaningless rather than zero.
     expect(changed(before, decodeFrame(frame(10, 12, () => 7)))).toBe(1);
+  });
+});
+
+// The CI job cross-compiles at an API level spelled in YAML, and `MIN_SDK` is
+// spelled in JavaScript, and nothing links the two. That is the shape of thing
+// this file already guards for `apk.rs`: two languages holding the same number
+// with no build step between them. It matters here because the number is not
+// cosmetic — `cpal` links `libaaudio`, which the NDK first ships at 26, so a
+// job that built below it would fail at the linker, and a job that built above
+// it would be testing an artifact the packager does not produce.
+describe("the Android CI job and the packager agree on the API floor", () => {
+  test("ci.yml cross-compiles at MIN_SDK", async () => {
+    const workflow = await readFile(join(import.meta.dir, "../../../.github/workflows/ci.yml"),
+      "utf8");
+    const platform = /cargo ndk[^\n]*-P (\d+)/.exec(workflow);
+    expect(platform).not.toBe(null);
+    expect(Number(platform[1])).toBe(MIN_SDK);
+    // And it builds the ABIs an APK would carry, not a subset of them.
+    for (const abi of DEFAULT_ABIS) expect(workflow).toContain(`-t ${abi}`);
   });
 });
