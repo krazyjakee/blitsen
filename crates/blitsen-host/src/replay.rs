@@ -15,13 +15,13 @@ use blitsen_core::frame::{FRAME_BUCKET_EDGES_MS, FrameHistogram, FrameStage};
 use blitsen_core::replay::{FrameDigest, InputTrace};
 use blitsen_dom::{DomBackend, LayoutSnapshot};
 use blitsen_js::{JsEngine, JsError};
-use blitz::dom::{DocumentConfig, NodeId};
+use blitz::dom::DocumentConfig;
 use blitz::traits::shell::{ColorScheme, Viewport};
 use serde::Serialize;
 
 use crate::alloc::{self, AllocationCounts};
-use crate::harness::{encode_png, load_document_harness, render_document};
-use crate::{dom_error, frame_loop::FrameLoop};
+use crate::frame_loop::FrameLoop;
+use crate::harness::{load_document_harness, record_frame, render_document, visit_elements};
 
 /// Digest domains. Bump the version when a digest's inputs change, so a stale
 /// golden fails loudly instead of comparing two different questions.
@@ -172,34 +172,25 @@ fn digest_document(
     document: &Rc<RefCell<BlitzDom>>,
     layout: LayoutSnapshot,
 ) -> Result<(String, String), JsError> {
-    let document = document.borrow();
     let mut dom = FrameDigest::new(DOM_DIGEST);
     let mut geometry = FrameDigest::new(LAYOUT_DIGEST);
-    let ids: Vec<NodeId> = document
-        .query_selector_all(document.document(), "*")
-        .map_err(dom_error)?;
-    for id in ids {
-        let node = document
-            .document_ref()
-            .get_node(id)
-            .ok_or_else(|| JsError::new("Blitz returned a stale node"))?;
-        let Some(element) = node.element_data() else {
-            continue;
-        };
-        dom.field(&element.name.local);
-        for attribute in element.attrs() {
+    let document = document.borrow();
+    visit_elements(&document, |element| {
+        dom.field(element.tag());
+        for attribute in element.attributes() {
             dom.field(&attribute.name.local).field(&attribute.value);
         }
-        dom.field(&document.inline_style_text(id).map_err(dom_error)?)
-            .field(&document.text_content(id).map_err(dom_error)?);
-        let rect = document.bounding_rect(id, layout).map_err(dom_error)?;
+        dom.field(&element.inline_style()?)
+            .field(&element.text_content()?);
+        let rect = element.bounding_rect(layout)?;
         geometry
-            .field(&element.name.local)
+            .field(element.tag())
             .number(f64::from(rect.x))
             .number(f64::from(rect.y))
             .number(f64::from(rect.width))
             .number(f64::from(rect.height));
-    }
+        Ok(())
+    })?;
     Ok((dom.finish(), geometry.finish()))
 }
 
@@ -296,10 +287,7 @@ pub fn replay<E: JsEngine + Clone + 'static>(
         if let Some(directory) = record_into
             && (record_frames.is_empty() || record_frames.contains(&frame))
         {
-            let path = directory.join(format!("frame-{frame:05}.png"));
-            std::fs::write(&path, encode_png(frame_loop.pixels(), width, height)?).map_err(
-                |error| JsError::new(format!("could not record frame {frame}: {error}")),
-            )?;
+            let path = record_frame(directory, frame, frame_loop.pixels(), width, height)?;
             recorded.push(path.to_string_lossy().into_owned());
         }
 
