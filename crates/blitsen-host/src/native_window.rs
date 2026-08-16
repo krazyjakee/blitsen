@@ -32,6 +32,21 @@ use crate::OpenDirectoryOptions;
 use crate::app::AppFiles;
 use crate::pointer_input::{PendingPointerInput, PointerIds};
 
+/// Hands the activity to the event loop, before there is one (issue #142).
+///
+/// [`WindowSession::open`] below builds its loop with
+/// `blitz::shell::create_default_event_loop`, whose Android branch reads the
+/// `AndroidApp` back out of a `OnceLock` and unwraps it. So this must be called
+/// first, and calling it is not something this crate can do for its caller: the
+/// activity is handed to `android_main` and reaches no other function.
+///
+/// Re-exported here rather than reached for through `blitz::shell` directly so
+/// that the ordering constraint is stated beside the code that imposes it. The
+/// caller is `blitsen-android`, the `cdylib` that exists because Android's entry
+/// point is not a `main`.
+#[cfg(target_os = "android")]
+pub use blitz::shell::set_android_app;
+
 /// The winit application behind one window: input translation and dispatch.
 pub struct WindowApplication<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> {
     pub(crate) inner: BlitzApplication<Rend>,

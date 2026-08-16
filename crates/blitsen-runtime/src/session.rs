@@ -3,12 +3,19 @@
 //! Phase 1 leaves both to Bun: a JavaScript launcher opens the window through
 //! the addon and pumps it from a task on Bun's loop (TECH.md §3, S1 option 1).
 //! Here there is no other loop to be inside, so this is it.
+//!
+//! Four ways in, one program. [`run_directory`], [`run_bundle`], [`run_url`] and
+//! [`run_assets`] are one per shape of [`AppFiles`], they differ only in how the
+//! files are found, and each ends in the same private `run`. That is what lets
+//! Android be a second artifact rather than a second runtime: `android_main`
+//! calls [`run_assets`] and everything after it is this file (`lib.rs`, #142).
 
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::rc::Rc;
 
 use blitsen_core::bundle::AppBundle;
+use blitsen_host::apk::ApkAssets;
 use blitsen_host::app::AppFiles;
 use blitsen_host::modules::ModuleRegistry;
 use blitsen_host::runtime_services::RuntimeServices;
@@ -145,6 +152,21 @@ pub fn run_directory(directory: PathBuf, arguments: &[String]) -> Result<ExitCod
 /// Runs the application appended to this executable.
 pub fn run_bundle(bundle: AppBundle, arguments: &[String]) -> Result<ExitCode, String> {
     let files = AppFiles::bundle(bundle, DEFAULT_ENTRYPOINT).map_err(|error| error.to_string())?;
+    run(files, arguments)
+}
+
+/// Runs the application packaged into an APK's `assets/` (issues #142, #144).
+///
+/// The Android entry point's whole body after the two calls only it can make —
+/// handing the activity to the event loop, and asking it for its asset manager.
+///
+/// `arguments` is empty at every real call site, because a system-launched APK
+/// has no argv to carry one. It is a parameter anyway rather than a hardcoded
+/// `&[]`, so that this is the same function as its three siblings and a desktop
+/// run against a directory standing in for `assets/` can be told a size — which
+/// is how the shape is exercised at all before an APK exists.
+pub fn run_assets(assets: ApkAssets, arguments: &[String]) -> Result<ExitCode, String> {
+    let files = AppFiles::assets(assets, DEFAULT_ENTRYPOINT).map_err(|error| error.to_string())?;
     run(files, arguments)
 }
 

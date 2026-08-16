@@ -1,0 +1,47 @@
+[package]
+name = "blitsen-android"
+description = "The Android entry point: a cdylib exporting android_main, where the desktop targets ship a bin exporting main"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+# The reason this is a crate and not a `cfg` inside `blitsen-runtime`. Android
+# starts an application by loading a `.so` out of the APK and calling
+# `android_main` in it; there is no `main` and nothing is exec'd. A package
+# emits one artifact kind per target name, so an executable and a shared object
+# cannot be the same target however the source is arranged.
+[lib]
+name = "blitsen_android"
+crate-type = ["cdylib"]
+path = "src/lib.rs"
+
+# Every dependency is Android's, because on every other target this crate is
+# empty — an entry point for a platform that is not being built for has nothing
+# to say. Stating that here rather than only in `cfg` attributes is what keeps a
+# desktop `cargo check --workspace` from building the runtime a second time to
+# produce a shared object with no symbols in it.
+[target.'cfg(target_os = "android")'.dependencies]
+# The backend selection android-activity refuses to compile without: "Either
+# `game-activity` or `native-activity` must be enabled as features". Chosen
+# because `native-activity` needs no Java and no Kotlin, so the APK carries no
+# application code outside this `.so`; `game-activity` would add a Gradle
+# dependency on a support library for an input model built around game pads.
+#
+# One selection, three consumers. `winit-android` and `blitz-shell` both depend
+# on `android-activity` 0.6 without naming a backend, so cargo's feature
+# unification carries this choice into both — which is why the entry point is
+# the only place it appears, exactly as it is the only place in Blitz's own
+# Android examples.
+android-activity = { version = "0.6.0", features = ["native-activity"] }
+blitsen-host = { path = "../blitsen-host" }
+blitsen-runtime = { path = "../blitsen-runtime" }
+# `__android_log_write`, and nothing else. Already in the graph beneath
+# `android-activity`, which calls the same symbol to report a panic out of
+# `android_main`, so this links no new library and adds no new link requirement.
+ndk-sys = "0.6"
+
+[lints]
+workspace = true
