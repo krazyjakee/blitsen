@@ -15,7 +15,7 @@ use winit::window::WindowId;
 
 use super::{PendingPointerInput, PointerAction, classify_pointer_event};
 use crate::DomRuntime;
-use crate::native_window::WindowApplication;
+use crate::native_window::{InputBootstrap, ModifierFlags, WindowApplication, take_queued_for};
 
 /// A pointer event as JavaScript receives it.
 ///
@@ -37,10 +37,8 @@ pub(crate) struct PointerEventInit {
     pub(crate) button: i32,
     pub(crate) delta_x: f64,
     pub(crate) delta_y: f64,
-    pub(crate) ctrl_key: bool,
-    pub(crate) shift_key: bool,
-    pub(crate) alt_key: bool,
-    pub(crate) meta_key: bool,
+    #[serde(flatten)]
+    pub(crate) modifiers: ModifierFlags,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) pointer_id: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -96,11 +94,11 @@ pub(crate) fn css_pointer_coordinates(
 /// `MouseEvent` outright, so it goes to the mouse one, which is where its scroll
 /// default action lives. Sending it to the pointer dispatcher instead dispatched
 /// a `PointerEvent` named "wheel" that scrolled nothing.
-fn entry_point(init: &PointerEventInit) -> &'static str {
+fn entry_point(init: &PointerEventInit) -> InputBootstrap {
     if init.pointer_id.is_some() {
-        "__blitsenDispatchPointerEvent"
+        InputBootstrap::Pointer
     } else {
-        "__blitsenDispatchMouseEvent"
+        InputBootstrap::Mouse
     }
 }
 
@@ -154,33 +152,19 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Ren
         init: &PointerEventInit,
     ) -> Result<bool, JsError> {
         let entry_point = entry_point(init);
-        let event_type =
-            serde_json::to_string(event_type).map_err(|error| JsError::new(error.to_string()))?;
-        let target = serde_json::to_string(&DomRuntime::serialize_handle(target))
-            .map_err(|error| JsError::new(error.to_string()))?;
-        let init = serde_json::to_string(init).map_err(|error| JsError::new(error.to_string()))?;
-        let mut engine = self.engine.clone();
-        let result = engine.evaluate_script(
-            &format!("globalThis.{entry_point}({event_type}, {target}, {init})"),
-            "blitsen:native-pointer-input",
-        )?;
-        engine.to_boolean(&result)
+        let target = DomRuntime::serialize_handle(target);
+        self.call_input_bootstrap(entry_point, &(event_type, target, init))
     }
 
     /// Dispatches everything the turn queued, at the tree the frame settled on.
     pub(crate) fn drain_pointer_input(&mut self, window_id: WindowId) {
-        if self.error.borrow().is_some() {
+        let Some(inputs) = take_queued_for(
+            self.error.as_ref(),
+            &mut self.pending_pointer_input,
+            &window_id,
+        ) else {
             return;
-        }
-        let mut inputs = Vec::new();
-        self.pending_pointer_input.retain(|(queued_window, input)| {
-            if *queued_window == window_id {
-                inputs.push(*input);
-                false
-            } else {
-                true
-            }
-        });
+        };
         if inputs.is_empty() {
             return;
         }
@@ -279,10 +263,7 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Ren
                 button,
                 delta_x: wheel_delta.map_or(0.0, |delta| delta.0),
                 delta_y: wheel_delta.map_or(0.0, |delta| delta.1),
-                ctrl_key: self.modifiers.control_key(),
-                shift_key: self.modifiers.shift_key(),
-                alt_key: self.modifiers.alt_key(),
-                meta_key: self.modifiers.meta_key(),
+                modifiers: self.modifier_flags(),
                 pointer_id: pointer.map(|pointer| pointer.pointer_id),
                 pointer_type: pointer.map(|pointer| pointer.pointer_type.as_str()),
                 is_primary: pointer.map(|pointer| pointer.primary),
@@ -331,10 +312,7 @@ mod tests {
             button: 0,
             delta_x: 0.0,
             delta_y: 0.0,
-            ctrl_key: false,
-            shift_key: false,
-            alt_key: false,
-            meta_key: false,
+            modifiers: ModifierFlags::default(),
             pointer_id: pointer.map(|pointer| pointer.pointer_id),
             pointer_type: pointer.map(|pointer| pointer.pointer_type.as_str()),
             is_primary: pointer.map(|pointer| pointer.primary),
@@ -372,17 +350,11 @@ mod tests {
         );
         assert!(touch.pointer().is_some());
         assert!(wheel.pointer().is_none());
-        assert_eq!(
-            entry_point(&init_for(&touch)),
-            "__blitsenDispatchPointerEvent"
-        );
+        assert_eq!(entry_point(&init_for(&touch)), InputBootstrap::Pointer);
         // The wheel's default action is a scroll and it lives on the mouse path.
         // Routing it through the pointer dispatcher dispatched a `PointerEvent`
         // named "wheel" that nothing acted on.
-        assert_eq!(
-            entry_point(&init_for(&wheel)),
-            "__blitsenDispatchMouseEvent"
-        );
+        assert_eq!(entry_point(&init_for(&wheel)), InputBootstrap::Mouse);
         // The serialized bag says the same thing, which is what the DOM reads.
         let wheel = serde_json::to_string(&init_for(&wheel)).unwrap();
         assert!(!wheel.contains("pointerId"), "{wheel}");
@@ -401,10 +373,7 @@ mod tests {
             },
             &mut ids,
         );
-        assert_eq!(
-            entry_point(&init_for(&cancelled)),
-            "__blitsenDispatchPointerEvent"
-        );
+        assert_eq!(entry_point(&init_for(&cancelled)), InputBootstrap::Pointer);
     }
 
     #[test]
