@@ -709,11 +709,17 @@ describe("an Android build, with every subprocess stubbed", () => {
       });
       // In order, and each is the real argv rather than a name: the installed
       // targets, where cargo will put the output, the cross-compile, the
-      // resource link, the alignment, the signature.
-      expect(commands.map(command => `${command[0]} ${command[1]}`)).toEqual([
+      // resource link, the alignment, the signature. A clean machine also
+      // creates the conventional debug keystore immediately before signing;
+      // a developer machine may already have it, so that step is optional here
+      // and its full command has dedicated coverage above.
+      const commandNames = commands.map(command => `${command[0]} ${command[1]}`);
+      expect(commandNames.filter(command => command !== "keytool -genkeypair")).toEqual([
         "rustup target", "cargo metadata", "cargo ndk", "aapt2 link", "zipalign -f",
         "apksigner sign",
       ]);
+      const keytool = commandNames.indexOf("keytool -genkeypair");
+      expect(keytool === -1 || keytool === commandNames.indexOf("apksigner sign") - 1).toBe(true);
       // `-p blitsen-android`, and no generated crate anywhere in it.
       expect(commands[2].slice(-2)).toEqual(["-p", ENTRY_CRATE]);
       expect(result.applicationId).toBe("com.blitsen.pong");
@@ -849,4 +855,3 @@ describe("an Android build, with every subprocess stubbed", () => {
     });
   });
 });
-
