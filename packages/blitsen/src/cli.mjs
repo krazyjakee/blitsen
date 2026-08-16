@@ -61,9 +61,9 @@ resolves, so it is a flag rather than a --target value):
                          BLITSEN_ANDROID_KEYSTORE_PASSWORD, never from a flag.
                          Without one the APK is signed with the Android debug
                          key: installable, not distributable
-  --android-debug        Build the debug profile — unoptimised, and the only
-                         profile in which the packager stores assets
-                         uncompressed`;
+  --android-debug        Build the debug profile — unoptimised Rust, and a
+                         manifest marked debuggable. Every entry in the APK is
+                         stored uncompressed on both profiles`;
 
 // The resolver owns it now, because the version pin is checked there; still on this
 // module's surface, which is where callers ask for it.

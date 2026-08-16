@@ -1,13 +1,14 @@
-// Finding the Android toolchain, and the two things a generated project needs
-// from the checkout it was built in (issue #148).
+// Finding the Android toolchain, and the crate the artifact is built from
+// (issue #148).
 //
 // Split from `android.mjs` because it answers a different question. That file
 // decides what an Android artifact *is* — its ABIs, its identity, its signing,
 // how it is packaged. This one is entirely about the machine the build is
-// running on: whether it has an SDK, an NDK, a build-tools that still ships
-// `aapt`, a packager, the Rust targets, and the entry crate that has not been
-// published yet. None of it is a decision about the product; all of it is a
-// question with a yes-or-no answer and an installation command attached.
+// running on: whether it has an SDK, an NDK, a build-tools that ships `aapt2`,
+// a cross-compiler driver, a libclang, the Rust targets, and the entry crate
+// that has not been published yet. None of it is a decision about the product;
+// all of it is a question with a yes-or-no answer and an installation command
+// attached.
 //
 // The rule it implements is decision 5 in `android.mjs`, and it is worth
 // restating in one line where the code lives: **detect precisely, install
@@ -20,10 +21,10 @@
 // subprocess happens to trip over.
 
 import { spawn } from "node:child_process";
-import { access, readdir, readFile } from "node:fs/promises";
+import { access, readdir } from "node:fs/promises";
 import { constants } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 
 /// The API level an artifact targets, and the oldest it installs on.
 ///
@@ -31,17 +32,36 @@ import { dirname, join, resolve } from "node:path";
 /// also a *prerequisite*: `android-<TARGET_SDK>/android.jar` has to be installed
 /// for the packager to link against, and this is the file that checks for it.
 ///
-/// 24 is the floor `android-activity` and the NDK's own C++ runtime settle on
-/// in practice, and it is below every device with a Vulkan driver worth
-/// rendering to. 33 is what #139 measured against, so it is what is claimed.
-export const MIN_SDK = 24;
+/// 24 was the first answer — the floor `android-activity` and the NDK's own C++
+/// runtime settle on in practice — and **it does not link**. The runtime's audio
+/// backend reaches `libaaudio`, which the NDK ships from API 26 and no earlier,
+/// so `cargo ndk -P 24` fails at the link step with `unable to find library
+/// -laaudio`. Raising the compile level while leaving the manifest at 24 would
+/// have produced a shared object binding symbols that are absent on the devices
+/// the manifest invites, and the failure there is a `dlopen` on a cold start
+/// with nothing on screen. 26 is Android 8.0.
+///
+/// This is measured rather than read: the sysroot has `libaaudio.so` under
+/// `usr/lib/<triple>/26` and under no lower level, and #148's original 24 was
+/// never built against the real entry crate, which is why nothing caught it.
+///
+/// 33 is what #139 and #143 measured against, so it is what is claimed.
+export const MIN_SDK = 26;
 export const TARGET_SDK = 33;
 
-/// Where the entry point comes from. Issue #142 owns the crate; these name the
-/// interface it has to present, and they are the only lines that have to change
-/// if #142 lands under another name.
+/// Where the entry point comes from, and what linking it produces.
+///
+/// #142 owns the crate and it is a `cdylib` exporting `android_main` directly —
+/// there is no rlib, no macro, and nothing for a build to generate. This was an
+/// open question until #143 settled it by building one and running it: `cargo
+/// ndk ... -p blitsen-android` links `libblitsen_android.so`, and
+/// `android.app.lib_name = blitsen_android` is what `NativeActivity` `dlopen`s.
+/// So the library name is the crate's `[lib] name` and not something derived
+/// from the application, and `cli-android.test.mjs` reads all three of these
+/// back out of `crates/blitsen-android/Cargo.toml` and fails if they drift.
 export const ENTRY_CRATE = "blitsen-android";
-export const ENTRY_MACRO = "blitsen_android::android_main";
+export const ENTRY_LIBRARY = "blitsen_android";
+export const ENTRY_SO = `lib${ENTRY_LIBRARY}.so`;
 
 /// Where the environment names the SDK and the NDK, in the order Google's own
 /// tools read them. `ANDROID_SDK_ROOT` is deprecated and still what many CI
@@ -113,16 +133,17 @@ export async function detectAndroidToolchain({ env = process.env, which = comman
       "Install some — `sdkmanager \"build-tools;34.0.0\"`.");
   }
   const buildTools = join(sdk, "build-tools", version);
-  // Named rather than inferred: cargo-apk 0.10 drives `aapt` v1, which Google
-  // is in the middle of removing, and a build-tools without it fails deep
-  // inside the packager with a path nobody can act on.
-  for (const tool of ["aapt", "zipalign", "apksigner"]) {
-    if (!await readable(join(buildTools, tool))) {
-      throw missing(`build-tools ${version} has no ${tool}, which the APK packager runs.`,
-        tool === "aapt"
-          ? "aapt v1 was removed from recent build-tools; install an older set — "
-            + "`sdkmanager \"build-tools;34.0.0\"` — which is what this path is verified against."
-          : `Reinstall build-tools ${version}.`);
+  // Named one at a time rather than discovered, because each is a separate step
+  // of the packaging in `android.mjs` and a build-tools missing any of them
+  // fails halfway through with a partial archive on disk. `aapt2` and not
+  // `aapt`: v1 is what Google has been removing, and nothing here needs it now
+  // that the archive is written rather than handed to a packager.
+  const tools = {};
+  for (const tool of ["aapt2", "zipalign", "apksigner"]) {
+    tools[tool] = join(buildTools, tool);
+    if (!await readable(tools[tool])) {
+      throw missing(`build-tools ${version} has no ${tool}, which packaging an APK runs.`,
+        `Reinstall build-tools ${version} — \`sdkmanager "build-tools;${version}"\`.`);
     }
   }
   const platform = join(sdk, "platforms", `android-${TARGET_SDK}`, "android.jar");
@@ -130,13 +151,61 @@ export async function detectAndroidToolchain({ env = process.env, which = comman
     throw missing(`the API ${TARGET_SDK} platform is not installed under ${sdk}.`,
       `Install it — \`sdkmanager "platforms;android-${TARGET_SDK}"\`.`);
   }
-  const packager = which("cargo-apk");
+  const packager = which("cargo-ndk");
   if (!packager) {
-    throw missing("cargo-apk is not on PATH, and it is what assembles the APK.",
-      "Install it — `cargo install cargo-apk`. It is the packager Blitsen drives; see the "
-      + "reasoning at the top of packages/blitsen/src/android.mjs.");
+    throw missing("cargo-ndk is not on PATH, and it is what points the Rust cross-compile at "
+      + "the NDK.",
+      "Install it — `cargo install cargo-ndk`. See the reasoning at the top of "
+      + "packages/blitsen/src/android.mjs.");
   }
-  return { sdk, ndk, buildTools, buildToolsVersion: version, platform, packager };
+  const libclang = await findLibclang(env);
+  if (!libclang) {
+    throw missing("no libclang was found, and this is the one target that needs one: rquickjs "
+      + "ships no pre-generated Android bindings and runs bindgen instead.",
+      "Install one — `apt install libclang-dev`, `dnf install clang-devel`, or "
+      + "`brew install llvm` — or set LIBCLANG_PATH to the directory that holds it.");
+  }
+  return { sdk, ndk, buildTools, buildToolsVersion: version, platform, packager, libclang, tools };
+}
+
+/// Where a shared library called `libclang` may be, in the order it is worth
+/// looking. Newest LLVM first, then the multiarch and system directories, then
+/// the two places macOS keeps one.
+async function libclangCandidates() {
+  const versioned = (await readdir("/usr/lib").catch(() => []))
+    .filter(name => /^llvm-\d/.test(name))
+    .sort((left, right) => Number(right.slice(5)) - Number(left.slice(5)))
+    .map(name => `/usr/lib/${name}/lib`);
+  return [
+    ...versioned,
+    "/usr/lib/x86_64-linux-gnu", "/usr/lib/aarch64-linux-gnu", "/usr/lib64", "/usr/lib",
+    "/usr/local/lib", "/opt/homebrew/opt/llvm/lib", "/usr/local/opt/llvm/lib",
+    "/Library/Developer/CommandLineTools/usr/lib",
+    "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib",
+  ];
+}
+
+/**
+ * Where `libclang` lives, which is a build-time requirement of the Android
+ * target and of no other: `rquickjs-sys` ships no pre-generated bindings for
+ * Android and runs bindgen instead. #143's spike had to set `LIBCLANG_PATH` by
+ * hand to build at all, which is exactly the kind of prerequisite this file
+ * exists to name before an hour of cross-compiling finds it.
+ *
+ * `LIBCLANG_PATH` is taken on trust when it is set, because bindgen reads the
+ * same variable and reporting a disagreement with it here would be this file
+ * second-guessing the thing it is configuring. A directory is returned rather
+ * than a file, because that is what bindgen wants.
+ */
+export async function findLibclang(env, candidates = null) {
+  if (env.LIBCLANG_PATH) return env.LIBCLANG_PATH;
+  for (const directory of candidates ?? await libclangCandidates()) {
+    const entries = await readdir(directory).catch(() => []);
+    // `libclang.so`, `libclang.so.1`, `libclang-18.so.18.1` and
+    // `libclang.dylib` are all the same library under four packagings.
+    if (entries.some(name => /^libclang.*\.(so|dylib)(\.|$)/.test(name))) return directory;
+  }
+  return null;
 }
 
 /**
@@ -158,47 +227,31 @@ export async function missingRustTargets(triples, run = defaultRun) {
 }
 
 /**
- * The `[patch]` tables of the workspace the entry crate came from, verbatim.
+ * Where cargo will leave the cross-compiled shared objects.
  *
- * The generated project is its own workspace — it has to be, because it is
- * written next to the user's build output rather than inside a checkout — and a
- * `[patch.crates-io]` is a property of the workspace that does the resolving,
- * not of the crate that needs it. So a checkout whose engine is pinned to a
- * fork resolves the fork only if the generated project carries the same tables.
- * Without this the entry crate's `blitz` dependencies resolve to crates.io and
- * either fail or, worse, succeed against a different engine.
+ * Asked of cargo rather than assumed to be `<workspace>/target`, because it is
+ * not: `CARGO_TARGET_DIR`, `build.target-dir` in any `.cargo/config.toml` on
+ * the way up, and a shared target directory across a set of checkouts are all
+ * ordinary, and every one of them moves the `.so` this build has to pick up. A
+ * wrong guess here does not fail loudly — it finds a *stale* library from an
+ * earlier build and packages that — so it is resolved rather than guessed.
  *
- * Copied as text rather than parsed, because the sections carry the reasoning
- * for each pin and a regenerated TOML would drop it. Only git and registry
- * sources survive the move: a `path =` patch is relative to the manifest it is
- * written in, so one is refused rather than copied to somewhere it means
- * something else.
+ * `--no-deps` because nothing about the dependency graph is wanted, only the
+ * one path, and resolving the graph for an Android target is the slow part.
  */
-export async function workspacePatches(entryCrate) {
-  for (let directory = entryCrate, previous = null; directory !== previous;
-    previous = directory, directory = dirname(directory)) {
-    const manifest = await readFile(join(directory, "Cargo.toml"), "utf8").catch(() => null);
-    if (manifest === null || !/^\[workspace\]/m.test(manifest)) continue;
-    const sections = [];
-    let capturing = false;
-    for (const line of manifest.split("\n")) {
-      const header = /^\s*\[([^\]]+)\]/.exec(line);
-      // A comment block immediately above a `[patch]` header belongs to it, so
-      // capture is decided at the header and the preceding comments are pulled
-      // in with it.
-      if (header) capturing = header[1] === "patch" || header[1].startsWith("patch.");
-      if (capturing) sections.push(line);
-    }
-    const text = sections.join("\n").trim();
-    if (text === "") return "";
-    if (/^\s*[\w"-]+\s*=\s*\{[^}]*\bpath\s*=/m.test(text)) {
-      throw new Error(`${join(directory, "Cargo.toml")} patches a dependency with a local path, `
-        + "which cannot be copied into a generated project: a relative path would resolve "
-        + "somewhere else. Pin it to a git revision, or build the APK from that workspace.");
-    }
-    return `\n${text}\n`;
+export async function cargoTargetDirectory(entryCrate, run = defaultRun) {
+  const result = await run(["cargo", "metadata", "--no-deps", "--format-version", "1",
+    "--manifest-path", join(entryCrate, "Cargo.toml")], { capture: true });
+  if (result.code !== 0) {
+    throw new Error(`cargo metadata exited ${result.code} for ${entryCrate}, so this build cannot `
+      + `tell where the cross-compiled ${ENTRY_SO} will be left.\n${result.stderr.trim()}`);
   }
-  return "";
+  const directory = JSON.parse(result.stdout).target_directory;
+  if (typeof directory !== "string" || directory === "") {
+    throw new Error("cargo metadata named no target_directory, so this build cannot tell where "
+      + `the cross-compiled ${ENTRY_SO} will be left.`);
+  }
+  return directory;
 }
 
 /** Runs one command, streaming its output, and resolves with its exit code. */
