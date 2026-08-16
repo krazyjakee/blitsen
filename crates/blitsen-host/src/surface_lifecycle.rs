@@ -336,11 +336,11 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Ren
     /// See the module comment for why this and nothing else.
     pub(crate) fn on_memory_warning(&mut self, event_loop: &dyn ActiveEventLoop) {
         self.inner.memory_warning(event_loop);
-        if self.error.borrow().is_some() {
+        if self.has_parked_error() {
             return;
         }
         if let Err(error) = self.engine.clone().collect_garbage() {
-            *self.error.borrow_mut() = Some(error);
+            self.park_error(error);
         }
     }
 

@@ -247,7 +247,7 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Ren
                 Ok(Some(hit)) => hit,
                 Ok(None) => continue,
                 Err(error) => {
-                    *self.error.borrow_mut() = Some(JsError::new(error.to_string()));
+                    self.park_error(JsError::new(error.to_string()));
                     return;
                 }
             };
@@ -274,7 +274,7 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Ren
                 tangential_pressure: pointer.map(|pointer| pointer.identity.tangential_pressure),
             };
             if let Err(error) = self.dispatch_input(event_type, hit.target, &init) {
-                *self.error.borrow_mut() = Some(error);
+                self.park_error(error);
                 return;
             }
         }

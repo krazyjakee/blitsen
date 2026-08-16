@@ -184,6 +184,14 @@ pub(crate) fn take_queued_for<K: PartialEq, T: Clone, Error>(
     Some(taken)
 }
 
+/// Parks an error only when no earlier callback error is waiting to surface.
+fn park_first_error<Error>(parked_error: &RefCell<Option<Error>>, error: Error) {
+    let mut parked_error = parked_error.borrow_mut();
+    if parked_error.is_none() {
+        *parked_error = Some(error);
+    }
+}
+
 fn input_call_script(
     bootstrap: InputBootstrap,
     arguments: &impl Serialize,
@@ -466,12 +474,30 @@ pub(crate) fn dom_key_code(key: PhysicalKey) -> String {
 }
 
 impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Rend, E> {
+    /// Whether a callback error is waiting for [`WindowSession::pump`] to take it.
+    pub(crate) fn has_parked_error(&self) -> bool {
+        self.error.borrow().is_some()
+    }
+
+    /// Retains the first callback error; later cascade errors cannot replace it.
+    pub(crate) fn park_error(&self, error: JsError) {
+        park_first_error(self.error.as_ref(), error);
+    }
+
+    /// Returns the error that stops JavaScript from running again this turn.
+    fn parked_error(&self) -> Option<JsError> {
+        self.error.borrow().clone()
+    }
+
     /// Calls one typed input entry point with JSON-serialized positional arguments.
     pub(crate) fn call_input_bootstrap(
         &self,
         bootstrap: InputBootstrap,
         arguments: &impl Serialize,
     ) -> Result<bool, JsError> {
+        if let Some(error) = self.parked_error() {
+            return Err(error);
+        }
         let script = input_call_script(bootstrap, arguments)?;
         let mut engine = self.engine.clone();
         let result = engine.evaluate_script(&script, bootstrap.script_name())?;
@@ -550,14 +576,14 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Ren
                 }
             };
             if let Err(error) = result {
-                *self.error.borrow_mut() = Some(error);
+                self.park_error(error);
                 return;
             }
         }
     }
 
     fn animation_frames_pending(&self) -> bool {
-        if self.error.borrow().is_some() {
+        if self.has_parked_error() {
             return false;
         }
         let result = (|| {
@@ -571,14 +597,14 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Ren
         match result {
             Ok(pending) => pending,
             Err(error) => {
-                *self.error.borrow_mut() = Some(error);
+                self.park_error(error);
                 false
             }
         }
     }
 
     fn run_animation_frame(&self) -> bool {
-        if self.error.borrow().is_some() {
+        if self.has_parked_error() {
             return false;
         }
         let timestamp = self.started_at.elapsed().as_secs_f64() * 1_000.0;
@@ -594,14 +620,14 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Ren
         match result {
             Ok(pending) => pending,
             Err(error) => {
-                *self.error.borrow_mut() = Some(error);
+                self.park_error(error);
                 false
             }
         }
     }
 
     fn sync_window(&self, width: u32, height: u32, device_pixel_ratio: f64) {
-        if self.error.borrow().is_some() {
+        if self.has_parked_error() {
             return;
         }
         *self.state.borrow_mut() = WindowState::new(width, height, device_pixel_ratio);
@@ -611,7 +637,7 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Ren
             self.state.borrow().sync(&mut engine, &window)
         })();
         if let Err(error) = result {
-            *self.error.borrow_mut() = Some(error);
+            self.park_error(error);
         }
     }
 
@@ -628,7 +654,7 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Ren
     /// changed at all, which keeps a still pointer over a still document from
     /// paying for a hit test every frame.
     fn sync_cursor(&mut self, window_id: WindowId) {
-        if self.error.borrow().is_some() {
+        if self.has_parked_error() {
             return;
         }
         let Some(&(physical_x, physical_y)) = self.pointer_positions.get(&window_id) else {
@@ -647,7 +673,7 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Ren
         let revision = match self.document.borrow_mut().flush_layout() {
             Ok(snapshot) => snapshot.revision(),
             Err(error) => {
-                *self.error.borrow_mut() = Some(crate::dom_error(error));
+                self.park_error(crate::dom_error(error));
                 return;
             }
         };
@@ -663,7 +689,7 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Ren
         {
             Ok(icon) => icon,
             Err(error) => {
-                *self.error.borrow_mut() = Some(crate::dom_error(error));
+                self.park_error(crate::dom_error(error));
                 return;
             }
         };
@@ -700,6 +726,9 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Ren
     }
 
     fn dispatch_window_event(&self, event_type: &str) -> Result<bool, JsError> {
+        if let Some(error) = self.parked_error() {
+            return Err(error);
+        }
         let event_type =
             serde_json::to_string(event_type).map_err(|error| JsError::new(error.to_string()))?;
         let mut engine = self.engine.clone();
@@ -749,6 +778,10 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Ren
     /// rather than paid for. Winit reports the size again on every configure a
     /// window manager sends, including the ones that only moved it.
     fn apply_pending_resize(&mut self, event_loop: &dyn ActiveEventLoop, window_id: WindowId) {
+        // Leave the resize queued until `pump` has surfaced the earlier error.
+        if self.has_parked_error() {
+            return;
+        }
         let Some(size) = self.pending_resize.remove(&window_id) else {
             return;
         };
@@ -759,8 +792,10 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Ren
         self.inner
             .window_event(event_loop, window_id, WindowEvent::SurfaceResized(size));
         self.sync_native_window(window_id);
-        if let Err(error) = self.dispatch_window_event("resize") {
-            *self.error.borrow_mut() = Some(error);
+        if !self.has_parked_error()
+            && let Err(error) = self.dispatch_window_event("resize")
+        {
+            self.park_error(error);
         }
         if let Some(view) = self.inner.windows.get(&window_id) {
             view.window.request_redraw();
@@ -768,7 +803,7 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Ren
     }
 
     pub(crate) fn maybe_dispatch_load(&mut self) {
-        if self.load_dispatched || self.error.borrow().is_some() {
+        if self.load_dispatched || self.has_parked_error() {
             return;
         }
         if self
@@ -786,7 +821,7 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Ren
                     view.window.request_redraw();
                 }
             }
-            Err(error) => *self.error.borrow_mut() = Some(error),
+            Err(error) => self.park_error(error),
         }
     }
 }
@@ -877,9 +912,13 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> ApplicationHandler
             self.sync_cursor(window_id);
         }
         if viewport_changed {
-            self.sync_native_window(window_id);
-            if let Err(error) = self.dispatch_window_event("resize") {
-                *self.error.borrow_mut() = Some(error);
+            if !self.has_parked_error() {
+                self.sync_native_window(window_id);
+            }
+            if !self.has_parked_error()
+                && let Err(error) = self.dispatch_window_event("resize")
+            {
+                self.park_error(error);
             }
             if let Some(view) = self.inner.windows.get(&window_id) {
                 view.window.request_redraw();
@@ -983,12 +1022,25 @@ mod tests {
     }
 
     #[test]
-    fn a_parked_error_leaves_queued_input_untouched() {
-        let parked_error = RefCell::new(Some("failed callback"));
+    fn the_first_parked_error_wins_and_leaves_queued_input_untouched() {
+        let parked_error = RefCell::new(None);
+        let first = JsError::with_stack("first callback failed", "first stack");
+        park_first_error(&parked_error, first.clone());
+        park_first_error(&parked_error, JsError::new("cascade failed too"));
         let mut queue = vec![(1, "first"), (2, "other"), (1, "second")];
 
         assert_eq!(take_queued_for(&parked_error, &mut queue, &1), None);
+        assert_eq!(parked_error.borrow().as_ref(), Some(&first));
         assert_eq!(queue, [(1, "first"), (2, "other"), (1, "second")]);
+
+        // Once `pump` surfaces that exact error, the preserved input is what
+        // the next turn drains; neither the first nor the second key was lost.
+        assert_eq!(parked_error.borrow_mut().take(), Some(first));
+        assert_eq!(
+            take_queued_for(&parked_error, &mut queue, &1),
+            Some(vec!["first", "second"])
+        );
+        assert_eq!(queue, [(2, "other")]);
     }
 
     #[test]
