@@ -223,6 +223,28 @@ impl QuickJs {
         self.inner.context
     }
 
+    pub(crate) fn runtime(&self) -> *mut q::JSRuntime {
+        self.inner.runtime
+    }
+
+    /// Bytes QuickJS has allocated and not yet returned to the allocator.
+    ///
+    /// Exists so that [`collect_garbage`](blitsen_js::JsEngine::collect_garbage)
+    /// can be *measured* rather than asserted: a trim that frees nothing and a
+    /// trim that was never called look identical from outside (issue #146).
+    pub fn heap_bytes(&self) -> usize {
+        // SAFETY: the runtime outlives this handle. `JS_ComputeMemoryUsage`
+        // writes every field of the struct before returning, which is what
+        // makes handing it uninitialized memory sound — it is an out parameter,
+        // not an in/out one, and the C API has no other way to fill it.
+        let usage = unsafe {
+            let mut usage = std::mem::MaybeUninit::<q::JSMemoryUsage>::uninit();
+            q::JS_ComputeMemoryUsage(self.runtime(), usage.as_mut_ptr());
+            usage.assume_init()
+        };
+        usage.malloc_size as usize
+    }
+
     /// Turns an exception pending on the context into a [`JsError`].
     pub(crate) fn exception(&self) -> JsError {
         unsafe {

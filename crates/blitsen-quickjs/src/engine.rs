@@ -488,4 +488,75 @@ impl JsEngine for QuickJs {
             LoopTurn::Idle
         })
     }
+
+    fn collect_garbage(&mut self) -> Result<(), JsError> {
+        // SAFETY: the runtime pointer is the one this handle was built around
+        // and outlives it. `JS_RunGC` is a complete mark-and-sweep over that
+        // runtime; it takes no values from the caller and hands none back, so
+        // there is nothing here that can be left dangling. It must not run
+        // while a script is on the stack, and the one caller is a winit
+        // lifecycle callback, which is between turns by construction.
+        unsafe { q::JS_RunGC(self.runtime()) };
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// What `memory_warning` buys, measured rather than assumed (issue #146).
+    ///
+    /// The garbage is deliberately *cyclic*. QuickJS frees by reference count
+    /// first and only runs the collector for cycles, so an acyclic allocation
+    /// dropped by a script is already gone before this is called — measuring
+    /// that would be measuring nothing. A ring that refers to itself is exactly
+    /// the memory a threshold-driven collector is still sitting on when the
+    /// system says it is short, which is the case the handler exists for.
+    ///
+    /// The automatic collector is switched off for the duration, so the only
+    /// thing that can free the ring is the call under test. Without that,
+    /// QuickJS's own threshold could collect at any allocation and the
+    /// assertion would pass whether or not `collect_garbage` did anything.
+    #[test]
+    fn collecting_the_heap_early_returns_what_the_threshold_had_not_reached_yet() {
+        let mut engine = QuickJs::new().expect("a runtime");
+        // SAFETY: the runtime is live for the whole test and this only sets a
+        // counter on it. `size_t::MAX` is "never collect on your own".
+        unsafe { q::JS_SetGCThreshold(engine.runtime(), q::size_t::MAX) };
+
+        let settled = engine.heap_bytes();
+        engine
+            .evaluate_script(
+                "globalThis.junk = []; \
+                 for (let i = 0; i < 20000; i++) { \
+                   const node = { i, s: 'x'.repeat(64) }; \
+                   node.self = node; \
+                   globalThis.junk.push(node); \
+                 } \
+                 globalThis.junk = null;",
+                "blitsen:gc-test",
+            )
+            .expect("the script runs");
+        let littered = engine.heap_bytes();
+        assert!(
+            littered > settled,
+            "the script has to actually allocate: {settled} -> {littered}"
+        );
+
+        engine.collect_garbage().expect("the heap collects");
+        let collected = engine.heap_bytes();
+        assert!(
+            collected < littered,
+            "collecting freed nothing: {littered} -> {collected}"
+        );
+        // Not "back to `settled`": QuickJS keeps its own arenas and the script's
+        // source and shapes stay interned. What is asserted is that the
+        // unreachable objects went, which is the whole of what the handler can
+        // promise a system that is short of memory.
+        assert!(
+            collected - settled < (littered - settled) / 2,
+            "most of the garbage should have gone: {settled} / {littered} / {collected}"
+        );
+    }
 }

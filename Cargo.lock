@@ -453,6 +453,7 @@ dependencies = [
  "blitsen-dom",
  "blitsen-js",
  "blitsen-platform",
+ "blitsen-quickjs",
  "blitz",
  "blitz-paint",
  "data-url",

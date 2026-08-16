@@ -57,6 +57,20 @@ url = "2"
 web-audio-api = "1.7"
 winit = "=0.31.0-beta.2"
 
+# An engine to drive `tests/surface_lifecycle.rs` with. QuickJS rather than
+# JavaScriptCore because it needs nothing found on the machine at runtime, and
+# because it is the engine the platforms that really do destroy a surface would
+# be hosting (#146).
+[dev-dependencies]
+blitsen-quickjs = { path = "../blitsen-quickjs" }
+
+# No libtest harness: a winit event loop must be created on the main thread, and
+# libtest runs every test on one it spawned. `fn main()` is the only way to be
+# on the thread the platform requires.
+[[test]]
+name = "surface_lifecycle"
+harness = false
+
 # An APK's `assets/`, read through `AAssetManager` (#144). Android only: the
 # other six targets have no asset manager, and the same provider reads a
 # directory standing in for one, which is what the tests run against.
