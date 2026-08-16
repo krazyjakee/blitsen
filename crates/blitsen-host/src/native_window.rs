@@ -244,10 +244,11 @@ impl<E: JsEngine + Clone + 'static> WindowSession<E> {
             engine,
             &files,
             net_provider,
-            options.width,
-            options.height,
-            None,
-            false,
+            crate::app::LoadOptions::new(
+                options.width,
+                options.height,
+                crate::dom_bridge::DocumentMode::Application,
+            ),
         )?;
         let renderer = anyrender_vello::VelloWindowRenderer::new();
         let attributes = WindowAttributes::default()
@@ -319,10 +320,12 @@ impl<E: JsEngine + Clone + 'static> WindowSession<E> {
             engine,
             &self.files,
             net_provider,
-            logical.width,
-            logical.height,
-            Some(viewport),
-            false,
+            crate::app::LoadOptions::new(
+                logical.width,
+                logical.height,
+                crate::dom_bridge::DocumentMode::Application,
+            )
+            .with_viewport(viewport),
         )?;
 
         let view = self

@@ -16,7 +16,8 @@ use std::sync::Arc;
 use blitsen_js::{JsEngine, JsError};
 use blitz::traits::net::NetProvider;
 
-use crate::app::{AppFiles, LoadedDocument, load_document};
+use crate::app::{AppFiles, LoadOptions, LoadedDocument, load_document};
+use crate::dom_bridge::DocumentMode;
 use crate::harness::snapshot_and_render;
 use crate::runtime_services::RuntimeServices;
 
@@ -56,7 +57,12 @@ pub fn run<E: JsEngine + Clone + 'static>(
     let net_provider = files.net_provider().unwrap_or_else(|| {
         Arc::new(blitsen_blitz::resources::LocalResources) as Arc<dyn NetProvider>
     });
-    let loaded = load_document(engine, files, net_provider, width, height, None, false)?;
+    let loaded = load_document(
+        engine,
+        files,
+        net_provider,
+        LoadOptions::new(width, height, DocumentMode::Application),
+    )?;
     engine.evaluate_script(
         "globalThis.__blitsenDispatchLifecycleEvent('load')",
         "blitsen:load",
