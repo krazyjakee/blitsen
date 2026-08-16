@@ -110,9 +110,7 @@
     get onabort() { return signalState(this).onabort; }
     set onabort(callback) {
       const state = signalState(this);
-      if (state.onabort) this.removeEventListener("abort", state.onabort);
-      state.onabort = typeof callback === "function" ? callback : null;
-      if (state.onabort) this.addEventListener("abort", state.onabort);
+      setEventHandler(this, state, "abort", callback, "onabort");
     }
     throwIfAborted() { const state = signalState(this); if (state.aborted) throw state.reason; }
     static abort(reason) { const signal = createSignal(); raiseAbort(signal, reason); return signal; }
@@ -312,4 +310,3 @@
     }
     call("stopLoading");
   };
-

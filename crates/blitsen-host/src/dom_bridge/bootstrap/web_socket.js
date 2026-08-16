@@ -23,9 +23,7 @@
   const setSocketHandler = (socket, type, callback) => {
     let handlers = socketHandlers.get(socket);
     if (!handlers) socketHandlers.set(socket, handlers = {});
-    if (handlers[type]) socket.removeEventListener(type, handlers[type]);
-    handlers[type] = typeof callback === "function" ? callback : null;
-    if (handlers[type]) socket.addEventListener(type, handlers[type]);
+    setEventHandler(socket, handlers, type, callback);
   };
   const socketMessage = (state, record) => {
     if (record.text !== undefined) return record.text;
@@ -132,4 +130,3 @@
     set onclose(callback) { setSocketHandler(this, "close", callback); }
   }
   defineConstants(WebSocket, ["CONNECTING", "OPEN", "CLOSING", "CLOSED"]);
-

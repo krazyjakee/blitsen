@@ -196,9 +196,7 @@
     get onchange() { return mediaStateFor(this).onchange; }
     set onchange(callback) {
       const state = mediaStateFor(this);
-      if (state.onchange) this.removeEventListener("change", state.onchange);
-      state.onchange = typeof callback === "function" ? callback : null;
-      if (state.onchange) this.addEventListener("change", state.onchange);
+      setEventHandler(this, state, "change", callback, "onchange");
     }
     // A list is only worth re-evaluating once something is listening to it.
     addEventListener(type, callback, options = false) {
@@ -297,4 +295,3 @@
     unobserve(target) { this._targets.delete(target); }
     disconnect() { this._targets.clear(); resizeObservers.delete(this); }
   }
-

@@ -392,9 +392,7 @@
   const setResourceHandler = (registry, element, type, callback) => {
     let handlers = registry.get(element);
     if (!handlers) registry.set(element, handlers = { load: null, error: null });
-    if (handlers[type]) element.removeEventListener(type, handlers[type]);
-    handlers[type] = typeof callback === "function" ? callback : null;
-    if (handlers[type]) element.addEventListener(type, handlers[type]);
+    setEventHandler(element, handlers, type, callback);
   };
 
   // Linked stylesheets. Only `rel="stylesheet"` is ever waited on, because it is
@@ -661,4 +659,3 @@
     toString() { return this._element.getAttribute(this._attribute) ?? ""; }
     *[Symbol.iterator]() { yield* this._tokens(); }
   }
-
