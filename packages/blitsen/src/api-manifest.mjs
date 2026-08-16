@@ -1,5 +1,8 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import {
+  REMOTE_CSS_ASSET_PATTERN, REMOTE_HTML_ASSET_PATTERN, REMOTE_HTML_SCRIPT_PATTERN,
+} from "./asset-references.mjs";
 
 // Paths rather than URL objects, here and everywhere else this package reads a
 // file of its own: the DOM bridge installs Blitsen's `URL` over the host's in
@@ -424,15 +427,12 @@ const REMOTE_ASSET = [
 ];
 const ASSET_RULES = [
   ["html", "ASSET_REMOTE_SCRIPT", "warning",
-    "<script\\b[^>]*\\bsrc\\s*=\\s*[\"'](?:https?:)?//",
+    REMOTE_HTML_SCRIPT_PATTERN,
     "A remote <script src> is not fetched; it is skipped and the rest of the page runs.",
     "Bundle the script into the output directory and reference its local path."],
   ["html", "ASSET_REMOTE", "warning",
-    "<(?:img|source|audio|video|track|embed|input)\\b[^>]*\\bsrc\\s*=\\s*[\"'](?:https?:)?//"
-    + "|<link\\b[^>]*\\bhref\\s*=\\s*[\"'](?:https?:)?//"
-    + "|<video\\b[^>]*\\bposter\\s*=\\s*[\"'](?:https?:)?//"
-    + "|<object\\b[^>]*\\bdata\\s*=\\s*[\"'](?:https?:)?//", ...REMOTE_ASSET],
-  ["css", "ASSET_REMOTE", "warning", "url\\(\\s*[\"']?(?:https?:)?//", ...REMOTE_ASSET],
+    REMOTE_HTML_ASSET_PATTERN, ...REMOTE_ASSET],
+  ["css", "ASSET_REMOTE", "warning", REMOTE_CSS_ASSET_PATTERN, ...REMOTE_ASSET],
 ];
 
 // Renderer capability, which no JavaScript declaration describes.
