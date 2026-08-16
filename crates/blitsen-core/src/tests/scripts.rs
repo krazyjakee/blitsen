@@ -8,6 +8,48 @@ fn ends_with_path(identity: &str, suffix: &str) -> bool {
 }
 
 #[test]
+fn inline_script_identifiers_round_trip_paths_and_urls() {
+    for document in [
+        "/tmp/app#archive?/index.html",
+        "blitsen://app/index.html?theme=dark",
+        "https://example.test/app/index.html?build=42",
+    ] {
+        let identifier = inline_script_identifier(document, 12);
+        assert_eq!(
+            parse_inline_script_identifier(&identifier),
+            Some((document, "#script-12"))
+        );
+    }
+
+    // A URL's old fragment is replaced rather than producing two fragments;
+    // its query remains part of the document identity.
+    let identifier = inline_script_identifier("blitsen://app/index.html?theme=dark#old", 2);
+    assert_eq!(identifier, "blitsen://app/index.html?theme=dark#script-2");
+    assert_eq!(
+        parse_inline_script_identifier(&identifier),
+        Some(("blitsen://app/index.html?theme=dark", "#script-2"))
+    );
+}
+
+#[test]
+fn inline_script_recognition_is_anchored_to_the_fragment() {
+    for ordinary in [
+        "relative/#script-1/index.html",
+        "relative/index#script-1.html",
+        "relative/index.html#script-one",
+        "relative/index.html#script-",
+        "relative/index.html#script-1/more",
+        "blitsen://app/#script-1/index.html",
+    ] {
+        assert_eq!(
+            parse_inline_script_identifier(ordinary),
+            None,
+            "misclassified {ordinary}"
+        );
+    }
+}
+
+#[test]
 fn document_scripts_run_in_order_with_local_module_identity() {
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../spikes/s7/fixture/index.html");
     let scripts = vec![
