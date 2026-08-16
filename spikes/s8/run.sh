@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# S8 — reproduce every number in README.md, in the order it reports them.
+# S8 — reproduce the QuickJS-ng numbers in README.md, in the order it reports
+# them. The JavaScriptCore arms this spike measured against are gone with
+# `crates/blitsen-jsc`; see "Reproduce" in README.md.
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -14,19 +16,3 @@ floor=$(stat -c %s target/release/floor)
 gzipped=$(gzip -9 -c target/release/floor | wc -c)
 printf '  QuickJS-ng floor  %s B installed, %s B gzip -9\n' "$floor" "$gzipped"
 printf '  JavaScriptCore    37980984 B installed, 17933416 B gzip -9  (spikes/s0)\n'
-
-echo
-echo "== engine init"
-./target/release/init
-
-echo
-echo "== synthetic throughput"
-./target/release/compare
-
-echo
-echo "== pong's own frame"
-./target/release/frame
-
-echo
-echo "== crossing cost against work cost"
-./target/release/crossover

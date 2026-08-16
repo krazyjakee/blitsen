@@ -5,13 +5,9 @@ edition = "2024"
 publish = false
 
 # Outside the workspace on purpose (`exclude = ["spikes/*"]`): a spike must not
-# be able to change what the product builds, and this one links a second
-# JavaScript engine.
+# be able to change what the product builds.
 [dependencies]
 blitsen-js = { path = "../../crates/blitsen-js" }
-# The incumbent, so the comparison is the same benchmark on the same machine
-# rather than this engine measured against a remembered number.
-blitsen-jsc = { path = "../../crates/blitsen-jsc" }
 rquickjs-sys = "0.12.2"
 
 [lib]
@@ -21,22 +17,6 @@ path = "src/lib.rs"
 [[bin]]
 name = "s8-quickjs"
 path = "src/main.rs"
-
-[[bin]]
-name = "compare"
-path = "src/bin/compare.rs"
-
-[[bin]]
-name = "frame"
-path = "src/bin/frame.rs"
-
-[[bin]]
-name = "crossover"
-path = "src/bin/crossover.rs"
-
-[[bin]]
-name = "init"
-path = "src/bin/init.rs"
 
 [[bin]]
 name = "surface"

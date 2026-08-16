@@ -77,7 +77,7 @@ pub fn print_licenses(bundle: Option<&AppBundle>) -> Result<ExitCode, String> {
 /// `cli-doctor.test.mjs` fail when the declaration and the engine disagree.
 const ENGINE_GLOBALS: &[&str] = &["Intl", "WebAssembly"];
 
-/// Prints which JavaScriptCore was loaded and what it supports.
+/// Prints which engine this build hosts and what it supports.
 pub fn print_engine() {
     let report = match engine::load() {
         Ok(mut loaded) => json!({
@@ -85,10 +85,8 @@ pub fn print_engine() {
             "engine": engine::NAME,
             "modules": engine::supports_modules(&loaded),
             "absentGlobals": engine::absent_globals(&mut loaded, ENGINE_GLOBALS),
-            // Present only when the engine is one the process loads at run
-            // time. A statically linked engine has nothing to override, and
-            // omitting the key says that better than a permanent null.
-            "libraryOverride": engine::library_override(),
+            // Reported rather than assumed by the size table, which asserts
+            // that nothing ships beside the executable.
             "linkage": engine::LINKAGE,
         }),
         Err(error) => json!({ "loaded": false, "engine": engine::NAME, "error": error }),

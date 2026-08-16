@@ -516,14 +516,6 @@ name = "blitsen-js"
 version = "0.0.0"
 
 [[package]]
-name = "blitsen-jsc"
-version = "0.0.0"
-dependencies = [
- "blitsen-js",
- "libloading 0.8.9",
-]
-
-[[package]]
 name = "blitsen-node"
 version = "0.0.0"
 dependencies = [
@@ -570,7 +562,6 @@ dependencies = [
  "blitsen-core",
  "blitsen-host",
  "blitsen-js",
- "blitsen-jsc",
  "blitsen-quickjs",
  "libc",
  "serde_json",
