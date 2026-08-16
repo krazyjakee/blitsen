@@ -167,6 +167,90 @@ const keyboardDispatch = JSON.parse(native.runBridgeHarness(
 ));
 assert.equal(keyboardDispatch.nodes.find(node => node.attributes.id === "first-key").attributes["data-keyboard"], "ok");
 
+// Issue #176: sequential focus is one native traversal, not a wildcard query
+// followed by several synchronous bridge calls for every element in the tree.
+// The irrelevant nodes make the old implementation cross the bridge more than
+// 9,000 times; the operation-specific counter keeps this a deterministic gate
+// rather than a wall-clock benchmark whose answer depends on the runner.
+const focusDistractors = Array.from({ length: 3_000 }, (_, index) =>
+  `<span data-focus-distractor="${index}"></span>`).join("");
+const focusTraversal = JSON.parse(native.runBridgeHarness(
+  `<div id="focus-root">
+     <button id="focus-first">first</button>
+     ${focusDistractors}
+     <button id="focus-disabled" disabled>disabled</button>
+     <button id="focus-hidden" hidden>hidden</button>
+     <div hidden><button id="focus-nested-hidden">nested hidden</button></div>
+     <input id="focus-hidden-input" type="hidden">
+     <div id="focus-negative" tabindex="-1">negative</div>
+     <div id="focus-whitespace" tabindex=" \u00a0 ">whitespace</div>
+     <div id="focus-positive" tabindex="0x2">positive</div>
+     <a id="focus-link" href="/next">link</a>
+     <button id="focus-last">last</button>
+   </div>`,
+  `{ const root = document.getElementById("focus-root");
+     const first = document.getElementById("focus-first");
+     const hidden = document.getElementById("focus-hidden");
+     const nestedHidden = document.getElementById("focus-nested-hidden");
+     const hiddenInput = document.getElementById("focus-hidden-input");
+     const whitespace = document.getElementById("focus-whitespace");
+     const positive = document.getElementById("focus-positive");
+     const link = document.getElementById("focus-link");
+     const last = document.getElementById("focus-last");
+     const dynamic = document.createElement("button");
+     dynamic.id = "focus-dynamic";
+     root.insertBefore(dynamic, document.getElementById("focus-disabled"));
+     first.focus();
+
+     const operations = ["nextFocusable", "querySelectorAll", "hasAttribute", "getAttribute", "tagName"];
+     const before = Object.fromEntries(operations.map(name => [name, __blitsenDomCallCount(name)]));
+     const pressTab = shiftKey => __blitsenDispatchKeyboardEvent("keydown",
+       { bubbles: true, cancelable: true, key: "Tab", code: "Tab", shiftKey });
+
+     pressTab(false);
+     if (document.activeElement !== dynamic) throw new Error("dynamic focus candidate order");
+     dynamic.setAttribute("disabled", "");
+     first.focus();
+     pressTab(false);
+     if (document.activeElement !== hidden) throw new Error("hidden attribute focus semantics changed");
+     pressTab(false);
+     if (document.activeElement !== nestedHidden) throw new Error("hidden ancestor focus semantics changed");
+     pressTab(false);
+     if (document.activeElement !== hiddenInput) throw new Error("hidden input focus semantics changed");
+     hidden.setAttribute("disabled", "");
+     nestedHidden.setAttribute("disabled", "");
+     hiddenInput.setAttribute("disabled", "");
+     first.focus();
+     pressTab(false);
+     if (document.activeElement !== whitespace) throw new Error("whitespace tabindex Number semantics");
+     whitespace.setAttribute("tabindex", "-1");
+     first.focus();
+     pressTab(false);
+     if (document.activeElement !== positive)
+       throw new Error("disabled, negative, and hexadecimal tabindex semantics");
+     positive.setAttribute("tabindex", "-1");
+     first.focus();
+     pressTab(false);
+     if (document.activeElement !== link) throw new Error("tabindex mutation affects the next traversal");
+     link.remove();
+     pressTab(true);
+     if (document.activeElement !== last) throw new Error("detached active element wraps backwards");
+     pressTab(true);
+     if (document.activeElement !== first) throw new Error("reverse document order");
+
+     const calls = Object.fromEntries(operations.map(name =>
+       [name, __blitsenDomCallCount(name) - before[name]]));
+     if (calls.nextFocusable !== 9 || calls.querySelectorAll !== 0)
+       throw new Error("Tab focus bridge calls: " + JSON.stringify(calls));
+     for (const name of ["hasAttribute", "getAttribute", "tagName"])
+       if (calls[name] > 10) throw new Error("per-element focus bridge calls returned: " + JSON.stringify(calls));
+     root.setAttribute("data-focus-calls", String(calls.nextFocusable)); }`,
+  320,
+  160,
+));
+assert.equal(focusTraversal.nodes.find(node => node.attributes.id === "focus-root")
+  .attributes["data-focus-calls"], "9");
+
 const defaultActions = JSON.parse(native.runBridgeHarness(
   `<style>
      #scroller { width:120px; height:60px; overflow:auto }
