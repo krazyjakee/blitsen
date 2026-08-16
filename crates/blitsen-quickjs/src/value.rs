@@ -24,6 +24,13 @@ impl QjsValue {
     pub(crate) unsafe fn own(ctx: *mut q::JSContext, raw: q::JSValue) -> Self {
         Self { ctx, raw }
     }
+
+    /// Transfers ownership of this value back to QuickJS.
+    pub(crate) fn into_raw(self) -> q::JSValue {
+        let raw = self.raw;
+        std::mem::forget(self);
+        raw
+    }
 }
 
 impl Clone for QjsValue {

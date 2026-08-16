@@ -135,11 +135,7 @@ pub(crate) unsafe extern "C" fn invoke_callback(
         (callback)(call)
     }));
     match outcome {
-        Ok(Ok(value)) => {
-            let raw = value.raw;
-            std::mem::forget(value); // ownership moves to the caller
-            raw
-        }
+        Ok(Ok(value)) => value.into_raw(), // ownership moves to the caller
         Ok(Err(error)) => unsafe { throw(ctx, error.message()) },
         Err(_) => unsafe { throw(ctx, "native callback panicked") },
     }
