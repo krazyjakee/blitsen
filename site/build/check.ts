@@ -43,6 +43,16 @@ async function main(): Promise<void> {
   const anchorsByPath = new Map<string, Set<string>>();
   const contents = new Map<string, string>();
 
+  const cnamePath = join(DIST, "CNAME");
+  const cname = existsSync(cnamePath) ? await readFile(cnamePath, "utf8") : "";
+  if (cname.trim() !== "blitsen.dev") {
+    problems.push({
+      file: "/CNAME",
+      kind: "invalid custom domain",
+      detail: cname.trim() || "file missing",
+    });
+  }
+
   for (const file of files) {
     const html = await readFile(file, "utf8");
     contents.set(file, html);

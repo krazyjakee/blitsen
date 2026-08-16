@@ -8,8 +8,8 @@
 export const REPO = "https://github.com/krazyjakee/blitsen";
 export const REPO_BLOB = `${REPO}/blob/main`;
 
-/** Set by the workflow so the site works under a project-pages sub-path. */
-export const BASE = (process.env.SITE_BASE ?? "/blitsen").replace(/\/$/, "");
+/** The custom domain serves from the root, so the sub-path is empty unless overridden. */
+export const BASE = (process.env.SITE_BASE ?? "").replace(/\/$/, "");
 
 export interface DocPage {
   /** Filename inside docs/. */

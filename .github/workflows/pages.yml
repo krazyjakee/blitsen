@@ -40,9 +40,9 @@ jobs:
 
       - name: Build the site
         env:
-          # Project pages are served from /<repo>, so assets need that prefix.
-          SITE_BASE: /${{ github.event.repository.name }}
-          SITE_ORIGIN: https://${{ github.repository_owner }}.github.io
+          # blitsen.dev serves from the root, so assets take no prefix.
+          SITE_BASE: ''
+          SITE_ORIGIN: https://blitsen.dev
         run: bun run site:build
 
       - name: Check links, anchors and rendering

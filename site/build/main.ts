@@ -1,8 +1,8 @@
 #!/usr/bin/env bun
 // Builds the static site into site/dist.
 //
-//   bun run site:build            → /blitsen base path, for project pages
-//   SITE_BASE="" bun run site:build   → root base path, for local preview
+//   bun run site:build                    → root base path, for blitsen.dev
+//   SITE_BASE=/preview bun run site:build → explicit sub-path, when needed
 //
 // Output is plain HTML, one stylesheet and a handful of images. No client-side
 // framework, no hydration, no build-time dependency beyond the bun already in the
@@ -151,8 +151,13 @@ that a missing API is <em>absent</em> rather than stubbed, is at least consisten
   // GitHub Pages runs Jekyll unless told otherwise, which would eat _-prefixed paths.
   await write(".nojekyll", "");
 
+  // Pages reads the custom domain from this file on every deploy, so it has to be
+  // part of the artifact — a domain set only in the repository settings is dropped
+  // the next time the workflow publishes.
+  await write("CNAME", "blitsen.dev\n");
+
   // ── sitemap and robots ──────────────────────────────────────────────────────
-  const origin = process.env.SITE_ORIGIN ?? "https://krazyjakee.github.io";
+  const origin = process.env.SITE_ORIGIN ?? "https://blitsen.dev";
   const urls = ["/", "/docs/", ...ALL_PAGES.map((p) => `/docs/${p.slug}/`)];
   await write("sitemap.xml",
     `<?xml version="1.0" encoding="UTF-8"?>\n` +
