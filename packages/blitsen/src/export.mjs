@@ -1,9 +1,12 @@
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { access, copyFile, mkdir, open, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { access, copyFile, mkdir, open, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, join, posix, relative, resolve, sep } from "node:path";
 import { gzipSync } from "node:zlib";
 import { linkBundle } from "./bundle.mjs";
+import {
+  HTML_EXTENSIONS, REWRITTEN_EXTENSIONS, SCRIPT_EXTENSIONS, walkFiles,
+} from "./files.mjs";
 import { packageBuild, signArtifact } from "./packaging.mjs";
 import { describeRuntime, hostTarget, requestedHost, resolvePhase2Runtime } from "./runtime.mjs";
 
@@ -16,10 +19,6 @@ const BUN_TARGETS = {
   "linux-arm64": "bun-linux-arm64", "linux-x64": "bun-linux-x64",
   "win32-arm64": "bun-windows-arm64", "win32-x64": "bun-windows-x64",
 };
-
-const HTML_EXTENSIONS = [".html", ".htm"];
-const SCRIPT_EXTENSIONS = [".js", ".mjs", ".cjs"];
-const REWRITTEN_EXTENSIONS = [...HTML_EXTENSIONS, ".css"];
 
 const HTML_REFERENCES = [
   /<(?:script|img|source|audio|video|track|embed|input)\b[^>]*?\bsrc\s*=\s*["']([^"']*)["']/gi,
@@ -49,22 +48,6 @@ const SCRIPT_LITERALS = [
   /'([^'\n\\]*)'/g,
   /`([^`\n\\$]*)`/g,
 ];
-
-async function collectFiles(root, directory = root) {
-  const files = [];
-  for (const entry of await readdir(directory, { withFileTypes: true })) {
-    const absolute = join(directory, entry.name);
-    if (entry.isSymbolicLink()) {
-      throw new Error(`application output contains a symbolic link: ${relative(root, absolute)}`);
-    }
-    if (entry.isDirectory()) files.push(...await collectFiles(root, absolute));
-    else if (entry.isFile()) files.push({
-      absolute,
-      relative: relative(root, absolute).split(sep).join("/"),
-    });
-  }
-  return files.sort((left, right) => left.relative.localeCompare(right.relative));
-}
 
 function referencePatterns(file) {
   const extension = extname(file).toLowerCase();
@@ -140,7 +123,12 @@ export function globMatcher(pattern) {
 // Reachability from the HTML entrypoint. Unreferenced output is pure export size,
 // so it is reported and dropped unless an --include glob asks for it.
 export async function planIngest(root, { entrypoint = "index.html", include = [] } = {}) {
-  const files = await collectFiles(root);
+  const files = await walkFiles(root, {
+    filter: (_file, entry) => entry.isFile(),
+    onSymlink: file => {
+      throw new Error(`application output contains a symbolic link: ${relative(root, file.absolute)}`);
+    },
+  });
   const byPath = new Map(files.map(file => [file.relative, file]));
   if (!byPath.has(entrypoint)) {
     throw new Error(`missing application entrypoint: ${join(root, entrypoint)}`);

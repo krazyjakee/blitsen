@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { main, parseArgs } from "../src/cli.mjs";
@@ -88,6 +88,18 @@ describe("directory CLI", () => {
     try {
       await writeFile(join(directory, "index.html"), '<link rel="stylesheet" href="/assets/gone.css">');
       await expect(planIngest(directory)).rejects.toThrow("index.html references /assets/gone.css");
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  test.skipIf(process.platform === "win32")("rejects symbolic links in application output", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "blitsen-symlink-"));
+    try {
+      await writeFile(join(directory, "index.html"), "<html></html>");
+      await symlink(join(directory, "index.html"), join(directory, "linked.html"));
+      await expect(planIngest(directory))
+        .rejects.toThrow("application output contains a symbolic link: linked.html");
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
