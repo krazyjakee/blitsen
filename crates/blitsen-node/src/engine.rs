@@ -8,6 +8,7 @@ use std::ffi::c_void;
 use std::path::{Path, PathBuf};
 use std::ptr;
 
+use blitsen_core::parse_inline_script_identifier;
 use blitsen_host::modules::APP_ORIGIN;
 use blitsen_js::{
     ExternalId, JsEngine, JsError, JsType, LoopTurn, NativeCall, NativeCallback, NativeClass,
@@ -559,12 +560,7 @@ impl JsEngine for NodeApiEngine {
         // would find it already declared. The runtime's own scripts are named
         // `blitsen:<something>` with no authority, and are not documents; the
         // application origin is `blitsen://app/…`, and is.
-        let internal = filename.starts_with("blitsen:") && !filename.starts_with(APP_ORIGIN);
-        let source = if !internal
-            && (filename.starts_with(APP_ORIGIN)
-                || Path::new(filename).is_absolute()
-                || filename.contains("#script-"))
-        {
+        let source = if uses_document_script_scope(filename) {
             let source =
                 serde_json::to_string(&source).map_err(|error| JsError::new(error.to_string()))?;
             format!("(0, eval)({source})")
@@ -672,6 +668,15 @@ impl JsEngine for NodeApiEngine {
     }
 }
 
+/// Whether a classic script needs the disposable document-level lexical scope.
+fn uses_document_script_scope(identifier: &str) -> bool {
+    let internal = identifier.starts_with("blitsen:") && !identifier.starts_with(APP_ORIGIN);
+    !internal
+        && (identifier.starts_with(APP_ORIGIN)
+            || Path::new(identifier).is_absolute()
+            || parse_inline_script_identifier(identifier).is_some())
+}
+
 /// The file an application URL names, when the application is on disk.
 ///
 /// `blitsen://app/assets/app.js` is where an application's own files live, and a
@@ -694,7 +699,8 @@ fn application_path(identifier: &str) -> Option<PathBuf> {
 /// `blitsen://app/index.html#script-2` is not a file; `index.html` beside it is,
 /// and it is what an `import` inside that script resolves against.
 fn application_document_path(identifier: &str) -> Option<PathBuf> {
-    let relative = identifier.strip_prefix(blitsen_host::modules::APP_ORIGIN)?;
+    let (document, _) = parse_inline_script_identifier(identifier)?;
+    let relative = document.strip_prefix(blitsen_host::modules::APP_ORIGIN)?;
     let document = relative.split(['#', '?']).next().unwrap_or_default();
     if document.is_empty() {
         return None;
@@ -723,11 +729,8 @@ fn document_url(identifier: &str) -> Option<String> {
     if identifier.is_empty() {
         return None;
     }
-    let (entrypoint, fragment) = identifier
-        .split_once('#')
-        .map_or((identifier, String::new()), |(path, tail)| {
-            (path, format!("#{tail}"))
-        });
+    let (entrypoint, fragment) =
+        parse_inline_script_identifier(identifier).unwrap_or((identifier, ""));
     let on_disk = application_document_path(identifier)
         .map(|path| path.to_string_lossy().into_owned())
         .or_else(|| {
@@ -738,7 +741,15 @@ fn document_url(identifier: &str) -> Option<String> {
     match on_disk {
         // The same escaping the document's own base URL uses, so a relative
         // resolution from a script and one from the document agree.
-        Some(path) => Some(format!("{}{fragment}", file_url(&path))),
+        Some(path) => {
+            // An application URL's query is not part of its on-disk path, but
+            // remains part of the document URL when that path is translated.
+            let query = entrypoint
+                .strip_prefix(APP_ORIGIN)
+                .and_then(|relative| relative.split_once('?').map(|(_, tail)| tail))
+                .map_or(String::new(), |query| format!("?{query}"));
+            Some(format!("{}{query}{fragment}", file_url(&path)))
+        }
         // A bundle: no file behind it, so the application URL is the address.
         None => identifier.contains("://").then(|| identifier.to_owned()),
     }
@@ -758,7 +769,12 @@ fn file_url(path: &str) -> String {
     } else {
         format!("/{slashed}")
     };
-    format!("file://{}", rooted.replace(' ', "%20"))
+    let escaped = rooted
+        .replace('%', "%25")
+        .replace(' ', "%20")
+        .replace('#', "%23")
+        .replace('?', "%3F");
+    format!("file://{escaped}")
 }
 
 pub(crate) fn external_from_raw(
@@ -817,7 +833,9 @@ pub(crate) fn from_typed_array_type(
 
 #[cfg(test)]
 mod tests {
-    use super::document_url;
+    use blitsen_core::inline_script_identifier;
+
+    use super::{document_url, uses_document_script_scope};
 
     /// Issue #125: an inline module's `import.meta.url` is the document's URL,
     /// as it is in a browser, so `new URL('./x', import.meta.url)` names a file
@@ -860,5 +878,36 @@ mod tests {
         // under identifiers that address no document at all.
         assert_eq!(document_url("blitsen:inline"), None);
         assert_eq!(document_url(""), None);
+    }
+
+    #[test]
+    fn only_a_trailing_inline_fragment_selects_document_scope() {
+        assert!(uses_document_script_scope(&inline_script_identifier(
+            "relative/index.html",
+            1
+        )));
+        assert!(!uses_document_script_scope("relative/#script-1/library.js"));
+        assert!(!uses_document_script_scope("relative/library#script-1.js"));
+        assert!(!uses_document_script_scope("blitsen:runtime#script-1"));
+        assert!(uses_document_script_scope("blitsen://app/assets/app.js"));
+    }
+
+    #[test]
+    fn document_urls_escape_path_punctuation_before_the_inline_fragment() {
+        let (document, expected) = if cfg!(windows) {
+            (
+                r"C:\app#archive?\index.html",
+                "file:///C:/app%23archive%3F/index.html#script-3",
+            )
+        } else {
+            (
+                "/tmp/app#archive?/index.html",
+                "file:///tmp/app%23archive%3F/index.html#script-3",
+            )
+        };
+        assert_eq!(
+            document_url(&inline_script_identifier(document, 3)).as_deref(),
+            Some(expected)
+        );
     }
 }

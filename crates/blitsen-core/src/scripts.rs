@@ -5,6 +5,36 @@ use std::path::{Path, PathBuf};
 use blitsen_dom::{DomBackend, DomError, DomName};
 use blitsen_js::{JsEngine, JsError};
 
+const INLINE_SCRIPT_FRAGMENT_PREFIX: &str = "#script-";
+
+/// Names an inline document script without pretending it is a separate file.
+///
+/// A URL can carry only one fragment, so the script identity replaces a URL's
+/// existing fragment while retaining its query. A filesystem path is kept
+/// byte-for-byte: `#` and `?` are valid filename characters on Unix.
+pub fn inline_script_identifier(document: &str, index: usize) -> String {
+    let document = if document.contains("://") {
+        document.split_once('#').map_or(document, |(head, _)| head)
+    } else {
+        document
+    };
+    format!("{document}{INLINE_SCRIPT_FRAGMENT_PREFIX}{index}")
+}
+
+/// Splits an identifier minted by [`inline_script_identifier`].
+///
+/// Recognition is anchored to the complete trailing fragment: a directory or
+/// filename merely containing `#script-` is not an inline script. The returned
+/// fragment includes its leading `#`, ready to append to a translated document
+/// URL without rebuilding the protocol.
+pub fn parse_inline_script_identifier(identifier: &str) -> Option<(&str, &str)> {
+    let (document, index) = identifier.rsplit_once(INLINE_SCRIPT_FRAGMENT_PREFIX)?;
+    if document.is_empty() || index.is_empty() || !index.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    Some((document, &identifier[document.len()..]))
+}
+
 /// Minimal script-element view provided by the authoritative DOM backend.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DocumentScript {
@@ -193,7 +223,10 @@ where
             let document = loader
                 .document_url()
                 .unwrap_or_else(|| entrypoint.display().to_string());
-            (script.source, format!("{document}#script-{}", index + 1))
+            (
+                script.source,
+                inline_script_identifier(&document, index + 1),
+            )
         };
         let result = if module {
             engine.run_module(&source, &identifier)
