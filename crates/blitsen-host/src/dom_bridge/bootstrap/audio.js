@@ -426,7 +426,11 @@
         if (state.paused) { state.offset = seconds; return; }
         this.pause();
         state.offset = seconds;
-        this.play();
+        // A property setter cannot hand the restart promise to application
+        // code. Observe its rejection here: loadMedia has already dispatched
+        // the element's `error` event, while a direct play() still returns its
+        // promise for the caller to handle.
+        this.play().catch(() => {});
       },
     },
     duration: {

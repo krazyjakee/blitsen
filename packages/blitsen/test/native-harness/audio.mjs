@@ -213,6 +213,9 @@ delete globalThis.__blitsenBadAudio;
   const { join } = await import("node:path");
 
   const directory = await mkdtemp(join(tmpdir(), "blitsen-audio-"));
+  const unhandledRejections = [];
+  const recordUnhandledRejection = reason => unhandledRejections.push(reason);
+  process.on("unhandledRejection", recordUnhandledRejection);
   try {
     await writeFile(join(directory, "cue.wav"), wav(0.5, 6_000));
     await writeFile(join(directory, "index.html"), `<!DOCTYPE html><html><body>
@@ -250,6 +253,21 @@ delete globalThis.__blitsenBadAudio;
           element.currentTime = 0;
           element.play();
         }, error => { results.error = error.name + ": " + error.message; results.done = true; });
+
+        // Issue #171: a currentTime assignment is synchronous and cannot give
+        // its internally restarted play() promise to the caller. Changing the
+        // attribute directly preserves the live state, so this exercises a
+        // restart whose new source fails after the setter has returned.
+        const seeking = new Audio("cue.wav");
+        seeking.addEventListener("error", () => {
+          results.seekErrors = (results.seekErrors ?? 0) + 1;
+          results.seekFailed = true;
+        });
+        seeking.play().then(() => {
+          seeking.setAttribute("src", "absent-after-play.wav");
+          seeking.currentTime = 0.01;
+          results.seekSetterReturned = true;
+        }, error => { results.seekSetupError = error.name + ": " + error.message; });
 
         // A source that is not there must fail, not hang: an application waiting
         // forever on a missing cue is worse than one told it is missing.
@@ -301,8 +319,21 @@ delete globalThis.__blitsenBadAudio;
     }
     assert.equal(media.missing, "EncodingError",
       "a source that is not there rejects rather than hanging");
+
+    for (let turn = 0; turn < 600 && !media.seekFailed; turn++) {
+      globalThis.__blitsenAnimationFrameTick(0);
+      await Bun.sleep(5);
+    }
+    await Bun.sleep(10);
+    assert.equal(media.seekSetupError, undefined,
+      `the seek failure fixture did not begin playing: ${media.seekSetupError}`);
+    assert.equal(media.seekSetterReturned, true, "the currentTime setter returns synchronously");
+    assert.equal(media.seekErrors, 1, "the failed restart remains observable as an error event");
+    assert.deepEqual(unhandledRejections, [],
+      "the setter observes the internal play rejection it cannot return to the caller");
     delete globalThis.__blitsenMedia;
   } finally {
+    process.off("unhandledRejection", recordUnhandledRejection);
     await rm(directory, { recursive: true, force: true });
   }
 }
