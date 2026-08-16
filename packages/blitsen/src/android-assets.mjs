@@ -40,6 +40,7 @@
 import { copyFile, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { dirname, extname, join } from "node:path";
 import { planIngest, rewriteRootRelativeReferences } from "./export.mjs";
+import { REWRITTEN_EXTENSIONS } from "./files.mjs";
 
 /// Where inside `assets/` a Blitsen application is packaged.
 ///
@@ -59,9 +60,6 @@ export const ASSET_INDEX = "blitsen.assets.json";
 /// at or below its own, so an older host reads a newer package's files and
 /// declines only its listing.
 export const INDEX_VERSION = 1;
-
-/// The extensions rewritten on the way in, matching the desktop export.
-const REWRITTEN = [".html", ".htm", ".css"];
 
 /**
  * The index for a set of staged files, as the bytes that go into the APK.
@@ -105,7 +103,7 @@ export async function stageAndroidAssets({
   for (const file of plan.files) {
     const destination = join(base, ...file.relative.split("/"));
     await mkdir(dirname(destination), { recursive: true });
-    if (REWRITTEN.includes(extname(file.relative).toLowerCase())) {
+    if (REWRITTEN_EXTENSIONS.includes(extname(file.relative).toLowerCase())) {
       const resolutions = plan.resolutions.get(file.relative);
       const source = rewriteRootRelativeReferences(
         await readFile(file.absolute, "utf8"),

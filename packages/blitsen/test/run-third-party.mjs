@@ -20,6 +20,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, extname, join } from "node:path";
 import { planIngest, rewriteRootRelativeReferences } from "../src/export.mjs";
+import { REWRITTEN_EXTENSIONS } from "../src/files.mjs";
 import { buildAddon, repository } from "./build-addon.mjs";
 
 const WIDTH = 1280;
@@ -129,7 +130,7 @@ async function stage(dist, staging) {
   for (const file of plan.files) {
     const staged = join(staging, ...file.relative.split("/"));
     await mkdir(dirname(staged), { recursive: true });
-    if ([".html", ".htm", ".css"].includes(extname(file.relative).toLowerCase())) {
+    if (REWRITTEN_EXTENSIONS.includes(extname(file.relative).toLowerCase())) {
       const resolutions = plan.resolutions.get(file.relative);
       await writeFile(staged, rewriteRootRelativeReferences(
         await readFile(file.absolute, "utf8"), file.relative,

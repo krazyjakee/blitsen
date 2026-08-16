@@ -1,6 +1,7 @@
-import { readFile, readdir } from "node:fs/promises";
-import { extname, join, relative, sep } from "node:path";
+import { readFile } from "node:fs/promises";
+import { extname } from "node:path";
 import { loadApiManifest } from "./api-manifest.mjs";
+import { HTML_EXTENSIONS, SCANNABLE_EXTENSIONS, walkFiles } from "./files.mjs";
 import { absentNativeModules } from "./native-modules.mjs";
 import { hostTarget } from "./runtime.mjs";
 
@@ -89,14 +90,8 @@ function scanRules(source, file, rules) {
 ///
 /// Not the scannable subset: what `fetch` names is usually data or media, and
 /// the question here is whether the export carries it, not whether it is code.
-async function collectShippedPaths(root, directory = root, paths = new Set()) {
-  for (const entry of await readdir(directory, { withFileTypes: true })) {
-    if (entry.isSymbolicLink()) continue;
-    const absolute = join(directory, entry.name);
-    if (entry.isDirectory()) await collectShippedPaths(root, absolute, paths);
-    else paths.add(relative(root, absolute).split(sep).join("/"));
-  }
-  return paths;
+async function collectShippedPaths(root) {
+  return new Set((await walkFiles(root)).map(file => file.relative));
 }
 
 // A fetch URL resolves against the document, which sits at the output root —
@@ -125,17 +120,10 @@ function namesAShippedFile(target, shipped, file) {
   return shipped.has(directory.join("/"));
 }
 
-async function collectScannableFiles(root, directory = root) {
-  const files = [];
-  for (const entry of await readdir(directory, { withFileTypes: true })) {
-    const absolute = join(directory, entry.name);
-    if (entry.isSymbolicLink()) continue;
-    if (entry.isDirectory()) files.push(...await collectScannableFiles(root, absolute));
-    else if ([".html", ".htm", ".css", ".js", ".mjs", ".cjs"].includes(extname(entry.name).toLowerCase())) {
-      files.push({ absolute, relative: relative(root, absolute).split(sep).join("/") });
-    }
-  }
-  return files.sort((left, right) => left.relative.localeCompare(right.relative));
+async function collectScannableFiles(root) {
+  return walkFiles(root, {
+    filter: file => SCANNABLE_EXTENSIONS.includes(extname(file.relative).toLowerCase()),
+  });
 }
 
 /**
@@ -156,7 +144,7 @@ export async function doctorApplication(root, { target = hostTarget() } = {}) {
   for (const file of files) {
     const source = await readFile(file.absolute, "utf8");
     const extension = extname(file.relative).toLowerCase();
-    if ([".html", ".htm"].includes(extension)) {
+    if (HTML_EXTENSIONS.includes(extension)) {
       diagnostics.push(...scanRules(source, file.relative, html));
     } else if (extension === ".css") {
       diagnostics.push(...scanRules(source, file.relative, css));

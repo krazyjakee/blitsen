@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildManifest, generateApiManifest, loadApiManifest, readBootstrapScript, renderCompatibilityDoc } from "../src/api-manifest.mjs";
@@ -147,6 +147,19 @@ describe("directory CLI", () => {
       const modules = await doctorApplication(directory);
       expect(modules.diagnostics.filter(entry => entry.code === "WEB_FETCH")
         .map(entry => entry.target)).toEqual(["./absent.wav"]);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  test.skipIf(process.platform === "win32")("ignores symbolic links while grading output", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "blitsen-doctor-link-"));
+    try {
+      await writeFile(join(directory, "app.js"), "new SharedWorker(url);");
+      await symlink(join(directory, "app.js"), join(directory, "linked.js"));
+      const report = await doctorApplication(directory);
+      expect(report.files).toBe(1);
+      expect(report.diagnostics.map(diagnostic => diagnostic.code)).toEqual(["WEB_WORKER"]);
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
