@@ -259,7 +259,7 @@ function renderHost(host, cpu) {
     ["Architecture", cpu.architecture],
     ["Booted", timestamp(host.bootTime)],
     ["Uptime", duration(host.uptime)],
-    ["Processor", cpu.brand],
+    ["Processor", cpu.brand ?? "—"],
   ]);
 }
 

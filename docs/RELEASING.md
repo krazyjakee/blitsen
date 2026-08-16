@@ -29,6 +29,19 @@ A dry run is worth doing on its own. It builds all six runtimes, runs the packag
 each freshly built addon, generates each target's notices, stages, packs, asks npm what every
 tarball would contain, and stops short of the registry.
 
+### The tag comes last, and does not trigger anything
+
+A real publish ends by tagging the commit it built and opening a GitHub Release from
+`docs/RELEASE-NOTES-<version>.md`, or from generated notes if that file is missing. A dispatch
+under a dist-tag other than `latest` marks the release a prerelease, which is the same distinction
+npm draws.
+
+**Pushing a tag does not publish.** The tag is written *after* the registry has accepted all seven
+packages, so it records a release rather than claiming one — it cannot name a version that failed
+to publish, and it points at the commit the run built rather than wherever the branch has moved
+since. The reverse arrangement, where `git push --tags` starts a release, makes a typo
+irreversible against a registry whose undo is a 72-hour window.
+
 Be precise about what a clean dry run does **not** prove. With no certificates in the repository
 the two signing steps do not sign: the Windows step locates `signtool.exe` and stops, and the
 macOS step ad-hoc-signs a copy in the runner's temp directory to show `codesign` accepts an
@@ -184,17 +197,24 @@ evidence those steps have.
 - [x] Confirm `blitsen` and all six `@blitsen/*` manifests carry the same version — asserted by
       the package tests, and again by the publish job before it publishes anything
 - [x] Rehearse the install against a local registry — see below; it found two release blockers
-- [ ] **Create the `blitsen` npm organisation and confirm who owns it** (\#131)
-- [ ] **Add `NPM_TOKEN`** — granular, write on the package `blitsen` and on the `@blitsen`
-      scope (\#132). A classic token fails at the sixth package if 2FA-for-publishing is on,
-      with a version already burned.
-- [ ] Merge to `main` — npm provenance records the ref it published from
-- [ ] Publish, then install `blitsen` from the registry on a machine that has never built it
+- [x] Create the `blitsen` npm organisation and confirm who owns it (\#131) — created on the free
+      plan, one member: `krazyjakee`, owner, the same account that owns the package `blitsen`
+- [x] Merge to `main` — npm provenance records the ref it published from (\#130, 2026-08-15)
+- [x] Add `NPM_TOKEN` (\#132) — granular, `blitsen` and `@blitsen` read and write, no organisation
+      access, 2FA bypassed so CI is never asked for a one-time password, expires 2026-11-13
+- [ ] **Dispatch Release from `main` with `publish: true`**
+- [ ] Install `blitsen` from the registry on a machine that has never built it
 
-Only the two bold ones need an account rather than a commit, and nothing else can proceed without
-them: `npm` has no command that creates an organisation, so it is a web action on npmjs.com, and
-the token cannot exist before the scope does. The publish job asks the registry about both before
-it publishes anything, so a wrong token fails the run rather than stopping it half way.
+The publish job asks `npm whoami` first, so a token that does not authenticate fails the run
+instead of the first publish. It does **not** gate on `npm access list packages @blitsen`: that
+reads the *organisation*, which is a different permission from writing to the scope, and a token
+scoped to publish and nothing else is refused by it with a 403. The check would fail the token that
+works and pass one that does not, so it is a log note now. What protects a half-published release
+is the ordering — a scope that refuses this token refuses the first platform package, with nothing
+published and no version burned.
+
+**The token expires 2026-11-13.** A release attempted after that fails at `npm whoami` with a
+message naming it, which is the cheapest place for it to fail.
 
 ### Rehearsing the install without the registry
 

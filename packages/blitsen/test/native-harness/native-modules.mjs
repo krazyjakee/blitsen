@@ -125,11 +125,20 @@ assert.equal(processor.logicalCores, processor.cores.length);
 // answers "Neoverse-N2"; the bridge reads the registry through sysinfo, which
 // is empty on arm64 Windows, where node answers "Cobalt 100" (#137).
 //
+// Silence from the bridge is `null` rather than `""`, which is the shape the
+// rest of this module uses for a fact the platform will not report, and the
+// assertion here holds it to that: an empty string would mean the mapping
+// stopped happening.
+//
 // What holds on all six is that they never name *different* processors, which
 // is the failure this pair exists to rule out: plausible strings about the
 // wrong machine. Silence from either side is a platform fact, not a mismatch.
+for (const [field, value] of [["brand", processor.brand], ["vendor", processor.vendor]]) {
+  assert(value === null || (typeof value === "string" && value !== ""),
+    `cpu().${field} is ${JSON.stringify(value)}: an unreported name is null, never empty`);
+}
 const nodeBrand = cpus()[0].model.trim();
-const bridgeBrand = processor.brand.trim();
+const bridgeBrand = processor.brand ?? "";
 const unnamed = bridgeBrand === "" || nodeBrand === "" || nodeBrand === "unknown";
 assert(unnamed || bridgeBrand === nodeBrand,
   `the bridge says ${JSON.stringify(bridgeBrand)} and node:os says ${JSON.stringify(nodeBrand)}`);

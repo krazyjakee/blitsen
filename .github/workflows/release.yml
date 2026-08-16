@@ -276,7 +276,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
-      contents: read
+      contents: write # the tag and the release page, written after a publish
       id-token: write # npm provenance
     steps:
       - uses: actions/checkout@v4
@@ -351,11 +351,24 @@ jobs:
           done
           exit $missing
 
-      # Issue #131: the `@blitsen` scope has to exist and be owned by whoever
-      # this token belongs to, and npm answers that question in a second. Asked
-      # before the first publish rather than discovered at it, because the six
-      # platform packages go out before `blitsen` does — a scope that refuses
-      # them leaves a release stopped halfway with a version burned.
+      # Issue #131: the token has to authenticate before the first publish
+      # rather than at it, because the six platform packages go out before
+      # `blitsen` does and a token the registry rejects leaves a release
+      # stopped halfway.
+      #
+      # Authentication is the part that can be settled up front, and `whoami`
+      # settles it. Whether the *scope* will accept a package cannot be:
+      # `npm access list packages @blitsen` reads the organisation, which is a
+      # different permission from writing to the scope, and a granular token
+      # scoped to publish — package `blitsen` and scope `@blitsen`, read and
+      # write, no organisation access — is refused by it with a 403. A token
+      # that passed that check could still fail to publish, and the one that
+      # publishes fails the check, so it was answering a question nobody asked.
+      # It stays as a note in the log rather than a gate.
+      #
+      # What protects the release is the ordering: a scope that refuses this
+      # token refuses the *first* platform package, so the run stops with
+      # nothing published and no version burned on `blitsen` itself.
       - name: Check the registry will take this
         if: inputs.publish
         shell: bash
@@ -367,9 +380,10 @@ jobs:
             exit 1
           }
           echo "Publishing as $who"
-          if ! npm access list packages @blitsen >/dev/null 2>&1; then
-            echo "::error::the @blitsen scope is not readable by this token — create the organisation and give the token write access to it (#131)"
-            exit 1
+          if npm access list packages @blitsen >/dev/null 2>&1; then
+            echo "This token can read the @blitsen organisation."
+          else
+            echo "::notice::@blitsen is not readable by this token, which is expected for a token with no organisation permissions — the first platform package is what proves the scope accepts it (#131)"
           fi
 
       - name: Check the version is not already published
@@ -408,6 +422,42 @@ jobs:
           done
           npm publish $flags --access public --tag "$TAG" ./packages/blitsen
 
+      # The tag is written after the registry has taken all seven packages, and
+      # never before. A tag pushed by hand is a claim about what was released;
+      # this one is a record of it, and it cannot name a version that failed to
+      # publish or point at a commit that was not the one built. That ordering
+      # is also why a tag does not *trigger* this workflow: `git push --tags`
+      # would make a typo irreversible, and npm has no undo past 72 hours.
+      #
+      # `gh release create` writes the tag and the release page in one call, at
+      # the commit this run built rather than at whatever the branch has moved
+      # to since.
+      - name: Tag the commit and open the release
+        if: inputs.publish
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DIST_TAG: ${{ inputs.tag }}
+        run: |
+          tag="v${{ env.version }}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "::notice::$tag already exists — leaving it as it is"
+            exit 0
+          fi
+          args=(--target "$GITHUB_SHA" --title "$tag")
+          notes="docs/RELEASE-NOTES-${{ env.version }}.md"
+          if [ -f "$notes" ]; then
+            args+=(--notes-file "$notes")
+          else
+            echo "::warning::no $notes, so the release page carries generated notes instead"
+            args+=(--generate-notes)
+          fi
+          # A dist-tag other than `latest` is a release npm will not default a
+          # user onto, and GitHub draws the same line with --prerelease.
+          if [ "$DIST_TAG" = latest ]; then args+=(--latest); else args+=(--prerelease); fi
+          gh release create "$tag" "${args[@]}"
+          echo "release_url=$(gh release view "$tag" --json url --jq .url)" >> "$GITHUB_ENV"
+
       - name: Summarise
         if: always()
         shell: bash
@@ -416,6 +466,10 @@ jobs:
             echo "## Release ${{ env.version }}"
             echo
             echo "Published: ${{ inputs.publish }} (tag \`${{ inputs.tag }}\`)"
+            if [ -n "${{ env.release_url }}" ]; then
+              echo
+              echo "Tagged \`v${{ env.version }}\` — ${{ env.release_url }}"
+            fi
             echo
             echo "Notarisation is **not** part of this workflow. Submit the macOS artifacts"
             echo "separately with \`notarytool\`; see docs/RELEASING.md."
