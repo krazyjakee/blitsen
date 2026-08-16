@@ -100,6 +100,52 @@ pub(crate) enum PendingKeyboardInput {
     WindowFocus(bool),
 }
 
+/// Modifier state shared by keyboard and pointer event initializer bags.
+#[derive(Clone, Copy, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ModifierFlags {
+    ctrl_key: bool,
+    shift_key: bool,
+    alt_key: bool,
+    meta_key: bool,
+}
+
+impl From<ModifiersState> for ModifierFlags {
+    fn from(modifiers: ModifiersState) -> Self {
+        Self {
+            ctrl_key: modifiers.control_key(),
+            shift_key: modifiers.shift_key(),
+            alt_key: modifiers.alt_key(),
+            meta_key: modifiers.meta_key(),
+        }
+    }
+}
+
+/// The input dispatcher in the DOM bootstrap.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum InputBootstrap {
+    Keyboard,
+    Pointer,
+    Mouse,
+}
+
+impl InputBootstrap {
+    fn entry_point(self) -> &'static str {
+        match self {
+            Self::Keyboard => "__blitsenDispatchKeyboardEvent",
+            Self::Pointer => "__blitsenDispatchPointerEvent",
+            Self::Mouse => "__blitsenDispatchMouseEvent",
+        }
+    }
+
+    fn script_name(self) -> &'static str {
+        match self {
+            Self::Keyboard => "blitsen:native-keyboard-event",
+            Self::Pointer | Self::Mouse => "blitsen:native-pointer-input",
+        }
+    }
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct KeyboardEventInit {
@@ -108,10 +154,46 @@ pub(crate) struct KeyboardEventInit {
     key: String,
     code: String,
     repeat: bool,
-    ctrl_key: bool,
-    shift_key: bool,
-    alt_key: bool,
-    meta_key: bool,
+    #[serde(flatten)]
+    modifiers: ModifierFlags,
+}
+
+/// Takes one key's queued values in order, unless an earlier callback failed.
+///
+/// An already parked error leaves the queue untouched so surfacing that error
+/// cannot silently consume input. Once draining starts, all matching values are
+/// removed before dispatch, preserving the existing rule that a dispatch error
+/// drops the rest of that window's turn rather than replaying it later.
+pub(crate) fn take_queued_for<K: PartialEq, T: Clone, Error>(
+    parked_error: &RefCell<Option<Error>>,
+    queue: &mut Vec<(K, T)>,
+    key: &K,
+) -> Option<Vec<T>> {
+    if parked_error.borrow().is_some() {
+        return None;
+    }
+    let mut taken = Vec::new();
+    queue.retain(|(queued_key, value)| {
+        if queued_key == key {
+            taken.push(value.clone());
+            false
+        } else {
+            true
+        }
+    });
+    Some(taken)
+}
+
+fn input_call_script(
+    bootstrap: InputBootstrap,
+    arguments: &impl Serialize,
+) -> Result<String, JsError> {
+    let arguments =
+        serde_json::to_string(arguments).map_err(|error| JsError::new(error.to_string()))?;
+    Ok(format!(
+        "globalThis.{}(...{arguments})",
+        bootstrap.entry_point()
+    ))
 }
 
 /// One open native window, its document, and the I/O runtime behind them.
@@ -381,6 +463,23 @@ pub(crate) fn dom_key_code(key: PhysicalKey) -> String {
 }
 
 impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Rend, E> {
+    /// Calls one typed input entry point with JSON-serialized positional arguments.
+    pub(crate) fn call_input_bootstrap(
+        &self,
+        bootstrap: InputBootstrap,
+        arguments: &impl Serialize,
+    ) -> Result<bool, JsError> {
+        let script = input_call_script(bootstrap, arguments)?;
+        let mut engine = self.engine.clone();
+        let result = engine.evaluate_script(&script, bootstrap.script_name())?;
+        engine.to_boolean(&result)
+    }
+
+    /// Snapshots the modifiers that every queued input in this turn observes.
+    pub(crate) fn modifier_flags(&self) -> ModifierFlags {
+        self.modifiers.into()
+    }
+
     fn queue_keyboard_input(&mut self, window_id: WindowId, event: &WindowEvent) -> bool {
         let input = match event {
             WindowEvent::KeyboardInput { event, .. } => PendingKeyboardInput::Key {
@@ -405,31 +504,17 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Ren
         event_type: &str,
         init: &KeyboardEventInit,
     ) -> Result<bool, JsError> {
-        let event_type =
-            serde_json::to_string(event_type).map_err(|error| JsError::new(error.to_string()))?;
-        let init = serde_json::to_string(init).map_err(|error| JsError::new(error.to_string()))?;
-        let mut engine = self.engine.clone();
-        let result = engine.evaluate_script(
-            &format!("globalThis.__blitsenDispatchKeyboardEvent({event_type}, {init})"),
-            "blitsen:native-keyboard-event",
-        )?;
-        engine.to_boolean(&result)
+        self.call_input_bootstrap(InputBootstrap::Keyboard, &(event_type, init))
     }
 
     fn drain_keyboard_input(&mut self, window_id: WindowId) {
-        if self.error.borrow().is_some() {
+        let Some(inputs) = take_queued_for(
+            self.error.as_ref(),
+            &mut self.pending_keyboard_input,
+            &window_id,
+        ) else {
             return;
-        }
-        let mut inputs = Vec::new();
-        self.pending_keyboard_input
-            .retain(|(queued_window, input)| {
-                if *queued_window == window_id {
-                    inputs.push(input.clone());
-                    false
-                } else {
-                    true
-                }
-            });
+        };
         for input in inputs {
             let result = match input {
                 PendingKeyboardInput::Key {
@@ -445,10 +530,7 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Ren
                         key,
                         code,
                         repeat,
-                        ctrl_key: self.modifiers.control_key(),
-                        shift_key: self.modifiers.shift_key(),
-                        alt_key: self.modifiers.alt_key(),
-                        meta_key: self.modifiers.meta_key(),
+                        modifiers: self.modifier_flags(),
                     },
                 ),
                 PendingKeyboardInput::WindowFocus(focused) => {
@@ -879,6 +961,81 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> ApplicationHandlerExt
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn taking_queued_input_preserves_both_orders() {
+        let parked_error = RefCell::<Option<&str>>::new(None);
+        let mut queue = vec![
+            (2, "other-first"),
+            (1, "first"),
+            (2, "other-second"),
+            (1, "second"),
+        ];
+
+        assert_eq!(
+            take_queued_for(&parked_error, &mut queue, &1),
+            Some(vec!["first", "second"])
+        );
+        assert_eq!(queue, [(2, "other-first"), (2, "other-second")]);
+    }
+
+    #[test]
+    fn a_parked_error_leaves_queued_input_untouched() {
+        let parked_error = RefCell::new(Some("failed callback"));
+        let mut queue = vec![(1, "first"), (2, "other"), (1, "second")];
+
+        assert_eq!(take_queued_for(&parked_error, &mut queue, &1), None);
+        assert_eq!(queue, [(1, "first"), (2, "other"), (1, "second")]);
+    }
+
+    #[test]
+    fn keyboard_input_calls_preserve_the_serialized_public_shape() {
+        let init = KeyboardEventInit {
+            bubbles: true,
+            cancelable: true,
+            key: "a".to_owned(),
+            code: "KeyA".to_owned(),
+            repeat: false,
+            modifiers: ModifierFlags::from(ModifiersState::CONTROL | ModifiersState::ALT),
+        };
+        let script = input_call_script(InputBootstrap::Keyboard, &("key\"down", init)).unwrap();
+        let arguments = script
+            .strip_prefix("globalThis.__blitsenDispatchKeyboardEvent(...")
+            .and_then(|script| script.strip_suffix(')'))
+            .expect("the typed keyboard entry point wraps one argument array");
+
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(arguments).unwrap(),
+            serde_json::json!([
+                "key\"down",
+                {
+                    "bubbles": true,
+                    "cancelable": true,
+                    "key": "a",
+                    "code": "KeyA",
+                    "repeat": false,
+                    "ctrlKey": true,
+                    "shiftKey": false,
+                    "altKey": true,
+                    "metaKey": false,
+                }
+            ])
+        );
+    }
+
+    #[test]
+    fn modifier_flags_keep_the_dom_initializer_shape() {
+        let modifiers = ModifierFlags::from(ModifiersState::CONTROL | ModifiersState::ALT);
+        assert_eq!(
+            serde_json::to_value(modifiers).unwrap(),
+            serde_json::json!({
+                "ctrlKey": true,
+                "shiftKey": false,
+                "altKey": true,
+                "metaKey": false,
+            })
+        );
+    }
 
     #[test]
     fn key_names_and_codes_match_dom_conventions() {
