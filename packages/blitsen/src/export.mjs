@@ -419,14 +419,7 @@ async function embeddedNotices(runtimePath) {
   };
 }
 
-export async function buildStandalone(
-  {
-    root, width, height, title, outfile, force = false, include = [], addons = [],
-    assets = "embedded", icon = null, bundleId = null, appVersion = null, sign = null,
-    target = null, platform, progress = () => {}, onNotice,
-  },
-  runtime,
-) {
+async function prepareStandaloneBuild({ root, outfile, force, assets, target, platform }, runtime) {
   const linkedRuntime = runtimeRecord(runtime);
   // The target being built for, and the platform that follows from it. Taken
   // from the runtime that was actually linked when no `--target` was given, so
@@ -449,6 +442,7 @@ export async function buildStandalone(
   await access(nativePath).catch(() => {
     throw new Error(`native addon is unavailable: ${nativePath}`);
   });
+
   // The runtime is the one thing in the export that must match the target and
   // cannot be checked once it is inside the executable. It matters most under
   // `--target`, where BLITSEN_NATIVE_PATH or a stale cache entry could otherwise
@@ -466,6 +460,7 @@ export async function buildStandalone(
       + `${runtimeBinary.platform}-${runtimeBinary.architectures.join("/")} `
       + `(${runtimeBinary.format}), but this build targets ${buildTarget}: ${nativePath}`);
   }
+
   // Windows executes by extension, so a Windows export is named `.exe` whoever
   // asked for what. `bun build --compile` already appends it on the Phase 1
   // path; the Phase 2 path links the bundle to exactly the name it is given, so
@@ -486,7 +481,13 @@ export async function buildStandalone(
       }
     }
   }
+  return {
+    linkedRuntime, buildTarget, buildPlatform, nativePath, requested,
+    targetPlatform, targetArchitecture, destination, assetDirectory, sideLoaded,
+  };
+}
 
+async function planApplication(root, include, addons) {
   const plan = await planIngest(root, { include });
   const carried = new Map(plan.files.map(file => [file.relative, file.absolute]));
   for (const [path, source] of await planAddons(root, addons)) {
@@ -496,35 +497,227 @@ export async function buildStandalone(
     }
     carried.set(path, source);
   }
-  const unreferenced = plan.unreferenced.filter(path => !carried.has(path));
+  return {
+    plan,
+    carried,
+    unreferenced: plan.unreferenced.filter(path => !carried.has(path)),
+  };
+}
+
+async function stageApplication({ plan, carried, staging, buildTarget }) {
+  const manifest = [];
+  for (const [path, absolute] of [...carried].sort(([left], [right]) => left.localeCompare(right))) {
+    const staged = join(staging, "app", ...path.split("/"));
+    await mkdir(dirname(staged), { recursive: true });
+    if (REWRITTEN_EXTENSIONS.includes(extname(path).toLowerCase())) {
+      const resolutions = plan.resolutions.get(path);
+      const source = rewriteRootRelativeReferences(
+        await readFile(absolute, "utf8"),
+        path,
+        reference => resolutions?.get(reference) ?? null,
+      );
+      await writeFile(staged, source);
+    } else {
+      await copyFile(absolute, staged);
+    }
+    // Checked however it arrived: declared, reached from a script, or kept by
+    // --include. A carried addon that cannot load is worse than an absent one.
+    const native = extname(path).toLowerCase() === ADDON_EXTENSION;
+    if (native) await inspectAddon(staged, path, buildTarget);
+    manifest.push({ path, hash: await hashFile(staged), ...native ? { native: true } : {} });
+  }
+  return {
+    manifest,
+    carriedAddons: manifest.filter(asset => asset.native).map(asset => asset.path),
+  };
+}
+
+function selectStandaloneHost(requested, carriedAddons) {
+  const host = requested ?? (carriedAddons.length > 0 ? "bun" : "blitsen");
+  if (host === "blitsen" && carriedAddons.length > 0) {
+    throw new Error(`BLITSEN_HOST=blitsen cannot load a carried native addon `
+      + `(${summarize(carriedAddons)}): the Phase 2 host has no Node-API. `
+      + "Drop the addon, or leave BLITSEN_HOST unset and the export links the host that can.");
+  }
+  return host;
+}
+
+function reportCollection(progress, { manifest, assets, unreferenced, carriedAddons }) {
+  progress({
+    step: "collect",
+    detail: `${manifest.length} ${assets} assets`,
+    notes: [
+      ...unreferenced.length === 0 ? [] : [
+        `dropped ${unreferenced.length} files unreachable from index.html `
+        + `(--include <glob> keeps them): ${summarize(unreferenced)}`,
+      ],
+      ...carriedAddons.length === 0 ? [] : [
+        `carried ${carriedAddons.length} native `
+        + `${carriedAddons.length === 1 ? "addon" : "addons"}: ${summarize(carriedAddons)} `
+        + "(load one from a module script with createRequire(import.meta.url))",
+        "linked the Bun host, which is the one that can load a Node-API addon: "
+        + "this export carries a copy of Bun and is roughly 95 MB larger than one without",
+      ],
+    ],
+  });
+}
+
+async function linkPhase2({
+  buildTarget, targetPlatform, targetArchitecture, onNotice, manifest, staging,
+  linkedRuntime, width, height, title, assets, destination,
+}) {
+  // After the checks above, deliberately: `fetch` is on the same terms as the
+  // addon's own resolution (#72) — a build for this host never reaches the
+  // network, and a cross-target one has no other way to obtain that target's
+  // runtime — and a build that is already going to be refused should be
+  // refused before it downloads anything.
+  const phase2Runtime = await resolvePhase2Runtime({
+    target: buildTarget, fetch: buildTarget !== hostTarget(),
+    ...(onNotice ? { onNotice } : {}),
+  });
+  // The same check the addon gets above, on the artifact the export is
+  // literally made of: a Phase 2 export is this executable with the
+  // application appended, so a runtime for the wrong platform is not a dlopen
+  // failure later — it is the whole product, built for the wrong machine and
+  // named as though it were not. `BLITSEN_RUNTIME_PATH` reaches here ahead of
+  // everything, including under `--target`.
+  const linked = describeExecutableBinary(await readContainerHeader(phase2Runtime.path));
+  if (!linked) {
+    throw new Error("the linked Phase 2 runtime is not an executable for any supported "
+      + `platform: ${phase2Runtime.path}`);
+  }
+  if (linked.platform !== targetPlatform
+    || !linked.architectures.includes(targetArchitecture)) {
+    throw new Error("the linked Phase 2 runtime is built for "
+      + `${linked.platform}-${linked.architectures.join("/")} (${linked.format}), `
+      + `but this build targets ${buildTarget}: ${phase2Runtime.path}`
+      + (phase2Runtime.source === "environment"
+        ? " — BLITSEN_RUNTIME_PATH names it, and it outranks the target's own runtime"
+        : ""));
+  }
+
+  // Phase 2 step ④: the application is appended to Blitsen's own runtime as a
+  // binary section (TECH.md §10, issue #88). No launcher and no Bun.
+  const files = new Map();
+  for (const entry of manifest) {
+    files.set(entry.path, await readFile(join(staging, "app", ...entry.path.split("/"))));
+  }
+  // Issue #73: an export names the runtime it was built against, in the binary
+  // and at run time — the same record the Phase 1 launcher carries, minus the
+  // linking path, which is machine-local.
+  const { path: _linkedPath, ...stamp } = linkedRuntime;
+  files.set("blitsen.runtime.json", Buffer.from(
+    `${JSON.stringify({ width, height, title, layout: assets, runtime: stamp })}\n`));
+  // Issue #121: the notices the artifact owes travel inside it. They are copied
+  // from the runtime package because a user's machine has no toolchain to
+  // derive them.
+  const notices = await embeddedNotices(phase2Runtime.path);
+  if (notices !== null) files.set(NOTICES_BUNDLE_FILE, notices.gzip);
+  await linkBundle({ runtime: phase2Runtime.path, output: destination, files });
+  return notices;
+}
+
+async function linkPhase1({
+  nativePath, staging, manifest, width, height, title, assets, assetDirectory,
+  linkedRuntime, destination, buildTarget,
+}) {
+  await copyFile(nativePath, join(staging, "blitsen.node"));
+  const launcher = join(staging, "launcher.mjs");
+  await writeFile(launcher, launcherSource(manifest, {
+    width, height, title, layout: assets, assetDirectory, runtime: linkedRuntime,
+  }));
+  // The Bun host is the one thing here that only Bun can build: `Bun.build`
+  // links the launcher into that target's Bun. The CLI otherwise runs anywhere
+  // Node does, and an export that needs this path says which half is missing.
+  if (globalThis.Bun === undefined) {
+    throw new Error("this export links the Bun host, which only Bun can build: "
+      + "run the same command with `bun` on PATH, or remove the .node addon that "
+      + "asked for it — an application without one links Blitsen's own runtime, "
+      + "which needs nothing but this package");
+  }
+  const result = await Bun.build({
+    entrypoints: [launcher],
+    // Bun downloads the target's own runtime to compile against, which is what
+    // makes a cross-target export possible at all.
+    compile: { outfile: destination, target: BUN_TARGETS[buildTarget] },
+  });
+  if (!result.success) {
+    const detail = result.logs.map(log => String(log)).join("\n");
+    throw new Error(`standalone compilation failed${detail ? `:\n${detail}` : ""}`);
+  }
+}
+
+async function writeSideLoadedAssets({ assets, sideLoaded, manifest, staging }) {
+  if (assets !== "side-loaded") return;
+  await rm(sideLoaded, { recursive: true, force: true });
+  for (const entry of manifest) {
+    const target = join(sideLoaded, ...entry.path.split("/"));
+    await mkdir(dirname(target), { recursive: true });
+    await copyFile(join(staging, "app", ...entry.path.split("/")), target);
+  }
+}
+
+async function finishStandaloneBuild({
+  destination, progress, icon, bundleId, appVersion, buildPlatform, title,
+  assets, sideLoaded, force, sign,
+}) {
+  // bun build --compile appends .exe on Windows when the requested path has no
+  // extension, so the linked artifact is not always the requested path.
+  const linked = await stat(destination).catch(() => null) ? destination : `${destination}.exe`;
+  progress({ step: "link", detail: linked });
+  const packaged = icon || bundleId || appVersion
+    ? await packageBuild({
+      platform: buildPlatform,
+      executable: linked,
+      title,
+      icon,
+      identifier: bundleId,
+      version: appVersion,
+      assetDirectory: assets === "side-loaded" ? sideLoaded : null,
+      force,
+    })
+    : null;
+  const executable = packaged?.executable ?? linked;
+  // The signing hook runs last, over the bundle on macOS and the executable
+  // elsewhere, so it sees exactly what ships.
+  const signed = sign
+    ? await signArtifact({ command: sign, artifact: packaged?.bundle ?? executable })
+    : null;
+  progress({
+    step: "package",
+    detail: packaged
+      ? `${packaged.platform}: ${packaged.artifacts.join(", ")}`
+      : "no platform artifacts requested (--icon, --bundle-id, --app-version)",
+    notes: [
+      ...packaged?.notes ?? [],
+      ...(signed ? [`signed ${signed.artifact} with: ${signed.command}`] : []),
+    ],
+  });
+  return { executable, packaged, signed };
+}
+
+export async function buildStandalone(
+  {
+    root, width, height, title, outfile, force = false, include = [], addons = [],
+    assets = "embedded", icon = null, bundleId = null, appVersion = null, sign = null,
+    target = null, platform, progress = () => {}, onNotice,
+  },
+  runtime,
+) {
+  const prepared = await prepareStandaloneBuild(
+    { root, outfile, force, assets, target, platform }, runtime);
+  const {
+    linkedRuntime, buildTarget, buildPlatform, nativePath, requested,
+    targetPlatform, targetArchitecture, destination, assetDirectory, sideLoaded,
+  } = prepared;
+  const { plan, carried, unreferenced } = await planApplication(root, include, addons);
   // Bun records the compiled entrypoint's path in the executable, so staging has
   // to be a stable location rather than a temporary one for reproducible output.
   const staging = join(dirname(destination), `.${basename(destination)}.blitsen-build`);
   await rm(staging, { recursive: true, force: true });
   try {
-    const manifest = [];
-    let notices = null;
-    for (const [path, absolute] of [...carried].sort(([left], [right]) => left.localeCompare(right))) {
-      const staged = join(staging, "app", ...path.split("/"));
-      await mkdir(dirname(staged), { recursive: true });
-      if (REWRITTEN_EXTENSIONS.includes(extname(path).toLowerCase())) {
-        const resolutions = plan.resolutions.get(path);
-        const source = rewriteRootRelativeReferences(
-          await readFile(absolute, "utf8"),
-          path,
-          reference => resolutions?.get(reference) ?? null,
-        );
-        await writeFile(staged, source);
-      } else {
-        await copyFile(absolute, staged);
-      }
-      // Checked however it arrived: declared, reached from a script, or kept by
-      // --include. A carried addon that cannot load is worse than an absent one.
-      const native = extname(path).toLowerCase() === ADDON_EXTENSION;
-      if (native) await inspectAddon(staged, path, buildTarget);
-      manifest.push({ path, hash: await hashFile(staged), ...native ? { native: true } : {} });
-    }
-    const carriedAddons = manifest.filter(asset => asset.native).map(asset => asset.path);
+    const { manifest, carriedAddons } = await stageApplication(
+      { plan, carried, staging, buildTarget });
     // The host, now that the application is known. Small by default, and one
     // thing overrides that — a capability rather than a preference: a `.node`
     // addon is Node-API, and `createRequire` is Bun's, so the Phase 2 host has
@@ -537,152 +730,24 @@ export async function buildStandalone(
     // module entry point. The shipped runtime links QuickJS-ng statically and
     // its module loader is stock, so there is no longer a build whose engine
     // could turn up without one.
-    const host = requested ?? (carriedAddons.length > 0 ? "bun" : "blitsen");
-    if (host === "blitsen" && carriedAddons.length > 0) {
-      throw new Error(`BLITSEN_HOST=blitsen cannot load a carried native addon `
-        + `(${summarize(carriedAddons)}): the Phase 2 host has no Node-API. `
-        + "Drop the addon, or leave BLITSEN_HOST unset and the export links the host that can.");
-    }
-    progress({
-      step: "collect",
-      detail: `${manifest.length} ${assets} assets`,
-      notes: [
-        ...unreferenced.length === 0 ? [] : [
-          `dropped ${unreferenced.length} files unreachable from index.html `
-          + `(--include <glob> keeps them): ${summarize(unreferenced)}`,
-        ],
-        ...carriedAddons.length === 0 ? [] : [
-          `carried ${carriedAddons.length} native `
-          + `${carriedAddons.length === 1 ? "addon" : "addons"}: ${summarize(carriedAddons)} `
-          + "(load one from a module script with createRequire(import.meta.url))",
-          "linked the Bun host, which is the one that can load a Node-API addon: "
-          + "this export carries a copy of Bun and is roughly 95 MB larger than one without",
-        ],
-      ],
-    });
-    // After the checks above, deliberately: `fetch` is on the same terms as the
-    // addon's own resolution (#72) — a build for this host never reaches the
-    // network, and a cross-target one has no other way to obtain that target's
-    // runtime — and a build that is already going to be refused should be
-    // refused before it downloads anything.
-    const phase2Runtime = host === "blitsen"
-      ? await resolvePhase2Runtime({
-        target: buildTarget, fetch: buildTarget !== hostTarget(),
-        ...(onNotice ? { onNotice } : {}),
-      })
-      : null;
+    const host = selectStandaloneHost(requested, carriedAddons);
+    reportCollection(progress, { manifest, assets, unreferenced, carriedAddons });
+    let notices = null;
     if (host === "blitsen") {
-      // The same check the addon gets above, on the artifact the export is
-      // literally made of: a Phase 2 export is this executable with the
-      // application appended, so a runtime for the wrong platform is not a
-      // dlopen failure later — it is the whole product, built for the wrong
-      // machine and named as though it were not. `BLITSEN_RUNTIME_PATH` reaches
-      // here ahead of everything, including under `--target`, which is exactly
-      // how a release job that sets it for its own tests silently produced an
-      // ELF called `App.exe` (#134).
-      const linked = describeExecutableBinary(await readContainerHeader(phase2Runtime.path));
-      if (!linked) {
-        throw new Error("the linked Phase 2 runtime is not an executable for any supported "
-          + `platform: ${phase2Runtime.path}`);
-      }
-      if (linked.platform !== targetPlatform
-        || !linked.architectures.includes(targetArchitecture)) {
-        throw new Error("the linked Phase 2 runtime is built for "
-          + `${linked.platform}-${linked.architectures.join("/")} (${linked.format}), `
-          + `but this build targets ${buildTarget}: ${phase2Runtime.path}`
-          + (phase2Runtime.source === "environment"
-            ? " — BLITSEN_RUNTIME_PATH names it, and it outranks the target's own runtime"
-            : ""));
-      }
-      // Phase 2 step ④: the application is appended to Blitsen's own runtime
-      // as a binary section (TECH.md §10, issue #88). No launcher and no Bun —
-      // the executable reads its own bundle at startup.
-      const files = new Map();
-      for (const entry of manifest) {
-        files.set(entry.path, await readFile(join(staging, "app", ...entry.path.split("/"))));
-      }
-      // Issue #73: an export names the runtime it was built against, in the
-      // binary and at run time — the same record the Phase 1 launcher carries,
-      // minus the linking path, which is machine-local. Written compactly so
-      // the record survives as a contiguous literal a shipped artifact can be
-      // searched for, exactly as it does on the other host.
-      const { path: _linkedPath, ...stamp } = linkedRuntime;
-      files.set("blitsen.runtime.json", Buffer.from(
-        `${JSON.stringify({ width, height, title, layout: assets, runtime: stamp })}\n`));
-      // Issue #121: the notices the artifact owes travel inside it. They are
-      // generated where the runtime is built and shipped in its platform
-      // package, so this is a copy rather than a computation — there is no
-      // toolchain on a user's machine to derive them from.
-      notices = await embeddedNotices(phase2Runtime.path);
-      if (notices !== null) files.set(NOTICES_BUNDLE_FILE, notices.gzip);
-      await linkBundle({ runtime: phase2Runtime.path, output: destination, files });
-    } else {
-      await copyFile(nativePath, join(staging, "blitsen.node"));
-      const launcher = join(staging, "launcher.mjs");
-      await writeFile(launcher, launcherSource(manifest, {
-        width, height, title, layout: assets, assetDirectory, runtime: linkedRuntime,
-      }));
-      // The Bun host is the one thing here that only Bun can build: `Bun.build`
-      // is what links the launcher into that target's Bun. The CLI otherwise
-      // runs anywhere Node does, and an export that needs this path says which
-      // half is missing rather than dying on an undefined global (#131).
-      if (globalThis.Bun === undefined) {
-        throw new Error("this export links the Bun host, which only Bun can build: "
-          + "run the same command with `bun` on PATH, or remove the .node addon that "
-          + "asked for it — an application without one links Blitsen's own runtime, "
-          + "which needs nothing but this package");
-      }
-      const result = await Bun.build({
-        entrypoints: [launcher],
-        // Bun downloads the target's own runtime to compile against, which is what
-        // makes a cross-target export possible at all: the launcher is bundled
-        // here and linked into that runtime rather than into this host's.
-        compile: { outfile: destination, target: BUN_TARGETS[buildTarget] },
+      notices = await linkPhase2({
+        buildTarget, targetPlatform, targetArchitecture, onNotice, manifest, staging,
+        linkedRuntime, width, height, title, assets, destination,
       });
-      if (!result.success) {
-        const detail = result.logs.map(log => String(log)).join("\n");
-        throw new Error(`standalone compilation failed${detail ? `:\n${detail}` : ""}`);
-      }
+    } else {
+      await linkPhase1({
+        nativePath, staging, manifest, width, height, title, assets, assetDirectory,
+        linkedRuntime, destination, buildTarget,
+      });
     }
-    if (assets === "side-loaded") {
-      await rm(sideLoaded, { recursive: true, force: true });
-      for (const entry of manifest) {
-        const target = join(sideLoaded, ...entry.path.split("/"));
-        await mkdir(dirname(target), { recursive: true });
-        await copyFile(join(staging, "app", ...entry.path.split("/")), target);
-      }
-    }
-    // bun build --compile appends .exe on Windows when the requested path has no
-    // extension, so the linked artifact is not always the requested path.
-    const linked = await stat(destination).catch(() => null) ? destination : `${destination}.exe`;
-    progress({ step: "link", detail: linked });
-    const packaged = icon || bundleId || appVersion
-      ? await packageBuild({
-        platform: buildPlatform,
-        executable: linked,
-        title,
-        icon,
-        identifier: bundleId,
-        version: appVersion,
-        assetDirectory: assets === "side-loaded" ? sideLoaded : null,
-        force,
-      })
-      : null;
-    const executable = packaged?.executable ?? linked;
-    // The signing hook runs last, over the bundle on macOS and the executable
-    // elsewhere, so it sees exactly what ships.
-    const signed = sign
-      ? await signArtifact({ command: sign, artifact: packaged?.bundle ?? executable })
-      : null;
-    progress({
-      step: "package",
-      detail: packaged
-        ? `${packaged.platform}: ${packaged.artifacts.join(", ")}`
-        : "no platform artifacts requested (--icon, --bundle-id, --app-version)",
-      notes: [
-        ...packaged?.notes ?? [],
-        ...(signed ? [`signed ${signed.artifact} with: ${signed.command}`] : []),
-      ],
+    await writeSideLoadedAssets({ assets, sideLoaded, manifest, staging });
+    const { executable, packaged, signed } = await finishStandaloneBuild({
+      destination, progress, icon, bundleId, appVersion, buildPlatform, title,
+      assets, sideLoaded, force, sign,
     });
     return {
       outfile: executable,
