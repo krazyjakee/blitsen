@@ -8,6 +8,8 @@
 //! everything downstream sees an entrypoint, a base URL, a subresource provider
 //! and a script loader.
 
+mod resources;
+
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -19,14 +21,14 @@ use blitsen_core::{ScriptDocument, ScriptLoader, WindowState, simplified};
 use blitsen_dom::DomBackend;
 use blitsen_js::{JsEngine, JsError};
 use blitz::dom::DocumentConfig;
-use blitz::traits::net::{Bytes, NetHandler, NetProvider, Request};
+use blitz::traits::net::NetProvider;
 use blitz::traits::shell::{ColorScheme, Viewport};
 use url::Url;
 
 use crate::apk::ApkAssets;
 use crate::dev_server::DevServer;
 use crate::dom_bridge::DocumentMode;
-use crate::modules::{APP_ORIGIN, AppSource, DirectorySource, path_of, url_of};
+use crate::modules::{APP_ORIGIN, AppSource, DirectorySource, url_of};
 
 /// What a served URL with no filename asks for.
 const DEFAULT_DOCUMENT: &str = "index.html";
@@ -269,11 +271,11 @@ impl AppFiles {
 
     /// How the document's `<script src>` elements are read.
     pub fn script_loader(&self) -> Box<dyn ScriptLoader> {
-        Box::new(AppScripts {
-            source: self.source(),
-            entrypoint: self.entrypoint_path(),
-            transformed: matches!(self, Self::Server { .. }),
-        })
+        resources::script_loader(
+            self.source(),
+            self.entrypoint_path(),
+            matches!(self, Self::Server { .. }),
+        )
     }
 
     /// The entrypoint's path inside the application, which is what its scripts
@@ -293,24 +295,14 @@ impl AppFiles {
     /// The subresource provider for images, stylesheets and fonts, or `None`
     /// when the ordinary Blitz provider should be used.
     ///
-    /// A bundle needs its own: no other provider can read a file that exists
-    /// only as a byte range inside the running executable.
+    /// A non-directory source needs its own: the ordinary provider cannot read
+    /// bytes held by a bundle, development server or installed package.
     pub fn net_provider(&self) -> Option<Arc<dyn NetProvider>> {
-        match self {
-            Self::Directory { root, .. } => Some(Arc::new(DirectoryResources {
-                source: Arc::new(DirectorySource::new(root.clone())),
-                root: root.clone(),
-            }) as Arc<dyn NetProvider>),
-            Self::Bundle { bundle, .. } => Some(Arc::new(BundleResources {
-                bundle: Arc::clone(bundle),
-            }) as Arc<dyn NetProvider>),
-            Self::Server { server, .. } => Some(Arc::new(ServerResources {
-                server: Arc::clone(server),
-            }) as Arc<dyn NetProvider>),
-            Self::Assets { assets, .. } => Some(Arc::new(AssetResources {
-                assets: Arc::clone(assets),
-            }) as Arc<dyn NetProvider>),
-        }
+        let directory_root = match self {
+            Self::Directory { root, .. } => Some(root.clone()),
+            Self::Bundle { .. } | Self::Server { .. } | Self::Assets { .. } => None,
+        };
+        Some(resources::net_provider(self.source(), directory_root))
     }
 }
 
@@ -580,178 +572,13 @@ fn count_files(root: &Path) -> usize {
         .sum()
 }
 
-/// Reads `<script src>` out of the application, whichever shape it came in.
-///
-/// One loader for both, because the identifier it hands back is load-bearing: a
-/// module resolves its own imports against it, and the resolver accepts nothing
-/// but application URLs. A directory run used to be named by its path on disk,
-/// so every `import` in a document module failed with "is not an application
-/// URL" — while the same application, exported, ran. That is exactly the
-/// difference between `blitsen run ./dist` and the binary it exports to that
-/// `modules.rs` says must not exist.
-///
-/// A script is still confined to the application: `resolve` refuses anything
-/// that would leave it, which is the same check reading loose files off disk
-/// made with a canonicalized prefix.
-struct AppScripts {
-    source: Arc<dyn AppSource>,
-    /// The entrypoint's application-relative path, which a `src` resolves
-    /// against.
-    entrypoint: String,
-    /// Whether the source transforms what it serves — a dev server does.
-    transformed: bool,
-}
-
-impl ScriptLoader for AppScripts {
-    fn load(&self, _root: &Path, src: &str) -> Result<(String, String), JsError> {
-        let url = crate::modules::resolve(&url_of(&self.entrypoint), &relative(src))?;
-        let path = path_of(&url).expect("resolve returns application URLs");
-        let bytes = self
-            .source
-            .read(path)
-            .ok_or_else(|| JsError::new(format!("the application has no script at {path}")))?;
-        let source = String::from_utf8(bytes)
-            .map_err(|_| JsError::new(format!("the script at {path} is not UTF-8")))?;
-        Ok((source, url))
-    }
-
-    fn document_url(&self) -> Option<String> {
-        Some(url_of(&self.entrypoint))
-    }
-
-    fn serves_transformed(&self) -> bool {
-        self.transformed
-    }
-}
-
-/// Serves a directory's subresources, with a server-root URL meaning the
-/// application root.
-///
-/// Blitz resolves `href="/assets/app.css"` against the document's `file:` base
-/// and arrives at `file:///assets/app.css` — the top of the disk, where nothing
-/// is. The application root is what the URL meant: it is what `blitsen build`
-/// rewrites it to at ingest, and what the application origin already means
-/// inside a shipped executable. Without this the default `vite build` output
-/// exported fine and would not open, which is a difference between two commands
-/// pointed at one directory.
-///
-/// The retry goes through [`AppSource`], so it is confined to the application by
-/// the same check every other read of it uses.
-struct DirectoryResources {
-    source: Arc<dyn AppSource>,
-    root: PathBuf,
-}
-
-impl NetProvider for DirectoryResources {
-    fn fetch(&self, doc_id: usize, request: Request, handler: Box<dyn NetHandler>) {
-        // Only a path that landed outside the application is reinterpreted. One
-        // already inside it is an ordinary relative reference and is read where
-        // it points, so a directory that happens to sit at the filesystem root
-        // cannot change what a relative URL means.
-        //
-        // Stated as "not demonstrably inside", because a `file:` URL that names
-        // no path at all is not inside either. `file:///assets/app.css` has no
-        // drive letter, so `to_file_path` fails on Windows where it succeeds on
-        // Unix — and reading that failure as "not outside" left the server-root
-        // retry unreachable there, so a stock `vite build` export opened with no
-        // stylesheet on Windows alone.
-        let outside = !request
-            .url
-            .to_file_path()
-            .is_ok_and(|path| path.starts_with(&self.root));
-        if request.url.scheme() == "file" && outside {
-            let relative = request.url.path().trim_start_matches('/');
-            if let Some(bytes) = self.source.read(relative) {
-                handler.bytes(request.url.as_str().to_owned(), Bytes::from(bytes));
-                return;
-            }
-        }
-        blitsen_blitz::resources::LocalResources.fetch(doc_id, request, handler);
-    }
-}
-
-/// Serves a document's subresources out of the appended section.
-struct BundleResources {
-    bundle: Arc<AppBundle>,
-}
-
-impl NetProvider for BundleResources {
-    fn fetch(&self, doc_id: usize, request: Request, handler: Box<dyn NetHandler>) {
-        let url = request.url.as_str().to_owned();
-        if let Some(path) = path_of(&url) {
-            // Blitz holds a stylesheet as a pending critical resource until its
-            // handler completes, so a missing file is answered with no bytes
-            // rather than left hanging — the same contract `LocalResources`
-            // keeps, and the reason a broken `<img>` reaches its errored state.
-            let bytes = self.bundle.read(path).unwrap_or_default();
-            handler.bytes(url, Bytes::from(bytes));
-            return;
-        }
-        // `data:` subresources, and anything else the ordinary local provider
-        // understands, still work inside a bundle.
-        blitsen_blitz::resources::LocalResources.fetch(doc_id, request, handler);
-    }
-}
-
-/// Serves a dev server's subresources, on the application origin (issue #67).
-///
-/// The same shape as [`BundleResources`], and for the same reason: a stylesheet
-/// is a pending critical resource until its handler completes, so one the server
-/// will not serve is answered with no bytes rather than left hanging.
-struct ServerResources {
-    server: Arc<DevServer>,
-}
-
-impl NetProvider for ServerResources {
-    fn fetch(&self, doc_id: usize, request: Request, handler: Box<dyn NetHandler>) {
-        let url = request.url.as_str().to_owned();
-        if let Some(path) = path_of(&url) {
-            let bytes = self.server.read(path).unwrap_or_default();
-            handler.bytes(url, Bytes::from(bytes));
-            return;
-        }
-        blitsen_blitz::resources::LocalResources.fetch(doc_id, request, handler);
-    }
-}
-
-/// Serves a document's subresources out of an APK's `assets/` (issue #144).
-///
-/// The same shape as [`BundleResources`], because it is the same problem: no
-/// other provider can read a file that exists only as an entry inside the
-/// installed package, and a stylesheet is a pending critical resource until its
-/// handler completes, so one the package does not carry is answered with no
-/// bytes rather than left hanging.
-struct AssetResources {
-    assets: Arc<ApkAssets>,
-}
-
-impl NetProvider for AssetResources {
-    fn fetch(&self, doc_id: usize, request: Request, handler: Box<dyn NetHandler>) {
-        let url = request.url.as_str().to_owned();
-        if let Some(path) = path_of(&url) {
-            let bytes = self.assets.read(path).unwrap_or_default();
-            handler.bytes(url, Bytes::from(bytes));
-            return;
-        }
-        // `data:` subresources, and anything else the ordinary local provider
-        // understands, still work inside a package.
-        blitsen_blitz::resources::LocalResources.fetch(doc_id, request, handler);
-    }
-}
-
-/// Turns a document-relative `src` into a specifier the resolver accepts.
-fn relative(src: &str) -> String {
-    if src.starts_with('/') || src.starts_with("./") || src.starts_with("../") {
-        src.to_owned()
-    } else {
-        format!("./{src}")
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use blitz::traits::net::Request;
+    use std::io::{Read as _, Write as _};
+    use std::net::TcpListener;
     use std::sync::Mutex;
+
+    use blitz::traits::net::{Bytes, NetHandler, Request};
 
     use super::*;
 
@@ -790,6 +617,51 @@ mod tests {
         }
     }
 
+    /// Serves the three requests the dev-server provider parity check makes.
+    fn app_server() -> (String, std::thread::JoinHandle<Vec<String>>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let origin = format!("http://{}", listener.local_addr().unwrap());
+        let handle = std::thread::spawn(move || {
+            let mut requests = Vec::new();
+            for _ in 0..3 {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut request = Vec::new();
+                let mut buffer = [0_u8; 1024];
+                while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+                    let read = stream.read(&mut buffer).unwrap();
+                    if read == 0 {
+                        break;
+                    }
+                    request.extend_from_slice(&buffer[..read]);
+                }
+                let request = String::from_utf8_lossy(&request);
+                let target = request
+                    .lines()
+                    .next()
+                    .and_then(|line| line.split_ascii_whitespace().nth(1))
+                    .unwrap()
+                    .to_owned();
+                requests.push(target.clone());
+                let (status, body): (&str, &[u8]) = match target.as_str() {
+                    "/index.html" => ("200 OK", b"<p>hi"),
+                    "/assets/app.css?theme=dark" => ("200 OK", b"body{color:white}"),
+                    "/assets/missing.css" => ("404 Not Found", b""),
+                    _ => ("500 Unexpected Request", b""),
+                };
+                write!(
+                    stream,
+                    "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                )
+                .unwrap();
+                stream.write_all(body).unwrap();
+                stream.flush().unwrap();
+            }
+            requests
+        });
+        (origin, handle)
+    }
+
     #[test]
     fn a_bundle_addresses_its_files_by_the_application_origin() {
         let root = std::env::temp_dir().join(format!("blitsen-app-{}", std::process::id()));
@@ -823,11 +695,53 @@ mod tests {
             )
         );
         assert!(files.net_provider().is_some());
+        let provider = files.net_provider().unwrap();
+        let collector = Collector::default();
+        assert_eq!(
+            collector.served(&provider, "blitsen://app/assets/app.js"),
+            18
+        );
+        assert_eq!(
+            collector.served(&provider, "blitsen://app/assets/missing.js"),
+            0
+        );
         assert_eq!(
             files.source().read("assets/app.js").unwrap(),
             b"globalThis.ran = 1"
         );
         std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn a_dev_server_provider_preserves_queries_missing_errors_and_callbacks() {
+        let (origin, server) = app_server();
+        let files = AppFiles::server(&origin).unwrap();
+        let provider = files.net_provider().expect("a server serves its files");
+        let collector = Collector::default();
+
+        assert_eq!(
+            collector.served(&provider, "blitsen://app/assets/app.css?theme=dark"),
+            17
+        );
+        assert_eq!(
+            collector.served(&provider, "blitsen://app/assets/missing.css"),
+            0
+        );
+        let AppFiles::Server { server: source, .. } = &files else {
+            unreachable!()
+        };
+        assert_eq!(
+            source.last_error(),
+            Some(format!("{origin}/assets/missing.css answered 404"))
+        );
+        assert_eq!(
+            server.join().unwrap(),
+            [
+                "/index.html",
+                "/assets/app.css?theme=dark",
+                "/assets/missing.css"
+            ]
+        );
     }
 
     /// A stock `vite build` writes `/assets/index-<hash>.js`, and Blitz resolves
