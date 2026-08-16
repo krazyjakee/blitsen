@@ -42,36 +42,11 @@ pub struct Workers;
 
 impl blitsen_host::worker::WorkerLauncher for Workers {
     fn launch(&self, boot: blitsen_host::worker::WorkerBoot) -> Result<(), JsError> {
-        let label = if boot.name.is_empty() {
-            boot.entry.clone()
-        } else {
-            boot.name.clone()
-        };
-        std::thread::Builder::new()
-            // Named for the thread lists a profiler and a debugger show, where
-            // "worker" alone would be three threads with one name.
-            .name(format!("blitsen-worker {label}"))
-            .spawn(move || {
-                let engine = load()
-                    .and_then(|mut engine| install_module_loader(&mut engine).map(|()| engine));
-                match engine {
-                    Ok(engine) => blitsen_host::worker::run(engine, boot),
-                    Err(error) => {
-                        // Reported to the `Worker` object as an `error` event,
-                        // because a thread that could not start an engine is
-                        // exactly the failure its `onerror` is for.
-                        blitsen_host::ports::registry().post(
-                            boot.port,
-                            blitsen_host::ports::Delivery::Error(format!(
-                                "a worker could not start a JavaScript engine: {error}"
-                            )),
-                        );
-                        blitsen_host::ports::registry().release(boot.context);
-                    }
-                }
-            })
-            .map(|_| ())
-            .map_err(|error| JsError::new(format!("could not start a worker thread: {error}")))
+        blitsen_host::worker::launch_on_thread(boot, || {
+            let mut engine = load().map_err(JsError::new)?;
+            install_module_loader(&mut engine).map_err(JsError::new)?;
+            Ok(engine)
+        })
     }
 }
 

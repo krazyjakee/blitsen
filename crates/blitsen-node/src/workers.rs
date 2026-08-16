@@ -21,29 +21,10 @@ pub struct Workers;
 
 impl blitsen_host::worker::WorkerLauncher for Workers {
     fn launch(&self, boot: blitsen_host::worker::WorkerBoot) -> Result<(), JsError> {
-        let label = if boot.name.is_empty() {
-            boot.entry.clone()
-        } else {
-            boot.name.clone()
-        };
-        std::thread::Builder::new()
-            .name(format!("blitsen-worker {label}"))
-            .spawn(move || match QuickJs::new() {
-                Ok(mut engine) => {
-                    engine.install_module_loader();
-                    blitsen_host::worker::run(engine, boot);
-                }
-                Err(error) => {
-                    blitsen_host::ports::registry().post(
-                        boot.port,
-                        blitsen_host::ports::Delivery::Error(format!(
-                            "a worker could not start a JavaScript engine: {error}"
-                        )),
-                    );
-                    blitsen_host::ports::registry().release(boot.context);
-                }
-            })
-            .map(|_| ())
-            .map_err(|error| JsError::new(format!("could not start a worker thread: {error}")))
+        blitsen_host::worker::launch_on_thread(boot, || {
+            let mut engine = QuickJs::new()?;
+            engine.install_module_loader();
+            Ok(engine)
+        })
     }
 }
