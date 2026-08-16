@@ -6,6 +6,7 @@ import { ASSET_ROOT } from "./android-assets.mjs";
 import { loadConfig, runBuildCommand } from "./config.mjs";
 import { doctorApplication, formatDiagnostic } from "./doctor.mjs";
 import { buildStandalone } from "./export.mjs";
+import { frameDelay } from "./frame-pacing.mjs";
 import { ANDROID_TARGETS } from "./native-modules.mjs";
 import { signArtifact } from "./packaging.mjs";
 import { describeRuntime, hostTarget, openRuntime, packageVersion, resolveRuntime, TARGETS }
@@ -554,13 +555,9 @@ export async function main(args, output = console, runtime = null) {
       : null;
     try {
       if (active.pumpWindow) {
-        const frameInterval = 1000 / 60;
-        let nextFrame = performance.now();
+        const pacing = { nextFrame: performance.now() };
         while (active.pumpWindow()) {
-          nextFrame += frameInterval;
-          const now = performance.now();
-          if (nextFrame < now - frameInterval) nextFrame = now;
-          const delay = Math.max(0, nextFrame - now);
+          const delay = frameDelay(pacing, performance.now());
           await (active.waitForNextFrame?.(delay)
             ?? new Promise(resolve => setTimeout(resolve, delay)));
         }
