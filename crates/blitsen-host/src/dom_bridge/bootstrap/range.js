@@ -37,11 +37,6 @@
     if (parent === null) throw new TypeError("the node has no parent to place a boundary in");
     return parent;
   };
-  const ancestorsOf = node => {
-    const chain = [];
-    for (let current = node; current; current = current.parentNode) chain.unshift(current);
-    return chain;
-  };
   // Where one boundary point sits relative to another: -1 before, 0 the same
   // place, 1 after, and `null` for two points in different trees, which have no
   // order at all. Two points in the same node compare by offset; otherwise the
@@ -50,15 +45,13 @@
   // or after a descendant according to which side of that child it names.
   const comparePoints = (node, offset, other, otherOffset) => {
     if (node === other) return offset === otherOffset ? 0 : offset < otherOffset ? -1 : 1;
-    const mine = ancestorsOf(node);
-    const theirs = ancestorsOf(other);
-    if (mine[0] !== theirs[0]) return null;
-    let depth = 0;
-    while (mine[depth] === theirs[depth]) depth += 1;
-    if (depth === mine.length) return childIndexOf(theirs[depth]) < offset ? 1 : -1;
-    if (depth === theirs.length) return childIndexOf(mine[depth]) < otherOffset ? -1 : 1;
-    const siblings = [...mine[depth - 1].childNodes];
-    return siblings.indexOf(mine[depth]) < siblings.indexOf(theirs[depth]) ? -1 : 1;
+    const relation = treeOrder(node, other);
+    if (relation === null) return null;
+    if (relation.nodeBranch === null)
+      return childIndexOf(relation.otherBranch) < offset ? 1 : -1;
+    if (relation.otherBranch === null)
+      return childIndexOf(relation.nodeBranch) < otherOffset ? -1 : 1;
+    return relation.order;
   };
 
   const boundsOf = range => {

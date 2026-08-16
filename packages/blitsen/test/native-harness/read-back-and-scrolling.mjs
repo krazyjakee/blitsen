@@ -68,7 +68,20 @@ const reads = JSON.parse(native.runBridgeHarness(DOCUMENT,
      expect(first.compareDocumentPosition(para), 10, "and its ancestor is CONTAINS | PRECEDING");
      expect(first.compareDocumentPosition(second), 4, "a later sibling FOLLOWS");
      expect(second.compareDocumentPosition(first), 2, "an earlier one PRECEDES");
-     expect(first.compareDocumentPosition(document.createElement("s")), 35,
+     const nested = document.createElement("small");
+     first.appendChild(nested);
+     expect(first.compareDocumentPosition(nested), 20,
+       "containment is preserved below the compared node");
+     expect(nested.compareDocumentPosition(second), 4,
+       "separate branches compare at their common ancestor");
+     const fragment = document.createDocumentFragment();
+     const detachedFirst = document.createElement("q");
+     const detachedSecond = document.createElement("s");
+     fragment.appendChild(detachedFirst);
+     fragment.appendChild(detachedSecond);
+     expect(detachedFirst.compareDocumentPosition(detachedSecond), 4,
+       "nodes in one detached tree retain tree order");
+     expect(first.compareDocumentPosition(detachedFirst), 35,
        "another tree is DISCONNECTED | PRECEDING | IMPLEMENTATION_SPECIFIC");
      expect(first.compareDocumentPosition(first), 0, "a node is not positioned against itself");
 

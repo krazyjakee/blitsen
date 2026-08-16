@@ -113,6 +113,9 @@ const boundaries = JSON.parse(native.runBridgeHarness(
        range.comparePoint(one.firstChild, 2) === 0 &&
        range.comparePoint(two.firstChild, 3) === 1,
        "a point before, inside and after it");
+     expect(range.comparePoint(host, 0) === -1 && range.comparePoint(host, 1) === 0 &&
+       range.comparePoint(host, 2) === 1,
+       "an ancestor boundary compares on the correct side of its child");
      expect(range.isPointInRange(one.firstChild, 2) && !range.isPointInRange(two.firstChild, 3),
        "which is what isPointInRange reports");
 
@@ -132,6 +135,22 @@ const boundaries = JSON.parse(native.runBridgeHarness(
        around.compareBoundaryPoints(Range.END_TO_END, range) === -1 &&
        range.compareBoundaryPoints(Range.START_TO_START, range) === 0,
        "boundary points compare in tree order");
+
+     const fragment = document.createDocumentFragment();
+     const detachedOne = document.createElement("b");
+     const detachedTwo = document.createElement("i");
+     detachedOne.textContent = "left";
+     detachedTwo.textContent = "right";
+     fragment.appendChild(detachedOne);
+     fragment.appendChild(detachedTwo);
+     const detached = document.createRange();
+     detached.setStart(detachedOne.firstChild, 1);
+     detached.setEnd(detachedTwo.firstChild, 2);
+     expect(detached.toString() === "eftri", "a detached tree still has boundary order");
+     let disconnected = false;
+     try { range.compareBoundaryPoints(Range.START_TO_START, detached); }
+     catch { disconnected = true; }
+     expect(disconnected, "boundary points in disconnected trees have no order");
 
      let refused = false;
      try { range.setStart(one.firstChild, 9); } catch { refused = true; }
