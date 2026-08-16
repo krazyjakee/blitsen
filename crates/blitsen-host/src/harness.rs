@@ -6,7 +6,7 @@
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -14,9 +14,9 @@ use anyrender::{PaintScene as _, render_to_buffer};
 use anyrender_vello_cpu::VelloCpuImageRenderer;
 use blitsen_blitz::{BlitzDom, resources::LocalResources};
 use blitsen_core::{DocumentScript, WindowState, execute_collected_document_scripts_from};
-use blitsen_dom::{DomBackend, LayoutSnapshot};
+use blitsen_dom::{DomBackend, LayoutSnapshot, Rect as DomRect};
 use blitsen_js::{JsEngine, JsError};
-use blitz::dom::{DocumentConfig, util::Color};
+use blitz::dom::{Attribute, DocumentConfig, ElementData, Node, NodeId, util::Color};
 use blitz::paint::paint_scene;
 use blitz::traits::net::NetProvider;
 use blitz::traits::shell::{ColorScheme, Viewport};
@@ -93,6 +93,64 @@ pub struct HarnessLayout {
     y: f32,
     width: f32,
     height: f32,
+}
+
+/// One resolved element in the document's selector order.
+pub(crate) struct ElementView<'a> {
+    document: &'a BlitzDom,
+    id: NodeId,
+    node: &'a Node,
+    element: &'a ElementData,
+}
+
+impl ElementView<'_> {
+    pub(crate) fn tag(&self) -> &str {
+        self.element.name.local.as_ref()
+    }
+
+    pub(crate) fn attributes(&self) -> impl Iterator<Item = &Attribute> {
+        self.element.attrs().iter()
+    }
+
+    pub(crate) fn inline_style(&self) -> Result<String, JsError> {
+        self.document.inline_style_text(self.id).map_err(dom_error)
+    }
+
+    pub(crate) fn text_content(&self) -> Result<String, JsError> {
+        self.document.text_content(self.id).map_err(dom_error)
+    }
+
+    pub(crate) fn bounding_rect(&self, snapshot: LayoutSnapshot) -> Result<DomRect, JsError> {
+        self.document
+            .bounding_rect(self.id, snapshot)
+            .map_err(dom_error)
+    }
+}
+
+/// Visits every element in the order returned by Blitz's universal selector.
+pub(crate) fn visit_elements(
+    document: &BlitzDom,
+    mut visit: impl FnMut(ElementView<'_>) -> Result<(), JsError>,
+) -> Result<(), JsError> {
+    let ids = document
+        .query_selector_all(document.document(), "*")
+        .map_err(dom_error)?;
+    for id in ids {
+        let node = document
+            .document_ref()
+            .get_node(id)
+            .ok_or_else(|| JsError::new("Blitz returned a stale node"))?;
+        let Some(element) = node.element_data() else {
+            continue;
+        };
+        visit(ElementView {
+            document,
+            id,
+            node,
+            element,
+        })?;
+    }
+    Ok(())
 }
 
 /// Returns the document the last document harness loaded, if one is still live.
@@ -314,21 +372,10 @@ pub fn snapshot_document(
     };
 
     let document = document.borrow();
-    let ids = document
-        .query_selector_all(document.document(), "*")
-        .map_err(dom_error)?;
-    let mut nodes = Vec::with_capacity(ids.len());
-    for id in ids {
-        let node = document
-            .document_ref()
-            .get_node(id)
-            .ok_or_else(|| JsError::new("Blitz returned a stale node"))?;
-        let Some(element) = node.element_data() else {
-            continue;
-        };
+    let mut nodes = Vec::new();
+    visit_elements(&document, |element| {
         let attributes = element
-            .attrs()
-            .iter()
+            .attributes()
             .map(|attribute| {
                 (
                     attribute.name.local.to_string(),
@@ -336,14 +383,14 @@ pub fn snapshot_document(
                 )
             })
             .collect::<BTreeMap<_, _>>();
-        let layout = document.bounding_rect(id, snapshot).map_err(dom_error)?;
-        let inline_style = document.inline_style_text(id).map_err(dom_error)?;
-        let scroll = *node.scroll_offset();
+        let layout = element.bounding_rect(snapshot)?;
+        let inline_style = element.inline_style()?;
+        let scroll = *element.node.scroll_offset();
         nodes.push(HarnessNode {
-            handle: id.as_u64(),
-            parent: node.parent.map(|parent| parent.as_u64()),
-            tag: element.name.local.to_string(),
-            text_content: document.text_content(id).map_err(dom_error)?,
+            handle: element.id.as_u64(),
+            parent: element.node.parent.map(|parent| parent.as_u64()),
+            tag: element.tag().to_owned(),
+            text_content: element.text_content()?,
             inline_style,
             attributes,
             scroll_x: scroll.x,
@@ -354,8 +401,9 @@ pub fn snapshot_document(
                 width: layout.width,
                 height: layout.height,
             },
-            image: document
-                .image_state(id, snapshot)
+            image: element
+                .document
+                .image_state(element.id, snapshot)
                 .ok()
                 .map(|state| HarnessImage {
                     natural_width: state.natural_width,
@@ -364,7 +412,8 @@ pub fn snapshot_document(
                     errored: state.errored,
                 }),
         });
-    }
+        Ok(())
+    })?;
     let mut paint_colors = BTreeMap::<[u8; 4], usize>::new();
     for pixel in pixels.chunks_exact(4) {
         *paint_colors
@@ -409,6 +458,20 @@ pub fn encode_png(pixels: &[u8], width: u32, height: u32) -> Result<Vec<u8>, JsE
         .map_err(|error| JsError::new(error.to_string()))?;
     drop(writer);
     Ok(png)
+}
+
+/// Encodes and writes one numbered frame, returning the path that was written.
+pub(crate) fn record_frame(
+    directory: &Path,
+    frame: u32,
+    pixels: &[u8],
+    width: u32,
+    height: u32,
+) -> Result<PathBuf, JsError> {
+    let path = directory.join(format!("frame-{frame:05}.png"));
+    std::fs::write(&path, encode_png(pixels, width, height)?)
+        .map_err(|error| JsError::new(format!("could not record frame {frame}: {error}")))?;
+    Ok(path)
 }
 
 /// Loads a real entrypoint the way a window does and snapshots the result.
@@ -488,11 +551,95 @@ pub fn execute_document_animation_harness<E: JsEngine + Clone + 'static>(
             .ok_or_else(|| JsError::new("frame resolved no layout"))?;
         snapshots.push(snapshot_document(&document, layout, frame_loop.pixels())?);
         if let Some(directory) = record_into {
-            let png = encode_png(frame_loop.pixels(), width, height)?;
-            std::fs::write(directory.join(format!("frame-{frame:05}.png")), &png).map_err(
-                |error| JsError::new(format!("could not record frame {frame}: {error}")),
-            )?;
+            record_frame(directory, frame, frame_loop.pixels(), width, height)?;
         }
     }
     Ok(snapshots)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn element_view_preserves_tree_and_attribute_order() {
+        let mut document = BlitzDom::from_html(
+            "<main data-last=2 id=first>one<span class=inner>two</span></main>",
+            DocumentConfig {
+                viewport: Some(Viewport::new(320, 200, 1.0, ColorScheme::Light)),
+                ..Default::default()
+            },
+        );
+        let layout = document.flush_layout().expect("the fixture lays out");
+        let mut seen = Vec::new();
+        visit_elements(&document, |element| {
+            if matches!(element.tag(), "main" | "span") {
+                let attributes = element
+                    .attributes()
+                    .map(|attribute| {
+                        (
+                            attribute.name.local.to_string(),
+                            attribute.value.to_string(),
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                seen.push((
+                    element.tag().to_owned(),
+                    attributes,
+                    element.inline_style()?,
+                    element.text_content()?,
+                    element.bounding_rect(layout)?,
+                ));
+            }
+            Ok(())
+        })
+        .expect("the elements resolve");
+
+        assert_eq!(seen.len(), 2);
+        assert_eq!(seen[0].0, "main");
+        assert_eq!(
+            seen[0].1,
+            [
+                ("data-last".into(), "2".into()),
+                ("id".into(), "first".into())
+            ]
+        );
+        assert_eq!(seen[0].2, "");
+        assert_eq!(seen[0].3, "onetwo");
+        assert!(seen[0].4.width > 0.0);
+        assert_eq!(seen[1].0, "span");
+        assert_eq!(seen[1].3, "two");
+    }
+
+    #[test]
+    fn record_frame_owns_the_filename_png_and_write_error() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("time moves forwards")
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "blitsen-record-frame-{}-{unique}",
+            std::process::id()
+        ));
+        std::fs::create_dir(&directory).expect("a scratch directory");
+
+        let pixels = [0x12, 0x34, 0x56, 0xff];
+        let path = record_frame(&directory, 12, &pixels, 1, 1).expect("the frame records");
+        assert_eq!(
+            path.file_name().and_then(|name| name.to_str()),
+            Some("frame-00012.png")
+        );
+        assert!(
+            std::fs::read(&path)
+                .expect("the PNG is readable")
+                .starts_with(&[0x89, b'P', b'N', b'G'])
+        );
+
+        let blocker = directory.join("not-a-directory");
+        std::fs::write(&blocker, []).expect("the blocker is written");
+        let error =
+            record_frame(&blocker, 13, &pixels, 1, 1).expect_err("writing below a file fails");
+        assert!(error.message().starts_with("could not record frame 13:"));
+        std::fs::remove_dir_all(directory).expect("the scratch directory is removed");
+    }
 }
