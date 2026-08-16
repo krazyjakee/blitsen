@@ -26,6 +26,30 @@ unsafe extern "C" fn interrupted(_rt: *mut q::JSRuntime, opaque: *mut c_void) ->
     c_int::from(stop.load(Ordering::Relaxed))
 }
 
+impl QuickJs {
+    /// Evaluates source with the requested QuickJS flags and retains its C name.
+    fn eval_source(
+        &self,
+        source: &str,
+        name: &str,
+        name_error: &str,
+        flags: c_int,
+    ) -> Result<(QjsValue, CString), JsError> {
+        let code = CString::new(source).map_err(|_| JsError::new("source contains a NUL"))?;
+        let name = CString::new(name).map_err(|_| JsError::new(name_error))?;
+        let raw = unsafe {
+            q::JS_Eval(
+                self.ctx(),
+                code.as_ptr(),
+                source.len() as q::size_t,
+                name.as_ptr(),
+                flags,
+            )
+        };
+        Ok((self.checked(raw)?, name))
+    }
+}
+
 impl JsEngine for QuickJs {
     type Value = QjsValue;
     type WeakRef = QjsWeakRef;
@@ -420,45 +444,26 @@ impl JsEngine for QuickJs {
     }
 
     fn evaluate_script(&mut self, source: &str, filename: &str) -> Result<Self::Value, JsError> {
-        let code = CString::new(source).map_err(|_| JsError::new("source contains a NUL"))?;
-        let name = CString::new(filename).map_err(|_| JsError::new("filename contains a NUL"))?;
-        let raw = unsafe {
-            q::JS_Eval(
-                self.ctx(),
-                code.as_ptr(),
-                source.len() as q::size_t,
-                name.as_ptr(),
-                0,
-            )
-        };
-        self.checked(raw)
+        self.eval_source(source, filename, "filename contains a NUL", 0)
+            .map(|(value, _name)| value)
     }
 
     fn evaluate_module(&mut self, source: &str, identifier: &str) -> Result<Self::Value, JsError> {
-        let code = CString::new(source).map_err(|_| JsError::new("source contains a NUL"))?;
-        let name =
-            CString::new(identifier).map_err(|_| JsError::new("identifier contains a NUL"))?;
         // Compiled first, evaluated second, so `import.meta` can be filled in
         // between the two — which is the only point at which it can be, and
         // what `qjs.c` itself does. An entry module never passes through the
         // loader, so this is the one place its own address is known.
-        let compiled = unsafe {
-            q::JS_Eval(
-                self.ctx(),
-                code.as_ptr(),
-                source.len() as q::size_t,
-                name.as_ptr(),
-                (q::JS_EVAL_TYPE_MODULE | q::JS_EVAL_FLAG_COMPILE_ONLY) as c_int,
-            )
-        };
-        if unsafe { q::JS_IsException(compiled) } {
-            return Err(self.exception());
-        }
+        let (compiled, name) = self.eval_source(
+            source,
+            identifier,
+            "identifier contains a NUL",
+            (q::JS_EVAL_TYPE_MODULE | q::JS_EVAL_FLAG_COMPILE_ONLY) as c_int,
+        )?;
         unsafe {
-            let module = q::JS_VALUE_GET_PTR(compiled).cast::<q::JSModuleDef>();
+            let module = q::JS_VALUE_GET_PTR(compiled.raw).cast::<q::JSModuleDef>();
             crate::modules::set_import_meta(self.ctx(), module, name.as_ptr());
             // `JS_EvalFunction` takes the compiled module over.
-            let raw = q::JS_EvalFunction(self.ctx(), compiled);
+            let raw = q::JS_EvalFunction(self.ctx(), compiled.into_raw());
             self.checked(raw)
         }
     }
@@ -504,6 +509,53 @@ impl JsEngine for QuickJs {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn evaluation_preserves_input_errors_and_script_module_flags() {
+        let mut engine = QuickJs::new().expect("a runtime");
+
+        let error = engine
+            .evaluate_script("void '\0'", "app.js")
+            .err()
+            .expect("a source NUL is rejected");
+        assert_eq!(error.message(), "source contains a NUL");
+        let error = engine
+            .evaluate_script("", "app\0.js")
+            .err()
+            .expect("a filename NUL is rejected");
+        assert_eq!(error.message(), "filename contains a NUL");
+        let error = engine
+            .evaluate_module("void '\0'", "app.mjs")
+            .err()
+            .expect("a module source NUL is rejected");
+        assert_eq!(error.message(), "source contains a NUL");
+        let error = engine
+            .evaluate_module("", "app\0.mjs")
+            .err()
+            .expect("an identifier NUL is rejected");
+        assert_eq!(error.message(), "identifier contains a NUL");
+        assert!(engine.evaluate_script(")", "broken.js").is_err());
+
+        engine
+            .evaluate_script("globalThis.scriptRan = true", "classic.js")
+            .expect("classic source is evaluated rather than compiled only");
+        engine
+            .evaluate_module(
+                "globalThis.moduleUrl = import.meta.url",
+                "blitsen:test-module",
+            )
+            .expect("module source accepts import.meta and is evaluated");
+        let result = engine
+            .evaluate_script(
+                "`${globalThis.scriptRan}:${globalThis.moduleUrl}`",
+                "result.js",
+            )
+            .expect("the evaluation effects are visible");
+        assert_eq!(
+            engine.to_string(&result).expect("the result is text"),
+            "true:blitsen:test-module"
+        );
+    }
 
     /// What `memory_warning` buys, measured rather than assumed (issue #146).
     ///
