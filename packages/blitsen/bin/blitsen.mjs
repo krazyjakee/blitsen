@@ -1,28 +1,20 @@
 #!/usr/bin/env node
 
-import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { main } from "../src/cli.mjs";
 import { buildStandalone } from "../src/export.mjs";
+import { openRuntime } from "../src/runtime.mjs";
 
 let runtime = null;
 try {
-  const require = createRequire(import.meta.url);
   const configuredPath = process.env.BLITSEN_NATIVE_PATH;
   const nativePath = configuredPath?.startsWith("file:")
     ? fileURLToPath(configuredPath)
     : configuredPath ?? fileURLToPath(new URL("../native/blitsen.node", import.meta.url));
-  const native = require(nativePath);
-  const engine = new native.Engine();
+  const resolved = { path: nativePath };
   runtime = {
-    openDirectory(options) {
-      return engine.openDirectory(options);
-    },
-    reloadCSS: engine.reloadCSS ? file => engine.reloadCSS(file) : null,
-    reloadDirectory: engine.reloadDirectory ? () => engine.reloadDirectory() : null,
-    pumpWindow: engine.pumpWindow ? () => engine.pumpWindow() : null,
-    waitForNextFrame: delay => Bun.sleep(delay),
-    build: options => buildStandalone(options, nativePath),
+    ...openRuntime(resolved, { waitForNextFrame: delay => Bun.sleep(delay) }),
+    build: options => buildStandalone(options, resolved),
   };
 } catch {}
 

@@ -363,8 +363,11 @@ export async function resolvePhase2Runtime({
 }
 
 /** Loads a resolved addon and adapts the engine to the surface the CLI drives. */
-export function openRuntime(resolved) {
-  const native = createRequire(import.meta.url)(resolved.path);
+export function openRuntime(resolved, {
+  loadAddon = createRequire(import.meta.url),
+  waitForNextFrame = setTimeout,
+} = {}) {
+  const native = loadAddon(resolved.path);
   const engine = new native.Engine();
   return {
     resolved,
@@ -374,6 +377,6 @@ export function openRuntime(resolved) {
     reloadCSS: engine.reloadCSS ? file => engine.reloadCSS(file) : null,
     reloadDirectory: engine.reloadDirectory ? () => engine.reloadDirectory() : null,
     pumpWindow: engine.pumpWindow ? () => engine.pumpWindow() : null,
-    waitForNextFrame: delay => setTimeout(delay),
+    waitForNextFrame,
   };
 }
