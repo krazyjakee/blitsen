@@ -130,9 +130,7 @@
     get onended() { return audioStateFor(this).onended ?? null; }
     set onended(callback) {
       const state = audioStateFor(this);
-      if (state.onended) this.removeEventListener("ended", state.onended);
-      state.onended = typeof callback === "function" ? callback : null;
-      if (state.onended) this.addEventListener("ended", state.onended);
+      setEventHandler(this, state, "ended", callback, "onended");
     }
     start(when = 0, offset = 0) {
       const state = audioStateFor(this);

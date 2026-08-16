@@ -21,3 +21,13 @@
     }
     return Object.defineProperties(target, descriptors);
   };
+
+  // The listener installed by an `onfoo` property is replaceable rather than
+  // additive. Each interface owns the record that backs its getters, while the
+  // subtle remove-before-add behaviour is shared by both window and worker
+  // scopes here.
+  const setEventHandler = (target, handlers, type, callback, slot = type) => {
+    if (handlers[slot]) target.removeEventListener(type, handlers[slot]);
+    handlers[slot] = typeof callback === "function" ? callback : null;
+    if (handlers[slot]) target.addEventListener(type, handlers[slot]);
+  };

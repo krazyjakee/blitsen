@@ -126,6 +126,63 @@ const eventDispatch = JSON.parse(native.runBridgeHarness(
 ));
 assert.equal(eventDispatch.nodes.find(node => node.attributes.id === "event-target").attributes["data-dispatch"], "ok");
 
+// Issue #173: every event-handler property shares replacement semantics, but
+// each interface keeps its own accessor and backing record. Exercise one
+// target from each of the six bootstrap fragments that use the shared helper.
+const handlerProperties = JSON.parse(native.runBridgeHarness(
+  `<div id="handler-properties"></div>`,
+  `{ const channel = new MessageChannel();
+     const targets = [
+       [new Image(), "onload", "load", "resource"],
+       [channel.port1, "onmessage", "message", "port"],
+       [Object.create(WebSocket.prototype), "onopen", "open", "socket"],
+       [matchMedia("(min-width: 1px)"), "onchange", "change", "media-query"],
+       [new AudioContext().createBufferSource(), "onended", "ended", "audio-source"],
+       [new AbortController().signal, "onabort", "abort", "abort-signal"],
+     ];
+     for (const [target, property, type, name] of targets) {
+       const descriptor = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(target), property);
+       if (typeof descriptor?.get !== "function" || typeof descriptor?.set !== "function" ||
+           descriptor.enumerable || !descriptor.configurable || Object.keys(target).includes(property))
+         throw new Error(name + " handler descriptor");
+       if (target[property] !== null || Object.hasOwn(target, property))
+         throw new Error(name + " initial handler");
+
+       const calls = [];
+       const listener = () => calls.push("listener");
+       const replaced = () => calls.push("replaced");
+       const current = function(event) {
+         if (this !== target || event.currentTarget !== target) throw new Error(name + " this binding");
+         calls.push("current");
+       };
+       target.addEventListener(type, listener);
+       target[property] = replaced;
+       if (target[property] !== replaced) throw new Error(name + " getter after assignment");
+       target[property] = current;
+       if (target[property] !== current || Object.hasOwn(target, property))
+         throw new Error(name + " replacement getter");
+       target.dispatchEvent(new Event(type));
+       if (calls.join(",") !== "listener,current")
+         throw new Error(name + " replacement delivery: " + calls);
+
+       target[property] = { handleEvent() { calls.push("object"); } };
+       if (target[property] !== null) throw new Error(name + " non-function clear");
+       target.dispatchEvent(new Event(type));
+       if (calls.join(",") !== "listener,current,listener")
+         throw new Error(name + " cleared delivery: " + calls);
+       target.removeEventListener(type, listener);
+     }
+     channel.port1.close(); channel.port2.close();
+     document.getElementById("handler-properties").setAttribute("data-handlers", "ok"); }`,
+  200,
+  100,
+));
+assert.equal(
+  handlerProperties.nodes.find(node => node.attributes.id === "handler-properties")
+    .attributes["data-handlers"],
+  "ok",
+);
+
 const keyboardDispatch = JSON.parse(native.runBridgeHarness(
   `<button id="first-key">first</button><button id="second-key">second</button>`,
   `{ const first = document.getElementById("first-key");

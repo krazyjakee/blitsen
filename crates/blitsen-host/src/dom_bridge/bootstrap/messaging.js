@@ -62,9 +62,7 @@
   const setPortHandler = (target, type, callback) => {
     let handlers = portHandlers.get(target);
     if (!handlers) portHandlers.set(target, handlers = {});
-    if (handlers[type]) target.removeEventListener(type, handlers[type]);
-    handlers[type] = typeof callback === "function" ? callback : null;
-    if (handlers[type]) target.addEventListener(type, handlers[type]);
+    setEventHandler(target, handlers, type, callback);
   };
 
   class MessagePort extends EventTarget {
