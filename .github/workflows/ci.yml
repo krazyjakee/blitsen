@@ -516,9 +516,11 @@ jobs:
             machine="${pair##*:}"
             so="target/$triple/release/libblitsen_android.so"
             test -f "$so" || { echo "$so was not built"; exit 1; }
-            "$readelf" -h "$so" | grep -q "$machine" \
+            header="$("$readelf" -h "$so")"
+            symbols="$("$nm" --dynamic --defined-only "$so")"
+            grep -q "$machine" <<< "$header" \
               || { echo "$so is not $machine"; "$readelf" -h "$so"; exit 1; }
-            "$nm" --dynamic --defined-only "$so" | grep -qw android_main \
+            grep -qw android_main <<< "$symbols" \
               || { echo "$so exports no android_main, so NativeActivity cannot start it"; exit 1; }
             echo "$so: $machine, exports android_main, $(stat -c%s "$so") bytes"
           done
