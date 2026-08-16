@@ -32,6 +32,11 @@ winit = "=0.31.0-beta.2"
 [build-dependencies]
 napi-build = "2.2"
 
+[dev-dependencies]
+# Unit tests do not run inside Node or Bun, so resolve Node-API symbols lazily.
+# Production addon builds keep the static imports the host supplies.
+napi = { version = "3.4", default-features = false, features = ["napi7", "dyn-symbols"] }
+
 [lints]
 workspace = true
 
