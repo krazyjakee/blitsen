@@ -493,14 +493,14 @@ describe("the build plan", () => {
     for (const triple of ["aarch64_linux_android", "x86_64_linux_android"]) {
       // openssl-sys builds OpenSSL vendored on Android, and its makefile runs a
       // `ranlib` the NDK stopped shipping under that name in r23.
-      expect(environment[`RANLIB_${triple}`]).toBe(`${llvm}/bin/llvm-ranlib`);
+      expect(environment[`RANLIB_${triple}`]).toBe(join(llvm, "bin", "llvm-ranlib"));
       // rquickjs-sys generates its own Android bindings and hands bindgen no
       // sysroot, so libclang reads Android's headers as the host's.
       expect(environment[`BINDGEN_EXTRA_CLANG_ARGS_${triple}`])
         .toContain(`--sysroot=${llvm}/sysroot`);
     }
     expect(environment.BINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android)
-      .toContain(`-I${llvm}/sysroot/usr/include/aarch64-linux-android`);
+      .toContain(`-I${join(llvm, "sysroot", "usr", "include", "aarch64-linux-android")}`);
     // Only the ABIs asked for: naming one configures one.
     expect(environment.RANLIB_armv7_linux_androideabi).toBeUndefined();
   });
@@ -513,9 +513,9 @@ describe("the build plan", () => {
     // The Rust triple is `armv7-linux-androideabi`; the include directory is
     // `arm-linux-androideabi`, and using the first finds nothing.
     expect(environment.BINDGEN_EXTRA_CLANG_ARGS_armv7_linux_androideabi)
-      .toContain("/sysroot/usr/include/arm-linux-androideabi");
+      .toContain(join("sysroot", "usr", "include", "arm-linux-androideabi"));
     expect(environment.BINDGEN_EXTRA_CLANG_ARGS_armv7_linux_androideabi)
-      .not.toContain("include/armv7-linux-androideabi");
+      .not.toContain(join("include", "armv7-linux-androideabi"));
   });
 
   test("takes the shared objects from where cargo left them", () => {
