@@ -7,7 +7,7 @@
 //! it.
 
 use std::cell::RefCell;
-use std::ffi::{CStr, CString, c_int, c_void};
+use std::ffi::{c_char, c_int, c_void};
 use std::rc::Rc;
 
 use blitsen_js::{ExternalId, JsError, NativeCall, NativeCallback};
@@ -147,11 +147,19 @@ pub(crate) unsafe fn context_state<'a>(ctx: *mut q::JSContext) -> &'a ContextSta
     unsafe { &*opaque.cast::<ContextState>() }
 }
 
+/// Copies a Rust string into QuickJS using the pointer and length from the same
+/// allocation. Unlike a C string, a JavaScript string may contain NUL bytes.
+pub(crate) unsafe fn new_string(ctx: *mut q::JSContext, text: &str) -> q::JSValue {
+    // SAFETY: the caller supplies a live context. `JS_NewStringLen` copies
+    // exactly `text.len()` bytes before returning, so the borrowed pointer does
+    // not escape and does not need a trailing NUL.
+    unsafe { q::JS_NewStringLen(ctx, text.as_ptr().cast::<c_char>(), text.len() as q::size_t) }
+}
+
 pub(crate) unsafe fn throw(ctx: *mut q::JSContext, message: &str) -> q::JSValue {
-    let text = CString::new(message).unwrap_or_else(|_| CString::new("native error").unwrap());
     unsafe {
         let error = q::JS_NewError(ctx);
-        let text = q::JS_NewStringLen(ctx, text.as_ptr(), message.len() as q::size_t);
+        let text = new_string(ctx, message);
         let key = c"message".as_ptr();
         q::JS_SetPropertyStr(ctx, error, key, text);
         q::JS_Throw(ctx, error)
@@ -268,7 +276,11 @@ impl QuickJs {
             if raw.is_null() {
                 return None;
             }
-            let text = CStr::from_ptr(raw).to_string_lossy().into_owned();
+            // `JS_ToCStringLen2` returns an explicit byte length because a
+            // JavaScript string can contain NUL. Reading it as `CStr` would
+            // silently truncate the value at the first one.
+            let bytes = std::slice::from_raw_parts(raw.cast::<u8>(), len as usize);
+            let text = String::from_utf8_lossy(bytes).into_owned();
             q::JS_FreeCString(self.ctx(), raw);
             Some(text)
         }
