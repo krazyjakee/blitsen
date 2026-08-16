@@ -16,6 +16,7 @@ use blitsen_js::{
 };
 use napi::bindgen_prelude::{FromNapiValue, Unknown};
 use napi::{Env, JsValue, Status, ValueType, sys};
+use url::Url;
 
 #[cfg(target_os = "macos")]
 use winit::application::macos::ApplicationHandlerExtMacOS;
@@ -731,50 +732,35 @@ fn document_url(identifier: &str) -> Option<String> {
     }
     let (entrypoint, fragment) =
         parse_inline_script_identifier(identifier).unwrap_or((identifier, ""));
-    let on_disk = application_document_path(identifier)
-        .map(|path| path.to_string_lossy().into_owned())
-        .or_else(|| {
-            Path::new(entrypoint)
-                .is_absolute()
-                .then(|| entrypoint.to_owned())
-        });
+    let on_disk = application_document_path(identifier).or_else(|| {
+        Path::new(entrypoint)
+            .is_absolute()
+            .then(|| PathBuf::from(entrypoint))
+    });
     match on_disk {
-        // The same escaping the document's own base URL uses, so a relative
-        // resolution from a script and one from the document agree.
-        Some(path) => {
-            // An application URL's query is not part of its on-disk path, but
-            // remains part of the document URL when that path is translated.
-            let query = entrypoint
-                .strip_prefix(APP_ORIGIN)
-                .and_then(|relative| relative.split_once('?').map(|(_, tail)| tail))
-                .map_or(String::new(), |query| format!("?{query}"));
-            Some(format!("{}{query}{fragment}", file_url(&path)))
-        }
+        // A real file URL gives relative imports and asset references the
+        // filesystem base the Node/Bun module loader expects.
+        Some(path) => document_file_url(&path, entrypoint, fragment),
         // A bundle: no file behind it, so the application URL is the address.
         None => identifier.contains("://").then(|| identifier.to_owned()),
     }
 }
 
-/// A filesystem path as a `file:` URL.
+/// Translates an on-disk document identity into the URL exposed to JavaScript.
 ///
-/// A POSIX path is already a URL path. A Windows one is not: `C:\app\x.html`
-/// has to become `/C:/app/x.html`, separators and all, or what comes out is
-/// `file://C:\app\x.html` — which is not a file URL, and which
-/// `new URL("./asset.png", import.meta.url)` resolves against as though the
-/// drive letter were a hostname.
-fn file_url(path: &str) -> String {
-    let slashed = path.replace('\\', "/");
-    let rooted = if slashed.starts_with('/') {
-        slashed
-    } else {
-        format!("/{slashed}")
-    };
-    let escaped = rooted
-        .replace('%', "%25")
-        .replace(' ', "%20")
-        .replace('#', "%23")
-        .replace('?', "%3F");
-    format!("file://{escaped}")
+/// Paths already cross this host's Node-API boundary as lossy UTF-8 strings;
+/// retain that policy here, then leave file URL authority, drive and path
+/// encoding rules to the standards implementation. The application query and
+/// inline-script fragment are URL syntax rather than path bytes, so they are
+/// restored only after the path has been converted.
+fn document_file_url(path: &Path, entrypoint: &str, fragment: &str) -> Option<String> {
+    let utf8_path = path.to_string_lossy();
+    let url = Url::from_file_path(Path::new(utf8_path.as_ref())).ok()?;
+    let query = entrypoint
+        .strip_prefix(APP_ORIGIN)
+        .and_then(|relative| relative.split_once('?').map(|(_, tail)| tail))
+        .map_or(String::new(), |query| format!("?{query}"));
+    Some(format!("{url}{query}{fragment}"))
 }
 
 pub(crate) fn external_from_raw(
@@ -833,9 +819,11 @@ pub(crate) fn from_typed_array_type(
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use blitsen_core::inline_script_identifier;
 
-    use super::{document_url, uses_document_script_scope};
+    use super::{document_file_url, document_url, uses_document_script_scope};
 
     /// Issue #125: an inline module's `import.meta.url` is the document's URL,
     /// as it is in a browser, so `new URL('./x', import.meta.url)` names a file
@@ -893,21 +881,77 @@ mod tests {
     }
 
     #[test]
-    fn document_urls_escape_path_punctuation_before_the_inline_fragment() {
+    fn document_urls_encode_every_path_segment_before_the_inline_fragment() {
         let (document, expected) = if cfg!(windows) {
             (
-                r"C:\app#archive?\index.html",
-                "file:///C:/app%23archive%3F/index.html#script-3",
+                r"C:\50% off#archive?\café.html",
+                "file:///C:/50%25%20off%23archive%3F/caf%C3%A9.html#script-3",
             )
         } else {
             (
-                "/tmp/app#archive?/index.html",
-                "file:///tmp/app%23archive%3F/index.html#script-3",
+                "/tmp/50% off#archive?/café.html",
+                "file:///tmp/50%25%20off%23archive%3F/caf%C3%A9.html#script-3",
             )
         };
         assert_eq!(
             document_url(&inline_script_identifier(document, 3)).as_deref(),
             Some(expected)
+        );
+    }
+
+    #[test]
+    fn an_application_query_stays_between_the_file_path_and_inline_fragment() {
+        let (path, expected) = if cfg!(windows) {
+            (
+                Path::new(r"C:\app\index.html"),
+                "file:///C:/app/index.html?theme=dark&build=42#script-7",
+            )
+        } else {
+            (
+                Path::new("/tmp/app/index.html"),
+                "file:///tmp/app/index.html?theme=dark&build=42#script-7",
+            )
+        };
+        assert_eq!(
+            document_file_url(
+                path,
+                "blitsen://app/index.html?theme=dark&build=42",
+                "#script-7",
+            )
+            .as_deref(),
+            Some(expected)
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn non_utf8_paths_keep_the_hosts_lossy_javascript_identifier_policy() {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+        use std::path::PathBuf;
+
+        let path = PathBuf::from(OsString::from_vec(b"/tmp/app-\x80/index.html".to_vec()));
+        assert_eq!(
+            document_file_url(&path, "", "#script-1").as_deref(),
+            Some("file:///tmp/app-%EF%BF%BD/index.html#script-1")
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_drive_and_unc_paths_use_file_url_platform_rules() {
+        assert_eq!(
+            document_file_url(Path::new(r"C:\my app\index.html"), "", "#script-1").as_deref(),
+            Some("file:///C:/my%20app/index.html#script-1")
+        );
+        assert_eq!(
+            document_file_url(
+                Path::new(r"\\server\share name\index.html"),
+                "",
+                "#script-2"
+            )
+            .as_deref(),
+            Some("file://server/share%20name/index.html#script-2")
         );
     }
 }
