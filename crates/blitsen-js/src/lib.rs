@@ -405,6 +405,18 @@ pub trait JsEngine {
     fn drain_microtasks(&mut self) -> Result<usize, JsError>;
     /// Gives the JavaScript host event loop one non-blocking turn.
     fn pump_event_loop(&mut self) -> Result<LoopTurn, JsError>;
+
+    /// Collects the heap now, rather than waiting for the engine's threshold.
+    ///
+    /// Asked for when the operating system says it is short of memory. The
+    /// default is to do nothing, and that is the right answer for an engine
+    /// whose only targets never receive such a warning: no desktop winit
+    /// backend delivers one, so JavaScriptCore and Node-API keep the default.
+    /// QuickJS implements it, because QuickJS is what Android and iOS host and
+    /// they are the two platforms that ask (issue #146).
+    fn collect_garbage(&mut self) -> Result<(), JsError> {
+        Ok(())
+    }
 }
 
 #[cfg(test)]

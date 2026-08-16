@@ -31,6 +31,7 @@ use winit::application::macos::ApplicationHandlerExtMacOS;
 use crate::OpenDirectoryOptions;
 use crate::app::AppFiles;
 use crate::pointer_input::{PendingPointerInput, PointerIds};
+use crate::surface_lifecycle::{SurfaceState, SyntheticPhase};
 
 /// Hands the activity to the event loop, before there is one (issue #142).
 ///
@@ -82,6 +83,10 @@ pub struct WindowApplication<Rend: anyrender::WindowRenderer, E: JsEngine + Clon
     pub(crate) pointer_ids: PointerIds,
     pub(crate) modifiers: ModifiersState,
     pub(crate) load_dispatched: bool,
+    /// Whether the window has a surface to paint into; see `surface_lifecycle`.
+    pub(crate) surface: SurfaceState,
+    /// A synthetic surface cycle a test asked for, run at the next pump.
+    pub(crate) synthetic_phase: Option<SyntheticPhase>,
 }
 
 #[derive(Clone)]
@@ -191,6 +196,8 @@ impl<E: JsEngine + Clone + 'static> WindowSession<E> {
             pointer_ids: PointerIds::default(),
             modifiers: ModifiersState::empty(),
             load_dispatched: false,
+            surface: SurfaceState::Initial,
+            synthetic_phase: None,
         };
         drop(guard);
         Ok(Self {
@@ -593,7 +600,7 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Ren
         }
     }
 
-    fn sync_native_window(&self, window_id: WindowId) {
+    pub(crate) fn sync_native_window(&self, window_id: WindowId) {
         let Some((width, height, scale)) = self.inner.windows.get(&window_id).map(|view| {
             let document = view.doc.inner();
             let viewport = document.viewport();
@@ -623,7 +630,7 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Ren
     /// There is deliberately only one: multiple windows wait on the shared
     /// versus isolated JavaScript context decision, and `create` is declared
     /// absent until it is settled.
-    fn publish_window(&self) {
+    pub(crate) fn publish_window(&self) {
         crate::dom_bridge::window::publish(
             self.inner
                 .windows
@@ -675,7 +682,7 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Ren
         }
     }
 
-    fn maybe_dispatch_load(&mut self) {
+    pub(crate) fn maybe_dispatch_load(&mut self) {
         if self.load_dispatched || self.error.borrow().is_some() {
             return;
         }
@@ -733,19 +740,11 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> ApplicationHandler
     }
 
     fn resumed(&mut self, event_loop: &dyn ActiveEventLoop) {
-        self.inner.resumed(event_loop);
+        self.on_resumed(event_loop);
     }
 
     fn can_create_surfaces(&mut self, event_loop: &dyn ActiveEventLoop) {
-        self.inner.can_create_surfaces(event_loop);
-        // Published before `load` is dispatched, so the first listener an
-        // application registers already has a window to act on.
-        self.publish_window();
-        let windows: Vec<_> = self.inner.windows.keys().copied().collect();
-        for id in windows {
-            self.sync_native_window(id);
-        }
-        self.maybe_dispatch_load();
+        self.on_can_create_surfaces(event_loop);
     }
 
     fn proxy_wake_up(&mut self, event_loop: &dyn ActiveEventLoop) {
@@ -780,7 +779,12 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> ApplicationHandler
             self.drain_pointer_input(window_id);
             self.drain_keyboard_input(window_id);
         }
-        let animation_pending = redraw && self.run_animation_frame();
+        // `requestAnimationFrame` means "before the next paint", and a window
+        // with no surface has no next paint. Android's winit backend stops
+        // dispatching redraws entirely while the app is stopped; the desktop
+        // backends have no such gate, so the rule is applied here instead and
+        // means the same thing on every target (see `surface_lifecycle`).
+        let animation_pending = redraw && !self.surface.is_lost() && self.run_animation_frame();
         self.inner.window_event(event_loop, window_id, event);
         // After Blitz has had the frame, because painting it re-resolves Blitz's
         // own hover state and sets a cursor from it.
@@ -816,6 +820,10 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> ApplicationHandler
     }
 
     fn about_to_wait(&mut self, event_loop: &dyn ActiveEventLoop) {
+        // First: a synthetic cycle is meant to be indistinguishable from one
+        // the platform sent, so it runs before the turn's other work, exactly
+        // where a real `destroy_surfaces` would have landed.
+        self.run_synthetic_phase(event_loop);
         self.inner.about_to_wait(event_loop);
         self.settle_native_resize(event_loop);
         // The turn's last reported size, applied once. A redraw in the same
@@ -825,7 +833,10 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> ApplicationHandler
             self.apply_pending_resize(event_loop, window_id);
         }
         self.maybe_dispatch_load();
-        if self.animation_frames_pending() {
+        // The surface is asked before JavaScript is: a window that cannot
+        // present has no frame to ask for, and the question below costs a
+        // script evaluation on every turn of the loop.
+        if !self.surface.is_lost() && self.animation_frames_pending() {
             for view in self.inner.windows.values() {
                 view.window.request_redraw();
             }
@@ -833,15 +844,15 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> ApplicationHandler
     }
 
     fn suspended(&mut self, event_loop: &dyn ActiveEventLoop) {
-        self.inner.suspended(event_loop);
+        self.on_suspended(event_loop);
     }
 
     fn destroy_surfaces(&mut self, event_loop: &dyn ActiveEventLoop) {
-        self.inner.destroy_surfaces(event_loop);
+        self.on_destroy_surfaces(event_loop);
     }
 
     fn memory_warning(&mut self, event_loop: &dyn ActiveEventLoop) {
-        self.inner.memory_warning(event_loop);
+        self.on_memory_warning(event_loop);
     }
 
     #[cfg(target_os = "macos")]

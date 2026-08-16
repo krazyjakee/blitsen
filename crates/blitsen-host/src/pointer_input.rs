@@ -66,41 +66,66 @@ pub(crate) enum PointerContact {
 const MOUSE_POINTER_ID: i64 = 1;
 
 /// DOM `pointerId`s, allocated per contact and retired when the contact ends.
+///
+/// The table holds the whole of what was last dispatched for a contact, not
+/// just its id, because a contact can be taken away by something that carries
+/// no description of it — a `PointerLeft` with no position, or the surface
+/// being destroyed underneath a gesture (see `surface_lifecycle`). Spelling
+/// that as a `pointercancel` needs the pointer's type and whether it was
+/// primary, and the last event that named them is the only place they existed.
 pub(crate) struct PointerIds {
-    assigned: HashMap<PointerContact, i64>,
+    live: HashMap<PointerContact, PointerDetails>,
     next: i64,
 }
 
 impl Default for PointerIds {
     fn default() -> Self {
         Self {
-            assigned: HashMap::new(),
+            live: HashMap::new(),
             next: MOUSE_POINTER_ID + 1,
         }
     }
 }
 
 impl PointerIds {
-    /// The id for a contact, allocating one the first time it is seen.
+    /// Resolves a device into the DOM pointer it is, allocating an id if new.
     ///
     /// Ids are never reused, so a finger the platform re-numbered is still a new
     /// pointer to the DOM — which is the whole point of not keying on `FingerId`.
-    pub(crate) fn id_for(&mut self, contact: PointerContact) -> i64 {
-        if contact == PointerContact::Mouse {
-            return MOUSE_POINTER_ID;
+    pub(crate) fn details_for(
+        &mut self,
+        identity: PointerIdentity,
+        primary: bool,
+    ) -> PointerDetails {
+        let pointer_id = match identity.contact {
+            PointerContact::Mouse => MOUSE_POINTER_ID,
+            contact => match self.live.get(&contact) {
+                Some(live) => live.pointer_id,
+                None => {
+                    let id = self.next;
+                    self.next += 1;
+                    id
+                }
+            },
+        };
+        let details = PointerDetails {
+            pointer_id,
+            pointer_type: identity.pointer_type,
+            primary,
+            identity,
+        };
+        // The mouse is deliberately absent: it has a fixed id, it is never
+        // "live" in the sense the cancellation path means, and it is the one
+        // pointer the platform never takes away without saying so.
+        if identity.contact != PointerContact::Mouse {
+            self.live.insert(identity.contact, details);
         }
-        if let Some(&id) = self.assigned.get(&contact) {
-            return id;
-        }
-        let id = self.next;
-        self.next += 1;
-        self.assigned.insert(contact, id);
-        id
+        details
     }
 
     /// Forgets a contact, so the next one spelled the same way is a new pointer.
     pub(crate) fn retire(&mut self, contact: PointerContact) {
-        self.assigned.remove(&contact);
+        self.live.remove(&contact);
     }
 
     /// Reports whether a contact is one this registry has an id out for.
@@ -108,12 +133,22 @@ impl PointerIds {
     /// The mouse is never in the table — it has a fixed id — and is never live
     /// in this sense, which is what keeps it out of the cancellation path.
     pub(crate) fn is_live(&self, contact: PointerContact) -> bool {
-        self.assigned.contains_key(&contact)
+        self.live.contains_key(&contact)
+    }
+
+    /// Every contact still on the books, in the order they were allocated.
+    ///
+    /// Ordered so that a caller cancelling all of them dispatches in a stable
+    /// sequence rather than whatever order the hash map happens to hold.
+    pub(crate) fn live(&self) -> Vec<PointerDetails> {
+        let mut live: Vec<_> = self.live.values().copied().collect();
+        live.sort_by_key(|details| details.pointer_id);
+        live
     }
 
     /// Forgets every contact, for a document that is being replaced.
     pub(crate) fn clear(&mut self) {
-        self.assigned.clear();
+        self.live.clear();
     }
 }
 
@@ -157,6 +192,18 @@ impl PointerIdentity {
             twist: 0.0,
             tangential_pressure: 0.0,
         }
+    }
+
+    /// A finger with no pressure reading, for tests in neighbouring modules.
+    #[cfg(test)]
+    pub(crate) fn touch_for_test(finger: usize) -> Self {
+        Self::touch(finger, None)
+    }
+
+    /// The mouse, for tests in neighbouring modules.
+    #[cfg(test)]
+    pub(crate) fn mouse_for_test() -> Self {
+        Self::mouse()
     }
 
     fn tool(kind: TabletToolKind, data: &winit::event::TabletToolData) -> Self {
@@ -313,7 +360,7 @@ pub(crate) fn classify_pointer_event(
                 PendingPointerInput::Move {
                     physical_x: position.x,
                     physical_y: position.y,
-                    pointer: pointer_details(ids, identity, *primary),
+                    pointer: ids.details_for(identity, *primary),
                 },
                 Some((position.x, position.y)),
             )
@@ -328,7 +375,7 @@ pub(crate) fn classify_pointer_event(
             let Some((identity, Some(button))) = identity_of_button(button) else {
                 return PointerAction::Ignore;
             };
-            let pointer = pointer_details(ids, identity, *primary);
+            let pointer = ids.details_for(identity, *primary);
             // A contact that has been lifted is finished, and the next one the
             // platform numbers the same way is a different pointer.
             if *state == ElementState::Released && identity.contact != PointerContact::Mouse {
@@ -377,7 +424,7 @@ pub(crate) fn classify_pointer_event(
                 PointerKind::Touch(finger) => PointerIdentity::touch(finger.into_raw(), None),
                 _ => PointerIdentity::mouse(),
             };
-            let pointer = pointer_details(ids, identity, *primary);
+            let pointer = ids.details_for(identity, *primary);
             ids.retire(contact);
             let (physical_x, physical_y) = position
                 .map(|position| (position.x, position.y))
@@ -396,19 +443,6 @@ pub(crate) fn classify_pointer_event(
     }
 }
 
-/// Resolves a device into the DOM pointer it is, allocating an id if new.
-fn pointer_details(
-    ids: &mut PointerIds,
-    identity: PointerIdentity,
-    primary: bool,
-) -> PointerDetails {
-    PointerDetails {
-        pointer_id: ids.id_for(identity.contact),
-        pointer_type: identity.pointer_type,
-        primary,
-        identity,
-    }
-}
 #[cfg(test)]
 mod tests {
     use winit::dpi::PhysicalPosition;
@@ -636,20 +670,63 @@ mod tests {
     #[test]
     fn pointer_ids_are_stable_per_contact_and_never_reused() {
         let mut ids = PointerIds::default();
-        assert_eq!(ids.id_for(PointerContact::Mouse), 1);
-        let first = ids.id_for(PointerContact::Finger(0));
-        let second = ids.id_for(PointerContact::Finger(1));
+        let id_for = |ids: &mut PointerIds, contact| match contact {
+            PointerContact::Mouse => ids.details_for(PointerIdentity::mouse(), true).pointer_id,
+            PointerContact::Finger(finger) => {
+                ids.details_for(PointerIdentity::touch(finger, None), true)
+                    .pointer_id
+            }
+            PointerContact::Tool(_) => unreachable!("this test has no tablet in it"),
+        };
+        assert_eq!(id_for(&mut ids, PointerContact::Mouse), 1);
+        let first = id_for(&mut ids, PointerContact::Finger(0));
+        let second = id_for(&mut ids, PointerContact::Finger(1));
         assert_ne!(first, second);
         assert_ne!(first, 1);
         // A contact keeps its id for as long as it lasts …
-        assert_eq!(ids.id_for(PointerContact::Finger(0)), first);
-        assert_eq!(ids.id_for(PointerContact::Mouse), 1);
+        assert_eq!(id_for(&mut ids, PointerContact::Finger(0)), first);
+        assert_eq!(id_for(&mut ids, PointerContact::Mouse), 1);
         // … and the next finger the platform numbers 0 is a different pointer.
         ids.retire(PointerContact::Finger(0));
         assert!(!ids.is_live(PointerContact::Finger(0)));
-        let third = ids.id_for(PointerContact::Finger(0));
+        let third = id_for(&mut ids, PointerContact::Finger(0));
         assert_ne!(third, first);
         assert_ne!(third, second);
         assert!(ids.is_live(PointerContact::Finger(1)));
+    }
+
+    /// Two fingers down, then the surface goes away underneath them.
+    ///
+    /// The registry is what remembers there were contacts at all, so this is
+    /// the assertion that a cancellation can be *spelled* — that everything a
+    /// `pointercancel` needs survives an event nobody sent.
+    #[test]
+    fn live_contacts_are_reported_with_enough_detail_to_cancel_them() {
+        let mut ids = PointerIds::default();
+        classify_pointer_event(&touch_press(7, true, ElementState::Pressed), &mut ids, None);
+        classify_pointer_event(
+            &touch_press(8, false, ElementState::Pressed),
+            &mut ids,
+            None,
+        );
+
+        let live = ids.live();
+        assert_eq!(live.len(), 2);
+        assert!(live[0].pointer_id < live[1].pointer_id);
+        assert_eq!(live[0].identity.contact, PointerContact::Finger(7));
+        assert_eq!(live[0].pointer_type, PointerType::Touch);
+        assert!(live[0].primary);
+        assert_eq!(live[1].identity.contact, PointerContact::Finger(8));
+        assert!(!live[1].primary);
+
+        // A finger that was lifted is not cancelled a second time.
+        classify_pointer_event(
+            &touch_press(7, true, ElementState::Released),
+            &mut ids,
+            None,
+        );
+        let live = ids.live();
+        assert_eq!(live.len(), 1);
+        assert_eq!(live[0].identity.contact, PointerContact::Finger(8));
     }
 }

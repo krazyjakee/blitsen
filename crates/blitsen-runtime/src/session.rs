@@ -244,12 +244,19 @@ fn run(files: AppFiles, arguments: &[String]) -> Result<ExitCode, String> {
             break;
         }
         let next_timer = services.next_timer_delay();
-        if pacer.forcing_frames() || session.animation_frames_pending() {
+        if crate::loop_pacing::paces_a_frame(
+            session.surface().is_lost(),
+            pacer.forcing_frames(),
+            || session.animation_frames_pending(),
+        ) {
             pacer.wait(next_timer);
             pump_timeout = Some(std::time::Duration::ZERO);
         } else {
             // Winit's proxy wakes this wait for network, worker, and platform
             // events. A finite timeout wakes it when the next JS timer is due.
+            // A suspended window arrives here too, and blocks until the platform
+            // hands its surface back — timers still come due on their own
+            // schedule while it waits (see `blitsen_host::surface_lifecycle`).
             pump_timeout = next_timer;
         }
     }

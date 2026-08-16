@@ -28,6 +28,8 @@ pub mod ports;
 pub mod replay;
 pub mod runtime_services;
 pub mod standalone;
+// Surface loss and recreation: what a window that can be taken away needs (#146).
+pub mod surface_lifecycle;
 pub mod worker;
 
 use std::cell::RefCell;

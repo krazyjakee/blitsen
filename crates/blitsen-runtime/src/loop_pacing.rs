@@ -11,6 +11,31 @@ use std::time::{Duration, Instant};
 /// One frame at 60 Hz.
 const FRAME: Duration = Duration::from_nanos(16_666_667);
 
+/// Whether this turn should pace a frame, or wait for something to happen.
+///
+/// The surface answers first, and can answer "no" on its own (issue #146). A
+/// window whose surface the platform has taken away — Android backgrounding it,
+/// iOS reclaiming it — cannot present anything, and winit will not dispatch a
+/// `RedrawRequested` into it either. Left to the other two conditions the loop
+/// would spin at 60 Hz for the whole time the application is in the background,
+/// because `animation_frames_pending` stays true for precisely as long as the
+/// callback that would clear the queue is the one not running: the condition
+/// feeds itself. Asking the surface first also skips the script evaluation that
+/// answering `animating` costs, which is why that one is a closure.
+///
+/// What this gives up: a `BLITSEN_STANDALONE_FRAMES` budget advances on turns
+/// rather than on painted frames while the surface is gone. On the six desktop
+/// targets that cannot arise at all — no desktop winit backend destroys a
+/// surface — so it costs the acceptance runs nothing today, and a cadence
+/// measured over frames that were never presented would be a fiction anyway.
+pub fn paces_a_frame(
+    surface_lost: bool,
+    forcing_frames: bool,
+    animating: impl FnOnce() -> bool,
+) -> bool {
+    !surface_lost && (forcing_frames || animating())
+}
+
 /// Keeps the loop to a frame schedule, and stops it when CI asked for a count.
 pub struct Pacer {
     started: Instant,
@@ -91,5 +116,35 @@ impl Pacer {
             "Blitsen native frame check passed ({} frames at {cadence:.1} fps)",
             self.limit
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::Cell;
+
+    use super::paces_a_frame;
+
+    #[test]
+    fn a_surface_that_is_gone_stops_the_frame_schedule_without_asking_javascript() {
+        // The window is there: the usual two conditions decide.
+        assert!(paces_a_frame(false, false, || true));
+        assert!(paces_a_frame(false, true, || false));
+        assert!(!paces_a_frame(false, false, || false));
+
+        // The surface is gone: nothing can be presented, so nothing is paced —
+        // including the acceptance-test frame budget, which would otherwise
+        // count frames that were never painted.
+        assert!(!paces_a_frame(true, false, || true));
+        assert!(!paces_a_frame(true, true, || true));
+
+        // And the engine is not asked, because asking costs a script evaluation
+        // on every turn of a loop that is meant to have stopped.
+        let asked = Cell::new(false);
+        assert!(!paces_a_frame(true, false, || {
+            asked.set(true);
+            true
+        }));
+        assert!(!asked.get(), "a lost surface asked JavaScript anyway");
     }
 }
