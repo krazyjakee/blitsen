@@ -23,6 +23,31 @@
     }
   };
 
+  const ancestorsOf = node => {
+    const ancestors = [];
+    for (let current = node; current; current = current.parentNode) ancestors.unshift(current);
+    return ancestors;
+  };
+  // The order shared by node positions and range boundary points. `nodeBranch`
+  // and `otherBranch` are the first children below the common ancestor; a null
+  // branch means that node is the common ancestor itself. Different roots have
+  // no tree order and return null.
+  const treeOrder = (node, other) => {
+    if (node === other) return { order: 0, nodeBranch: null, otherBranch: null };
+    const mine = ancestorsOf(node);
+    const theirs = ancestorsOf(other);
+    if (mine[0] !== theirs[0]) return null;
+    let depth = 0;
+    while (mine[depth] === theirs[depth]) depth += 1;
+    const nodeBranch = mine[depth] ?? null;
+    const otherBranch = theirs[depth] ?? null;
+    if (nodeBranch === null) return { order: -1, nodeBranch, otherBranch };
+    if (otherBranch === null) return { order: 1, nodeBranch, otherBranch };
+    const siblings = [...mine[depth - 1].childNodes];
+    const order = siblings.indexOf(nodeBranch) < siblings.indexOf(otherBranch) ? -1 : 1;
+    return { order, nodeBranch, otherBranch };
+  };
+
   class Node extends EventTarget {
     constructor() { throw new TypeError("Illegal constructor"); }
     get nodeType() { return NODE_TYPES[call("kind", this[handle])]; }
@@ -119,23 +144,14 @@
     // exactly as a browser reports it.
     compareDocumentPosition(other) {
       if (!(other instanceof Node)) throw new TypeError("argument is not a Node");
-      if (other === this) return 0;
-      const chain = node => {
-        const ancestors = [];
-        for (let current = node; current; current = current.parentNode) ancestors.unshift(current);
-        return ancestors;
-      };
-      const mine = chain(this);
-      const theirs = chain(other);
-      if (mine[0] !== theirs[0]) return 1 + 2 + 32;
-      let depth = 0;
-      while (mine[depth] === theirs[depth]) depth += 1;
+      const relation = treeOrder(this, other);
+      if (relation === null) return 1 + 2 + 32;
+      if (relation.order === 0) return 0;
       // One chain running out first is the containment case: the shorter node is
       // the ancestor, and an ancestor precedes its descendant in document order.
-      if (depth === mine.length) return 16 + 4;
-      if (depth === theirs.length) return 8 + 2;
-      const siblings = [...mine[depth - 1].childNodes];
-      return siblings.indexOf(mine[depth]) < siblings.indexOf(theirs[depth]) ? 4 : 2;
+      if (relation.nodeBranch === null) return 16 + 4;
+      if (relation.otherBranch === null) return 8 + 2;
+      return relation.order < 0 ? 4 : 2;
     }
     // Merges adjacent text and drops the empty ones, depth first. A comment
     // between two text nodes separates them, which is why any other child ends
@@ -187,4 +203,3 @@
   // What the variadic insertion methods accept: anything that is not a node is
   // the text it stringifies to.
   const insertable = value => value instanceof Node ? value : document.createTextNode(String(value));
-
