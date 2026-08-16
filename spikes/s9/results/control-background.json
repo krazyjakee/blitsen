@@ -1,0 +1,95 @@
+{
+  "frame": "results/control-background.png",
+  "width": 1080,
+  "height": 2340,
+  "distinctColours": 417,
+  "page": "3b0b52",
+  "js": "00ffd0",
+  "pixels": {
+    "page": 1894538,
+    "js": 45088,
+    "css-red": 45086,
+    "css-green": 45088,
+    "css-blue": 45086,
+    "strip": 183099,
+    "text": 23890
+  },
+  "specimens": [
+    {
+      "pixels": 7961,
+      "left": 88,
+      "right": 695,
+      "width": 608
+    },
+    {
+      "pixels": 7789,
+      "left": 88,
+      "right": 840,
+      "width": 753
+    }
+  ],
+  "sharedGlyphs": 1.0,
+  "movedPixels": 1241,
+  "checks": [
+    {
+      "check": "frame is not uniform",
+      "pass": true,
+      "detail": "417 distinct colours"
+    },
+    {
+      "check": "page background painted",
+      "pass": true,
+      "detail": "1894538 px of #3b0b52"
+    },
+    {
+      "check": "css-red fill painted",
+      "pass": true,
+      "detail": "45086 px"
+    },
+    {
+      "check": "css-green fill painted",
+      "pass": true,
+      "detail": "45088 px"
+    },
+    {
+      "check": "css-blue fill painted",
+      "pass": true,
+      "detail": "45086 px"
+    },
+    {
+      "check": "javascript fill painted",
+      "pass": true,
+      "detail": "45088 px of #00ffd0, a colour no markup or stylesheet carries"
+    },
+    {
+      "check": "body text painted",
+      "pass": true,
+      "detail": "23890 px of glyph"
+    },
+    {
+      "check": "two type specimens found",
+      "pass": true,
+      "detail": "2 pale bands"
+    },
+    {
+      "check": "specimen 0 has glyphs",
+      "pass": true,
+      "detail": "7961 dark px spanning 608 px"
+    },
+    {
+      "check": "specimen 1 has glyphs",
+      "pass": true,
+      "detail": "7789 dark px spanning 753 px"
+    },
+    {
+      "check": "the two families measure differently",
+      "pass": true,
+      "detail": "sans 608 px vs monospace 753 px"
+    },
+    {
+      "check": "still painting five seconds later",
+      "pass": true,
+      "detail": "1241 px differ from results/control-background-later.png"
+    }
+  ]
+}

@@ -1,0 +1,29 @@
+08-16 01:30:22.098 I/FontLog ( 5412): Package dev.blitsen.s9 has no metadata [CONTEXT service_id=132 ]
+08-16 01:30:22.117 I/ActivityTaskManager(  537): START u0 {flg=0x10000000 cmp=dev.blitsen.s9/android.app.NativeActivity} from uid 2000
+08-16 01:30:22.127 V/SplashScreenExceptionList(  537): SplashScreen checking exception for package dev.blitsen.s9 (target sdk:33) -> false
+08-16 01:30:22.153 D/CoreBackPreview(  537): Window{558d0d9 u0 Splash Screen dev.blitsen.s9}: Setting back callback OnBackInvokedCallbackInfo{mCallback=android.window.IOnBackInvokedCallback$Stub$Proxy@50cd238, mPriority=0}
+08-16 01:30:22.155 I/ActivityManager(  537): Start proc 8208:dev.blitsen.s9/u0a174 for next-top-activity {dev.blitsen.s9/android.app.NativeActivity}
+08-16 01:30:22.163 I/dev.blitsen.s9( 8208): Late-enabling -Xcheck:jni
+08-16 01:30:22.208 I/dev.blitsen.s9( 8208): Using CollectorTypeCC GC.
+08-16 01:30:22.209 W/dev.blitsen.s9( 8208): Unexpected CPU variant for x86: x86_64.
+08-16 01:30:22.209 W/dev.blitsen.s9( 8208): Known variants: atom, sandybridge, silvermont, kabylake, default
+08-16 01:30:22.249 D/nativeloader( 8208): Configuring classloader-namespace for other apk . target_sdk_version=33, uses_libraries=, library_path=/data/app/~~2TEc8l5GwW-6WDTQUor-wA==/dev.blitsen.s9-FymRXgQwngdpIV9lF-BmZQ==/lib/x86_64:/data/app/~~2TEc8l5GwW-6WDTQUor-wA==/dev.blitsen.s9-FymRXgQwngdpIV9lF-BmZQ==/base.apk!/lib/x86_64, permitted_path=/data:/mnt/expand:/data/user/0/dev.blitsen.s9
+08-16 01:30:22.253 V/GraphicsEnvironment( 8208): ANGLE Developer option for 'dev.blitsen.s9' set to: 'default'
+08-16 01:30:22.254 V/GraphicsEnvironment( 8208): ANGLE GameManagerService for dev.blitsen.s9: false
+08-16 01:30:22.381 I/Blitsen ( 8208): starting ApkAssets { root: "blitsen", indexed: true, files: 4 }
+08-16 01:30:22.553 D/vulkan  ( 8208): searching for layers in '/data/app/~~2TEc8l5GwW-6WDTQUor-wA==/dev.blitsen.s9-FymRXgQwngdpIV9lF-BmZQ==/lib/x86_64'
+08-16 01:30:22.553 D/vulkan  ( 8208): searching for layers in '/data/app/~~2TEc8l5GwW-6WDTQUor-wA==/dev.blitsen.s9-FymRXgQwngdpIV9lF-BmZQ==/base.apk!/lib/x86_64'
+08-16 01:30:22.664 D/CoreBackPreview(  537): Window{eb521a7 u0 dev.blitsen.s9/android.app.NativeActivity}: Setting back callback OnBackInvokedCallbackInfo{mCallback=android.window.IOnBackInvokedCallback$Stub$Proxy@c1359fd, mPriority=0}
+08-16 01:30:22.696 W/ziparchive(  537): Unable to open '/data/app/~~2TEc8l5GwW-6WDTQUor-wA==/dev.blitsen.s9-FymRXgQwngdpIV9lF-BmZQ==/base.dm': No such file or directory
+08-16 01:30:22.697 I/ActivityTaskManager(  537): Displayed dev.blitsen.s9/android.app.NativeActivity: +579ms
+08-16 01:30:22.741 I/GoogleInputMethodService( 1608): GoogleInputMethodService.onStartInput():1877 onStartInput(EditorInfo{inputType=0x0(NULL) imeOptions=0x0 privateImeOptions=null actionName=UNSPECIFIED actionLabel=null actionId=0 initialSelStart=-1 initialSelEnd=-1 initialCapsMode=0x0 hintText=null label=null packageName=dev.blitsen.s9 fieldId=-1 fieldName=null extras=null}, false)
+08-16 01:30:23.085 D/CoreBackPreview(  537): Window{558d0d9 u0 Splash Screen dev.blitsen.s9 EXITING}: Setting back callback null
+08-16 01:30:23.085 W/InputManager-JNI(  537): Input channel object '558d0d9 Splash Screen dev.blitsen.s9 (client)' was disposed without first being removed with the input manager!
+08-16 01:30:42.273 I/GoogleInputMethodService( 1608): GoogleInputMethodService.onStartInput():1877 onStartInput(EditorInfo{inputType=0x0(NULL) imeOptions=0x0 privateImeOptions=null actionName=UNSPECIFIED actionLabel=null actionId=0 initialSelStart=-1 initialSelEnd=-1 initialCapsMode=0x0 hintText=null label=null packageName=dev.blitsen.s9 fieldId=-1 fieldName=null extras=null}, true)
+08-16 01:30:42.295 I/GoogleInputMethodService( 1608): GoogleInputMethodService.onStartInput():1877 onStartInput(EditorInfo{inputType=0x0(NULL) imeOptions=0x0 privateImeOptions=null actionName=UNSPECIFIED actionLabel=null actionId=0 initialSelStart=-1 initialSelEnd=-1 initialCapsMode=0x0 hintText=null label=null packageName=dev.blitsen.s9 fieldId=-1 fieldName=null extras=null}, true)
+08-16 01:30:42.301 I/GoogleInputMethodService( 1608): GoogleInputMethodService.onStartInput():1877 onStartInput(EditorInfo{inputType=0x0(NULL) imeOptions=0x0 privateImeOptions=null actionName=UNSPECIFIED actionLabel=null actionId=0 initialSelStart=-1 initialSelEnd=-1 initialCapsMode=0x0 hintText=null label=null packageName=dev.blitsen.s9 fieldId=-1 fieldName=null extras=null}, true)
+08-16 01:30:42.313 I/ContentCaptureHelper( 1112): Setting logging level to DEBUG
+08-16 01:30:52.240 I/GoogleInputMethodService( 1608): GoogleInputMethodService.onStartInput():1877 onStartInput(EditorInfo{inputType=0x0(NULL) imeOptions=0x0 privateImeOptions=null actionName=UNSPECIFIED actionLabel=null actionId=0 initialSelStart=-1 initialSelEnd=-1 initialCapsMode=0x0 hintText=null label=null packageName=dev.blitsen.s9 fieldId=-1 fieldName=null extras=null}, true)
+08-16 01:30:52.274 I/GoogleInputMethodService( 1608): GoogleInputMethodService.onStartInput():1877 onStartInput(EditorInfo{inputType=0x0(NULL) imeOptions=0x0 privateImeOptions=null actionName=UNSPECIFIED actionLabel=null actionId=0 initialSelStart=-1 initialSelEnd=-1 initialCapsMode=0x0 hintText=null label=null packageName=dev.blitsen.s9 fieldId=-1 fieldName=null extras=null}, true)
+08-16 01:30:52.288 I/GoogleInputMethodService( 1608): GoogleInputMethodService.onStartInput():1877 onStartInput(EditorInfo{inputType=0x0(NULL) imeOptions=0x0 privateImeOptions=null actionName=UNSPECIFIED actionLabel=null actionId=0 initialSelStart=-1 initialSelEnd=-1 initialCapsMode=0x0 hintText=null label=null packageName=dev.blitsen.s9 fieldId=-1 fieldName=null extras=null}, true)
+08-16 01:30:52.316 I/ContentCaptureHelper( 1112): Setting logging level to DEBUG

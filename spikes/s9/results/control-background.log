@@ -1,0 +1,24 @@
+08-16 01:33:48.338 W/AlarmManager(  537): Package dev.blitsen.s9, uid 10174 lost permission to set exact alarms!
+08-16 01:33:48.355 I/ProximityAuth( 5412): [RecentAppsMediator] Package added: (user=UserHandle{0}) dev.blitsen.s9
+08-16 01:33:48.356 I/ActivityTaskManager(  537): START u0 {flg=0x10000000 cmp=dev.blitsen.s9/android.app.NativeActivity} from uid 2000
+08-16 01:33:48.365 V/SplashScreenExceptionList(  537): SplashScreen checking exception for package dev.blitsen.s9 (target sdk:33) -> false
+08-16 01:33:48.367 W/SQLiteLog( 7169): (28) double-quoted string literal: "dev.blitsen.s9"
+08-16 01:33:48.381 D/CoreBackPreview(  537): Window{eb2994 u0 Splash Screen dev.blitsen.s9}: Setting back callback OnBackInvokedCallbackInfo{mCallback=android.window.IOnBackInvokedCallback$Stub$Proxy@486d9fb, mPriority=0}
+08-16 01:33:48.397 I/FontLog ( 5412): Package dev.blitsen.s9 has no metadata [CONTEXT service_id=132 ]
+08-16 01:33:48.426 I/ActivityManager(  537): Start proc 8602:dev.blitsen.s9/u0a174 for next-top-activity {dev.blitsen.s9/android.app.NativeActivity}
+08-16 01:33:48.442 I/dev.blitsen.s9( 8602): Late-enabling -Xcheck:jni
+08-16 01:33:48.471 I/dev.blitsen.s9( 8602): Using CollectorTypeCC GC.
+08-16 01:33:48.476 W/dev.blitsen.s9( 8602): Unexpected CPU variant for x86: x86_64.
+08-16 01:33:48.476 W/dev.blitsen.s9( 8602): Known variants: atom, sandybridge, silvermont, kabylake, default
+08-16 01:33:48.522 D/nativeloader( 8602): Configuring classloader-namespace for other apk . target_sdk_version=33, uses_libraries=, library_path=/data/app/~~CpsG2-RW7arK0rrwUtdJNQ==/dev.blitsen.s9-WMK_igNq5vbkM-5aP00BJQ==/lib/x86_64:/data/app/~~CpsG2-RW7arK0rrwUtdJNQ==/dev.blitsen.s9-WMK_igNq5vbkM-5aP00BJQ==/base.apk!/lib/x86_64, permitted_path=/data:/mnt/expand:/data/user/0/dev.blitsen.s9
+08-16 01:33:48.529 V/GraphicsEnvironment( 8602): ANGLE Developer option for 'dev.blitsen.s9' set to: 'default'
+08-16 01:33:48.530 V/GraphicsEnvironment( 8602): ANGLE GameManagerService for dev.blitsen.s9: false
+08-16 01:33:48.570 I/Blitsen ( 8602): starting ApkAssets { root: "blitsen", indexed: true, files: 4 }
+08-16 01:33:48.681 D/vulkan  ( 8602): searching for layers in '/data/app/~~CpsG2-RW7arK0rrwUtdJNQ==/dev.blitsen.s9-WMK_igNq5vbkM-5aP00BJQ==/lib/x86_64'
+08-16 01:33:48.681 D/vulkan  ( 8602): searching for layers in '/data/app/~~CpsG2-RW7arK0rrwUtdJNQ==/dev.blitsen.s9-WMK_igNq5vbkM-5aP00BJQ==/base.apk!/lib/x86_64'
+08-16 01:33:48.773 D/CoreBackPreview(  537): Window{657bf8f u0 dev.blitsen.s9/android.app.NativeActivity}: Setting back callback OnBackInvokedCallbackInfo{mCallback=android.window.IOnBackInvokedCallback$Stub$Proxy@d93ae25, mPriority=0}
+08-16 01:33:48.805 W/ziparchive(  537): Unable to open '/data/app/~~CpsG2-RW7arK0rrwUtdJNQ==/dev.blitsen.s9-WMK_igNq5vbkM-5aP00BJQ==/base.dm': No such file or directory
+08-16 01:33:48.805 I/ActivityTaskManager(  537): Displayed dev.blitsen.s9/android.app.NativeActivity: +448ms
+08-16 01:33:48.813 I/GoogleInputMethodService( 1608): GoogleInputMethodService.onStartInput():1877 onStartInput(EditorInfo{inputType=0x0(NULL) imeOptions=0x0 privateImeOptions=null actionName=UNSPECIFIED actionLabel=null actionId=0 initialSelStart=-1 initialSelEnd=-1 initialCapsMode=0x0 hintText=null label=null packageName=dev.blitsen.s9 fieldId=-1 fieldName=null extras=null}, false)
+08-16 01:33:49.198 D/CoreBackPreview(  537): Window{eb2994 u0 Splash Screen dev.blitsen.s9 EXITING}: Setting back callback null
+08-16 01:33:49.198 W/InputManager-JNI(  537): Input channel object 'eb2994 Splash Screen dev.blitsen.s9 (client)' was disposed without first being removed with the input manager!
