@@ -59,8 +59,15 @@
     const values = Object.fromEntries(names.map((name, value) => [name, value]));
     for (const target of [constructor, constructor.prototype]) defineMembers(target, values);
   };
-  const call = (operation, ...args) =>
+  const bridgeCallCounts = testHarness ? new Map() : null;
+  const rawCall = (operation, ...args) =>
     JSON.parse(__blitsenDomCall(operation, ...args.map(value => String(value))));
+  const call = testHarness
+    ? (operation, ...args) => {
+      bridgeCallCounts.set(operation, (bridgeCallCounts.get(operation) ?? 0) + 1);
+      return rawCall(operation, ...args);
+    }
+    : rawCall;
   const handle = Symbol("Blitsen node handle");
   let nextAnimationFrameId = 1;
   let animationFrames = new Map();
@@ -132,4 +139,3 @@
       + (call("isAnimating") ? 1 : 0) + (nativeDialogPending() ? 1 : 0)
       + (portsPending() ? 1 : 0);
   };
-

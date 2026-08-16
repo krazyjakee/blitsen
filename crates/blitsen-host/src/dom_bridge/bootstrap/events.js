@@ -319,14 +319,7 @@
   let activeElement = null;
   let readyState = "loading";
   const elementTag = element => call("tagName", element[handle]);
-  const isFocusable = element => {
-    if (!(element instanceof Element) || element.hasAttribute("disabled")) return false;
-    const tabindex = element.getAttribute("tabindex");
-    if (tabindex !== null) return Number(tabindex) >= 0;
-    const tag = elementTag(element);
-    return ["button", "input", "select", "textarea"].includes(tag) ||
-      (tag === "a" && element.hasAttribute("href"));
-  };
+  const isFocusable = element => element instanceof Element && call("isFocusable", element[handle]);
   // Four events, not two. `focus` and `blur` do not bubble, so a framework that
   // delegates from the root — React has since 17 — sees nothing unless the
   // bubbling `focusin`/`focusout` pair is dispatched as well. Each carries the
@@ -354,13 +347,8 @@
     setFocus(document.body);
   };
   const moveFocus = backwards => {
-    const focusables = [...document.querySelectorAll("*")].filter(isFocusable);
-    if (focusables.length === 0) { setFocus(document.body); return; }
-    const current = focusables.indexOf(activeElement);
-    const index = backwards
-      ? (current <= 0 ? focusables.length - 1 : current - 1)
-      : (current < 0 || current === focusables.length - 1 ? 0 : current + 1);
-    setFocus(focusables[index]);
+    const next = call("nextFocusable", activeElement?.[handle] ?? "", Boolean(backwards));
+    setFocus(next === null ? document.body : wrap(next));
   };
   // The DOM `pointerId` the mouse always has, matching the host's constant. Not
   // 0: the spec reserves that for a pointer of unknown identity.

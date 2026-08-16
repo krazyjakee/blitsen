@@ -134,6 +134,8 @@
     if (!(target instanceof Node)) throw new TypeError("mouse event target must be a Node");
     return dispatchMouseEvent(String(type), target[handle], init);
   };
+  if (testHarness) globals.__blitsenDomCallCount = operation =>
+    bridgeCallCounts.get(String(operation)) ?? 0;
   // Injects at viewport coordinates the way the native window does: hit test the
   // laid-out tree first, then dispatch at whatever that resolves to. Harness-only,
   // so tests exercise the same path as real input rather than picking a target.
