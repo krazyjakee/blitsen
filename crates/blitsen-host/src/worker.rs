@@ -91,6 +91,44 @@ pub trait WorkerLauncher: Send + Sync {
     fn launch(&self, boot: WorkerBoot) -> Result<(), JsError>;
 }
 
+/// Starts one engine and worker loop on a named thread.
+///
+/// The crate that selected the engine supplies only its factory, including any
+/// engine-specific module-loader installation. Thread naming and failures after
+/// the spawn belong here because [`WorkerBoot`], the port registry and [`run`]
+/// all do: keeping them together gives both hosts the same error delivery and
+/// context-release order without making this engine-neutral crate depend on an
+/// engine implementation.
+pub fn launch_on_thread<E>(
+    boot: WorkerBoot,
+    engine_factory: impl FnOnce() -> Result<E, JsError> + Send + 'static,
+) -> Result<(), JsError>
+where
+    E: JsEngine + 'static,
+{
+    let label = if boot.name.is_empty() {
+        boot.entry.clone()
+    } else {
+        boot.name.clone()
+    };
+    std::thread::Builder::new()
+        .name(format!("blitsen-worker {label}"))
+        .spawn(move || match engine_factory() {
+            Ok(engine) => run(engine, boot),
+            Err(error) => {
+                registry().post(
+                    boot.port,
+                    Delivery::Error(format!(
+                        "a worker could not start a JavaScript engine: {error}"
+                    )),
+                );
+                registry().release(boot.context);
+            }
+        })
+        .map(|_| ())
+        .map_err(|error| JsError::new(format!("could not start a worker thread: {error}")))
+}
+
 static LAUNCHER: OnceLock<Box<dyn WorkerLauncher>> = OnceLock::new();
 
 /// Registers how this process starts a worker.
@@ -269,4 +307,94 @@ fn turn<E: JsEngine + 'static>(
     services.run_expired_timers(engine)?;
     engine.drain_microtasks()?;
     Ok(pending)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::mpsc;
+    use std::time::{Duration, Instant};
+
+    use super::*;
+    use crate::modules::AppSource;
+
+    struct EmptySource;
+
+    impl AppSource for EmptySource {
+        fn read(&self, _path: &str) -> Option<Vec<u8>> {
+            None
+        }
+    }
+
+    fn failed_launch(name: &str, entry: &str) -> (String, Vec<Delivery>) {
+        let document = registry().new_context();
+        let worker = registry().new_context();
+        let (near, far) = registry().entangle(document, worker);
+        registry().start(near);
+        let waker = Arc::new(Waker::default());
+        registry().attach_waker(document, Arc::clone(&waker));
+        let boot = WorkerBoot {
+            name: name.to_owned(),
+            entry: entry.to_owned(),
+            module: true,
+            files: WorkerFiles {
+                source: Arc::new(EmptySource),
+                reader: None,
+            },
+            context: worker,
+            port: far,
+            stop: Arc::new(AtomicBool::new(false)),
+            waker: Arc::new(Waker::default()),
+        };
+        let (thread_name, named) = mpsc::sync_channel(1);
+        launch_on_thread::<blitsen_quickjs::QuickJs>(boot, move || {
+            thread_name
+                .send(std::thread::current().name().unwrap_or_default().to_owned())
+                .expect("the test is still waiting for the worker thread");
+            Err(JsError::new("factory refused"))
+        })
+        .expect("the worker thread can be spawned");
+
+        let named = named
+            .recv_timeout(Duration::from_secs(5))
+            .expect("the engine factory ran on its worker thread");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut deliveries = Vec::new();
+        while !deliveries
+            .iter()
+            .any(|delivery| matches!(delivery, Delivery::Closed))
+        {
+            deliveries.extend(
+                registry()
+                    .drain(document)
+                    .into_iter()
+                    .map(|(_, delivery)| delivery),
+            );
+            if Instant::now() >= deadline {
+                panic!("the failed worker did not release its context");
+            }
+            waker.wait(Some(Duration::from_millis(10)));
+        }
+        registry().release(document);
+        (named, deliveries)
+    }
+
+    #[test]
+    fn launcher_names_threads_and_reports_factory_failure_before_releasing() {
+        for (name, entry, expected_thread) in [
+            ("parser", "blitsen://app/work.js", "blitsen-worker parser"),
+            (
+                "",
+                "blitsen://app/fallback.js",
+                "blitsen-worker blitsen://app/fallback.js",
+            ),
+        ] {
+            let (thread, deliveries) = failed_launch(name, entry);
+            assert_eq!(thread, expected_thread);
+            assert!(matches!(
+                deliveries.as_slice(),
+                [Delivery::Error(message), Delivery::Closed]
+                    if message == "a worker could not start a JavaScript engine: factory refused"
+            ));
+        }
+    }
 }
