@@ -322,18 +322,34 @@ impl AppFiles {
 /// `--licenses` cannot be typed at it — the file still travels inside the signed
 /// archive, and the entry point can print or display it (see [`crate::apk`]).
 ///
-/// `None` when the artifact carries none, or carries something that is not the
-/// gzipped text it should be. Both mean the same thing to a caller: this is not
-/// an artifact cleared for redistribution.
+/// Two names are looked for, and the second one is not a convenience (#148).
+/// `aapt` **rewrites an asset whose name ends in `.gz`**: it strips the suffix
+/// and stores the decompressed contents under the shortened name, so
+/// `blitsen.notices.txt.gz` staged into an APK arrives as
+/// [`NOTICES_UNCOMPRESSED`] holding plain text. That was measured by building an
+/// APK and reading the archive back, not inferred from documentation. Looking
+/// for one name only would have meant every Android artifact reporting itself
+/// uncleared for redistribution while carrying the notices it owes — which is
+/// the failure `docs/LICENSING.md` exists to gate against, arriving silently.
+///
+/// So the packaging step writes the uncompressed name on that path and this
+/// reads either. Compression was never load-bearing here: it saves 88 KB inside
+/// a container that deflates its own entries anyway.
+///
+/// `None` when the artifact carries none, or carries something that is neither
+/// the gzipped text nor the plain text it should be. All of those mean the same
+/// thing to a caller: this is not an artifact cleared for redistribution.
 pub fn notices(source: &dyn AppSource) -> Option<String> {
     use std::io::Read as _;
 
-    let compressed = source.read(NOTICES)?;
-    let mut text = String::new();
-    flate2::read::GzDecoder::new(compressed.as_slice())
-        .read_to_string(&mut text)
-        .ok()?;
-    Some(text)
+    if let Some(compressed) = source.read(NOTICES) {
+        let mut text = String::new();
+        return flate2::read::GzDecoder::new(compressed.as_slice())
+            .read_to_string(&mut text)
+            .ok()
+            .map(|_| text);
+    }
+    String::from_utf8(source.read(NOTICES_UNCOMPRESSED)?).ok()
 }
 
 /// Reads the files an application shipped, addressed the way JavaScript sees
@@ -508,6 +524,14 @@ pub const RUNTIME_CONFIG: &str = "blitsen.runtime.json";
 /// file and a notice a user can delete is not one that travels with the binary.
 /// Compressed because it is 876 KB of licence text and 88 KB of bytes.
 pub const NOTICES: &str = "blitsen.notices.txt.gz";
+
+/// The same notices, as they arrive inside an APK (issue #148).
+///
+/// Not an alternative format: it is the *only* name that survives `aapt`, which
+/// strips `.gz` from an asset and inflates it on the way in. The Android
+/// packaging step therefore stages the text uncompressed under this name, and
+/// [`notices`] reads either. See the argument there.
+pub const NOTICES_UNCOMPRESSED: &str = "blitsen.notices.txt";
 
 fn count_files(root: &Path) -> usize {
     let Ok(entries) = std::fs::read_dir(root) else {
@@ -907,6 +931,35 @@ mod tests {
         // acceptance gate: it has to be answerable by the thing that ships.
         let bare = ApkAssets::open_directory(root.join("nowhere"), "");
         assert!(notices(&bare).is_none());
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// `aapt` strips `.gz` from an asset and inflates it, so what an APK
+    /// actually holds is the plain text under the shortened name (#148). This
+    /// is the shape a real APK was measured to have; the test above is the
+    /// shape an appended bundle has. Both have to read.
+    #[test]
+    fn notices_are_read_from_an_apk_whose_packager_stripped_the_gzip() {
+        let root = std::env::temp_dir().join(format!("blitsen-apk-plain-{}", std::process::id()));
+        std::fs::remove_dir_all(&root).ok();
+        let application = root.join(crate::apk::DEFAULT_ASSET_ROOT);
+        std::fs::create_dir_all(&application).unwrap();
+        std::fs::write(application.join("index.html"), b"<p>hi").unwrap();
+        std::fs::write(
+            application.join(NOTICES_UNCOMPRESSED),
+            b"THIRD-PARTY NOTICES\n",
+        )
+        .unwrap();
+
+        let assets = ApkAssets::open_directory(&root, crate::apk::DEFAULT_ASSET_ROOT);
+        let files = AppFiles::assets(assets, "index.html").unwrap();
+        assert_eq!(
+            notices(files.source().as_ref()).unwrap(),
+            "THIRD-PARTY NOTICES\n"
+        );
+        // The gzipped name still wins where both are present, so an artifact
+        // built before this and one built after cannot be read differently.
+        assert!(!application.join(NOTICES).exists());
         std::fs::remove_dir_all(&root).ok();
     }
 
