@@ -704,8 +704,29 @@ describe("the build plan", () => {
     expect(signed.debugSigned).toBe(false);
     expect(signed.sign.command).toContain("/keys/release.jks");
     expect(signed.sign.command).not.toContain("hunter2");
+    // No alias, because a keystore holding one key needs none and guessing one
+    // fails with "no key with alias" rather than with anything a reader can act
+    // on. The key's password defaults to the store's, which is what keytool
+    // writes when it is not asked for two.
     expect(signed.sign.command).not.toContain("--ks-key-alias");
     expect(signed.sign.environment.BLITSEN_APKSIGNER_KEYSTORE_PASSWORD).toBe("hunter2");
+    expect(signed.sign.environment.BLITSEN_APKSIGNER_KEY_PASSWORD).toBe("hunter2");
+  });
+
+  test("names the key inside a store that holds more than one, still not in the argv", () => {
+    const signed = plan({
+      keystore: "/keys/release.jks", keystorePassword: "hunter2",
+      keyAlias: "upload", keyPassword: "different",
+    });
+    expect(signed.sign.command).toContain("--ks-key-alias");
+    expect(signed.sign.command).toContain("upload");
+    expect(signed.sign.command).toContain("env:BLITSEN_APKSIGNER_KEY_PASSWORD");
+    expect(signed.sign.command).not.toContain("different");
+    expect(signed.sign.environment.BLITSEN_APKSIGNER_KEY_PASSWORD).toBe("different");
+    // And neither reaches the debug key, whose alias and password are fixed.
+    const debug = plan({ keyAlias: "upload", keyPassword: "different" });
+    expect(debug.sign.command).toContain("androiddebugkey");
+    expect(debug.sign.environment.BLITSEN_APKSIGNER_KEY_PASSWORD).toBe("android");
   });
 
   test("refuses a keystore whose password was not put in the environment", () => {
@@ -895,6 +916,36 @@ describe("an Android build, with every subprocess stubbed", () => {
       // And what the cross-compile produced is in there verbatim, which is the
       // whole of what "this APK contains the engine" means at this level.
       expect(archive.includes(Buffer.from("ELF x86_64-linux-android"))).toBe(true);
+    });
+  });
+
+  test("a named key reaches apksigner, and the debug keystore is left alone", async () => {
+    await withWork(async directory => {
+      const root = await application(directory);
+      const crate = await withCrate(directory);
+      const commands = [];
+      const stub = stubRun(join(directory, "target"));
+      const result = await buildAndroid({
+        root,
+        name: "Pong",
+        outfile: join(directory, "Pong.apk"),
+        keystore: "/keys/release.jks",
+        keystorePassword: "hunter2",
+        keyAlias: "upload",
+        keyPassword: "different",
+        env: { BLITSEN_ANDROID_CRATE: crate },
+        run: command => { commands.push(command); return stub(command); },
+        detect: stubToolchain(),
+      });
+      const sign = commands.find(command => command[0] === "apksigner");
+      expect(sign).toContain("/keys/release.jks");
+      expect(sign).toContain("upload");
+      expect(sign).not.toContain("hunter2");
+      expect(sign).not.toContain("different");
+      // keytool is never reached: a build that names a key must not invent one.
+      expect(commands.some(command => command[0] === "keytool")).toBe(false);
+      expect(result.debugSigned).toBe(false);
+      expect(result.keystore).toBe("/keys/release.jks");
     });
   });
 

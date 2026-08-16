@@ -220,7 +220,8 @@ export const DEBUG_KEYSTORE_ALIAS = "androiddebugkey";
 /// What the signing passwords are called in the environment `apksigner` is
 /// handed. Private to this process — they are not the variables a user sets,
 /// which are `BLITSEN_ANDROID_KEYSTORE_PASSWORD` and
-/// `BLITSEN_ANDROID_KEY_PASSWORD` — and they exist because `apksigner`'s
+/// `BLITSEN_ANDROID_KEY_PASSWORD`, which `cli.mjs` reads — and they exist
+/// because `apksigner`'s
 /// `env:` scheme is the only one of its four that keeps a password out of both
 /// the argv and the filesystem.
 const KEYSTORE_PASSWORD_VARIABLE = "BLITSEN_APKSIGNER_KEYSTORE_PASSWORD";
@@ -406,6 +407,8 @@ export function apkPlan({
   release = true,
   keystore = null,
   keystorePassword = null,
+  keyAlias = null,
+  keyPassword = null,
 }) {
   const profile = release ? "release" : "debug";
   const environment = {
@@ -425,8 +428,10 @@ export function apkPlan({
       + "BLITSEN_ANDROID_KEYSTORE_PASSWORD. It is read from the environment rather than "
       + "taken as a flag because an argument is visible in `ps` and lands in shell history.");
   }
-  const alias = keystore === null ? DEBUG_KEYSTORE_ALIAS : (process.env.BLITSEN_ANDROID_KEY_ALIAS
-    ?? null);
+  // A keystore with one key needs no alias, which is every keystore anyone
+  // makes for one application, so the alias is omitted rather than guessed. The
+  // debug keystore is the exception because its alias is a fixed convention.
+  const alias = keystore === null ? DEBUG_KEYSTORE_ALIAS : keyAlias;
   const paths = {
     manifest: join(directory, "AndroidManifest.xml"),
     linked: join(directory, "linked"),
@@ -474,7 +479,11 @@ export function apkPlan({
         "--min-sdk-version", String(MIN_SDK), paths.apk],
       environment: {
         [KEYSTORE_PASSWORD_VARIABLE]: password,
-        [KEY_PASSWORD_VARIABLE]: process.env.BLITSEN_ANDROID_KEY_PASSWORD ?? password,
+        // Defaulted to the keystore's, which is what `keytool` writes when it
+        // is not asked for two, rather than left for apksigner to prompt for on
+        // a terminal a build may not have.
+        [KEY_PASSWORD_VARIABLE]: keystore === null ? DEBUG_KEYSTORE_PASSWORD
+          : (keyPassword ?? password),
       },
     },
     keystore: key,
@@ -571,6 +580,8 @@ export async function buildAndroid({
   appVersion = "0.1.0",
   keystore = null,
   keystorePassword = null,
+  keyAlias = null,
+  keyPassword = null,
   release = true,
   include = [],
   force = false,
@@ -626,6 +637,7 @@ export async function buildAndroid({
   const targetDirectory = await cargoTargetDirectory(entryCrate, run);
   const plan = apkPlan({
     project, directory, toolchain, entryCrate, targetDirectory, release, keystore, keystorePassword,
+    keyAlias, keyPassword,
   });
   progress({
     step: "link",
