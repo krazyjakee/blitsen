@@ -20,10 +20,13 @@ unsafe extern "C" fn normalize_module(
     _opaque: *mut c_void,
 ) -> *mut c_char {
     match unsafe { call_global(ctx, "__blitsenModuleResolve", &[base, name]) } {
-        Ok(text) => {
-            let owned = CString::new(text).unwrap_or_default();
-            unsafe { q::js_strdup(ctx, owned.as_ptr()) }
-        }
+        Ok(text) => match CString::new(text) {
+            Ok(owned) => unsafe { q::js_strdup(ctx, owned.as_ptr()) },
+            Err(_) => {
+                unsafe { throw(ctx, "the resolved module name contains a NUL byte") };
+                std::ptr::null_mut()
+            }
+        },
         // The exception QuickJS raised is still on the context, which is
         // where it looks for the reason this returned nothing.
         Err(Pending) => std::ptr::null_mut(),
