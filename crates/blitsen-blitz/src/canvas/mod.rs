@@ -27,12 +27,12 @@ use std::rc::Rc;
 
 use anyrender::{PaintScene as _, RenderContext, Scene};
 use blitsen_dom::{DomBackend as _, DomError, DomName};
+use blitz::dom::Widget;
 use blitz::dom::node::ComputedStyles;
-use blitz::dom::{NodeId, Widget};
 use kurbo::Affine;
 
 use crate::BlitzDom;
-use crate::surface::{Surface, SurfaceWidget};
+use crate::surface::{Surface, SurfaceWidget, attach_widgets};
 
 /// The tag whose elements carry a canvas.
 pub(crate) const CANVAS_TAG: &str = "canvas";
@@ -187,31 +187,21 @@ impl BlitzDom {
     /// the widget is attached — a parsed document's attributes are already in
     /// place by then.
     pub(crate) fn attach_canvases(&mut self) -> Result<(), DomError> {
-        for node in self.query_selector_all(self.document(), CANVAS_TAG)? {
-            if self.canvases.contains_key(&node) {
-                continue;
-            }
-            let width = self.attribute(node, &DomName::attribute("width"))?;
-            let height = self.attribute(node, &DomName::attribute("height"))?;
-            let state = Rc::new(RefCell::new(CanvasState {
-                width: dimension(width.as_deref(), DEFAULT_SIZE.0),
-                height: dimension(height.as_deref(), DEFAULT_SIZE.1),
-                ..Default::default()
-            }));
-            self.document
-                .mutate()
-                .set_custom_widget(node, Box::new(CanvasWidget::new(Rc::clone(&state))));
-            self.canvases.insert(node, state);
-        }
-        let dropped: Vec<NodeId> = self
-            .canvases
-            .keys()
-            .copied()
-            .filter(|node| self.document.get_node(*node).is_none())
-            .collect();
-        for node in dropped {
-            self.canvases.remove(&node);
-        }
-        Ok(())
+        attach_widgets(
+            self,
+            CANVAS_TAG,
+            |dom| &mut dom.canvases,
+            |dom, node| {
+                let width = dom.attribute(node, &DomName::attribute("width"))?;
+                let height = dom.attribute(node, &DomName::attribute("height"))?;
+                let state = Rc::new(RefCell::new(CanvasState {
+                    width: dimension(width.as_deref(), DEFAULT_SIZE.0),
+                    height: dimension(height.as_deref(), DEFAULT_SIZE.1),
+                    ..Default::default()
+                }));
+                let widget = Box::new(CanvasWidget::new(Rc::clone(&state)));
+                Ok((state, widget))
+            },
+        )
     }
 }

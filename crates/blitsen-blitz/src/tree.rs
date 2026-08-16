@@ -4,10 +4,11 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use blitsen_dom::{DomBackend, DomError, DomName, NATIVE_VIEWPORT_TAG, Namespace};
+use blitsen_dom::{DomError, DomName, NATIVE_VIEWPORT_TAG, Namespace};
 use blitz::dom::{LocalName, NodeData, NodeId, QualName, ns};
 
 use crate::BlitzDom;
+use crate::surface::attach_widgets;
 use crate::viewport::{ViewportState, ViewportWidget};
 
 impl BlitzDom {
@@ -18,27 +19,16 @@ impl BlitzDom {
     /// frame that created it. A detached element keeps its surface, because a
     /// reparented viewport is the same viewport.
     pub(crate) fn attach_native_viewports(&mut self) -> Result<(), DomError> {
-        for node in self.query_selector_all(self.document(), NATIVE_VIEWPORT_TAG)? {
-            if self.native_viewports.contains_key(&node) {
-                continue;
-            }
-            let state = Rc::new(RefCell::new(ViewportState::default()));
-            let widget = ViewportWidget::new(Rc::clone(&state));
-            self.document
-                .mutate()
-                .set_custom_widget(node, Box::new(widget));
-            self.native_viewports.insert(node, state);
-        }
-        let dropped: Vec<NodeId> = self
-            .native_viewports
-            .keys()
-            .copied()
-            .filter(|node| self.document.get_node(*node).is_none())
-            .collect();
-        for node in dropped {
-            self.native_viewports.remove(&node);
-        }
-        Ok(())
+        attach_widgets(
+            self,
+            NATIVE_VIEWPORT_TAG,
+            |dom| &mut dom.native_viewports,
+            |_dom, _node| {
+                let state = Rc::new(RefCell::new(ViewportState::default()));
+                let widget = Box::new(ViewportWidget::new(Rc::clone(&state)));
+                Ok((state, widget))
+            },
+        )
     }
 
     /// Propagates the resolved box and display density into each surface.

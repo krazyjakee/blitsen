@@ -12,10 +12,45 @@
 //! the revision it painted, and a paint that forgets leaves the element either
 //! redrawing every frame or never again. [`SurfaceWidget::begin_paint`] is the
 //! only way to reach the contents from a paint, and it marks as it borrows, so
-//! the invariant cannot be half-kept.
+//! the invariant cannot be half-kept. [`attach_widgets`] likewise owns the
+//! shared attachment lifecycle: a detached-but-live node retains its state for
+//! reparenting, while a node the document has dropped is swept from the map.
 
 use std::cell::{Ref, RefCell, RefMut};
+use std::collections::HashMap;
 use std::rc::Rc;
+
+use blitsen_dom::{DomBackend as _, DomError};
+use blitz::dom::{NodeId, Widget};
+
+use crate::BlitzDom;
+
+/// Attaches one kind of surface widget and forgets states whose nodes are stale.
+pub(crate) fn attach_widgets<S>(
+    dom: &mut BlitzDom,
+    tag: &str,
+    states: fn(&mut BlitzDom) -> &mut HashMap<NodeId, Rc<RefCell<S>>>,
+    mut make: impl FnMut(&mut BlitzDom, NodeId) -> Result<(Rc<RefCell<S>>, Box<dyn Widget>), DomError>,
+) -> Result<(), DomError> {
+    for node in dom.query_selector_all(dom.document(), tag)? {
+        if states(dom).contains_key(&node) {
+            continue;
+        }
+        let (state, widget) = make(dom, node)?;
+        dom.document.mutate().set_custom_widget(node, widget);
+        states(dom).insert(node, state);
+    }
+
+    // A detached node remains in the document arena while JavaScript holds it,
+    // and keeps the same surface if it is reparented. Only a stale node is dead.
+    let tracked: Vec<_> = states(dom).keys().copied().collect();
+    for node in tracked {
+        if dom.document.get_node(node).is_none() {
+            states(dom).remove(&node);
+        }
+    }
+    Ok(())
+}
 
 /// Contents that can say when they last changed.
 pub(crate) trait Surface {

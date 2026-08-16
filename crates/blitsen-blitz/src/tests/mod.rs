@@ -7,6 +7,7 @@ mod forms;
 mod images;
 mod ranges;
 mod stylesheets;
+mod surfaces;
 mod text;
 mod ua;
 mod viewport;
