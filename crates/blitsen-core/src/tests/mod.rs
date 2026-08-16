@@ -153,14 +153,6 @@ struct MockContent {
     invalidations: usize,
 }
 
-struct MockScripts(Vec<DocumentScript>);
-
-impl ScriptDocument for MockScripts {
-    fn document_scripts(&self) -> Result<Vec<DocumentScript>, DomError> {
-        Ok(self.0.clone())
-    }
-}
-
 #[derive(Default)]
 struct RecordingScriptEngine {
     evaluations: Vec<(String, String, String)>,
