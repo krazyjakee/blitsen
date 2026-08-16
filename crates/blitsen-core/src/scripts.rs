@@ -69,26 +69,6 @@ impl<J: JsEngine> ScriptEngine for J {
     }
 }
 
-/// Executes document scripts after parsing in strict document order.
-///
-/// v0 deliberately treats `async` and `defer` as document-order execution at
-/// this post-parse checkpoint. This deterministic subset preserves dependency
-/// order until networking and incremental parsing are introduced.
-pub fn execute_document_scripts<D, J>(
-    document: &D,
-    engine: &mut J,
-    entrypoint: &Path,
-) -> Result<Vec<J::Value>, JsError>
-where
-    D: ScriptDocument,
-    J: ScriptEngine,
-{
-    let scripts = document
-        .document_scripts()
-        .map_err(|error| JsError::new(error.to_string()))?;
-    execute_collected_document_scripts(scripts, engine, entrypoint)
-}
-
 /// Where a document's external scripts are read from.
 ///
 /// The Phase 1 host and a directory being run take them off disk. An exported
@@ -139,21 +119,6 @@ impl ScriptLoader for LocalScripts {
         })?;
         Ok((source, path.to_string_lossy().into_owned()))
     }
-}
-
-/// Executes a previously collected document-order script list.
-///
-/// Hosts with interior-mutable DOM storage use this form to release their tree
-/// borrow before evaluation callbacks begin mutating that same tree.
-pub fn execute_collected_document_scripts<J>(
-    scripts: Vec<DocumentScript>,
-    engine: &mut J,
-    entrypoint: &Path,
-) -> Result<Vec<J::Value>, JsError>
-where
-    J: ScriptEngine,
-{
-    execute_collected_document_scripts_from(scripts, engine, entrypoint, &LocalScripts)
 }
 
 /// Executes a collected script list, reading `src` scripts through `loader`.

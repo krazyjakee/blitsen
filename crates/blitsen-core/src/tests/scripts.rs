@@ -10,7 +10,7 @@ fn ends_with_path(identity: &str, suffix: &str) -> bool {
 #[test]
 fn document_scripts_run_in_order_with_local_module_identity() {
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../spikes/s7/fixture/index.html");
-    let document = MockScripts(vec![
+    let scripts = vec![
         DocumentScript {
             source: "globalThis.first = true".into(),
             src: None,
@@ -32,10 +32,11 @@ fn document_scripts_run_in_order_with_local_module_identity() {
             async_attribute: false,
             defer_attribute: false,
         },
-    ]);
+    ];
     let mut engine = RecordingScriptEngine::default();
     assert_eq!(
-        execute_document_scripts(&document, &mut engine, &fixture).unwrap(),
+        execute_collected_document_scripts_from(scripts, &mut engine, &fixture, &LocalScripts)
+            .unwrap(),
         vec![1, 2]
     );
     assert_eq!(engine.evaluations[0].0, "classic");
@@ -49,19 +50,25 @@ fn document_scripts_run_in_order_with_local_module_identity() {
 fn a_server_root_source_is_read_from_the_application_root() {
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../spikes/s7/fixture/index.html");
     let script = |src: &str| {
-        MockScripts(vec![DocumentScript {
+        vec![DocumentScript {
             source: String::new(),
             src: Some(src.into()),
             script_type: Some("module".into()),
             async_attribute: false,
             defer_attribute: false,
-        }])
+        }]
     };
     // The leading slash is the application's root, not the filesystem's — the
     // meaning `blitsen build` rewrites it to and the application origin already
     // carries inside an export. A stock `vite build` emits nothing else.
     let mut engine = RecordingScriptEngine::default();
-    execute_document_scripts(&script("/src/math.js"), &mut engine, &fixture).unwrap();
+    execute_collected_document_scripts_from(
+        script("/src/math.js"),
+        &mut engine,
+        &fixture,
+        &LocalScripts,
+    )
+    .unwrap();
     assert!(ends_with_path(&engine.evaluations[0].2, "src/math.js"));
     assert!(!engine.evaluations[0].1.is_empty());
 
@@ -69,7 +76,13 @@ fn a_server_root_source_is_read_from_the_application_root() {
     // not ship is skipped, for the reason a remote one is: one source that does
     // not arrive must not stop every other script on the page.
     let mut engine = RecordingScriptEngine::default();
-    execute_document_scripts(&script("/assets/app.js"), &mut engine, &fixture).unwrap();
+    execute_collected_document_scripts_from(
+        script("/assets/app.js"),
+        &mut engine,
+        &fixture,
+        &LocalScripts,
+    )
+    .unwrap();
     assert!(engine.evaluations.is_empty());
 }
 
@@ -86,10 +99,11 @@ fn a_remote_script_skips_without_stopping_the_document() {
         defer_attribute: false,
     };
     for remote in ["https://example.com/gtag.js", "//cdn.example.com/a.js"] {
-        let document = MockScripts(vec![script(Some(remote), ""), script(None, "1")]);
+        let scripts = vec![script(Some(remote), ""), script(None, "1")];
         let mut engine = RecordingScriptEngine::default();
         assert_eq!(
-            execute_document_scripts(&document, &mut engine, &fixture).unwrap(),
+            execute_collected_document_scripts_from(scripts, &mut engine, &fixture, &LocalScripts)
+                .unwrap(),
             vec![1],
             "the inline script after {remote} still runs"
         );
