@@ -504,9 +504,21 @@ function blanked(script) {
   for (let index = 0; index < characters.length; index++) {
     const character = script[index];
     if (state === null) {
-      if (character === "/" && script[index + 1] === "/") state = "line";
-      else if (character === "/" && !/[\w$)\]]/.test(previous(index))) state = "regex";
-      else if (character === '"' || character === "'" || character === "`") state = character;
+      if (character === "/" && script[index + 1] === "/") {
+        characters[index] = characters[index + 1] = " ";
+        index++;
+        state = "line";
+      } else if (character === "/" && script[index + 1] === "*") {
+        characters[index] = characters[index + 1] = " ";
+        index++;
+        state = "block";
+      } else if (character === "/" && !/[\w$)\]]/.test(previous(index))) {
+        characters[index] = " ";
+        state = "regex";
+      } else if (character === '"' || character === "'" || character === "`") {
+        characters[index] = " ";
+        state = character;
+      }
       continue;
     }
     if (state === "line") {
@@ -514,15 +526,158 @@ function blanked(script) {
       else characters[index] = " ";
       continue;
     }
+    if (state === "block") {
+      if (character === "*" && script[index + 1] === "/") {
+        characters[index] = characters[index + 1] = " ";
+        index++;
+        state = null;
+      } else if (character !== "\n") characters[index] = " ";
+      continue;
+    }
     if (character === "\\") {
       characters[index] = characters[index + 1] = " ";
       index++;
       continue;
     }
-    if (character === (state === "regex" ? "/" : state)) state = null;
+    if (character === (state === "regex" ? "/" : state)) {
+      characters[index] = " ";
+      state = null;
+    }
     else characters[index] = " ";
   }
   return characters.join("");
+}
+
+const identifierAt = (script, index) => /^[A-Za-z_$][\w$]*/.exec(script.slice(index))?.[0] ?? null;
+const afterSpace = (script, index) => {
+  while (index < script.length && /\s/.test(script[index])) index++;
+  return index;
+};
+const sourceLine = (script, index) => script.slice(0, index).split("\n").length;
+
+function matchingDelimiter(script, opening, open, close, context) {
+  let depth = 0;
+  for (let index = opening; index < script.length; index++) {
+    if (script[index] === open) depth++;
+    else if (script[index] === close && --depth === 0) return index;
+  }
+  throw new Error(`${context} has no closing ${close}`);
+}
+
+function classMemberKey(script, index, className) {
+  let generator = false;
+  if (script[index] === "*") {
+    generator = true;
+    index = afterSpace(script, index + 1);
+  }
+  if (script[index] === "[") {
+    const end = matchingDelimiter(script, index, "[", "]", `${className}'s computed member`);
+    return { name: null, index: afterSpace(script, end + 1) };
+  }
+  let name = identifierAt(script, index);
+  if (!name)
+    throw new Error(`${className} has an unsupported member at line ${sourceLine(script, index)}`);
+  index = afterSpace(script, index + name.length);
+
+  // These are modifiers only when another property key follows. `get()`,
+  // `set()` and `static()` remain ordinary methods with those names.
+  if (!generator && ["static", "async", "get", "set"].includes(name)
+      && script[index] !== "(" && script[index] !== "=" && script[index] !== ";") {
+    if (name === "static" && script[index] === "{") {
+      const end = matchingDelimiter(script, index, "{", "}", `${className}'s static block`);
+      return { name: null, index: afterSpace(script, end + 1), complete: true };
+    }
+    return classMemberKey(script, index, className);
+  }
+  return { name, index };
+}
+
+function classMembers(script, opening, closing, className) {
+  const members = new Set();
+  let index = opening + 1;
+  while ((index = afterSpace(script, index)) < closing) {
+    if (script[index] === ";") { index++; continue; }
+    const key = classMemberKey(script, index, className);
+    index = key.index;
+    if (key.complete) continue;
+    if (script[index] === "(") {
+      const parameters = matchingDelimiter(script, index, "(", ")", `${className}.${key.name ?? "[computed]"}`);
+      index = afterSpace(script, parameters + 1);
+      if (script[index] !== "{")
+        throw new Error(`${className}.${key.name ?? "[computed]"} must have a method body`);
+      index = matchingDelimiter(script, index, "{", "}",
+        `${className}.${key.name ?? "[computed]"}`) + 1;
+    } else if (script[index] === "=") {
+      // Bootstrap classes currently use methods and accessors. Supporting a
+      // field is cheap, but its initializer must still be structurally closed
+      // rather than letting the next declaration be mistaken for a member.
+      let braces = 0, brackets = 0, parentheses = 0;
+      for (index++; index < closing; index++) {
+        if (script[index] === "{") braces++;
+        else if (script[index] === "}") { if (braces === 0) break; braces--; }
+        else if (script[index] === "[") brackets++;
+        else if (script[index] === "]") brackets--;
+        else if (script[index] === "(") parentheses++;
+        else if (script[index] === ")") parentheses--;
+        else if (script[index] === ";" && braces === 0 && brackets === 0 && parentheses === 0) {
+          index++;
+          break;
+        }
+      }
+    } else if (script[index] === ";") index++;
+    else throw new Error(`${className}.${key.name ?? "[computed]"} has an unsupported declaration`);
+    if (key.name && key.name !== "constructor") members.add(key.name);
+  }
+  return members;
+}
+
+function runtimeClassesAndInstances(script) {
+  const classes = new Map();
+  const instanceDeclarations = [];
+  let braces = 0, brackets = 0, parentheses = 0;
+  for (let index = 0; index < script.length;) {
+    const identifier = identifierAt(script, index);
+    if (identifier && braces === 0 && brackets === 0 && parentheses === 0) {
+      if (identifier === "class") {
+        let cursor = afterSpace(script, index + identifier.length);
+        const name = identifierAt(script, cursor);
+        if (!name) throw new Error(`the bootstrap has an unnamed class at line ${sourceLine(script, index)}`);
+        cursor = afterSpace(script, cursor + name.length);
+        let base;
+        if (identifierAt(script, cursor) === "extends") {
+          cursor = afterSpace(script, cursor + "extends".length);
+          base = identifierAt(script, cursor);
+          if (!base) throw new Error(`${name} has an unsupported extends declaration`);
+          cursor = afterSpace(script, cursor + base.length);
+        }
+        if (script[cursor] !== "{") throw new Error(`${name} has no class body`);
+        const closing = matchingDelimiter(script, cursor, "{", "}", `class ${name}`);
+        if (classes.has(name)) throw new Error(`the bootstrap declares class ${name} twice`);
+        classes.set(name, { base, members: classMembers(script, cursor, closing, name) });
+        index = closing + 1;
+        continue;
+      }
+      if (identifier === "const") {
+        const declaration = /^const\s+([A-Za-z_$][\w$]*)\s*=\s*(?:new\s+([A-Za-z_$][\w$]*)\s*\(\s*\)|Object\s*\.\s*create\s*\(\s*([A-Za-z_$][\w$]*)\s*\.\s*prototype\s*\))\s*;/
+          .exec(script.slice(index));
+        if (declaration)
+          instanceDeclarations.push([declaration[1], declaration[2] ?? declaration[3]]);
+      }
+      index += identifier.length;
+      continue;
+    }
+    if (script[index] === "{") braces++;
+    else if (script[index] === "}") braces--;
+    else if (script[index] === "[") brackets++;
+    else if (script[index] === "]") brackets--;
+    else if (script[index] === "(") parentheses++;
+    else if (script[index] === ")") parentheses--;
+    index++;
+  }
+  if (braces !== 0 || brackets !== 0 || parentheses !== 0)
+    throw new Error("the bootstrap has unbalanced delimiters");
+  const instances = new Map(instanceDeclarations.filter(([, className]) => classes.has(className)));
+  return { classes, instances };
 }
 
 function objectKeys(script, declaration) {
@@ -585,18 +740,7 @@ export function extractRuntimeSurface(source) {
     /for \(const key of (\[[\s\S]*?\])\) \{\n\s*try \{ delete globalThis\[key\]; \} catch \{\}/,
     "the deliberately absent globals"));
 
-  const classes = new Map();
-  for (const [, name, base, body] of structure
-    .matchAll(/\n {2}class (\w+)(?: extends (\w+))? \{\n([\s\S]*?)\n {2}\}/g)) {
-    const members = [...`\n${body}`.matchAll(/\n {4}(?:static )?(?:get |set )?([A-Za-z_$][\w$]*)\s*[(=]/g)]
-      .map(([, member]) => member)
-      .filter(member => member !== "constructor");
-    classes.set(name, { base, members: new Set(members) });
-  }
-  const instances = new Map();
-  for (const [, name, constructed, created] of structure
-    .matchAll(/\n {2}const (\w+) = (?:new (\w+)\(\)|Object\.create\((\w+)\.prototype\));/g))
-    if (classes.has(constructed ?? created)) instances.set(name, constructed ?? created);
+  const { classes, instances } = runtimeClassesAndInstances(structure);
   const native = new Map(Object.keys(NATIVE).map(module =>
     [module, new Set(objectKeys(structure, `const native${capitalized(module)} = {`))]));
   return { globals: [...globals].filter(name => !name.startsWith("__blitsen")), classes, instances,
