@@ -21,7 +21,7 @@
 
 import { spawn } from "node:child_process";
 import { access, readdir, readFile } from "node:fs/promises";
-import { constants } from "node:fs";
+import { constants, existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
@@ -31,10 +31,18 @@ import { dirname, join, resolve } from "node:path";
 /// also a *prerequisite*: `android-<TARGET_SDK>/android.jar` has to be installed
 /// for the packager to link against, and this is the file that checks for it.
 ///
-/// 24 is the floor `android-activity` and the NDK's own C++ runtime settle on
-/// in practice, and it is below every device with a Vulkan driver worth
-/// rendering to. 33 is what #139 measured against, so it is what is claimed.
-export const MIN_SDK = 24;
+/// 26, and the number is a link error rather than a preference. `cpal`'s Android
+/// backend is AAudio, so `blitsen-android` links `-laaudio`, and the NDK ships
+/// `libaaudio.so` from API 26 and no earlier — `sysroot/usr/lib/<triple>/24/`
+/// and `/25/` simply do not contain it, so a min_sdk below 26 fails at `ld.lld`
+/// with `unable to find library -laaudio`. This was 24 until an APK was built
+/// against Blitsen's own graph for the first time and found it (#149).
+///
+/// What it costs is Android 7.x, which no device with a Vulkan driver worth
+/// rendering to is still on: 26 is Oreo, August 2017, and it is also the floor
+/// #148 already names for the 32-bit ABI it declines to default. 33 is what
+/// #139 measured against, so it is what is claimed.
+export const MIN_SDK = 26;
 export const TARGET_SDK = 33;
 
 /// Where the entry point comes from. Issue #142 owns the crate; these name the
@@ -50,6 +58,33 @@ const SDK_VARIABLES = ["ANDROID_HOME", "ANDROID_SDK_ROOT"];
 const NDK_VARIABLES = ["ANDROID_NDK_HOME", "ANDROID_NDK_ROOT", "NDK_HOME"];
 
 const readable = path => access(path, constants.R_OK).then(() => true, () => false);
+
+/// `which`, without Bun.
+///
+/// The obvious spelling of this is `Bun.which(command)`, and it was — which
+/// made `npx blitsen build --android` die at step ② with `Bun is not defined`
+/// on every machine that installed the package instead of cloning it. That is
+/// #131's bug exactly, on the one path #131 did not cover, and it is spelled
+/// out here because `Bun?.which` *looks* like it guards the case and does not:
+/// optional chaining short-circuits a null value, not an undeclared binding, so
+/// the reference throws before the `?.` is ever consulted.
+///
+/// Synchronous and eager because the callers are, and because a PATH scan is a
+/// handful of `stat`s. `PATHEXT` is honoured so this answers the same question
+/// on Windows, where the packager is `cargo-apk.exe`.
+function onPath(command) {
+  const separator = process.platform === "win32" ? ";" : ":";
+  const extensions = process.platform === "win32"
+    ? (process.env.PATHEXT ?? ".EXE;.CMD;.BAT").split(";") : [""];
+  for (const directory of (process.env.PATH ?? "").split(separator)) {
+    if (directory === "") continue;
+    for (const extension of extensions) {
+      const candidate = join(directory, command + extension);
+      if (existsSync(candidate)) return candidate;
+    }
+  }
+  return null;
+}
 
 /// Highest-numbered entry in a versioned SDK directory, by numeric segments —
 /// so `34.0.0` beats `9.0.0`, which a string sort gets wrong.
@@ -82,7 +117,7 @@ export const missing = (what, fix) => new Error(`${what}\n  ${fix}`);
  * assumed, because a machine with `ANDROID_HOME` set to a directory that no
  * longer exists is the ordinary failure, not an exotic one.
  */
-export async function detectAndroidToolchain({ env = process.env, which = command => Bun?.which?.(command) ?? null } = {}) {
+export async function detectAndroidToolchain({ env = process.env, which = onPath } = {}) {
   const named = SDK_VARIABLES.map(name => [name, env[name]]).find(([, value]) => value);
   const guess = join(homedir(), "Android", "Sdk");
   const sdk = named?.[1] ?? (await readable(guess) ? guess : null);
@@ -107,6 +142,21 @@ export async function detectAndroidToolchain({ env = process.env, which = comman
       + "C toolchain, a Rust toolchain and two installed Rust targets either way, and the "
       + "NDK is two and a half gigabytes behind a licence.");
   }
+  // The one C toolchain inside the NDK, found rather than named. An NDK ships
+  // exactly one `toolchains/llvm/prebuilt/<host>` — `linux-x86_64`,
+  // `darwin-x86_64` (on Apple Silicon too) or `windows-x86_64` — and reading
+  // the directory is both shorter than a table of those and correct when
+  // Google adds a fourth. Wanted here because two of the environment variables
+  // an Android cross-compile needs are paths inside it, and computing them at
+  // the call site would mean the same guess in two places.
+  const prebuilt = join(ndk, "toolchains", "llvm", "prebuilt");
+  const [host] = (await readdir(prebuilt).catch(() => [])).sort();
+  if (!host) {
+    throw missing(`${ndk} has no C toolchain under toolchains/llvm/prebuilt.`,
+      "That directory is the NDK's compiler, linker and sysroot, so this is not an NDK. "
+      + "Reinstall it — `sdkmanager \"ndk;27.2.12479018\"`.");
+  }
+  const llvm = join(prebuilt, host);
   const version = await newestVersioned(join(sdk, "build-tools"));
   if (version === null) {
     throw missing(`no Android build-tools are installed under ${sdk}.`,
@@ -136,7 +186,8 @@ export async function detectAndroidToolchain({ env = process.env, which = comman
       "Install it — `cargo install cargo-apk`. It is the packager Blitsen drives; see the "
       + "reasoning at the top of packages/blitsen/src/android.mjs.");
   }
-  return { sdk, ndk, buildTools, buildToolsVersion: version, platform, packager };
+  return { sdk, ndk, llvm, sysroot: join(llvm, "sysroot"), buildTools,
+    buildToolsVersion: version, platform, packager };
 }
 
 /**

@@ -29,6 +29,7 @@ import {
   ASSET_INDEX, ASSET_ROOT, INDEX_VERSION, assetIndex, stageAndroidAssets,
 } from "../src/android-assets.mjs";
 import { main, parseArgs } from "../src/cli.mjs";
+import { changed, decodeFrame, describe as describeFrame } from "./run-android-smoke.mjs";
 import { capture } from "./cli-support.mjs";
 
 const apkSource = join(import.meta.dir, "../../../crates/blitsen-host/src/apk.rs");
@@ -306,7 +307,13 @@ describe("the workspace's dependency pins travel with the generated project", ()
 async function fakeSdk(directory, { ndk = "27.2.12479018", tools = ["aapt", "zipalign", "apksigner"],
   buildTools = "34.0.0" } = {}) {
   const sdk = join(directory, "Sdk");
-  if (ndk) await mkdir(join(sdk, "ndk", ndk), { recursive: true });
+  if (ndk) {
+    // The C toolchain the detector reads back out. An NDK ships exactly one
+    // `toolchains/llvm/prebuilt/<host>`, which is what makes finding it by
+    // reading the directory correct rather than a table of host names.
+    await mkdir(join(sdk, "ndk", ndk, "toolchains", "llvm", "prebuilt", "linux-x86_64", "bin"),
+      { recursive: true });
+  }
   await mkdir(join(sdk, "build-tools", buildTools), { recursive: true });
   for (const tool of tools) await writeFile(join(sdk, "build-tools", buildTools, tool), "");
   await mkdir(join(sdk, "platforms", "android-33"), { recursive: true });
@@ -352,17 +359,37 @@ describe("the toolchain is detected, never installed", () => {
     await withWork(async directory => {
       const sdk = await fakeSdk(directory);
       const elsewhere = join(directory, "ndk-r99");
-      await mkdir(elsewhere, { recursive: true });
-      expect((await detected(sdk, { ANDROID_NDK_HOME: elsewhere })).ndk).toBe(elsewhere);
+      await mkdir(join(elsewhere, "toolchains", "llvm", "prebuilt", "darwin-x86_64"),
+        { recursive: true });
+      const toolchain = await detected(sdk, { ANDROID_NDK_HOME: elsewhere });
+      expect(toolchain.ndk).toBe(elsewhere);
+      // And the C toolchain follows it, rather than staying with the SDK's.
+      expect(toolchain.llvm)
+        .toBe(join(elsewhere, "toolchains", "llvm", "prebuilt", "darwin-x86_64"));
+      expect(toolchain.sysroot).toBe(join(toolchain.llvm, "sysroot"));
+    });
+  });
+
+  test("an NDK with no C toolchain in it is refused, not used", async () => {
+    await withWork(async directory => {
+      const sdk = await fakeSdk(directory);
+      const hollow = join(directory, "not-an-ndk");
+      await mkdir(hollow, { recursive: true });
+      await expect(detected(sdk, { ANDROID_NDK_HOME: hollow }))
+        .rejects.toThrow("no C toolchain");
     });
   });
 });
 
 describe("the packager invocation", () => {
   const plan = (overrides = {}) => apkPlan({
-    project: { apkName: "Pong" },
+    project: { apkName: "Pong", abis: ["arm64-v8a", "x86_64"] },
     directory: "/build/.Pong.apk.blitsen-android",
-    toolchain: { sdk: "/sdk", ndk: "/sdk/ndk/27" },
+    toolchain: {
+      sdk: "/sdk", ndk: "/sdk/ndk/27",
+      llvm: "/sdk/ndk/27/toolchains/llvm/prebuilt/linux-x86_64",
+      sysroot: "/sdk/ndk/27/toolchains/llvm/prebuilt/linux-x86_64/sysroot",
+    },
     ...overrides,
   });
 
@@ -373,6 +400,40 @@ describe("the packager invocation", () => {
     expect(release.environment.ANDROID_NDK_HOME).toBe("/sdk/ndk/27");
     expect(release.artifact)
       .toBe(join("/build/.Pong.apk.blitsen-android", "target", "release", "apk", "Pong.apk"));
+  });
+
+  // Both of these are absences in `cargo apk` rather than preferences, and both
+  // were found by building an APK against Blitsen's own graph for the first
+  // time (#149). Asserted per ABI, because the variables are per target triple
+  // and an ABI that is named but unconfigured fails an hour into the build.
+  test("tells the cross-compile the two things cargo-apk does not", () => {
+    const environment = plan().environment;
+    const llvm = "/sdk/ndk/27/toolchains/llvm/prebuilt/linux-x86_64";
+    for (const triple of ["aarch64_linux_android", "x86_64_linux_android"]) {
+      // openssl-sys builds OpenSSL vendored on Android, and its makefile runs a
+      // `ranlib` the NDK stopped shipping under that name in r23.
+      expect(environment[`RANLIB_${triple}`]).toBe(`${llvm}/bin/llvm-ranlib`);
+      // rquickjs-sys generates its own Android bindings and hands bindgen no
+      // sysroot, so libclang reads Android's headers as the host's.
+      expect(environment[`BINDGEN_EXTRA_CLANG_ARGS_${triple}`])
+        .toContain(`--sysroot=${llvm}/sysroot`);
+    }
+    expect(environment.BINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android)
+      .toContain(`-I${llvm}/sysroot/usr/include/aarch64-linux-android`);
+    // Only the ABIs asked for: naming one configures one.
+    expect(environment.RANLIB_armv7_linux_androideabi).toBeUndefined();
+  });
+
+  test("names the sysroot headers for the ABI, which 32-bit ARM spells differently", () => {
+    const environment = plan({
+      project: { apkName: "Pong", abis: ["armeabi-v7a"] },
+    }).environment;
+    // The Rust triple is `armv7-linux-androideabi`; the include directory is
+    // `arm-linux-androideabi`, and using the first finds nothing.
+    expect(environment.BINDGEN_EXTRA_CLANG_ARGS_armv7_linux_androideabi)
+      .toContain("/sysroot/usr/include/arm-linux-androideabi");
+    expect(environment.BINDGEN_EXTRA_CLANG_ARGS_armv7_linux_androideabi)
+      .not.toContain("include/armv7-linux-androideabi");
   });
 
   test("signs a release with the debug key until a real one is named", () => {
@@ -449,6 +510,7 @@ describe("an Android build, with the packager stubbed", () => {
         env: { BLITSEN_ANDROID_CRATE: crate },
         run,
         detect: async () => ({ sdk: "/sdk", ndk: "/sdk/ndk/27", buildTools: "/sdk/bt",
+          llvm: "/sdk/ndk/27/llvm", sysroot: "/sdk/ndk/27/llvm/sysroot",
           buildToolsVersion: "34.0.0", platform: "/sdk/p", packager: "cargo-apk" }),
         progress: event => steps.push(event),
       });
@@ -487,7 +549,8 @@ describe("an Android build, with the packager stubbed", () => {
         run: async command => (command[0] === "rustup"
           ? { code: 0, stdout: "x86_64-unknown-linux-gnu\n", stderr: "" }
           : { code: 0, stdout: "", stderr: "" }),
-        detect: async () => ({ sdk: "/sdk", ndk: "/sdk/ndk/27", buildToolsVersion: "34.0.0" }),
+        detect: async () => ({ sdk: "/sdk", ndk: "/sdk/ndk/27", llvm: "/sdk/ndk/27/llvm",
+          sysroot: "/sdk/ndk/27/llvm/sysroot", buildToolsVersion: "34.0.0" }),
       })).rejects.toThrow("rustup target add aarch64-linux-android x86_64-linux-android");
     });
   });
@@ -596,5 +659,67 @@ describe("the command line", () => {
       // one never asks for one.
       expect(said).not.toContain("native build runtime");
     });
+  });
+});
+
+// The one piece of the emulator smoke test (#149) that can be measured without
+// an emulator, and the one most worth measuring. `screencap`'s raw header grew
+// a field in Android 9, so the reader tries both sizes; if it ever picked the
+// wrong one the pixels would be shifted by four bytes and every frame would
+// decode as noise — which has thousands of distinct colours and would sail
+// through the blankness check. A green Android job that measured nothing is
+// precisely the outcome #149 exists to avoid, so the decoder is held to frames
+// whose contents are known.
+describe("the frame the Android smoke test reads back", () => {
+  /// A raw `screencap` buffer: header, then width x height little-endian pixels.
+  const frame = (width, height, pixel, header = 16) => {
+    const bytes = Buffer.alloc(header + width * height * 4);
+    bytes.writeUInt32LE(width, 0);
+    bytes.writeUInt32LE(height, 4);
+    bytes.writeUInt32LE(1, 8);
+    for (let at = 0; at < width * height; at += 1) {
+      bytes.writeUInt32LE(pixel(at % width, Math.floor(at / width)), header + at * 4);
+    }
+    return bytes;
+  };
+
+  test("decodes both header sizes, and reads the pixels in the right places", () => {
+    for (const header of [12, 16]) {
+      const decoded = decodeFrame(frame(4, 3, (x, y) => 0x1000 * y + x, header));
+      expect(decoded.header).toBe(header);
+      expect([decoded.width, decoded.height]).toEqual([4, 3]);
+      // The corner pixels, which is where an off-by-four in the header shows.
+      expect(decoded.pixels[0]).toBe(0);
+      expect(decoded.pixels[3]).toBe(3);
+      expect(decoded.pixels[11]).toBe(0x2003);
+    }
+  });
+
+  test("refuses a buffer whose arithmetic does not work out", () => {
+    const truncated = frame(4, 3, () => 0).subarray(0, 40);
+    expect(() => decodeFrame(truncated)).toThrow("not a frame this understands");
+    expect(() => decodeFrame(Buffer.alloc(0))).toThrow("not a frame");
+  });
+
+  test("a flat frame is blank and a varied one is not", () => {
+    expect(describeFrame(decodeFrame(frame(64, 64, () => 0xff000000))).blank).toBe(true);
+    const varied = describeFrame(decodeFrame(frame(64, 64, (x, y) => (x << 8) | y)));
+    expect(varied.blank).toBe(false);
+    expect(varied.colours).toBe(64 * 64);
+    // A frame that is one colour with a handful of pixels of another is still
+    // blank: the launcher's clock must not count as an application painting.
+    const nearlyFlat = describeFrame(decodeFrame(frame(64, 64, (x, y) => (x < 1 && y < 4 ? y : 0))));
+    expect(nearlyFlat.blank).toBe(true);
+  });
+
+  test("change is measured against the control, not against nothing", () => {
+    const before = decodeFrame(frame(10, 10, () => 7));
+    expect(changed(before, decodeFrame(frame(10, 10, () => 7)))).toBe(0);
+    expect(changed(before, decodeFrame(frame(10, 10, () => 9)))).toBe(1);
+    // Half the rows repainted.
+    expect(changed(before, decodeFrame(frame(10, 10, (x, y) => (y < 5 ? 9 : 7))))).toBe(0.5);
+    // A different size is a different screen, and comparing them pixelwise
+    // would be meaningless rather than zero.
+    expect(changed(before, decodeFrame(frame(10, 12, () => 7)))).toBe(1);
   });
 });

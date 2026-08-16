@@ -400,6 +400,40 @@ export function apkPlan({
     ANDROID_NDK_HOME: toolchain.ndk,
     ANDROID_NDK_ROOT: toolchain.ndk,
   };
+  // The two things `cargo apk` does not tell the cross-compile, and Blitsen's
+  // graph needs both. `cargo apk` sets `CC_`, `CFLAGS_`, `AR_` and the cargo
+  // linker for each target and stops there, which is enough for a crate whose C
+  // is one `cc::Build`; it is not enough for this dependency graph, and neither
+  // gap is visible until an APK is built against the real one (#149). Both are
+  // what `cargo-ndk` sets for the same triples, and are copied from it rather
+  // than invented.
+  //
+  //   * `RANLIB_<triple>` — `openssl-sys` builds OpenSSL vendored on Android
+  //     (blitz-net asks reqwest for `native-tls-vendored` there), and OpenSSL's
+  //     makefile runs `$(CROSS_COMPILE)ranlib`. The `cc` crate answers with
+  //     `aarch64-linux-android-ranlib`, which NDK r23 removed along with the
+  //     rest of the GNU binutils wrappers; what exists is `llvm-ranlib`. Without
+  //     this the build dies in `make install_dev` with `ranlib: not found`.
+  //   * `BINDGEN_EXTRA_CLANG_ARGS_<triple>` — `rquickjs-sys` ships no Android
+  //     bindings, so `crates/blitsen-quickjs/Cargo.toml` turns on `bindgen`
+  //     there, and that crate's build script hands bindgen no target and no
+  //     sysroot. libclang then reads Android's headers as the host's and emits
+  //     a `JSValue` that does not match the one the crate's own inline
+  //     functions expect, so `rquickjs-sys` fails to compile against bindings
+  //     it generated itself.
+  //
+  // Underscored triples, because that is the spelling both readers agree on:
+  // the `cc` crate takes either and bindgen takes only this one.
+  for (const abi of project.abis) {
+    const triple = ANDROID_ABIS[abi];
+    const key = triple.replace(/-/g, "_");
+    environment[`RANLIB_${key}`] = join(toolchain.llvm, "bin", "llvm-ranlib");
+    // The sysroot's per-target include directory is named for the ABI rather
+    // than the Rust triple, and 32-bit ARM is the one place the two differ.
+    const headers = triple === "armv7-linux-androideabi" ? "arm-linux-androideabi" : triple;
+    environment[`BINDGEN_EXTRA_CLANG_ARGS_${key}`] =
+      `--sysroot=${toolchain.sysroot} -I${join(toolchain.sysroot, "usr", "include", headers)}`;
+  }
   // A release build is unsigned unless a key is named, and an unsigned APK
   // installs nowhere. The debug key is the default so that the first run
   // produces something runnable; the build prints what it signed with.

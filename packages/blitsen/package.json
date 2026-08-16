@@ -118,7 +118,8 @@
     "test:standalone": "bun test/run-standalone.mjs",
     "notices": "bun test/generate-notices.mjs",
     "test:licensing": "bun test/run-redistribution.mjs",
-    "test:proxy": "bun test/run-proxy.mjs"
+    "test:proxy": "bun test/run-proxy.mjs",
+    "test:android": "bun test/run-android-smoke.mjs"
   },
   "publishConfig": {
     "access": "public"
