@@ -494,10 +494,11 @@ in, and S0 measured it at **37,980,984 B** for the engine alone ([`spikes/s0`](.
 QuickJS-ng contributes about **1.5 MB** to the same total and brings no ICU at all — which is also
 why `Intl` is absent from the compatibility profile.
 
-**Still outstanding for P1.** Only Linux x64 is measured — the other five targets have no runner
-yet (TECH.md §14) — and no Electron or Tauri build has been measured on the same machine with the
-same application, so the comparison remains a claim rather than a number. Both are what the
-remaining P1 work is.
+**Still outstanding for P1.** Only Linux x64 is measured — the other five targets build and test in
+CI (TECH.md §11) but have no committed size baseline, so the gate reports on them and gates nothing
+(TECH.md §14) — and no Electron or Tauri build has been measured on the same machine with the same
+application, so the comparison remains a claim rather than a number. Both are what the remaining P1
+work is.
 
 The S0 floor already exceeded the old 25–50 MB installed estimate before production services or
 application code, and that estimate, along with the derived 20–40 MB Phase 3 estimate, stays

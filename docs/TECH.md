@@ -847,10 +847,12 @@ blitsen                        ← thin JS: CLI, config, TypeScript definitions
   package, which the CLI can fetch on demand rather than at install.
 
 The six manifests live in `packages/platforms/`, one directory per target, each declaring its
-`os`/`cpu` pair and a single `blitsen.node`. **None is published, and only `linux-x64` is built
-today**: no binary is committed, the other five have no runner, and `.github/workflows/release.yml`
-is manual-dispatch and packs rather than publishes. They are deliberately not workspace members —
-six unpublished names in the root lockfile would break `bun install --frozen-lockfile`.
+`os`/`cpu` pair, the addon `blitsen.node` and the executable an export links into.
+**All six are built, and none is published**: every target has a runner in
+`.github/workflows/release.yml`, no binary is committed, and the workflow is manual-dispatch — it
+packs and dry-runs unless its `publish` input says otherwise, because `npm publish` cannot be
+undone. They are deliberately not workspace members — six unpublished names in the root lockfile
+would break `bun install --frozen-lockfile`.
 
 ### Resolving the runtime
 
@@ -963,8 +965,10 @@ executing the same native assertions on Linux, macOS, or Windows.
 
 ## 15. Feasibility spikes
 
-All eight spikes were completed on Linux x64. The consolidated outcome is **go, re-scoped**;
-see [the M0 decision](M0.md). Windows and macOS validation is deferred.
+All eight spikes were completed on Linux x64, so every number in this section is a Linux number.
+The consolidated outcome is **go, re-scoped**; see [the M0 decision](M0.md). Windows and macOS are
+no longer deferred — all six targets build and test in CI (§11) — but nothing here was re-measured
+on them ([issue #123](https://github.com/krazyjakee/blitsen/issues/123)).
 
 | # | Question | Kills / changes what |
 | --- | --- | --- |

@@ -7,8 +7,11 @@ JavaScript output. It hosts a JavaScript engine directly and pairs it with
 [Blitz](https://github.com/DioxusLabs/blitz)'s native HTML/CSS renderer. It does not embed Chromium, and it does not use the operating system's
 WebView.
 
-**The project is pre-alpha.** Linux x64 is the only supported target; Windows and macOS validation
-is deferred.
+**The project is pre-alpha.** All six targets build and test in CI — Linux, macOS and Windows on
+x64 and arm64 — with the full suite on `linux-x64`, `darwin-arm64` and `win32-x64` and a smoke tier
+on the other three. Nothing is published to npm yet, size and startup have a baseline on Linux x64
+alone, and every harness is headless: no Blitsen window has been watched paint on Windows or macOS
+outside CI ([issue #123](https://github.com/krazyjakee/blitsen/issues/123)).
 
 ## What it is not
 
