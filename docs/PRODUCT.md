@@ -326,8 +326,10 @@ notifications.
 **Later — as demand justifies**
 `<canvas>` 2D · WebGL / WebGPU · WebRTC · anything else earning its size.
 
-**Where the v1 line was drawn, stated plainly.** `<canvas>` (#99), text input and IME (#103) and
-accessibility (#102) are **not v1**. `<canvas>` in particular is a `doctor` **error** rather than a
+**Where the v1 line was drawn, stated plainly.** `<canvas>` (#99), advanced text input and IME
+(#103), and accessibility (#102) are **not v1**. Basic keyboard editing, caret placement and drag
+selection in text controls have landed; clipboard editing, undo/redo, composition and
+`contenteditable` have not. `<canvas>` in particular is a `doctor` **error** rather than a
 warning — the element ships in the document and nothing paints inside it, and unlike an image or a
 font it has no degraded appearance to fall back to. So "v1 makes real apps possible" and "canvas is
 an error" are true at the same time, and that is the one place the tiers can be read as more

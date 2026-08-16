@@ -51,7 +51,7 @@ your build tool — it runs the command you wrote and consumes the directory it 
 directory argument (`npx blitsen build dist`) skips the wrapping, and every flag overrides the
 configured value. `name` becomes the window title and the default output file name. The `blitsen`
 key of `package.json` is the only config location; its schema ships as
-`blitsen/src/config.schema.json`, and `defineConfig` from the package validates the same shape
+`blitsen/config.schema.json`, and `defineConfig` from the package validates the same shape
 in JS:
 
 ```js
@@ -80,9 +80,11 @@ choose where the collected assets live:
 npx blitsen build dist --include 'locales/**' --assets side-loaded
 ```
 
-`--assets embedded` is the default and produces one executable containing the Bun host, native
-addon, and application assets. `--assets side-loaded` writes them to `<outfile>.assets/` beside
-the executable instead. A profile error from `doctor` fails the build.
+`--assets embedded` is the default and produces one executable containing the selected host and
+the application assets. An ordinary export appends the application to Blitsen's Phase 2 runtime.
+An application carrying a `.node` addon selects the Phase 1 Bun host instead and carries both the
+runtime addon and the application's addon. `--assets side-loaded` writes the application assets to
+`<outfile>.assets/` beside the executable instead. A profile error from `doctor` fails the build.
 
 Give the export a platform identity, and hand the finished artifact to your own signing setup:
 
@@ -106,13 +108,14 @@ never handles certificates.
 npx blitsen build dist --target win32-x64   # from Linux
 ```
 
-`--target` takes any of the six triples. The target's runtime is fetched **on demand** rather than
-installed six times over on every machine, and cached between builds — under `XDG_CACHE_HOME`,
-`~/Library/Caches` or `%LOCALAPPDATA%`, keyed by version as well as by target, because the runtime
-and the CLI are one ABI. `BLITSEN_CACHE_DIR` moves it. The launcher is compiled for that target's
-own Bun, so the artifact is a real PE, Mach-O or ELF executable for the platform you asked for —
-and a runtime that does not match the target is refused rather than linked into an executable that
-would fail at `dlopen` in front of a user.
+`--target` takes any of the six triples. The target's runtime package is fetched **on demand**
+rather than installed six times over on every machine, and cached between builds — under
+`XDG_CACHE_HOME`, `~/Library/Caches` or `%LOCALAPPDATA%`, keyed by version as well as by target,
+because the runtime and the CLI are one ABI. `BLITSEN_CACHE_DIR` moves it. An ordinary export
+appends the application to that target's Phase 2 executable; an application carrying a `.node`
+addon selects the target's Bun-based Phase 1 path. Either way the artifact is a real PE, Mach-O or
+ELF executable for the platform you asked for, and a binary that does not match the target is
+refused rather than shipped to fail in front of a user.
 
 **What a cross-target build cannot do is sign.** Signing and notarisation need the target
 platform's own toolchain and its keychain:
@@ -130,12 +133,73 @@ that platform; `--sign` is that seam, and it takes the same command you would ru
 cross-built macOS app that is never signed and notarised is refused by Gatekeeper on any machine
 that did not build it.
 
+### Building an Android APK
+
+Android is a separate cross-compiled artifact, not a seventh `--target` value:
+
+```sh
+npx blitsen build dist --android --android-abi arm64-v8a --out MyApp.apk
+```
+
+`arm64-v8a` is the device build. With no `--android-abi`, the APK contains both `arm64-v8a` and
+`x86_64`, so the same file also installs on an emulator; the option is repeatable, and
+`armeabi-v7a` is available on request but has not been run by this project. Android builds are
+cross-compiles and Blitsen installs none of their toolchain. The machine needs:
+
+- a Rust toolchain with the requested Android targets, plus `cargo-ndk`;
+- an Android SDK with API 33, an NDK, and build-tools containing `aapt2`, `zipalign` and
+  `apksigner`;
+- `libclang`, which generates QuickJS's Android bindings; and
+- a JDK, which `apksigner` uses and which supplies `keytool` when the debug keystore has to be
+  created.
+
+The Android entry crate is not published yet. Run this command from a Blitsen checkout, where
+`crates/blitsen-android` is found automatically, or point an installed CLI at that checkout:
+
+```sh
+BLITSEN_ANDROID_CRATE=/path/to/blitsen/crates/blitsen-android \
+  npx blitsen build dist --android --android-abi arm64-v8a --out MyApp.apk
+```
+
+Without `--android-keystore`, Blitsen creates or uses the standard Android debug key. That APK is
+installable but not distributable. A release key stays out of the command line; only its path is a
+flag and its password is an environment variable:
+
+```sh
+BLITSEN_ANDROID_KEYSTORE_PASSWORD='...' \
+  npx blitsen build dist --android --android-abi arm64-v8a \
+  --android-package com.example.myapp --android-keystore /path/to/release.jks \
+  --app-version 1.2.3 --out MyApp.apk
+```
+
+`BLITSEN_ANDROID_KEY_ALIAS` selects a key when the store holds more than one, and
+`BLITSEN_ANDROID_KEY_PASSWORD` supplies a key password that differs from the store password. The
+result is an APK for direct installation and sideloading. Signing alone does not clear it for
+redistribution: Android has no platform package from which to copy third-party notices, so set
+`BLITSEN_NOTICES_PATH` to the audited `NOTICES.txt` generated for the Android crate. Without it,
+the build reports that the APK is not cleared for redistribution. The result is **not an Android
+App Bundle** and cannot be uploaded as a new Google Play application; this release has no AAB
+output path.
+
 ## The native runtime
 
-This package is thin JavaScript — CLI, config, types. The runtime is one prebuilt binary per
-target (`@blitsen/linux-x64`, `@blitsen/darwin-arm64`, and the four others), declared as
+This package is thin JavaScript — CLI, config, types. Each target package
+(`@blitsen/linux-x64`, `@blitsen/darwin-arm64`, and the four others) carries two prebuilt binaries:
+`blitsen.node`, the addon used by `blitsen run` and Phase 1 exports, and `blitsen-runtime` (with
+`.exe` on Windows), the Phase 2 executable an ordinary export links. The packages are declared as
 `optionalDependencies` carrying `os` and `cpu` fields, so your package manager downloads only the
-one matching your machine. Install is a download: no postinstall compile step, no Rust toolchain.
+one matching your machine. A desktop install is a download: no postinstall compile step, no Rust
+toolchain.
+
+The published Linux runtimes are built on Ubuntu 22.04 and have a glibc 2.35 floor. At runtime
+they dynamically require ALSA (`libasound.so.2`), OpenSSL 3 (`libssl.so.3` and
+`libcrypto.so.3`), fontconfig (`libfontconfig.so.1`), and the ordinary display libraries required
+by the active X11 or Wayland session. Minimal and headless Linux images must supply those shared
+libraries separately.
+
+The Windows runtimes target Windows 10 or newer (and Server 2016 or newer on x64). They statically
+link the Microsoft C runtime, so a clean Windows installation does not need a separate Visual C++
+Redistributable.
 
 The runtime is pinned to this package's version **exactly**, because the two halves are one ABI
 built and tested together. Pin the pair by pinning `blitsen` — its lockfile entry is the pin, and
@@ -148,9 +212,23 @@ Built /home/me/MyApp (12 assets, 58720256 bytes)
 Runtime: @blitsen/linux-x64@0.1.0
 ```
 
-**No platform package is published yet.** Until they ship, Blitsen resolves the runtime from
-`BLITSEN_NATIVE_PATH`, or from an addon built inside a checkout of the repository, and otherwise
-refuses with the platform whose package it wanted rather than running against something else.
+Runtime resolution follows one visible order. `BLITSEN_NATIVE_PATH` overrides the addon used by
+`blitsen run` and Phase 1 exports; `BLITSEN_RUNTIME_PATH` independently overrides the Phase 2
+executable used by ordinary exports. Each accepts a filesystem path or `file:` URL, takes priority
+over the installed platform package, a checkout build, and the cross-target download cache, and is
+checked before use: the file must be a supported native binary for the requested platform and
+architecture. An override is deliberately unversioned, so the CLI names it on stderr rather than
+silently making it look like the pinned package runtime.
+
+A desktop build resolves the addon before it inspects the application and chooses its export host,
+so the two variables override separate halves of one target package rather than replacing each
+other. Setting `BLITSEN_RUNTIME_PATH` does not provide the addon, and setting
+`BLITSEN_NATIVE_PATH` does not provide the Phase 2 executable.
+
+Without an override, Blitsen resolves the matching `@blitsen/<target>` package through ordinary
+package resolution, then a release build in this repository's `target/release`. A cross-target
+build may fetch the exact package version into its cache after those local choices are exhausted;
+a host run never starts a network download merely because its installed runtime is missing.
 
 **The 0.1.0 runtimes are unsigned on every platform.** No Developer ID and no Windows
 code-signing certificate exist for this project yet, so what ships is what a build with no

@@ -61,6 +61,7 @@ describe("runtime resolution", () => {
 
   test("declares one platform package per target, pinned to this version exactly", async () => {
     const manifest = JSON.parse(await readFile(join(import.meta.dir, "../package.json"), "utf8"));
+    const license = await readFile(join(import.meta.dir, "../LICENSE"), "utf8");
     expect(Object.keys(manifest.optionalDependencies))
       .toEqual(TARGETS.map(target => `@blitsen/${target}`));
     for (const target of TARGETS) {
@@ -72,6 +73,8 @@ describe("runtime resolution", () => {
       expect(platform.os).toEqual([os]);
       expect(platform.cpu).toEqual([cpu]);
       expect(platform.exports["./blitsen.node"]).toBe("./blitsen.node");
+      expect(platform.files).toContain("LICENSE");
+      expect(await readFile(join(platformPackages, target, "LICENSE"), "utf8")).toBe(license);
       // A range would allow a pair that was never built together; see TECH.md §11.
       expect(platform.version).toBe(cliVersion);
       expect(manifest.optionalDependencies[platform.name]).toBe(cliVersion);

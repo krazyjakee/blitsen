@@ -1,10 +1,8 @@
 # 0.1.0 — first cross-platform release
 
-Draft. This is what goes in the GitHub release and the npm README banner when 0.1.0 publishes;
-it is committed so the claims in it are reviewable before they are made rather than written in a
-hurry against a registry that cannot take them back.
-
-Blitsen is **pre-alpha**. What follows is written to be true rather than to be attractive.
+Blitsen 0.1.0 is the first release with native runtimes for Linux, macOS and Windows, on both x64
+and arm64. Blitsen is **pre-alpha**: use the published compatibility profile and known gaps below
+as the boundary of what this release supports.
 
 ## What ships
 
@@ -31,10 +29,23 @@ npm i -D blitsen
 `os` and `cpu` on each runtime package are what make your package manager download only the one
 your machine needs. There is no postinstall compile step and no Rust toolchain.
 
+The Linux runtimes are built on Ubuntu 22.04 and require glibc 2.35 or newer, plus ALSA
+(`libasound.so.2`), OpenSSL 3 (`libssl.so.3` and `libcrypto.so.3`), fontconfig
+(`libfontconfig.so.1`) and the display libraries for the active X11 or Wayland session.
+The Windows runtimes support Windows 10 or newer (and Server 2016 or newer on x64) and statically
+link the Microsoft C runtime, so a separate Visual C++ Redistributable installation is not
+required.
+
+The GitHub release also keeps the seven package tarballs (`.tgz`) as durable release assets,
+alongside `SHA256SUMS` for independent integrity checks. They are a recoverable snapshot of what
+was published, not a second installation channel: `npm install blitsen` remains the normal way to
+install and resolve the runtime for the current machine.
+
 ## Every platform is unsigned
 
-**No artifact in this release is signed, on any platform.** No Apple Developer ID and no Windows
-code-signing certificate exist for this project yet, so the release was built with none and the
+**No artifact in this release is signed, on any platform.** That includes the Linux, macOS and
+Windows runtimes in npm and in the GitHub release tarballs. No Apple Developer ID or Windows
+code-signing certificate exists for this project yet, so the release was built with none and the
 signing steps recorded that they were skipped.
 
 Inside an npm package this is mostly invisible: neither Gatekeeper nor SmartScreen inspects an
@@ -45,9 +56,10 @@ Nothing here is notarised either (issue #71).
 
 ## What has been tested, and where
 
-Three targets run the full suite on every push — `linux-x64`, `darwin-arm64`, `win32-x64`:
-workspace tests, the native acceptance harnesses, layout conformance, frame determinism and the
-size gate.
+Three primary targets run the platform behaviour suite on every push — `linux-x64`,
+`darwin-arm64`, `win32-x64`: workspace tests, the native acceptance harnesses, host conformance,
+layout conformance and size/benchmark measurement. Frame determinism is a separate Linux x64 gate,
+and only Linux x64 has a committed size baseline that can fail a build.
 
 Three run a smoke tier — `linux-arm64`, `darwin-x64`, `win32-arm64`: both release artifacts built,
 the package tests against them, a frame through the native harness, a standalone export that is
@@ -55,8 +67,9 @@ built and run, the layout corpus, and a size measurement that reports rather tha
 regression specific to one of those three is likelier to reach you than one on the first three
 (issue #133).
 
-Size, cold start and idle RAM are measured on Linux x86-64. The other five targets have no
-committed baseline yet, so the size gate reports on them and gates nothing.
+Size, cold start and idle RAM are measured on the three primary targets. The other three targets
+have a report-only size measurement. Only Linux x64 has a committed size baseline, so measurements
+on the other five targets report rather than gate.
 
 ## Built on a patched Blitz
 
@@ -70,15 +83,18 @@ name it.
 
 ## Known gaps
 
-- Node-API wrapper finalizers do not run on Windows, so a long-running Windows application retains
-  every DOM node it has touched (issue #136).
-- `<canvas>` 2D, WebGL/WebGPU, WebRTC, accessibility, IME and cross-platform font fallback are
-  out of scope for this release and tracked in the backlog milestone.
+- `<canvas>` 2D is not implemented and a document containing it is rejected by `blitsen doctor`.
+  WebGL, WebGPU and WebRTC are not implemented either (issue #99 and the compatibility profile).
+- Form controls support basic keyboard editing, caret placement and drag selection, but IME
+  composition, clipboard/undo, `contenteditable` and complex-script coverage remain incomplete;
+  the runtime also exports no platform accessibility tree (issues #103 and #102).
+- Cross-platform font fallback is incomplete; verify text rendering on every platform you ship
+  (issue #104).
 - `blitsen doctor` reports what the compatibility profile does not cover; read it before assuming
   an application is inside the profile.
 
 ## Checking the release
 
-The only real check is the one that uses the registry rather than the workflow: install `blitsen`
-on a machine that has never built it, export an application, and run the artifact. See
-`docs/RELEASING.md`.
+Install `blitsen` from npm on a machine that has never built it, export an application, and run the
+artifact. The release page's `SHA256SUMS` can also verify a downloaded `.tgz`; see
+`docs/RELEASING.md` for the release procedure.

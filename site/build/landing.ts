@@ -34,7 +34,7 @@ export function landingBody(crestSvg: string): string {
   return `
 <section class="hero">
   ${hero}
-  <p class="eyebrow">Pre-alpha · Linux x64 only</p>
+  <p class="eyebrow">Pre-alpha · Linux, macOS and Windows</p>
   <h1>Blitsen</h1>
   <p class="lede">
     Write an app in HTML, CSS and TypeScript. Ship a native executable.

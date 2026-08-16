@@ -1,7 +1,11 @@
 # @blitsen/win32-arm64
 
-The prebuilt Blitsen native runtime for `win32-arm64`: one `blitsen.node` addon carrying
-the Rust host, Blitz, the DOM↔JS bridge and the web APIs.
+The prebuilt Blitsen native runtime for `win32-arm64`: the `blitsen.node` addon used by
+`blitsen run` and addon-carrying exports, plus the `blitsen-runtime.exe` executable used
+by ordinary standalone exports.
+
+The binaries target Windows 10 or newer and statically link the Microsoft C runtime, so a
+separate Visual C++ Redistributable is not required.
 
 Do not install this package directly. It is an `optionalDependency` of
 [`blitsen`](https://www.npmjs.com/package/blitsen), whose `os` and `cpu` fields make

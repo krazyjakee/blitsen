@@ -9,7 +9,8 @@ architecture surface plus `fetch`, `WebSocket`, images, web fonts, audio playbac
 `blitsen/{app,window,dialog,clipboard}` modules. Three of its members are partial by design and
 say so where they are documented: `dialog.*` is Linux/BSD only, `app.requestSingleInstanceLock`
 is Unix-only, and `window.create` is absent. What is *not* v1 is stated as plainly:
-**`<canvas>` is a `doctor` error**, and text input, IME and accessibility are absent — see
+**`<canvas>` is a `doctor` error**, accessibility is absent, and text controls provide basic
+editing and selection but not IME or the advanced editing surface — see
 [What v1 is not](#what-v1-is-not).
 
 Run the check against build output, not source:
@@ -37,7 +38,7 @@ JavaScript comes from the [generated manifest](#capability-tiers) below.
 | Pointer input | `pointerdown`/`pointermove`/`pointerup`/`pointercancel` with `pointerType`, `pointerId`, `pressure` and `isPrimary`, for mouse, touch and pen; multi-touch with one pointer per contact; `setPointerCapture`/`releasePointerCapture`; the mouse events synthesised behind them — see [Pointer events](#pointer-events) |
 | Style read-back | `getComputedStyle`, `matchMedia`/`MediaQueryList`, `ResizeObserver`, `CSS.escape`/`CSS.supports` |
 | Geometry and text | `getBoundingClientRect`, `getClientRects`, the offset/client/scroll box properties, `clientTop`/`clientLeft`, `offsetParent`, `innerText`, `compareDocumentPosition`, `elementFromPoint` |
-| Ranges and selection | `Range` and `document.createRange` for boundary points, text and geometry — `getClientRects` over a run of characters — `caretRangeFromPoint`/`caretPositionFromPoint`, and a `Selection` a script sets and reads; not the tree-editing range methods, and not a selection the user can make by dragging |
+| Ranges and selection | `Range` and `document.createRange` for boundary points, text and geometry — `getClientRects` over a run of characters — `caretRangeFromPoint`/`caretPositionFromPoint`, and a `Selection` a script sets and reads; supported text controls also expose a user-placeable caret and drag selection, but generic document selection remains script-driven and the tree-editing range methods are absent |
 | Scrolling | `window.scrollTo`/`scrollBy`/`scroll`, `scrollX`/`scrollY`/`pageXOffset`/`pageYOffset`, `element.scrollTop`/`scrollLeft`, `scrollIntoView` |
 | Parsing | `innerHTML`, `outerHTML`, `insertAdjacentHTML`, `insertAdjacentElement`, and `DOMParser` for `text/html` into a fragment |
 | Scheduling | `requestAnimationFrame`, timers and microtasks |
@@ -1043,7 +1044,7 @@ actually draws it rather than where the pitch would prefer.
 | Not in v1 | What a build sees | Tracked as |
 | --- | --- | --- |
 | `<canvas>` 2D | `HTML_CANVAS`, an **error**: the element is in the shipped document and nothing paints inside it. Referencing `HTMLCanvasElement` or calling `.getContext()` from script is `WEB_CANVAS`, a warning, because a guarded reference selects a fallback | [#99](https://github.com/krazyjakee/blitsen/issues/99) |
-| Text input and IME | Form controls render and can be read and written from script; there is no caret the user can place with the keyboard, no composition, and no drag-selection | [#103](https://github.com/krazyjakee/blitsen/issues/103) |
+| Advanced text input and IME | Text controls support keyboard editing, caret movement, click placement, drag selection and `beforeinput`/`input`; clipboard editing, undo/redo, composition/IME, `contenteditable`, `selectionchange`, target ranges and complex-script coverage remain incomplete | [#103](https://github.com/krazyjakee/blitsen/issues/103) |
 | Accessibility | No accessibility tree is exported to the platform, so a screen reader finds nothing | [#102](https://github.com/krazyjakee/blitsen/issues/102) |
 | WebGL, WebGPU, WebRTC | `WEB_GPU`, a warning. `<blitsen-view>` is the supported way to put GPU output on screen | — |
 
