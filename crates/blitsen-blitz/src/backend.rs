@@ -317,10 +317,7 @@ impl DomBackend for BlitzDom {
     }
 
     fn inline_style(&self, node: NodeId, property: &str) -> Result<Option<String>, DomError> {
-        Ok(Self::declarations(&self.style_text(node)?)
-            .into_iter()
-            .find(|(name, _)| name == property)
-            .map(|(_, value)| value))
+        self.style_property_value(node, property)
     }
 
     fn set_inline_style(
@@ -338,28 +335,25 @@ impl DomBackend for BlitzDom {
             value
         };
         let original = self.style_text(node)?;
-        let mut declarations = Self::declarations(&original);
-        declarations.retain(|(name, _)| name != property);
-        declarations.push((property.to_owned(), value.to_owned()));
-        let candidate = declarations
-            .iter()
-            .map(|(name, value)| format!("{name}: {value};"))
-            .collect::<Vec<_>>()
-            .join(" ");
+        // Replace rather than append so a previous `!important` declaration
+        // does not silently win over a CSSOM assignment. Both operations go
+        // through Blitz's Stylo-backed declaration block; serializing it back
+        // into the attribute keeps DOM reads and the cascade on one value.
+        self.document.remove_style_property(node, property);
+        self.document.set_style_property(node, property, value);
+        let valid = self.inline_style(node, property)?.is_some();
+        let candidate = if valid {
+            self.style_text(node)?
+        } else {
+            original
+        };
         self.document.mutate().set_attribute(
             node,
             Self::qual_name(&DomName::attribute("style")),
             &candidate,
         );
-        let valid = self.inline_style(node, property)?.is_some();
         if valid {
             self.mutate(Some(node), Some(node));
-        } else {
-            self.document.mutate().set_attribute(
-                node,
-                Self::qual_name(&DomName::attribute("style")),
-                &original,
-            );
         }
         Ok(valid)
     }
@@ -374,12 +368,8 @@ impl DomBackend for BlitzDom {
         if old.is_none() {
             return Ok(None);
         }
-        let css = Self::declarations(&self.style_text(node)?)
-            .into_iter()
-            .filter(|(name, _)| name != property)
-            .map(|(name, value)| format!("{name}: {value};"))
-            .collect::<Vec<_>>()
-            .join(" ");
+        self.document.remove_style_property(node, property);
+        let css = self.style_text(node)?;
         self.document.mutate().set_attribute(
             node,
             Self::qual_name(&DomName::attribute("style")),
