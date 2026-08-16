@@ -420,13 +420,14 @@ workspace and a clean `cargo ndk check` without scaffolding.
 
 | # | Requirement | Target | Notes |
 | --- | --- | --- | --- |
-| P1 | Bare exported app size | **38.1 MB, and that is the whole download** — measured on Linux x64, against 131.6 MB for the same app on Phase 1 | S0 disproved the original ≤50 MB target against a design that shipped an engine library alongside; statically linking QuickJS-ng put the shipped total back inside it. Five targets unmeasured, and no measured Electron or Tauri comparison yet; see §9. |
+| P1 | Bare exported app size | **38.1 MB, and that is the whole download** — measured on Linux x64, against 131.6 MB for the same app on Phase 1 | S0 disproved the original ≤50 MB target against a design that shipped an engine library alongside; statically linking QuickJS-ng put the shipped total back inside it. Five targets unmeasured, and no measured Electron or Tauri comparison yet; see §9. Android is not one of the five and never joins this row: an APK is a different artifact, and it is P1b. |
+| P1b | Bare APK size, per ABI | **35.2 MB installed, 14.7 MB downloaded** — measured `arm64-v8a`, release, on the same bare application P1 uses (#150) | The budget is one ABI's, because a device installs one ABI and runs it. The two-ABI APK `blitsen build --android` defaults to is **74.6 MB**, and the half of it the device cannot use is carried anyway — so `--android-abi arm64-v8a` is the shipping build and the default set is the one a developer can also put on an emulator. Both numbers are stated because they answer different questions: the APK is what a sideload transfers, and 14.7 MB is what Play's own `bundletool get-size` reports a per-ABI split delivering. Android's vendored OpenSSL is measured rather than asserted, at **≥3.6 MB** of the library, and it does not show up as a premium: at equal architecture the whole APK is *smaller* than the desktop executable. Play measures every limit on the compressed download, and this is 3% of the 500 MB base-module ceiling — size is not the argument for an AAB. Breakdown, method and limits in §9. |
 | P2 | Cold start to first frame | < 500 ms on mid-range hardware | Should beat Electron decisively or the pitch weakens. |
 | P3 | Idle RAM, bare app | < 100 MB | |
 | P4 | Sustained frame rate | 60 fps for a moderate 2D scene | Measured with the Pong acceptance build. |
 | P5 | Platforms, initial | Windows x64, Linux x64, macOS arm64 | Windows is the priority target for size claims. |
 | P5b | Platforms, full matrix | win32 x64/arm64, linux x64/arm64, darwin x64/arm64 | One npm platform package each (TECH.md §11). Two tiers of evidence: `linux-x64`, `darwin-arm64` and `win32-x64` run the whole suite in CI; `linux-arm64`, `darwin-x64` and `win32-arm64` run a smoke tier — the release artifacts built, the package tests against them, a frame through the native harness, a standalone export and the layout corpus — with the product-behaviour suites and the size gate left to the first three (issue #133). |
-| P5c | Platforms, Android | `arm64-v8a` shipping, `x86_64` for emulators | A distinct artifact, not a P5b row: a cross-compiled APK with keystore signing, produced by `blitsen build --android`, not a runtime an install resolves from npm (#148). It is a flag rather than a `--target` value because one APK carries every ABI, and `--target` picks one prebuilt runtime to link. Both defaults ship in one artifact; `armeabi-v7a` builds on request and is unproven. Signed with the Android debug key unless `--android-keystore` names one, and the build says on every run that a debug-signed APK is not distributable. **Not an AAB**, so not a Google Play upload — the packager (`cargo apk`, #139's survey) emits none, and that is the first thing a Gradle backend would buy. The NDK is a prerequisite the CLI detects and never installs: an Android build is a cross-compile, so P9's "no toolchain" does not reach it. Its size budget is its own — P1 is a desktop figure and does not transfer (#150). Evidence tier to be set with #133's precedent in mind (#149). |
+| P5c | Platforms, Android | `arm64-v8a` shipping, `x86_64` for emulators | A distinct artifact, not a P5b row: a cross-compiled APK with keystore signing, produced by `blitsen build --android`, not a runtime an install resolves from npm (#148). It is a flag rather than a `--target` value because one APK carries every ABI, and `--target` picks one prebuilt runtime to link. Both defaults ship in one artifact; `armeabi-v7a` builds on request and is unproven. Signed with the Android debug key unless `--android-keystore` names one, and the build says on every run that a debug-signed APK is not distributable. **Not an AAB**, so not a Google Play upload — the packager (`cargo apk`, #139's survey) emits none. A Gradle backend is not what that would take, though, and #150 priced it rather than repeating it: an AAB of this workspace's own libraries was built with `aapt2 link --proto-format` and `bundletool`, two of Google's own tools, on the JDK `apksigner` already runs on. What is missing is a path through the CLI, and no split out of that bundle has been installed on a device. The NDK is a prerequisite the CLI detects and never installs: an Android build is a cross-compile, so P9's "no toolchain" does not reach it. Its size budget is its own and is **P1b** — P1 is a `linux-x64` figure and does not transfer. Evidence tier to be set with #133's precedent in mind (#149). |
 | P6 | Render consistency | Byte-identical layout across platforms for the test corpus | The core advantage over WebView-based tools. |
 | P7 | npm compatibility | Pure-JS packages install and import unmodified | Native Node addons: best-effort. |
 | P8 | No runtime dependency on an installed browser or WebView | Absolute | |
@@ -476,6 +477,26 @@ Phase 3 levers, measured on the same build
                                               option that does not trade frame time for bytes
   panic = "abort"                   rejected  the native callback boundary turns a panic into a
                                               JavaScript exception; aborting takes the process down
+
+Bare APK, the same application (2026-08-16, 07a0ed1, `bun run --cwd packages/blitsen size:android`)
+  arm64-v8a  libblitsen_android.so   35,160,952 B  measured  release; llvm-strip finds a further 512
+             signed APK              35,172,930 B  measured  library and assets stored, not deflated
+             per-ABI split delivers  14,680,852 B  measured  bundletool get-size total, Play's own sum
+  x86_64     libblitsen_android.so   39,426,560 B  measured
+             signed APK              39,440,959 B  measured
+             per-ABI split delivers  15,552,431 B  measured
+  both ABIs in one APK               74,605,200 B  measured  what `blitsen build --android` defaults to
+  the application itself                    391 B  measured  index.html and the asset listing
+  ── inside the arm64-v8a library ──────────
+  every sized symbol                 23,494,991 B  measured  66.8% of the file; the method sees no more
+  vendored OpenSSL                    3,631,074 B  measured  a floor: 12,530 of libcrypto.a + libssl.a's
+                                                             18,283 symbols, sized in the linked object
+  QuickJS-ng                            918,068 B  measured  a floor: 1,324 of libquickjs.a's 1,522
+  ─────────────────────────────────────────
+  linux-x64, the same commit         39,470,504 B  measured  `size:phase2`, for the comparison below
+  x86_64 APK against it                 -29,545 B  measured  the entire Android premium, at equal
+                                                             architecture, vendored OpenSSL included
+  the whole record                        tracked  packages/blitsen/test/metrics/android-size.json
 ```
 
 **Neither LTO lever is adopted.** Both cost build time, and `opt-level = "z"` buys its 16 MB with
@@ -494,6 +515,76 @@ which exist on a machine that has never had a GTK desktop. A self-contained JSC 
 in, and S0 measured it at **37,980,984 B** for the engine alone ([`spikes/s0`](../spikes/s0/README.md)).
 QuickJS-ng contributes about **1.5 MB** to the same total and brings no ICU at all — which is also
 why `Intl` is absent from the compatibility profile.
+
+### Android: a different artifact, so a different budget (P1b)
+
+**The budget is one ABI's.** A device installs an APK, picks the one ABI it can run, and ignores
+the rest; nothing about carrying a second ABI reaches the user except the bytes. So the figure that
+describes a user is **35.2 MB for `arm64-v8a`**, and the figure that describes what
+`blitsen build --android` produces today is **74.6 MB**, because its default ABI set exists so that
+one artifact also installs on an emulator (P5c). Both are above. `--android-abi arm64-v8a` is the
+shipping build, and the 39.4 MB it drops is the emulator's, not any phone's.
+
+**A sideload transfers the APK; Play would transfer far less.** Every Google Play limit is measured
+on the *compressed download*, not the installed archive — 500 MB for a base module, 100 MB for the
+legacy signed-APK route, with a non-blocking warning to users on mobile data above 200 MB. The APK
+above stores its library uncompressed, which `android:extractNativeLibs="false"` requires and which
+is why nothing is extracted into `/data` at install; that is a deliberate trade of download for
+device footprint, and it costs **20.5 MB** on `arm64-v8a` — the same archive at `zip -9` is
+14,651,970 B. `bundletool get-size total`, which is Play's own arithmetic, says a per-ABI split
+delivers **14,680,852 B**. Two methods, 0.2% apart.
+
+**`native-tls-vendored` is real, is Android's alone, and costs less than it looks.** It is not
+ours: `blitz-net` asks `reqwest` for it under `cfg(target_os = "android")` and nowhere else, so the
+desktop runtime links `libssl.so.3` and `libcrypto.so.3` from the system — zero bytes in the
+artifact, and a dependency on a library Android does not offer an NDK application. Vendoring is
+therefore not a choice to reverse; the alternative is rustls, which is a different TLS stack and a
+different decision. What it costs is **≥3,631,074 B** of the `arm64-v8a` library, about 10% of it.
+
+**How that was attributed, and what the method cannot see.** The symbol *names* come from the
+`libcrypto.a` and `libssl.a` that `openssl-src` built for the target; the *sizes* come from the
+linked shared object, so what is counted is what survived the link rather than what was compiled.
+It needs a symbol table, which `[profile.release]` strips, so the count is taken on `release-dbg` —
+the same profile with its symbols back — and the two builds' `.text` differ by 53,096 B, 0.24%.
+Every sized symbol in that object totals 23,494,991 B against a 35,160,952 B file, so the method is
+blind to a third of it: unnamed `.rodata`, `.eh_frame`, `.gcc_except_table` and the relocation
+tables carry bytes no symbol is named for. **3.6 MB is a floor, not a share.** QuickJS-ng comes out
+at 918,068 B by the same method, consistent with the ~1.5 MB recorded above for the desktop build.
+
+**And the premium is not where it looks.** At equal architecture the Android artifact is *smaller*:
+the `x86_64` APK is 39,440,959 B against 39,470,504 B for the `linux-x64` export from the same
+commit — **29,545 B less**, complete with the 3.6 MB of OpenSSL the desktop build does not carry.
+Only that net is measured. The obvious reading is that what Android drops pays for what it vendors
+— winit's X11 and Wayland backends, `arboard`, the XDG portal and every `native:` module §7 records
+as absent are all out of its graph — but nothing here priced those omissions, so that sentence is
+an inference and the 29,545 B is the measurement. What it does settle is the direction: the
+vendored-OpenSSL cost is a real line in the breakdown and it is not a reason the APK is large.
+
+**An AAB is not a size decision, and it is not a Gradle decision either.** At 14.7 MB the compressed
+download is 3% of Play's base-module ceiling and 7% of the threshold that warns a user on mobile
+data, so nothing about size forces the format. What an AAB buys is a Play listing, and #148
+recorded that as needing a Gradle backend because `cargo apk` emits no bundle. That second half is
+wrong, and it was cheaper to disprove than to argue: `aapt2 link --proto-format` writes the
+protobuf module a bundle is made of and `bundletool build-bundle` assembles it — both Google's own,
+on the JDK `apksigner` is already a wrapper around — and the 30,220,813 B bundle whose splits are
+tabled above was produced that way, from this workspace's own libraries, with no Gradle, no AGP and
+no Android project checked in. `size:android --bundletool <jar>` reproduces it. So the price of an
+AAB is `bundletool` and a CLI path, not a build system. **It is still not adopted**: no split out of
+that bundle has been installed on a device or run, `bundletool` is a downloaded jar the repository
+does not vendor, and P5c's artifact remains the APK until somebody wants a Play listing.
+
+**What P1b does not cover.** One ABI is unmeasured — `armeabi-v7a` builds on request and nothing
+here built it. The application is the bare one, so nothing says what a real application's assets
+add. `release-min` was not tried against Android, so the Phase 3 levers above are desktop numbers.
+And the APKs measured here were assembled by `size:android` along `spikes/s9`'s proven path rather
+than by `blitsen build --android`, whose entry point was mid-reconciliation (#148) when this was
+taken; the library in them is the product's, but the packaging step is the script's.
+
+One number above is not Android's and should be read carefully: the `linux-x64` export measured
+**39,470,504 B** on 2026-08-16, against the **38,090,586 B** recorded on 2026-08-13 in the block
+above. That is 3.6% of desktop growth in three days that nothing in this section explains, and it
+is P1's to explain, not P1b's — the figure is here only because a comparison across architectures
+has to come from one commit.
 
 **Still outstanding for P1.** Only Linux x64 is measured — the other five targets build and test in
 CI (TECH.md §11) but have no committed size baseline, so the gate reports on them and gates nothing
