@@ -1,0 +1,177 @@
+{
+  "target": "android",
+  "application": "bare",
+  "profile": "release",
+  "recordedAt": "2026-08-16T01:12:04.925Z",
+  "commit": "07a0ed1",
+  "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+  "ndk": "27.2.12479018",
+  "buildTools": "34.0.0",
+  "minSdk": 24,
+  "targetSdk": 33,
+  "abis": [
+    "arm64-v8a",
+    "x86_64"
+  ],
+  "libraries": [
+    {
+      "abi": "arm64-v8a",
+      "triple": "aarch64-linux-android",
+      "bytes": 35160952,
+      "stripped": 35160440,
+      "sections": {
+        ".note.android.ident": 152,
+        ".dynsym": 7152,
+        ".gnu.version": 596,
+        ".gnu.version_r": 112,
+        ".gnu.hash": 40,
+        ".dynstr": 4243,
+        ".rela.dyn": 1896552,
+        ".rela.plt": 6984,
+        ".gcc_except_table": 1161484,
+        ".rodata": 4668988,
+        ".eh_frame_hdr": 425732,
+        ".eh_frame": 3070660,
+        ".text": 22298720,
+        ".plt": 4688,
+        ".data.rel.ro": 1567792,
+        ".fini_array": 16,
+        ".init_array": 24,
+        ".dynamic": 464,
+        ".got": 5600,
+        ".got.plt": 2352,
+        ".relro_padding": 1944,
+        ".data": 33216,
+        ".bss": 18664,
+        ".comment": 432
+      }
+    },
+    {
+      "abi": "x86_64",
+      "triple": "x86_64-linux-android",
+      "bytes": 39426560,
+      "stripped": 39426240,
+      "sections": {
+        ".note.android.ident": 152,
+        ".dynsym": 7128,
+        ".gnu.version": 594,
+        ".gnu.version_r": 112,
+        ".gnu.hash": 36,
+        ".dynstr": 4209,
+        ".rela.dyn": 2096808,
+        ".rela.plt": 3480,
+        ".gcc_except_table": 1163640,
+        ".rodata": 4489912,
+        ".eh_frame_hdr": 438060,
+        ".eh_frame": 3023624,
+        ".text": 26499306,
+        ".init": 5,
+        ".plt": 2336,
+        ".data.rel.ro": 1597296,
+        ".fini_array": 16,
+        ".dynamic": 432,
+        ".got": 60920,
+        ".got.plt": 1184,
+        ".relro_padding": 1320,
+        ".data": 34440,
+        ".bss": 19024,
+        ".comment": 248
+      }
+    }
+  ],
+  "application_bytes": 391,
+  "apks": [
+    {
+      "name": "x86_64-0",
+      "abis": [
+        "x86_64"
+      ],
+      "compress": 0,
+      "bytes": 39440959,
+      "gzip": 15428165
+    },
+    {
+      "name": "x86_64-9",
+      "abis": [
+        "x86_64"
+      ],
+      "compress": 9,
+      "bytes": 15479359,
+      "gzip": 15428725
+    },
+    {
+      "name": "arm64-v8a-0",
+      "abis": [
+        "arm64-v8a"
+      ],
+      "compress": 0,
+      "bytes": 35172930,
+      "gzip": 14576743
+    },
+    {
+      "name": "arm64-v8a-9",
+      "abis": [
+        "arm64-v8a"
+      ],
+      "compress": 9,
+      "bytes": 14651970,
+      "gzip": 14602004
+    },
+    {
+      "name": "universal-0",
+      "abis": [
+        "arm64-v8a",
+        "x86_64"
+      ],
+      "compress": 0,
+      "bytes": 74605200,
+      "gzip": 30002396
+    },
+    {
+      "name": "universal-9",
+      "abis": [
+        "arm64-v8a",
+        "x86_64"
+      ],
+      "compress": 9,
+      "bytes": 30122640,
+      "gzip": 30025924
+    }
+  ],
+  "aab": {
+    "bytes": 30220813,
+    "download": [
+      {
+        "abi": "x86_64",
+        "download": 15552431
+      },
+      {
+        "abi": "arm64-v8a",
+        "download": 14680852
+      }
+    ]
+  },
+  "attribution": {
+    "abi": "arm64-v8a",
+    "profile": "release-dbg",
+    "textDrift": 53096,
+    "symbolBytes": 23494991,
+    "openssl": {
+      "bytes": 3631074,
+      "symbols": 12530,
+      "declared": 18283,
+      "archives": [
+        "libcrypto.a",
+        "libssl.a"
+      ]
+    },
+    "quickjs": {
+      "bytes": 918068,
+      "symbols": 1324,
+      "declared": 1522,
+      "archives": [
+        "libquickjs.a"
+      ]
+    }
+  }
+}

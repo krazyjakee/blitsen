@@ -16,6 +16,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
+import { BARE_APP } from "./bare-app.mjs";
 import { buildAddon, repository } from "./build-addon.mjs";
 import { buildStandalone } from "../src/export.mjs";
 import { resolvePhase2Runtime } from "../src/runtime.mjs";
@@ -28,14 +29,9 @@ const bytes = async path => (await stat(path)).size;
 const gzipped = async path => gzipSync(await readFile(path), { level: 9 }).length;
 const mb = value => `${(value / 1e6).toFixed(1)} MB`;
 
-// The bare app P1 is written against: an HTML file that renders and nothing
-// else. Anything larger measures the application rather than the runtime.
-const BARE_APP = `<!doctype html><html><head><meta charset="utf-8"><title>Bare</title>
-<style>html,body{margin:0;height:100%}body{display:grid;place-items:center;background:#101820;color:#f5f7fa;font:16px sans-serif}</style>
-</head><body><main id="app">bare</main>
-<script>document.querySelector("#app").textContent = "ready";</script>
-</body></html>
-`;
+// The bare app P1 is written against lives in `bare-app.mjs`, because the
+// Android size script measures the same one and a number is only comparable to
+// another number if both were taken of the same application.
 
 async function bareApp() {
   const directory = await mkdtemp(join(tmpdir(), "blitsen-phase2-size-"));

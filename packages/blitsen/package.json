@@ -102,6 +102,7 @@
     "size:baseline": "bun test/run-size-gate.mjs --update",
     "size:gate": "bun test/run-size-gate.mjs",
     "size:phase2": "bun test/run-phase2-size.mjs",
+    "size:android": "bun test/run-android-size.mjs",
     "test": "bun test",
     "test:determinism": "bun test/run-determinism.mjs",
     "golden:record": "bun test/run-determinism.mjs --update",
