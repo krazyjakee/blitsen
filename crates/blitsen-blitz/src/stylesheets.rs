@@ -3,6 +3,7 @@
 use blitsen_dom::{DomBackend, DomError};
 use blitz::dom::NodeId;
 use style::context::QuirksMode;
+use style::properties::PropertyId;
 use style::servo_arc::Arc;
 use style::shared_lock::SharedRwLock;
 use style::stylesheets::{AllowImportRules, Origin, StylesheetContents, UrlExtraData};
@@ -163,11 +164,33 @@ impl BlitzDom {
         rules
     }
 
-    pub(crate) fn declarations(css: &str) -> Vec<(String, String)> {
-        css.split(';')
-            .filter_map(|declaration| declaration.split_once(':'))
-            .map(|(name, value)| (name.trim().to_ascii_lowercase(), value.trim().to_owned()))
-            .filter(|(name, _)| !name.is_empty())
-            .collect()
+    /// Reads one value from the same parsed declaration block the cascade uses.
+    ///
+    /// In particular, this keeps semicolons and colons inside strings, URLs,
+    /// escapes, comments and custom-property values out of the declaration
+    /// boundary business entirely. Stylo has already parsed the style attribute
+    /// and applied declaration order and `!important` before this read.
+    pub(crate) fn style_property_value(
+        &self,
+        node: NodeId,
+        property: &str,
+    ) -> Result<Option<String>, DomError> {
+        let element = self
+            .node(node)?
+            .element_data()
+            .ok_or(DomError::InvalidNodeType)?;
+        let Some(style) = &element.style_attribute else {
+            return Ok(None);
+        };
+        let Ok(property) = PropertyId::parse_enabled_for_all_content(property) else {
+            return Ok(None);
+        };
+        let guard = self.document.guard().read();
+        let mut value = String::new();
+        style
+            .read_with(&guard)
+            .property_value_to_css(&property, &mut value)
+            .map_err(|error| DomError::Backend(error.to_string()))?;
+        Ok((!value.is_empty()).then_some(value))
     }
 }

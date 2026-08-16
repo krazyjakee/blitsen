@@ -35,6 +35,31 @@ assert.match(styled.inline_style, /left:\s*5px/);
 assert.doesNotMatch(styled.inline_style, /definitely-invalid/);
 assert.equal(styled.layout.width, 90);
 
+const tokenizedInlineStyle = JSON.parse(native.runBridgeHarness(
+  `<div id="tokens" style='background-image:url("data:image/svg+xml;charset=utf-8,%3Csvg%3E%3C/svg%3E");--quoted:"left;right:tail";--escaped:semi\\;colon\\:tail;--commented:left/* ; : */right;color:rgb(1,2,3)!important;color:blue'></div>`,
+  `{ const element = document.getElementById("tokens");
+     const style = element.style;
+     const names = ["background-image", "--quoted", "--escaped", "--commented", "color"];
+     const before = names.map(name => style.getPropertyValue(name));
+     if (before.some(value => value === "") || !before[0].includes("data:image/svg+xml;charset=utf-8") ||
+         before[1] !== '"left;right:tail"' || before[4] !== "rgb(1, 2, 3)")
+       throw new Error("inline declaration parsing: " + JSON.stringify(before));
+     style.width = "17px";
+     if (JSON.stringify(names.map(name => style.getPropertyValue(name))) !== JSON.stringify(before))
+       throw new Error("setting a property corrupted another declaration");
+     if (!style.cssText.includes("!important") || style.removeProperty("width") !== "17px" ||
+         JSON.stringify(names.map(name => style.getPropertyValue(name))) !== JSON.stringify(before))
+       throw new Error("removal corrupted declaration order, importance, or tokens");
+     style.color = "green";
+     if (style.color !== "green" || style.cssText.includes("green !important"))
+       throw new Error("assignment did not replace an important declaration");
+     element.setAttribute("data-inline-tokens", "ok"); }`,
+  320,
+  180,
+));
+assert.equal(tokenizedInlineStyle.nodes.find(node => node.attributes.id === "tokens")
+  .attributes["data-inline-tokens"], "ok");
+
 // Read-back style: the cascade, the device and element geometry, asked from
 // JavaScript. Asserted by what each answers, not by whether it exists — the
 // manifest check below already covers presence.
@@ -325,4 +350,3 @@ const baselinePng = Buffer.from(native.renderBridgeHarnessPng(
 ), "base64");
 assert.deepEqual([...mutatedPng.subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10]);
 assert.notDeepEqual(mutatedPng, baselinePng, "post-mutation PNG differs from the parsed frame");
-
