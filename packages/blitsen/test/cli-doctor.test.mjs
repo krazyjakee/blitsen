@@ -194,6 +194,22 @@ describe("directory CLI", () => {
       .toThrow("no longer declares const globals = {");
   });
 
+  test("reads class members and instances by structure rather than indentation", async () => {
+    const source = await readBootstrapScript();
+    const reformatted = source
+      .replace("  class Element extends Node {\n    get tagName() {",
+        "class Element\n  extends Node\n{\nget tagName\n(\n)\n{")
+      .replace("    querySelector(selector) {",
+        "querySelector\n(\n  selector\n)\n{")
+      .replace("  const document = new Document();",
+        "const document\n=\nnew Document\n(\n)\n;");
+    expect(buildManifest(reformatted)).toEqual(buildManifest(source));
+
+    const malformed = source.replace("    querySelector(selector) {",
+      "    querySelector(selector) => {");
+    expect(() => buildManifest(malformed)).toThrow("Element.querySelector must have a method body");
+  });
+
   test("diagnoses what the manifest calls absent, and nothing it calls implemented", async () => {
     const directory = await mkdtemp(join(tmpdir(), "blitsen-manifest-test-"));
     try {
