@@ -240,15 +240,6 @@ pub fn replay_document_frames(
     json(&report)
 }
 
-/// Digests a fixed text-and-shape fixture to identify this machine's rasterizer.
-///
-/// Pixel-level goldens only mean anything between runs that agree on this, since
-/// installed fonts and CPU feature detection both change the bytes that come out.
-#[napi]
-pub fn render_environment_fingerprint() -> String {
-    replay::fingerprint()
-}
-
 /// Renders the post-JavaScript frame as a base64-encoded PNG.
 #[napi]
 pub fn render_bridge_harness_png(
