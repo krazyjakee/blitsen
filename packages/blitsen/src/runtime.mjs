@@ -7,6 +7,7 @@ import { createRequire } from "node:module";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { describeExecutableBinary, describeNativeBinary, readContainerHeader } from "./binary.mjs";
 
 // TECH.md §11: one binary package per target, installed by optionalDependencies and
 // found through ordinary package resolution — never by walking node_modules.
@@ -34,6 +35,35 @@ export function describeRuntime(runtime) {
 }
 
 const readable = path => access(path).then(() => true, () => false);
+const reportOverride = message => console.error(message);
+
+async function environmentRuntime({ configured, variable, target, executable, onNotice }) {
+  const path = configured.startsWith("file:") ? fileURLToPath(configured) : configured;
+  let bytes;
+  try {
+    bytes = await readContainerHeader(path);
+  } catch (error) {
+    throw new Error(`${variable} cannot be read: ${path} (${error.message}). `
+      + `Unset ${variable} to use the installed runtime instead.`);
+  }
+  const binary = executable ? describeExecutableBinary(bytes) : describeNativeBinary(bytes);
+  if (!binary) {
+    throw new Error(`${variable} does not name ${executable ? "a supported executable" : "an ELF, Mach-O or PE shared library"}: `
+      + `${path}. Unset ${variable} to use the installed runtime instead.`);
+  }
+  const platform = target.slice(0, target.lastIndexOf("-"));
+  const architecture = target.slice(target.lastIndexOf("-") + 1);
+  if (binary.platform !== platform || !binary.architectures.includes(architecture)) {
+    const kind = executable ? "Phase 2 runtime" : "runtime";
+    throw new Error(`the linked ${kind} is built for `
+      + `${binary.platform}-${binary.architectures.join("/")} (${binary.format}), `
+      + `but runtime resolution requested ${target}: ${path} — ${variable} names it and `
+      + `overrides package/cache resolution. Unset ${variable}, or point it at a ${target} binary.`);
+  }
+  onNotice(`blitsen: ${variable} overrides package/cache resolution for ${target} `
+    + `with an unversioned binary: ${path}`);
+  return { path, target, version: null, package: null, source: "environment" };
+}
 
 // TECH.md §11: the runtime package is pinned to this package's version exactly, so a
 // pair that was never built together is a hard stop rather than a warning — the two
@@ -254,11 +284,13 @@ export async function resolveRuntime({
   fetch = false,
   run,
   cacheDir,
+  onNotice = reportOverride,
 } = {}) {
   const configured = env.BLITSEN_NATIVE_PATH;
   if (configured) {
-    const path = configured.startsWith("file:") ? fileURLToPath(configured) : configured;
-    return { path, target, version: null, package: null, source: "environment" };
+    return environmentRuntime({
+      configured, variable: "BLITSEN_NATIVE_PATH", target, executable: false, onNotice,
+    });
   }
   const name = runtimePackage(target);
   let manifestPath = null;
@@ -329,11 +361,13 @@ export async function resolvePhase2Runtime({
   fetch = false,
   run,
   cacheDir,
+  onNotice = reportOverride,
 } = {}) {
   const configured = env.BLITSEN_RUNTIME_PATH;
   if (configured) {
-    const path = configured.startsWith("file:") ? fileURLToPath(configured) : configured;
-    return { path, target, version: null, package: null, source: "environment" };
+    return environmentRuntime({
+      configured, variable: "BLITSEN_RUNTIME_PATH", target, executable: true, onNotice,
+    });
   }
   const name = runtimePackage(target);
   const binary = phase2Binary(target);

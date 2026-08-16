@@ -7,15 +7,16 @@ import { openRuntime } from "../src/runtime.mjs";
 
 let runtime = null;
 try {
-  const configuredPath = process.env.BLITSEN_NATIVE_PATH;
-  const nativePath = configuredPath?.startsWith("file:")
-    ? fileURLToPath(configuredPath)
-    : configuredPath ?? fileURLToPath(new URL("../native/blitsen.node", import.meta.url));
-  const resolved = { path: nativePath };
-  runtime = {
-    ...openRuntime(resolved, { waitForNextFrame: delay => Bun.sleep(delay) }),
-    build: options => buildStandalone(options, resolved),
-  };
+  // Environment overrides go through the resolver in `main`: it verifies and
+  // reports them before loading. This fast path is only the package-staged addon.
+  if (!process.env.BLITSEN_NATIVE_PATH) {
+    const nativePath = fileURLToPath(new URL("../native/blitsen.node", import.meta.url));
+    const resolved = { path: nativePath };
+    runtime = {
+      ...openRuntime(resolved, { waitForNextFrame: delay => Bun.sleep(delay) }),
+      build: options => buildStandalone(options, resolved),
+    };
+  }
 } catch {}
 
 const code = await main(process.argv.slice(2), console, runtime);

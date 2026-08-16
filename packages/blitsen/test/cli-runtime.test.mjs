@@ -1,13 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { readFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { main } from "../src/cli.mjs";
 import { buildStandalone, runtimeRecord } from "../src/export.mjs";
-import { describeRuntime, hostTarget, openRuntime, resolveRuntime, TARGETS }
+import { describeRuntime, hostTarget, openRuntime, resolvePhase2Runtime, resolveRuntime, TARGETS }
   from "../src/runtime.mjs";
-import { viteBase, engineBuilt, platformPackages, cliVersion, withPlatformPackages, withStubbedExport, capture } from "./cli-support.mjs";
+import { viteBase, engineBuilt, executableStub, nativeStub, platformPackages, cliVersion, withPlatformPackages, withStubbedExport, capture } from "./cli-support.mjs";
 
 describe("runtime resolution", () => {
   test("adapts an engine with its resolved metadata and the caller's wait strategy", async () => {
@@ -128,15 +127,62 @@ describe("runtime resolution", () => {
   });
 
   test("takes BLITSEN_NATIVE_PATH ahead of an installed package, in either spelling", async () => {
-    await withPlatformPackages({ "linux-x64": { version: cliVersion } }, async ({ require }) => {
-      const addon = join(tmpdir(), "explicit.node");
+    await withPlatformPackages({ "linux-x64": { version: cliVersion } }, async ({ directory, require }) => {
+      const addon = join(directory, "explicit.node");
+      await writeFile(addon, nativeStub("linux-x64"));
       for (const configured of [addon, pathToFileURL(addon).href]) {
+        const notices = [];
         expect(await resolveRuntime({
           target: "linux-x64", version: cliVersion, require,
           env: { BLITSEN_NATIVE_PATH: configured },
+          onNotice: notice => notices.push(notice),
         })).toEqual({ path: addon, target: "linux-x64", version: null, package: null,
           source: "environment" });
+        expect(notices).toEqual([`blitsen: BLITSEN_NATIVE_PATH overrides package/cache `
+          + `resolution for linux-x64 with an unversioned binary: ${addon}`]);
       }
+    });
+  });
+
+  test("an environment addon must match an explicit target, and says how to stop overriding it", async () => {
+    await withPlatformPackages({}, async ({ directory, require }) => {
+      const addon = join(directory, "host.node");
+      await writeFile(addon, nativeStub("linux-x64"));
+      await expect(resolveRuntime({
+        target: "darwin-arm64", version: cliVersion, require,
+        env: { BLITSEN_NATIVE_PATH: addon }, onNotice: () => {},
+      })).rejects.toThrow("the linked runtime is built for linux-x64 (ELF), "
+        + "but runtime resolution requested darwin-arm64");
+      await expect(resolveRuntime({
+        target: "darwin-arm64", version: cliVersion, require,
+        env: { BLITSEN_NATIVE_PATH: addon }, onNotice: () => {},
+      })).rejects.toThrow("Unset BLITSEN_NATIVE_PATH, or point it at a darwin-arm64 binary");
+    });
+  });
+
+  test("BLITSEN_RUNTIME_PATH is a visible, target-checked Phase 2 override", async () => {
+    await withPlatformPackages({}, async ({ directory, require }) => {
+      const runtime = join(directory, "blitsen-runtime");
+      await writeFile(runtime, executableStub("linux-arm64"));
+      const notices = [];
+      expect(await resolvePhase2Runtime({
+        target: "linux-arm64", version: cliVersion, require,
+        env: { BLITSEN_RUNTIME_PATH: runtime },
+        onNotice: notice => notices.push(notice),
+      })).toEqual({ path: runtime, target: "linux-arm64", version: null, package: null,
+        source: "environment" });
+      expect(notices).toEqual([`blitsen: BLITSEN_RUNTIME_PATH overrides package/cache `
+        + `resolution for linux-arm64 with an unversioned binary: ${runtime}`]);
+
+      await expect(resolvePhase2Runtime({
+        target: "win32-x64", version: cliVersion, require,
+        env: { BLITSEN_RUNTIME_PATH: runtime }, onNotice: () => {},
+      })).rejects.toThrow("the linked Phase 2 runtime is built for linux-arm64 (ELF), "
+        + "but runtime resolution requested win32-x64");
+      await expect(resolvePhase2Runtime({
+        target: "win32-x64", version: cliVersion, require,
+        env: { BLITSEN_RUNTIME_PATH: runtime }, onNotice: () => {},
+      })).rejects.toThrow("Unset BLITSEN_RUNTIME_PATH, or point it at a win32-x64 binary");
     });
   });
 

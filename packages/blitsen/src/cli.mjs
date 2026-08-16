@@ -364,23 +364,30 @@ export function watchApplication(root, runtime, output = console, debounceMs = 1
   };
 }
 
-// bin/blitsen.mjs loads whatever addon it can see without resolution work:
-// BLITSEN_NATIVE_PATH, or one staged beside the package. Everything else — the
-// platform package npm installed, an addon this checkout built — resolves here,
-// and naming the platform it wanted is the point of failing here rather than there.
-async function hostRuntime() {
-  const resolved = await resolveRuntime();
-  return { ...openRuntime(resolved), build: options => buildStandalone(options, resolved) };
+// bin/blitsen.mjs can load an addon staged beside the package without resolution
+// work. Environment paths deliberately come here instead: resolving is what
+// makes their precedence visible and verifies their platform before `require`.
+async function hostRuntime(output) {
+  const resolved = await resolveRuntime({ onNotice: message => output.error(message) });
+  const waitForNextFrame = globalThis.Bun === undefined
+    ? undefined
+    : delay => globalThis.Bun.sleep(delay);
+  return {
+    ...openRuntime(resolved, { ...(waitForNextFrame ? { waitForNextFrame } : {}) }),
+    build: options => buildStandalone(options, resolved),
+  };
 }
 
 // A build for another target links that target's runtime, so it resolves its own
 // rather than reusing the host's — and it is never opened, because it cannot run
 // here. `fetch` is on for exactly this path: a cross-target build is the only
 // one allowed to reach the network for a runtime it does not have.
-async function targetRuntime(target) {
-  if (target === undefined || target === hostTarget()) return hostRuntime();
-  const resolved = await resolveRuntime({ target, fetch: true });
-  return { build: options => buildStandalone(options, resolved) };
+async function targetRuntime(target, output) {
+  if (target === undefined || target === hostTarget()) return hostRuntime(output);
+  const resolved = await resolveRuntime({
+    target, fetch: true, onNotice: message => output.error(message),
+  });
+  return { resolved, build: options => buildStandalone(options, resolved) };
 }
 
 // The Android artifact, reported the way a desktop one is.
@@ -454,7 +461,7 @@ export async function main(args, output = console, runtime = null) {
       // on an export that cannot link. For a cross-target build that includes
       // fetching the target's runtime, so a target that cannot be built for
       // fails before the build command rather than after it.
-      active ??= await targetRuntime(options.target);
+      active ??= await targetRuntime(options.target, output);
       if (!active?.build) {
         throw new Error("native build runtime is unavailable; reinstall blitsen for this platform");
       }
@@ -518,6 +525,7 @@ export async function main(args, output = console, runtime = null) {
         ...options,
         outfile: buildOutfile(options),
         progress: event => reportStep(output, event),
+        onNotice: message => output.error(message),
       });
       output.log(`Built ${result.outfile} (${result.assets} assets, ${result.bytes} bytes)`);
       // Issue #73: the export records the runtime it linked, so the line that
@@ -539,7 +547,7 @@ export async function main(args, output = console, runtime = null) {
       }
       return 0;
     }
-    active ??= await hostRuntime();
+    active ??= await hostRuntime(output);
     if (!active?.openDirectory) {
       throw new Error("native addon is unavailable; reinstall blitsen for this platform");
     }
