@@ -3,7 +3,6 @@
 mod attributes;
 pub mod bundle;
 mod document;
-pub mod events;
 pub mod frame;
 mod node;
 pub mod replay;
