@@ -13,17 +13,22 @@
 //!
 //! An exported application is this binary with its files appended as a section
 //! (`blitsen_core::bundle`), read in place rather than unpacked.
+//!
+//! What this file is, and is not: the console program around the runtime. The
+//! runtime itself is the library beside it, because Android's entry point is a
+//! `cdylib` calling the same code with no argv and no executable to read
+//! (`lib.rs`, issue #142). Argument parsing, the reports, and the process-global
+//! memory defaults stay here; everything after "here are the application's
+//! files" is [`blitsen_runtime::session`].
 
-mod engine;
-mod loop_pacing;
 mod memory_defaults;
 mod report;
-mod session;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
 
 use blitsen_core::bundle::AppBundle;
+use blitsen_runtime::session;
 
 fn main() -> ExitCode {
     // Before Tokio, wgpu or a driver starts a thread: the environment changes

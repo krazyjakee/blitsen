@@ -402,6 +402,16 @@ name = "blitsen"
 version = "0.0.1"
 
 [[package]]
+name = "blitsen-android"
+version = "0.0.0"
+dependencies = [
+ "android-activity",
+ "blitsen-host",
+ "blitsen-runtime",
+ "ndk-sys",
+]
+
+[[package]]
 name = "blitsen-blitz"
 version = "0.0.0"
 dependencies = [

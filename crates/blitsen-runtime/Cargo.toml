@@ -8,6 +8,16 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+# The runtime is a library with two entry points, not one program carrying a
+# mobile branch. Android loads a `cdylib` out of an APK and calls
+# `android_main`; there is no `main` and no executable to read a bundle from, so
+# the Android entry point is a sibling crate of a different artifact kind
+# (`blitsen-android`, #142). Both link this library, so the session, the engine
+# and the frame loop exist once and are compiled once.
+[lib]
+name = "blitsen_runtime"
+path = "src/lib.rs"
+
 [[bin]]
 name = "blitsen-runtime"
 path = "src/main.rs"
