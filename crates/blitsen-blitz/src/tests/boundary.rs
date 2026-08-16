@@ -69,6 +69,46 @@ fn implements_the_complete_boundary_over_one_blitz_tree() {
 }
 
 #[test]
+fn layout_reads_and_scroll_writes_require_both_freshness_clauses() {
+    let mut dom = backend();
+    let root = dom.document_element().unwrap();
+    let node = dom.get_element_by_id("x").unwrap().unwrap();
+    let current = dom.flush_layout().unwrap();
+    let scroll_before = dom.document_ref().viewport_scroll();
+
+    // The document is flushed, but this token names a different revision.
+    let wrong_snapshot = LayoutSnapshot::new(current.revision().wrapping_add(1));
+    assert_eq!(dom.flushed_revision, dom.revision);
+    assert_ne!(wrong_snapshot.revision(), dom.revision);
+    assert_eq!(
+        dom.bounding_rect(node, wrong_snapshot),
+        Err(DomError::LayoutNotFlushed)
+    );
+    assert_eq!(
+        dom.set_scroll_offset(root, None, Some(20.0), wrong_snapshot),
+        Err(DomError::LayoutNotFlushed)
+    );
+    assert_eq!(dom.document_ref().viewport_scroll(), scroll_before);
+
+    // This token names the current revision, but that revision has not flushed.
+    dom.set_attribute(node, &DomName::attribute("class"), "changed")
+        .unwrap();
+    let unflushed = LayoutSnapshot::new(dom.revision);
+    assert!(dom.layout_is_dirty());
+    assert_eq!(unflushed.revision(), dom.revision);
+    assert_ne!(dom.flushed_revision, dom.revision);
+    assert_eq!(
+        dom.bounding_rect(node, unflushed),
+        Err(DomError::LayoutNotFlushed)
+    );
+    assert_eq!(
+        dom.set_scroll_offset(root, None, Some(20.0), unflushed),
+        Err(DomError::LayoutNotFlushed)
+    );
+    assert_eq!(dom.document_ref().viewport_scroll(), scroll_before);
+}
+
+#[test]
 fn detached_nodes_follow_javascript_wrapper_lifetime() {
     let mut dom = backend();
     let node = dom.get_element_by_id("x").unwrap().unwrap();
