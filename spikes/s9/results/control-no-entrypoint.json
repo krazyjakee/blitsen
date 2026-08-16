@@ -1,0 +1,67 @@
+{
+  "frame": "results/control-no-entrypoint.png",
+  "width": 1080,
+  "height": 2340,
+  "distinctColours": 32668,
+  "page": "0b1020",
+  "js": "ff00aa",
+  "pixels": {
+    "page": 8,
+    "js": 0,
+    "css-red": 0,
+    "css-green": 0,
+    "css-blue": 0,
+    "strip": 0,
+    "text": 63
+  },
+  "specimens": [],
+  "sharedGlyphs": null,
+  "movedPixels": 0,
+  "checks": [
+    {
+      "check": "frame is not uniform",
+      "pass": true,
+      "detail": "32668 distinct colours"
+    },
+    {
+      "check": "page background painted",
+      "pass": false,
+      "detail": "8 px of #0b1020"
+    },
+    {
+      "check": "css-red fill painted",
+      "pass": false,
+      "detail": "0 px"
+    },
+    {
+      "check": "css-green fill painted",
+      "pass": false,
+      "detail": "0 px"
+    },
+    {
+      "check": "css-blue fill painted",
+      "pass": false,
+      "detail": "0 px"
+    },
+    {
+      "check": "javascript fill painted",
+      "pass": false,
+      "detail": "0 px of #ff00aa, a colour no markup or stylesheet carries"
+    },
+    {
+      "check": "body text painted",
+      "pass": false,
+      "detail": "63 px of glyph"
+    },
+    {
+      "check": "two type specimens found",
+      "pass": false,
+      "detail": "0 pale bands"
+    },
+    {
+      "check": "still painting five seconds later",
+      "pass": false,
+      "detail": "0 px differ from results/control-no-entrypoint-later.png"
+    }
+  ]
+}

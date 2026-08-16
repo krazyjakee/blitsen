@@ -1,0 +1,36 @@
+measurement	value	unit	note
+so_release_x86_64	39415872	B	cargo ndk -t x86_64 -P 33 build --release -p blitsen-android
+so_release_arm64	35146072	B	cargo ndk -t arm64-v8a -P 33 build --release -p blitsen-android, linked but not run
+so_release_x86_64_stripped	39415552	B	llvm-strip; a release build carries almost nothing to remove
+apk_signed	39432985	B	one ABI, aapt2 link + zip -0 + zipalign -p 4 + apksigner
+app_index_html	1239	B	assets/blitsen/index.html
+app_style_css	1999	B	assets/blitsen/style.css
+app_app_js	1954	B	assets/blitsen/app.js
+app_runtime_json	85	B	assets/blitsen/blitsen.runtime.json
+app_assets_json	283	B	assets/blitsen/blitsen.assets.json, written by hand (#148 owes the writer)
+displayed_first_frame	452	ms	ActivityTaskManager "Displayed ...NativeActivity"; 448-579 over five runs
+frames_between_captures	312	frames	861 to 1173 over a 5 s sleep plus two screencaps, ~60 Hz
+frame_width	1080	px	adb exec-out screencap
+frame_height	2340	px	the whole display; the surface is 1080x2204 at y=136
+distinct_colours	399	colours	a uniform frame would be 1
+page_background	1906830	px	exact #0b1020
+swatch_css_red	45086	px	exact #e5484d
+swatch_css_green	45088	px	exact #30a46c
+swatch_css_blue	45086	px	exact #0091ff
+swatch_javascript	45088	px	exact #ff00aa, written only by app.js
+body_text	23709	px	exact #f5f7ff outside the two specimen strips
+specimen_sans_ink	608	px	sans-serif, measured across the strip
+specimen_mono_ink	753	px	monospace; the difference is the digits, not the letters
+specimen_shared_glyphs	100.0	%	the two specimens' leading glyphs are pixel-identical once aligned
+layout_sans_width	224.52	css px	getBoundingClientRect, painted into the document
+layout_mono_width	284.64	css px	getBoundingClientRect, painted into the document
+js_viewport_width	640	css px	window.innerWidth, and blitsen.runtime.json's value, not the surface
+js_viewport_height	480	css px	window.innerHeight, same
+surface_width	1080	px	dumpsys window: Requested w=1080 h=2204
+surface_height	2204	px	mAppBounds=Rect(0, 136 - 1080, 2274)
+layout_swatch_row	957	px	4x78 + 3x12 CSS px at 2.75; the layout used the surface, not the 640
+layout_swatch	214	px	78 CSS px at 2.75
+control_background_page	1894538	px	exact #3b0b52; #0b1020 falls to 11983, all of it specimen text
+control_background_js	45088	px	exact #00ffd0; #ff00aa falls to 0
+control_config_declared_moved	3333	px	manifest claims uiMode; still painting after the change
+control_config_undeclared_moved	0	px	manifest does not; never paints again, process still alive

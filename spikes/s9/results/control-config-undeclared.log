@@ -1,0 +1,41 @@
+08-16 01:31:32.111 W/SQLiteLog( 7169): (28) double-quoted string literal: "dev.blitsen.s9"
+08-16 01:31:32.151 I/ActivityTaskManager(  537): START u0 {flg=0x10000000 cmp=dev.blitsen.s9/android.app.NativeActivity} from uid 2000
+08-16 01:31:32.153 I/ProximityAuth( 5412): [RecentAppsMediator] Package added: (user=UserHandle{0}) dev.blitsen.s9
+08-16 01:31:32.162 D/ImsResolver( 1079): maybeAddedImsService, packageName: dev.blitsen.s9
+08-16 01:31:32.162 V/SplashScreenExceptionList(  537): SplashScreen checking exception for package dev.blitsen.s9 (target sdk:33) -> false
+08-16 01:31:32.163 D/CarrierSvcBindHelper( 1079): onHandleForceStop: [dev.blitsen.s9]
+08-16 01:31:32.177 D/CoreBackPreview(  537): Window{1e8e33 u0 Splash Screen dev.blitsen.s9}: Setting back callback OnBackInvokedCallbackInfo{mCallback=android.window.IOnBackInvokedCallback$Stub$Proxy@df390ab, mPriority=0}
+08-16 01:31:32.203 I/dev.blitsen.s9( 8337): Late-enabling -Xcheck:jni
+08-16 01:31:32.226 I/ActivityManager(  537): Start proc 8337:dev.blitsen.s9/u0a174 for next-top-activity {dev.blitsen.s9/android.app.NativeActivity}
+08-16 01:31:32.232 I/Telecom (  537): CarModeTracker: Package dev.blitsen.s9 is not tracked.: SSH.oR@AnE
+08-16 01:31:32.246 I/dev.blitsen.s9( 8337): Using CollectorTypeCC GC.
+08-16 01:31:32.250 W/dev.blitsen.s9( 8337): Unexpected CPU variant for x86: x86_64.
+08-16 01:31:32.250 W/dev.blitsen.s9( 8337): Known variants: atom, sandybridge, silvermont, kabylake, default
+08-16 01:31:32.281 I/FontLog ( 5412): Package dev.blitsen.s9 has no metadata [CONTEXT service_id=132 ]
+08-16 01:31:32.285 W/AlarmManager(  537): Package dev.blitsen.s9, uid 10174 lost permission to set exact alarms!
+08-16 01:31:32.363 D/nativeloader( 8337): Configuring classloader-namespace for other apk . target_sdk_version=33, uses_libraries=, library_path=/data/app/~~Nil8s6Tt_S5X2eWscvhCOA==/dev.blitsen.s9-3vpohRzp3Z3Gklr-IjtH8g==/lib/x86_64:/data/app/~~Nil8s6Tt_S5X2eWscvhCOA==/dev.blitsen.s9-3vpohRzp3Z3Gklr-IjtH8g==/base.apk!/lib/x86_64, permitted_path=/data:/mnt/expand:/data/user/0/dev.blitsen.s9
+08-16 01:31:32.367 V/GraphicsEnvironment( 8337): ANGLE Developer option for 'dev.blitsen.s9' set to: 'default'
+08-16 01:31:32.367 V/GraphicsEnvironment( 8337): ANGLE GameManagerService for dev.blitsen.s9: false
+08-16 01:31:32.452 I/Blitsen ( 8337): starting ApkAssets { root: "blitsen", indexed: true, files: 4 }
+08-16 01:31:32.561 D/vulkan  ( 8337): searching for layers in '/data/app/~~Nil8s6Tt_S5X2eWscvhCOA==/dev.blitsen.s9-3vpohRzp3Z3Gklr-IjtH8g==/lib/x86_64'
+08-16 01:31:32.561 D/vulkan  ( 8337): searching for layers in '/data/app/~~Nil8s6Tt_S5X2eWscvhCOA==/dev.blitsen.s9-3vpohRzp3Z3Gklr-IjtH8g==/base.apk!/lib/x86_64'
+08-16 01:31:32.630 D/CoreBackPreview(  537): Window{c49d8a3 u0 dev.blitsen.s9/android.app.NativeActivity}: Setting back callback OnBackInvokedCallbackInfo{mCallback=android.window.IOnBackInvokedCallback$Stub$Proxy@79dff59, mPriority=0}
+08-16 01:31:32.663 W/ziparchive(  537): Unable to open '/data/app/~~Nil8s6Tt_S5X2eWscvhCOA==/dev.blitsen.s9-3vpohRzp3Z3Gklr-IjtH8g==/base.dm': No such file or directory
+08-16 01:31:32.664 I/ActivityTaskManager(  537): Displayed dev.blitsen.s9/android.app.NativeActivity: +512ms
+08-16 01:31:32.722 I/GoogleInputMethodService( 1608): GoogleInputMethodService.onStartInput():1877 onStartInput(EditorInfo{inputType=0x0(NULL) imeOptions=0x0 privateImeOptions=null actionName=UNSPECIFIED actionLabel=null actionId=0 initialSelStart=-1 initialSelEnd=-1 initialCapsMode=0x0 hintText=null label=null packageName=dev.blitsen.s9 fieldId=-1 fieldName=null extras=null}, false)
+08-16 01:31:33.083 D/CoreBackPreview(  537): Window{1e8e33 u0 Splash Screen dev.blitsen.s9 EXITING}: Setting back callback null
+08-16 01:31:33.083 W/InputManager-JNI(  537): Input channel object '1e8e33 Splash Screen dev.blitsen.s9 (client)' was disposed without first being removed with the input manager!
+08-16 01:31:52.227 I/GoogleInputMethodService( 1608): GoogleInputMethodService.onStartInput():1877 onStartInput(EditorInfo{inputType=0x0(NULL) imeOptions=0x0 privateImeOptions=null actionName=UNSPECIFIED actionLabel=null actionId=0 initialSelStart=-1 initialSelEnd=-1 initialCapsMode=0x0 hintText=null label=null packageName=dev.blitsen.s9 fieldId=-1 fieldName=null extras=null}, true)
+08-16 01:31:52.277 I/GoogleInputMethodService( 1608): GoogleInputMethodService.onStartInput():1877 onStartInput(EditorInfo{inputType=0x0(NULL) imeOptions=0x0 privateImeOptions=null actionName=UNSPECIFIED actionLabel=null actionId=0 initialSelStart=-1 initialSelEnd=-1 initialCapsMode=0x0 hintText=null label=null packageName=dev.blitsen.s9 fieldId=-1 fieldName=null extras=null}, true)
+08-16 01:31:52.302 I/GoogleInputMethodService( 1608): GoogleInputMethodService.onStartInput():1877 onStartInput(EditorInfo{inputType=0x0(NULL) imeOptions=0x0 privateImeOptions=null actionName=UNSPECIFIED actionLabel=null actionId=0 initialSelStart=-1 initialSelEnd=-1 initialCapsMode=0x0 hintText=null label=null packageName=dev.blitsen.s9 fieldId=-1 fieldName=null extras=null}, true)
+08-16 01:31:52.313 I/ContentCaptureHelper( 1112): Setting logging level to DEBUG
+08-16 01:31:54.260 W/WindowManager(  537): Force clearing freeze: ActivityRecord{37f66f4 u0 dev.blitsen.s9/android.app.NativeActivity} t18}
+08-16 01:31:54.262 I/WindowManager(  537): Screen frozen for +2s35ms due to ActivityRecord{37f66f4 u0 dev.blitsen.s9/android.app.NativeActivity} t18}
+08-16 01:31:54.290 W/WindowManager(  537): Force clearing orientation change: Window{c49d8a3 u0 dev.blitsen.s9/android.app.NativeActivity}
+08-16 01:32:02.287 I/GoogleInputMethodService( 1608): GoogleInputMethodService.onStartInput():1877 onStartInput(EditorInfo{inputType=0x0(NULL) imeOptions=0x0 privateImeOptions=null actionName=UNSPECIFIED actionLabel=null actionId=0 initialSelStart=-1 initialSelEnd=-1 initialCapsMode=0x0 hintText=null label=null packageName=dev.blitsen.s9 fieldId=-1 fieldName=null extras=null}, true)
+08-16 01:32:02.325 I/GoogleInputMethodService( 1608): GoogleInputMethodService.onStartInput():1877 onStartInput(EditorInfo{inputType=0x0(NULL) imeOptions=0x0 privateImeOptions=null actionName=UNSPECIFIED actionLabel=null actionId=0 initialSelStart=-1 initialSelEnd=-1 initialCapsMode=0x0 hintText=null label=null packageName=dev.blitsen.s9 fieldId=-1 fieldName=null extras=null}, true)
+08-16 01:32:02.347 I/GoogleInputMethodService( 1608): GoogleInputMethodService.onStartInput():1877 onStartInput(EditorInfo{inputType=0x0(NULL) imeOptions=0x0 privateImeOptions=null actionName=UNSPECIFIED actionLabel=null actionId=0 initialSelStart=-1 initialSelEnd=-1 initialCapsMode=0x0 hintText=null label=null packageName=dev.blitsen.s9 fieldId=-1 fieldName=null extras=null}, true)
+08-16 01:32:02.356 I/ContentCaptureHelper( 1112): Setting logging level to DEBUG
+08-16 01:32:04.306 W/WindowManager(  537): Force clearing freeze: ActivityRecord{37f66f4 u0 dev.blitsen.s9/android.app.NativeActivity} t18}
+08-16 01:32:04.307 I/WindowManager(  537): Screen frozen for +2s28ms due to ActivityRecord{37f66f4 u0 dev.blitsen.s9/android.app.NativeActivity} t18}
+08-16 01:32:04.324 W/WindowManager(  537): Force clearing orientation change: Window{c49d8a3 u0 dev.blitsen.s9/android.app.NativeActivity}

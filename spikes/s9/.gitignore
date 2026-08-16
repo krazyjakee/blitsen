@@ -1,0 +1,6 @@
+# The full logs are hundreds of kilobytes of the platform talking to itself;
+# results/*.log keeps the part that names us.
+results/*.logcat
+# Two captures of the launcher wallpaper, 1.3 MB each, showing nothing. What
+# this control produced that is worth keeping is the logcat line in its .log.
+results/control-no-entrypoint*.png

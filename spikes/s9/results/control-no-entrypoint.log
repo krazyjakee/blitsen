@@ -1,0 +1,21 @@
+08-16 01:34:19.588 I/ActivityTaskManager(  537): START u0 {flg=0x10000000 cmp=dev.blitsen.s9/android.app.NativeActivity} from uid 2000
+08-16 01:34:19.592 V/SplashScreenExceptionList(  537): SplashScreen checking exception for package dev.blitsen.s9 (target sdk:33) -> false
+08-16 01:34:19.599 I/ProximityAuth( 5412): [RecentAppsMediator] Package added: (user=UserHandle{0}) dev.blitsen.s9
+08-16 01:34:19.604 W/SQLiteLog( 7169): (28) double-quoted string literal: "dev.blitsen.s9"
+08-16 01:34:19.610 I/ActivityManager(  537): Start proc 8708:dev.blitsen.s9/u0a174 for next-top-activity {dev.blitsen.s9/android.app.NativeActivity}
+08-16 01:34:19.615 D/CoreBackPreview(  537): Window{fc9ea66 u0 Splash Screen dev.blitsen.s9}: Setting back callback OnBackInvokedCallbackInfo{mCallback=android.window.IOnBackInvokedCallback$Stub$Proxy@2f38e9f, mPriority=0}
+08-16 01:34:19.619 I/FontLog ( 5412): Package dev.blitsen.s9 has no metadata [CONTEXT service_id=132 ]
+08-16 01:34:19.629 I/dev.blitsen.s9( 8708): Late-enabling -Xcheck:jni
+08-16 01:34:19.669 I/dev.blitsen.s9( 8708): Using CollectorTypeCC GC.
+08-16 01:34:19.670 W/dev.blitsen.s9( 8708): Unexpected CPU variant for x86: x86_64.
+08-16 01:34:19.670 W/dev.blitsen.s9( 8708): Known variants: atom, sandybridge, silvermont, kabylake, default
+08-16 01:34:19.735 D/nativeloader( 8708): Configuring classloader-namespace for other apk . target_sdk_version=33, uses_libraries=, library_path=/data/app/~~xMuVOwrWWZv1kt-Okzx3UA==/dev.blitsen.s9-OVcSrU6BfDtD9LJ__Ok1EA==/lib/x86_64:/data/app/~~xMuVOwrWWZv1kt-Okzx3UA==/dev.blitsen.s9-OVcSrU6BfDtD9LJ__Ok1EA==/base.apk!/lib/x86_64, permitted_path=/data:/mnt/expand:/data/user/0/dev.blitsen.s9
+08-16 01:34:19.739 V/GraphicsEnvironment( 8708): ANGLE Developer option for 'dev.blitsen.s9' set to: 'default'
+08-16 01:34:19.739 V/GraphicsEnvironment( 8708): ANGLE GameManagerService for dev.blitsen.s9: false
+08-16 01:34:19.796 I/Blitsen ( 8708): starting ApkAssets { root: "blitsen", indexed: true, files: 3 }
+08-16 01:34:19.796 E/Blitsen ( 8708): this package has no index.html under assets/blitsen: an application needs an HTML entrypoint
+08-16 01:34:19.800 D/CoreBackPreview(  537): Window{d17dc41 u0 dev.blitsen.s9/android.app.NativeActivity}: Setting back callback OnBackInvokedCallbackInfo{mCallback=android.window.IOnBackInvokedCallback$Stub$Proxy@468727, mPriority=0}
+08-16 01:34:20.195 D/CoreBackPreview(  537): Window{fc9ea66 u0 Splash Screen dev.blitsen.s9 EXITING}: Setting back callback null
+08-16 01:34:20.195 W/InputManager-JNI(  537): Input channel object 'fc9ea66 Splash Screen dev.blitsen.s9 (client)' was disposed without first being removed with the input manager!
+08-16 01:34:20.445 D/CoreBackPreview(  537): Window{d17dc41 u0 dev.blitsen.s9/android.app.NativeActivity}: Setting back callback null
+08-16 01:34:20.446 W/InputManager-JNI(  537): Input channel object 'd17dc41 dev.blitsen.s9/android.app.NativeActivity (client)' was disposed without first being removed with the input manager!

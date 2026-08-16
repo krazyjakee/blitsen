@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The whole of the Java side of a Blitsen application: an activity class that
+  ships with the platform, told the name of a shared object to load.
+
+  `android:hasCode="false"` is the claim that makes it true — there is no dex in
+  this APK, so `native-activity` (#142's feature selection) is not a convenience,
+  it is what lets the artifact have no Java in it at all.
+
+  `configChanges` lists every change this activity absorbs rather than being
+  destroyed and recreated for, the way every winit-and-android-activity recipe
+  does. It is load-bearing, and measurably so: run.sh's two config-change
+  controls differ only in this attribute, and without it a dark-mode change stops
+  the application painting for good, leaving the process alive holding its last
+  frame and never drawing again. That is #146's, and it is not the failure #142
+  predicted here; see README.md. (An XML comment cannot contain two hyphens in a
+  row, which is why the control names are not spelled out.)
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="dev.blitsen.s9">
+
+    <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="33" />
+
+    <application
+        android:label="Blitsen s9"
+        android:hasCode="false"
+        android:debuggable="true"
+        android:extractNativeLibs="false">
+        <activity
+            android:name="android.app.NativeActivity"
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:theme="@android:style/Theme.DeviceDefault.NoActionBar.Fullscreen"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|screenLayout|smallestScreenSize|locale|layoutDirection|density|uiMode|fontScale|navigation|mcc|mnc">
+            <meta-data android:name="android.app.lib_name" android:value="blitsen_android" />
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

@@ -1,0 +1,116 @@
+/* Every colour here is a literal the frame checker looks for by exact RGB, so
+   none of them is a variable and none is written twice. `--page` is the one
+   `run.sh --control background` rewrites, which is how a captured frame is
+   shown to be this document rather than something that happened to be on the
+   screen. */
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  /* PAGE-BACKGROUND */
+  background: #0b1020;
+  color: #f5f7ff;
+  font-family: sans-serif;
+  padding: 24px 20px;
+}
+
+h1 {
+  margin: 0;
+  font-size: 40px;
+  letter-spacing: 4px;
+  font-weight: 700;
+}
+
+.sub {
+  margin: 4px 0 24px;
+  font-size: 13px;
+  color: #8a93b2;
+}
+
+.swatches {
+  display: flex;
+  gap: 12px;
+}
+
+.swatch {
+  width: 78px;
+  height: 78px;
+  border-radius: 10px;
+  /* An element JavaScript never touches still needs a fill, or "JavaScript did
+     not run" and "the fourth box is missing" look the same. */
+  background: #3d4463;
+}
+
+.css-red {
+  background: #e5484d;
+}
+
+.css-green {
+  background: #30a46c;
+}
+
+.css-blue {
+  background: #0091ff;
+}
+
+.caption {
+  margin: 10px 0 22px;
+  font-size: 12px;
+  color: #8a93b2;
+}
+
+/* A pale strip behind each specimen, so the checker can measure ink coverage
+   against a known background and a missing font is an empty band rather than a
+   guess. */
+.specimen {
+  background: #f5f7ff;
+  color: #0b1020;
+  padding: 6px 10px;
+  margin-bottom: 8px;
+  border-radius: 6px;
+}
+
+.sans {
+  font-family: sans-serif;
+  font-size: 22px;
+}
+
+.mono {
+  font-family: monospace;
+  font-size: 22px;
+}
+
+.facts {
+  margin-top: 22px;
+  font-size: 17px;
+  border-spacing: 0;
+}
+
+.facts td {
+  padding: 3px 14px 3px 0;
+}
+
+.facts td:first-child {
+  color: #8a93b2;
+}
+
+.track {
+  margin-top: 18px;
+  width: 300px;
+  height: 16px;
+  border-radius: 8px;
+  background: #2a3150;
+}
+
+/* Not the strip colour: a bar 300 CSS px wide in #f5f7ff would be read as a
+   third type specimen by check.py's band finder. */
+#ticker {
+  height: 16px;
+  border-radius: 8px;
+  background: #ffd166;
+  width: 0;
+}

@@ -1,0 +1,40 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Blitsen on Android</title>
+    <link rel="stylesheet" href="./style.css">
+  </head>
+  <body>
+    <h1>BLITSEN</h1>
+    <p class="sub">painted on Android &middot; spike s9 &middot; issue 143</p>
+
+    <div class="swatches">
+      <div class="swatch css-red"></div>
+      <div class="swatch css-green"></div>
+      <div class="swatch css-blue"></div>
+      <div class="swatch" id="js-swatch"></div>
+    </div>
+
+    <p class="caption">three fills from the stylesheet, the fourth from JavaScript</p>
+
+    <div class="specimen">
+      <span id="sans" class="sans">Hamburgefonstiv 0369</span>
+    </div>
+    <div class="specimen">
+      <span id="mono" class="mono">Hamburgefonstiv 0369</span>
+    </div>
+
+    <table class="facts">
+      <tr><td>0.1 + 0.2</td><td id="float">not run</td></tr>
+      <tr><td>sans-serif px</td><td id="sans-width">not run</td></tr>
+      <tr><td>monospace px</td><td id="mono-width">not run</td></tr>
+      <tr><td>viewport</td><td id="viewport">not run</td></tr>
+      <tr><td>frames</td><td id="frames">not run</td></tr>
+    </table>
+
+    <div class="track"><div id="ticker"></div></div>
+
+    <script src="./app.js"></script>
+  </body>
+</html>
