@@ -170,11 +170,41 @@ describe("runtime resolution", () => {
       });
   });
 
+  test("a cross-target build can fall past a source workspace before its addon is staged", async () => {
+    const target = TARGETS.find(candidate => candidate !== hostTarget());
+    await withPlatformPackages({ [target]: { version: cliVersion, binary: false } },
+      async ({ directory, require }) => {
+        const cacheDir = join(directory, "cache");
+        const cached = join(cacheDir, "runtimes", cliVersion, target);
+        const path = join(cached, "blitsen.node");
+        await mkdir(cached, { recursive: true });
+        await writeFile(path, "cached addon");
+        expect(await resolveRuntime({
+          target, version: cliVersion, env: {}, require, fetch: true, cacheDir,
+        })).toEqual({ path, target, version: cliVersion, package: `@blitsen/${target}`,
+          source: "cache" });
+      });
+  });
+
+  test("a source workspace can fall through to the checkout's built addon", async () => {
+    const target = hostTarget();
+    await withPlatformPackages({ [target]: { version: cliVersion, binary: false } },
+      async ({ directory, require }) => {
+        const path = join(directory, "repository.node");
+        await writeFile(path, "built addon");
+        expect(await resolveRuntime({
+          target, version: cliVersion, env: {}, require,
+          repository: async () => path,
+        })).toEqual({ path, target, version: null, package: null, source: "repository" });
+      });
+  });
+
   test("refuses a platform package that carries no addon", async () => {
-    await withPlatformPackages({ "linux-x64": { version: cliVersion, binary: false } },
+    const target = TARGETS.find(candidate => candidate !== hostTarget());
+    await withPlatformPackages({ [target]: { version: cliVersion, binary: false } },
       async ({ require }) => {
-        await expect(resolveRuntime({ target: "linux-x64", version: cliVersion, env: {}, require }))
-          .rejects.toThrow(`@blitsen/linux-x64@${cliVersion} is installed but carries no blitsen.node`);
+        await expect(resolveRuntime({ target, version: cliVersion, env: {}, require }))
+          .rejects.toThrow(`@blitsen/${target}@${cliVersion} is installed but carries no blitsen.node`);
       });
   });
 

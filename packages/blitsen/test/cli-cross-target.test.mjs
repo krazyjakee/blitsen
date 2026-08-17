@@ -211,13 +211,19 @@ describe("cross-target export", () => {
       delete process.env.BLITSEN_NATIVE_PATH;
       delete process.env.BLITSEN_RUNTIME_PATH;
 
+      // Keep the Linux entry foreign to its ARM64 runner. That smoke job stages
+      // its own real runtime before this suite, so asking it for linux-arm64
+      // takes the host path and stops testing the cache-backed cross-target path.
+      const linuxTarget = hostTarget() === "linux-arm64" ? "linux-x64" : "linux-arm64";
       const formats = {
         "win32-x64": /PE32\+ executable.*x86-64/,
         // `file` words this differently per host — macOS says "64-bit executable
         // arm64" where Linux says "64-bit arm64" — so the pattern reads the
         // format and the architecture and not the sentence between them.
         "darwin-arm64": /Mach-O 64-bit.*arm64/,
-        "linux-arm64": /ELF 64-bit.*(aarch64|ARM)/,
+        [linuxTarget]: linuxTarget === "linux-x64"
+          ? /ELF 64-bit.*x86-64/
+          : /ELF 64-bit.*(aarch64|ARM)/,
       };
       for (const [target, expected] of Object.entries(formats)) {
         await seedCache(cache, target, await import("../src/runtime.mjs")
