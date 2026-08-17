@@ -304,10 +304,13 @@ async function resolveBinary({
   if (manifestPath !== null) {
     const path = join(dirname(manifestPath), binary);
     const exists = await readable(path);
-    // The addon is mandatory in every platform package, so its version is the
-    // first diagnosis even if the package is malformed. Phase 2 was introduced
-    // later and deliberately falls through when an installed package lacks it.
-    if (exists || missingPackageBinary !== null) {
+    // The addon is mandatory in every published platform package, so a host
+    // install that lacks it is malformed and stops here. A cross-target build
+    // is different: Bun can resolve the source-only platform workspaces before
+    // the release job has staged their binaries. Since that path is already
+    // allowed to fetch the exact version, let it continue to the cache/registry
+    // just as Phase 2 does when an older package lacks that executable.
+    if (exists || (missingPackageBinary !== null && !fetch)) {
       const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
       assertRuntimeVersion(target, version ?? await packageVersion(), manifest.version);
       if (!exists) throw missingPackageBinary({ name, version: manifest.version, path, binary });

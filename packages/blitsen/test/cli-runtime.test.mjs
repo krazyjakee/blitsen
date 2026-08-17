@@ -170,6 +170,22 @@ describe("runtime resolution", () => {
       });
   });
 
+  test("a cross-target build can fall past a source workspace before its addon is staged", async () => {
+    const target = TARGETS.find(candidate => candidate !== hostTarget());
+    await withPlatformPackages({ [target]: { version: cliVersion, binary: false } },
+      async ({ directory, require }) => {
+        const cacheDir = join(directory, "cache");
+        const cached = join(cacheDir, "runtimes", cliVersion, target);
+        const path = join(cached, "blitsen.node");
+        await mkdir(cached, { recursive: true });
+        await writeFile(path, "cached addon");
+        expect(await resolveRuntime({
+          target, version: cliVersion, env: {}, require, fetch: true, cacheDir,
+        })).toEqual({ path, target, version: cliVersion, package: `@blitsen/${target}`,
+          source: "cache" });
+      });
+  });
+
   test("refuses a platform package that carries no addon", async () => {
     await withPlatformPackages({ "linux-x64": { version: cliVersion, binary: false } },
       async ({ require }) => {
