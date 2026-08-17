@@ -33,6 +33,33 @@ use crate::app::AppFiles;
 use crate::pointer_input::{PendingPointerInput, PointerIds};
 use crate::surface_lifecycle::{SurfaceState, SyntheticPhase};
 
+/// The window renderer safe for this target.
+///
+/// Vello's Metal compute path has caused full-session GPU resets on Intel Macs
+/// (#229). Those machines use the CPU rasterizer and a software framebuffer;
+/// other targets retain the GPU renderer.
+#[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+pub type NativeWindowRenderer = anyrender_vello_cpu::VelloCpuWindowRenderer;
+
+/// The window renderer safe for this target.
+#[cfg(not(all(target_os = "macos", target_arch = "x86_64")))]
+pub type NativeWindowRenderer = anyrender_vello::VelloWindowRenderer;
+
+#[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+fn native_window_renderer() -> NativeWindowRenderer {
+    eprintln!(
+        "blitsen: renderer=vello-cpu window-backend=softbuffer \
+         reason=Intel-macOS-Metal-safety-fallback"
+    );
+    NativeWindowRenderer::new()
+}
+
+#[cfg(not(all(target_os = "macos", target_arch = "x86_64")))]
+fn native_window_renderer() -> NativeWindowRenderer {
+    eprintln!("blitsen: renderer=vello-gpu backend=wgpu");
+    NativeWindowRenderer::new()
+}
+
 /// Hands the activity to the event loop, before there is one (issue #142).
 ///
 /// [`WindowSession::open`] below builds its loop with
@@ -216,7 +243,7 @@ pub struct WindowSession<E: JsEngine + Clone> {
     /// The winit loop, advanced without blocking by [`pump`](Self::pump).
     pub event_loop: EventLoop,
     /// Window, document and input translation.
-    pub application: WindowApplication<anyrender_vello::VelloWindowRenderer, E>,
+    pub application: WindowApplication<NativeWindowRenderer, E>,
     /// The first error raised inside a winit callback, surfaced by `pump`.
     pub error: Rc<RefCell<Option<JsError>>>,
     /// Where the application's files come from, retained for reload.
@@ -258,7 +285,10 @@ impl<E: JsEngine + Clone + 'static> WindowSession<E> {
                 crate::dom_bridge::DocumentMode::Application,
             ),
         )?;
-        let renderer = anyrender_vello::VelloWindowRenderer::new();
+        // Renderer selection happens before winit creates a surface. On an
+        // unsafe target this must never construct wgpu: recovering from device
+        // loss is too late when a Metal compute submission wedges WindowServer.
+        let renderer = native_window_renderer();
         let attributes = WindowAttributes::default()
             .with_title(options.title.clone())
             .with_surface_size(LogicalSize::new(options.width, options.height));
