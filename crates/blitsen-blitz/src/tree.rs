@@ -4,7 +4,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use blitsen_dom::{DomError, DomName, NATIVE_VIEWPORT_TAG, Namespace};
+use blitsen_dom::{DomError, DomName, LayoutSnapshot, NATIVE_VIEWPORT_TAG, Namespace};
 use blitz::dom::{LocalName, NodeData, NodeId, QualName, ns};
 
 use crate::BlitzDom;
@@ -51,6 +51,16 @@ impl BlitzDom {
 
     pub(crate) fn node(&self, node: NodeId) -> Result<&blitz::dom::Node, DomError> {
         self.document.get_node(node).ok_or(DomError::StaleNode)
+    }
+
+    /// Rejects layout state unless both the token and the last flush describe
+    /// the tree's current revision.
+    pub(crate) fn ensure_layout_fresh(&self, snapshot: LayoutSnapshot) -> Result<(), DomError> {
+        if snapshot.revision() == self.revision && self.flushed_revision == self.revision {
+            Ok(())
+        } else {
+            Err(DomError::LayoutNotFlushed)
+        }
     }
 
     /// The box that laid this one out, which is not always the DOM parent.

@@ -744,10 +744,9 @@ records the compiled entrypoint's path inside the executable.
 
 Step ⑤ runs over the linked artifact when a packaging option (`--icon`, `--bundle-id`,
 `--app-version`) is given; without one the export is the bare executable it has always been.
-Packaging targets the host platform. `--target <platform>-<arch>` accepts only the host triple:
-the Phase 1 runtime is the host's compiled addon and there are no per-target runtime packages to
-link against, so any other target fails naming issue #72 rather than quietly producing a host
-build under a foreign name.
+Packaging targets the requested platform. `--target <platform>-<arch>` accepts any of the six
+desktop triples and resolves that target's runtime package on demand. File generation works across
+hosts; signing and notarisation still require the target platform or an external signing service.
 
 | Host | Produced beside or around the executable |
 | --- | --- |
@@ -854,29 +853,28 @@ blitsen                        ← thin JS: CLI, config, TypeScript definitions
   package, which the CLI can fetch on demand rather than at install.
 
 The six manifests live in `packages/platforms/`, one directory per target, each declaring its
-`os`/`cpu` pair, the addon `blitsen.node` and the executable an export links into.
-**All six are built, and none is published**: every target has a runner in
-`.github/workflows/release.yml`, no binary is committed, and the workflow is manual-dispatch — it
-packs and dry-runs unless its `publish` input says otherwise, because `npm publish` cannot be
-undone. They are deliberately not workspace members — six unpublished names in the root lockfile
-would break `bun install --frozen-lockfile`.
+`os`/`cpu` pair, the addon `blitsen.node` and the executable an export links into. Every target has
+a native runner in `.github/workflows/release.yml`; no binary is committed. The manual workflow
+packs and dry-runs unless its `publish` input is explicitly true, then publishes all six platform
+packages before the thin `blitsen` package and records the same tarballs on the GitHub release.
+They are deliberately not workspace members: putting platform-specific packages in the root
+lockfile would make a frozen install depend on artifacts that do not exist in a checkout.
 
 ### Resolving the runtime
 
-`packages/blitsen/src/runtime.mjs` answers one question — where is this host's addon — in a
-fixed order, and every consumer shares that answer: the CLI's `run` and `build`, and the
-exporter, which links whatever was resolved rather than reaching into `target/` itself.
+`packages/blitsen/src/runtime.mjs` owns one ordered resolver for both native binaries. The addon
+used by `run` and Phase 1 takes `BLITSEN_NATIVE_PATH`; the Phase 2 executable used by ordinary
+exports takes `BLITSEN_RUNTIME_PATH`. Each variable accepts a path or `file:` URL, is visibly
+reported as an unversioned override, and must contain a readable library/executable whose binary
+format and architecture match the requested target.
 
-1. `BLITSEN_NATIVE_PATH`, an explicit addon path or `file:` URL. Unversioned by construction: it
-   is the escape hatch the repository's own harnesses and example scripts use.
-2. `@blitsen/<platform>-<arch>`, found by resolving `@blitsen/<target>/package.json` through
-   ordinary package resolution rather than by walking `node_modules`, so workspaces, pnpm's store
-   and yarn PnP all resolve without special cases.
-3. An addon this checkout built into `target/release/`, so a clone that ran
-   `cargo build --release -p blitsen-node` needs no install at all.
-4. Otherwise it refuses, naming the platform and saying that its package is not published —
-   the same shape as `--target`'s refusal, and for the same reason: a runtime that silently
-   isn't the one you asked for is worse than a build that stops.
+After an override, both binaries follow the same ladder: the exact installed
+`@blitsen/<platform>-<arch>` package, a release build in this checkout, then the versioned
+cross-target download cache. A cross-target build may fetch the exact platform package when local
+sources are exhausted; a host run does not start a network download merely because its installed
+runtime is missing. The addon and executable are resolved independently because a checkout may
+have built only one, but the installed pair is version-checked against the CLI before either is
+used.
 
 ### Runtime version pinning
 
@@ -945,8 +943,10 @@ implements roughly 95% of Node-API, which is also what makes the addon strategy 
 ## 14. Testing
 
 Interactive verification is the user's job; everything below is designed to run headlessly.
-GitHub-hosted CI runs the JavaScript, Rust, acceptance and metrics jobs on Linux x64; the other
-five platform targets have no runner yet. Run the cross-platform bridge suite locally with
+GitHub-hosted CI runs the full Rust, native acceptance, layout and metrics suites on Linux x64,
+macOS arm64 and Windows x64. Linux arm64, macOS x64 and Windows arm64 each run a release-artifact
+smoke tier covering both binaries, the package tests, a frame, a standalone export and the layout
+corpus. Android has a cross-compile/package smoke tier. Run the bridge suite locally with
 `bun run --cwd packages/blitsen test:native`; it builds and stages the platform's addon before
 executing the same native assertions on Linux, macOS, or Windows.
 

@@ -26,6 +26,97 @@ fn a_sheet_splits_into_the_rules_a_browser_would_report() {
     assert!(BlitzDom::split_css_rules("  /* nothing */  ").is_empty());
 }
 
+/// Inline CSS is a declaration grammar, not a semicolon-separated map. Values
+/// routinely carry the same punctuation as the surrounding grammar, and an
+/// unrelated CSSOM mutation must not corrupt them.
+#[test]
+fn inline_style_mutations_preserve_css_tokens_and_cascade_semantics() {
+    let mut dom = fixture_document(
+        r#"<div id='styled' style='
+          background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg%3E%3C/svg%3E");
+          --quoted: "left;right:tail";
+          --escaped: semi\;colon\:tail;
+          --commented: left/* ; : */right;
+          color: rgb(1, 2, 3) !important;
+          color: blue;
+          broken declaration;
+          height: 11px
+        '></div>"#,
+        None,
+    );
+    let styled = dom.get_element_by_id("styled").unwrap().unwrap();
+    let properties = [
+        "background-image",
+        "--quoted",
+        "--escaped",
+        "--commented",
+        "color",
+        "height",
+    ];
+    let before = properties.map(|property| dom.inline_style(styled, property).unwrap());
+
+    assert!(before.iter().all(Option::is_some));
+    assert!(
+        before[0]
+            .as_deref()
+            .unwrap()
+            .contains("data:image/svg+xml;charset=utf-8")
+    );
+    assert_eq!(before[1].as_deref(), Some(r#""left;right:tail""#));
+    assert!(
+        before[2]
+            .as_deref()
+            .unwrap()
+            .contains("semi\\;colon\\:tail")
+    );
+    assert!(before[3].as_deref().unwrap().contains("left"));
+    assert_eq!(before[4].as_deref(), Some("rgb(1, 2, 3)"));
+    assert_eq!(
+        dom.inline_style(styled, "broken declaration").unwrap(),
+        None
+    );
+
+    assert!(dom.set_inline_style(styled, "width", "17px").unwrap());
+    assert_eq!(
+        properties.map(|property| dom.inline_style(styled, property).unwrap()),
+        before
+    );
+    let css = dom.inline_style_text(styled).unwrap();
+    assert!(css.contains("color: rgb(1, 2, 3) !important"));
+    let positions = properties.map(|property| css.find(property).unwrap());
+    assert!(positions.windows(2).all(|pair| pair[0] < pair[1]));
+
+    assert_eq!(
+        dom.remove_inline_style(styled, "width").unwrap().as_deref(),
+        Some("17px")
+    );
+    assert_eq!(
+        properties.map(|property| dom.inline_style(styled, property).unwrap()),
+        before
+    );
+
+    // Replacing an important property is replacement, not an appended normal
+    // declaration that loses to the old value.
+    assert!(dom.set_inline_style(styled, "color", "green").unwrap());
+    assert_eq!(
+        dom.inline_style(styled, "color").unwrap().as_deref(),
+        Some("green")
+    );
+    assert!(
+        !dom.inline_style_text(styled)
+            .unwrap()
+            .contains("green !important")
+    );
+
+    // An invalid replacement leaves every parsed declaration exactly as it was.
+    let original = dom.inline_style_text(styled).unwrap();
+    assert!(
+        !dom.set_inline_style(styled, "height", "definitely-invalid")
+            .unwrap()
+    );
+    assert_eq!(dom.inline_style_text(styled).unwrap(), original);
+}
+
 /// The whole point of the CSSOM sheet surface: a rule inserted from script
 /// has to reach the stylesheet set Stylo cascades from, which is only
 /// answerable in painted pixels.

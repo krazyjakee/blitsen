@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { main } from "../src/cli.mjs";
 import { buildStandalone, runtimeRecord } from "../src/export.mjs";
-import { describeRuntime, hostTarget, openRuntime, resolvePhase2Runtime, resolveRuntime, TARGETS }
+import { describeRuntime, hostTarget, openRuntime, phase2Binary, resolvePhase2Runtime, resolveRuntime, TARGETS }
   from "../src/runtime.mjs";
 import { viteBase, engineBuilt, executableStub, nativeStub, platformPackages, cliVersion, withPlatformPackages, withStubbedExport, capture } from "./cli-support.mjs";
 
@@ -60,6 +60,7 @@ describe("runtime resolution", () => {
 
   test("declares one platform package per target, pinned to this version exactly", async () => {
     const manifest = JSON.parse(await readFile(join(import.meta.dir, "../package.json"), "utf8"));
+    const license = await readFile(join(import.meta.dir, "../LICENSE"), "utf8");
     expect(Object.keys(manifest.optionalDependencies))
       .toEqual(TARGETS.map(target => `@blitsen/${target}`));
     for (const target of TARGETS) {
@@ -71,24 +72,34 @@ describe("runtime resolution", () => {
       expect(platform.os).toEqual([os]);
       expect(platform.cpu).toEqual([cpu]);
       expect(platform.exports["./blitsen.node"]).toBe("./blitsen.node");
+      expect(platform.files).toContain("LICENSE");
+      expect(await readFile(join(platformPackages, target, "LICENSE"), "utf8")).toBe(license);
       // A range would allow a pair that was never built together; see TECH.md §11.
       expect(platform.version).toBe(cliVersion);
       expect(manifest.optionalDependencies[platform.name]).toBe(cliVersion);
     }
   });
 
-  test("picks the package matching the target, ignoring the others installed", async () => {
+  test("picks both binaries from the package matching the target", async () => {
     await withPlatformPackages(
-      { "linux-x64": { version: cliVersion }, "darwin-arm64": { version: cliVersion } },
+      {
+        "linux-x64": { version: cliVersion, phase2: true },
+        "darwin-arm64": { version: cliVersion, phase2: true },
+      },
       async ({ directory, require }) => {
         for (const target of ["linux-x64", "darwin-arm64"]) {
-          expect(await resolveRuntime({ target, version: cliVersion, env: {}, require })).toEqual({
-            path: join(directory, "node_modules/@blitsen", target, "blitsen.node"),
-            target,
-            version: cliVersion,
-            package: `@blitsen/${target}`,
-            source: "package",
-          });
+          for (const [resolve, binary] of [
+            [resolveRuntime, "blitsen.node"],
+            [resolvePhase2Runtime, phase2Binary(target)],
+          ]) {
+            expect(await resolve({ target, version: cliVersion, env: {}, require })).toEqual({
+              path: join(directory, "node_modules/@blitsen", target, binary),
+              target,
+              version: cliVersion,
+              package: `@blitsen/${target}`,
+              source: "package",
+            });
+          }
         }
       });
   });
@@ -109,19 +120,90 @@ describe("runtime resolution", () => {
     });
   });
 
-  test("refuses a platform package whose version is not the CLI's", async () => {
-    await withPlatformPackages({ "linux-x64": { version: "0.0.9" } }, async ({ require }) => {
-      await expect(resolveRuntime({ target: "linux-x64", version: "1.2.3", env: {}, require }))
-        .rejects.toThrow("runtime version mismatch: blitsen 1.2.3 requires @blitsen/linux-x64 "
-          + "1.2.3, but 0.0.9 is installed");
+  test("pins both installed binaries to the CLI's exact version", async () => {
+    await withPlatformPackages(
+      { "linux-x64": { version: "0.0.9", phase2: true } },
+      async ({ require }) => {
+        for (const resolve of [resolveRuntime, resolvePhase2Runtime]) {
+          await expect(resolve({
+            target: "linux-x64", version: "1.2.3", env: {}, require,
+          })).rejects.toThrow("runtime version mismatch: blitsen 1.2.3 requires "
+            + "@blitsen/linux-x64 1.2.3, but 0.0.9 is installed");
+        }
+      });
+  });
+
+  test("fetches the binary each resolver names after local sources are exhausted", async () => {
+    await withPlatformPackages({}, async ({ directory, require }) => {
+      const target = TARGETS.find(candidate => candidate !== hostTarget());
+      const cacheDir = join(directory, "cache");
+      const cached = join(cacheDir, "runtimes", cliVersion, target);
+      await mkdir(cached, { recursive: true });
+      for (const [resolve, binary] of [
+        [resolveRuntime, "blitsen.node"],
+        [resolvePhase2Runtime, phase2Binary(target)],
+      ]) {
+        const path = join(cached, binary);
+        await writeFile(path, "cached runtime");
+        expect(await resolve({
+          target, version: cliVersion, env: {}, require, fetch: true, cacheDir,
+        })).toEqual({ path, target, version: cliVersion, package: `@blitsen/${target}`,
+          source: "cache" });
+      }
     });
   });
 
+  test("Phase 2 can fall past an installed package from before it carried that binary", async () => {
+    const target = TARGETS.find(candidate => candidate !== hostTarget());
+    await withPlatformPackages({ [target]: { version: cliVersion } },
+      async ({ directory, require }) => {
+        const cacheDir = join(directory, "cache");
+        const cached = join(cacheDir, "runtimes", cliVersion, target);
+        const path = join(cached, phase2Binary(target));
+        await mkdir(cached, { recursive: true });
+        await writeFile(path, "cached Phase 2 runtime");
+        expect(await resolvePhase2Runtime({
+          target, version: cliVersion, env: {}, require, fetch: true, cacheDir,
+        })).toEqual({ path, target, version: cliVersion, package: `@blitsen/${target}`,
+          source: "cache" });
+      });
+  });
+
+  test("a cross-target build can fall past a source workspace before its addon is staged", async () => {
+    const target = TARGETS.find(candidate => candidate !== hostTarget());
+    await withPlatformPackages({ [target]: { version: cliVersion, binary: false } },
+      async ({ directory, require }) => {
+        const cacheDir = join(directory, "cache");
+        const cached = join(cacheDir, "runtimes", cliVersion, target);
+        const path = join(cached, "blitsen.node");
+        await mkdir(cached, { recursive: true });
+        await writeFile(path, "cached addon");
+        expect(await resolveRuntime({
+          target, version: cliVersion, env: {}, require, fetch: true, cacheDir,
+        })).toEqual({ path, target, version: cliVersion, package: `@blitsen/${target}`,
+          source: "cache" });
+      });
+  });
+
+  test("a source workspace can fall through to the checkout's built addon", async () => {
+    const target = hostTarget();
+    await withPlatformPackages({ [target]: { version: cliVersion, binary: false } },
+      async ({ directory, require }) => {
+        const path = join(directory, "repository.node");
+        await writeFile(path, "built addon");
+        expect(await resolveRuntime({
+          target, version: cliVersion, env: {}, require,
+          repository: async () => path,
+        })).toEqual({ path, target, version: null, package: null, source: "repository" });
+      });
+  });
+
   test("refuses a platform package that carries no addon", async () => {
-    await withPlatformPackages({ "linux-x64": { version: cliVersion, binary: false } },
+    const target = TARGETS.find(candidate => candidate !== hostTarget());
+    await withPlatformPackages({ [target]: { version: cliVersion, binary: false } },
       async ({ require }) => {
-        await expect(resolveRuntime({ target: "linux-x64", version: cliVersion, env: {}, require }))
-          .rejects.toThrow(`@blitsen/linux-x64@${cliVersion} is installed but carries no blitsen.node`);
+        await expect(resolveRuntime({ target, version: cliVersion, env: {}, require }))
+          .rejects.toThrow(`@blitsen/${target}@${cliVersion} is installed but carries no blitsen.node`);
       });
   });
 

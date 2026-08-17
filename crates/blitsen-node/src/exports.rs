@@ -357,34 +357,42 @@ pub fn wrapper_identity_smoke(env: Env) -> napi::Result<u32> {
     Ok(u32::try_from(table.len()).unwrap_or(u32::MAX))
 }
 
-/// Runs the load-bearing Node-API subset used by the trait implementation.
-///
-/// This is exported for the Bun compatibility test and is not public package API.
-#[napi]
-pub fn node_api_smoke(env: Env) -> napi::Result<bool> {
-    let mut engine = NodeApiEngine::new(env);
-    let string = engine.string("42").map_err(napi_error)?;
-    if engine.to_number(&string).map_err(napi_error)? != 42.0 {
-        return Ok(false);
+/// Turns a failed smoke assertion into the capability name the runner needs to
+/// diagnose it.
+fn smoke_check(condition: bool, capability: &str) -> napi::Result<()> {
+    if condition {
+        Ok(())
+    } else {
+        Err(failure(format!(
+            "Node-API smoke check failed: {capability}"
+        )))
     }
+}
+
+fn smoke_values(engine: &mut NodeApiEngine) -> napi::Result<()> {
+    let string = engine.string("42").map_err(napi_error)?;
+    smoke_check(
+        engine.to_number(&string).map_err(napi_error)? == 42.0,
+        "string-to-number conversion returned the wrong value",
+    )?;
     let one = engine.number(1.0);
     let two = engine.number(2.0);
     let array = engine.array(&[one, two]).map_err(napi_error)?;
-    if engine.to_array(&array).map_err(napi_error)?.len() != 2 {
-        return Ok(false);
-    }
+    smoke_check(
+        engine.to_array(&array).map_err(napi_error)?.len() == 2,
+        "array round trip returned the wrong length",
+    )?;
     let typed = TypedArray::new(TypedArrayKind::Uint8, vec![1, 2, 3]).map_err(napi_error)?;
     let typed = engine.typed_array(&typed).map_err(napi_error)?;
-    if engine.to_typed_array(&typed).map_err(napi_error)?.bytes != [1, 2, 3] {
-        return Ok(false);
-    }
+    smoke_check(
+        engine.to_typed_array(&typed).map_err(napi_error)?.bytes == [1, 2, 3],
+        "typed-array round trip changed its bytes",
+    )?;
     let result = engine
         .evaluate_script("21 * 2", "smoke.js")
         .and_then(|value| engine.to_number(&value))
         .map_err(napi_error)?;
-    if result != 42.0 {
-        return Ok(false);
-    }
+    smoke_check(result == 42.0, "script evaluation returned the wrong value")?;
 
     let identity = engine
         .define_function("identity", Box::new(|call| Ok(call.arguments[0])))
@@ -394,10 +402,13 @@ pub fn node_api_smoke(env: Env) -> napi::Result<bool> {
         .call(&identity, None, &[argument])
         .and_then(|value| engine.to_string(&value))
         .map_err(napi_error)?;
-    if result != "callback" {
-        return Ok(false);
-    }
+    smoke_check(
+        result == "callback",
+        "native callback argument/result round trip changed the value",
+    )
+}
 
+fn smoke_class_and_weak_ref(engine: &mut NodeApiEngine) -> napi::Result<()> {
     let class = engine
         .register_class(NativeClass::new("SmokeNode").with_method(NativeMethod::new(
             "identity",
@@ -407,9 +418,10 @@ pub fn node_api_smoke(env: Env) -> napi::Result<bool> {
     let instance = engine
         .instantiate(&class, ExternalId(42), None)
         .map_err(napi_error)?;
-    if engine.external_id(&instance).map_err(napi_error)? != ExternalId(42) {
-        return Ok(false);
-    }
+    smoke_check(
+        engine.external_id(&instance).map_err(napi_error)? == ExternalId(42),
+        "native class instance lost its external identity",
+    )?;
     let method = engine
         .get_property(&instance, "identity")
         .map_err(napi_error)?;
@@ -417,10 +429,13 @@ pub fn node_api_smoke(env: Env) -> napi::Result<bool> {
         .call(&method, Some(&instance), &[])
         .map_err(napi_error)?;
     let weak = engine.downgrade(&instance).map_err(napi_error)?;
-    if engine.upgrade(&weak).map_err(napi_error)?.is_none() {
-        return Ok(false);
-    }
+    smoke_check(
+        engine.upgrade(&weak).map_err(napi_error)?.is_some(),
+        "weak reference did not upgrade while its instance was still live",
+    )
+}
 
+fn smoke_globals_and_window(engine: &mut NodeApiEngine) -> napi::Result<()> {
     let global_value = engine.string("visible").map_err(napi_error)?;
     engine
         .set_global("__blitsenSmoke", &global_value)
@@ -429,14 +444,15 @@ pub fn node_api_smoke(env: Env) -> napi::Result<bool> {
         .evaluate_script("globalThis.__blitsenSmoke", "global-smoke.js")
         .and_then(|value| engine.to_string(&value))
         .map_err(napi_error)?;
-    if global_result != "visible" {
-        return Ok(false);
-    }
+    smoke_check(
+        global_result == "visible",
+        "global set/evaluate/read round trip changed the value",
+    )?;
 
     let document = engine.object().map_err(napi_error)?;
     let mut window_state = WindowState::new(800, 600, 2.0);
     let window = window_state
-        .install(&mut engine, &document)
+        .install(engine, &document)
         .map_err(napi_error)?;
     let window_check = engine
         .evaluate_script(
@@ -445,13 +461,12 @@ pub fn node_api_smoke(env: Env) -> napi::Result<bool> {
         )
         .and_then(|value| engine.to_boolean(&value))
         .map_err(napi_error)?;
-    if !window_check {
-        return Ok(false);
-    }
+    smoke_check(
+        window_check,
+        "window installation exposed the wrong globals or dimensions",
+    )?;
     window_state.resize(1024, 768);
-    window_state
-        .sync(&mut engine, &window)
-        .map_err(napi_error)?;
+    window_state.sync(engine, &window).map_err(napi_error)?;
     let resized = engine
         .evaluate_script(
             "innerWidth === 1024 && innerHeight === 768",
@@ -459,10 +474,13 @@ pub fn node_api_smoke(env: Env) -> napi::Result<bool> {
         )
         .and_then(|value| engine.to_boolean(&value))
         .map_err(napi_error)?;
-    if !resized {
-        return Ok(false);
-    }
+    smoke_check(
+        resized,
+        "window resize did not synchronize the global dimensions",
+    )
+}
 
+fn smoke_error_propagation(engine: &mut NodeApiEngine) -> napi::Result<()> {
     let throwing = engine
         .define_function(
             "throwing",
@@ -470,13 +488,20 @@ pub fn node_api_smoke(env: Env) -> napi::Result<bool> {
         )
         .map_err(napi_error)?;
     let error = match engine.call(&throwing, None, &[]) {
-        Ok(_) => return Ok(false),
+        Ok(_) => {
+            return Err(failure(
+                "Node-API smoke check failed: native callback returned instead of throwing",
+            ));
+        }
         Err(error) => error,
     };
-    if !error.message().contains("native callback failed") {
-        return Ok(false);
-    }
+    smoke_check(
+        error.message().contains("native callback failed"),
+        "native callback error lost its message",
+    )
+}
 
+fn smoke_large_module(engine: &mut NodeApiEngine) -> napi::Result<()> {
     // Keep this comfortably above common filesystem component limits. Bun used
     // to mistake the data URL carrying a production-sized inline module for a
     // package path, then fail with NameTooLong before evaluating it.
@@ -487,9 +512,10 @@ pub fn node_api_smoke(env: Env) -> napi::Result<bool> {
     let module = engine
         .evaluate_module(&large_module_source, "smoke-module.js")
         .map_err(napi_error)?;
-    if engine.value_type(&module).map_err(napi_error)? != JsType::Object {
-        return Ok(false);
-    }
+    smoke_check(
+        engine.value_type(&module).map_err(napi_error)? == JsType::Object,
+        "large inline module evaluation returned a non-object",
+    )?;
     let large_module_ran = engine
         .evaluate_script(
             "globalThis.__blitsenLargeModule === 42",
@@ -497,10 +523,47 @@ pub fn node_api_smoke(env: Env) -> napi::Result<bool> {
         )
         .and_then(|value| engine.to_boolean(&value))
         .map_err(napi_error)?;
-    if !large_module_ran {
-        return Ok(false);
-    }
+    smoke_check(large_module_ran, "large inline module did not execute")
+}
+
+/// Runs the load-bearing Node-API subset used by the trait implementation.
+///
+/// This is exported for the Bun compatibility test and is not public package API.
+/// The established JavaScript contract remains `true` on success; a failed
+/// capability now throws an error naming itself instead of returning `false`.
+#[napi]
+pub fn node_api_smoke(env: Env) -> napi::Result<bool> {
+    let mut engine = NodeApiEngine::new(env);
+    smoke_values(&mut engine)?;
+    smoke_class_and_weak_ref(&mut engine)?;
+    smoke_globals_and_window(&mut engine)?;
+    smoke_error_propagation(&mut engine)?;
+    smoke_large_module(&mut engine)?;
     engine.drain_microtasks().map_err(napi_error)?;
     engine.pump_event_loop().map_err(napi_error)?;
     Ok(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::smoke_check;
+
+    #[test]
+    fn smoke_checks_succeed_or_name_the_failed_capability() {
+        smoke_check(true, "successful capability").expect("a successful check continues");
+
+        let string_failure =
+            smoke_check(false, "string conversion").expect_err("a failed string check is an error");
+        let module_failure =
+            smoke_check(false, "module evaluation").expect_err("a failed module check is an error");
+        assert_eq!(
+            string_failure.reason,
+            "Node-API smoke check failed: string conversion"
+        );
+        assert_eq!(
+            module_failure.reason,
+            "Node-API smoke check failed: module evaluation"
+        );
+        assert_ne!(string_failure.reason, module_failure.reason);
+    }
 }

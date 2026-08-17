@@ -1,13 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { promisify } from "node:util";
 
 import { buildPayload, buildTrailer, linkBundle, readBundle, FORMAT_VERSION } from "../src/bundle.mjs";
 import { buildStandalone } from "../src/export.mjs";
-import { compileAddon, compiler, withStubbedExport } from "./cli-support.mjs";
+import { compileAddon, compiler, exportedName, withStubbedExport } from "./cli-support.mjs";
 
 const run = promisify(execFile);
 const REPO = new URL("../../../", import.meta.url).pathname;
@@ -157,6 +157,24 @@ describe("Phase 2 link step", () => {
       expect(readBundle(await readFile(built.outfile))).not.toBeNull();
     });
   }, 120_000);
+
+  test("cleans deterministic staging when linking fails after collection", async () => {
+    await withStubbedExport(async ({ directory, outfile, nativePath, runtimePath }) => {
+      const root = await staticApp(directory, CLASSIC_APP);
+      await writeFile(runtimePath, "not an executable\n");
+      const events = [];
+      await expect(buildStandalone({
+        root, width: 800, height: 600, title: "Broken", outfile,
+        progress: event => events.push(event),
+      }, nativePath)).rejects.toThrow("BLITSEN_RUNTIME_PATH does not name a supported executable");
+
+      const destination = exportedName(outfile);
+      const staging = join(directory, `.${basename(destination)}.blitsen-build`);
+      expect(events.map(event => event.step)).toEqual(["collect"]);
+      expect(await stat(staging).catch(() => null)).toBeNull();
+      expect(await stat(destination).catch(() => null)).toBeNull();
+    });
+  });
 
   // The case that decides what most users get. A module application used to be
   // able to force the Bun host, back when the Phase 2 runtime loaded

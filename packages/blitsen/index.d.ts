@@ -20,6 +20,8 @@ export interface BlitsenConfig {
   output: string;
   /** Application name: the native window title and the default output file name. */
   name?: string;
+  /** Native `.node` addons carried into the export, relative to this `package.json`. */
+  addons?: string[];
 }
 
 /** The discovered configuration, or `config: null` when no `blitsen` key exists. */

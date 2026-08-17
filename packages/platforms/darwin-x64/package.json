@@ -1,6 +1,6 @@
 {
   "name": "@blitsen/darwin-x64",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "description": "Blitsen native runtime for darwin-x64",
   "license": "MIT OR Apache-2.0",
   "repository": {
@@ -17,7 +17,7 @@
     "./blitsen.node": "./blitsen.node",
     "./blitsen-runtime": "./blitsen-runtime"
   },
-  "files": ["blitsen.node", "blitsen-runtime", "NOTICES.txt", "NOTICES.json"],
+  "files": ["LICENSE", "blitsen.node", "blitsen-runtime", "NOTICES.txt", "NOTICES.json"],
   "preferUnplugged": true,
   "publishConfig": {
     "access": "public"

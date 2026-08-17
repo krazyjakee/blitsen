@@ -268,6 +268,72 @@ async function repositoryRuntime(target) {
 }
 
 /**
+ * Resolves one binary carried by a platform runtime package.
+ *
+ * The four rungs and their ordering live here. Callers provide the parts that
+ * genuinely differ: which environment variable and binary kind they accept,
+ * the filename in the package/cache, how a checkout produces that binary, and
+ * the diagnostics for an absent package binary or exhausted ladder.
+ */
+async function resolveBinary({
+  target,
+  version,
+  env,
+  resolver,
+  fetch,
+  run,
+  cacheDir,
+  onNotice,
+  variable,
+  executable,
+  name,
+  binary,
+  repository,
+  missingPackageBinary = null,
+  missing,
+}) {
+  const configured = env[variable];
+  if (configured) {
+    return environmentRuntime({ configured, variable, target, executable, onNotice });
+  }
+
+  let packageFailure = null;
+  let manifestPath = null;
+  try {
+    manifestPath = resolver.resolve(`${name}/package.json`);
+  } catch {} // Not installed is the ordinary case for every non-host target.
+  if (manifestPath !== null) {
+    const path = join(dirname(manifestPath), binary);
+    const exists = await readable(path);
+    // The addon is mandatory in every published platform package. Keep its
+    // diagnostic when it is absent, but do not let a source-only workspace
+    // shadow the checkout artifact built beside it. A cross-target build may
+    // likewise continue to its exact-version cache/registry path. If neither
+    // exists, the retained package error remains the most useful diagnosis.
+    if (exists || missingPackageBinary !== null) {
+      const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+      assertRuntimeVersion(target, version ?? await packageVersion(), manifest.version);
+      if (exists) {
+        return { path, target, version: manifest.version, package: name, source: "package" };
+      }
+      packageFailure = missingPackageBinary({ name, version: manifest.version, path, binary });
+    }
+  }
+
+  const built = await repository(target, binary);
+  if (built !== null) {
+    return { path: built, target, version: null, package: null, source: "repository" };
+  }
+  if (fetch) {
+    return fetchRuntime({
+      target, version: version ?? await packageVersion(), binary, env, run, cacheDir,
+    });
+  }
+  if (packageFailure !== null) throw packageFailure;
+  throw missing({ name, binary });
+}
+
+/**
  * Finds the native runtime for `target`, in the order a user can reason about:
  * an explicit path, then the platform package npm installed, then an addon this
  * checkout built. Throws rather than returning null — every caller needs the
@@ -285,34 +351,23 @@ export async function resolveRuntime({
   run,
   cacheDir,
   onNotice = reportOverride,
+  repository = repositoryRuntime,
 } = {}) {
-  const configured = env.BLITSEN_NATIVE_PATH;
-  if (configured) {
-    return environmentRuntime({
-      configured, variable: "BLITSEN_NATIVE_PATH", target, executable: false, onNotice,
-    });
-  }
   const name = runtimePackage(target);
-  let manifestPath = null;
-  try {
-    manifestPath = resolver.resolve(`${name}/package.json`);
-  } catch {} // Not installed is the ordinary case for every non-host target.
-  if (manifestPath !== null) {
-    const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
-    // Version before contents: a mismatched pair is the cause, an odd-looking package
-    // the symptom, and reporting the symptom sends the reader to the wrong place.
-    assertRuntimeVersion(target, version ?? await packageVersion(), manifest.version);
-    const path = join(dirname(manifestPath), RUNTIME_BINARY);
-    if (!await readable(path)) {
-      throw new Error(`${name}@${manifest.version} is installed but carries no ${RUNTIME_BINARY}: `
-        + `expected ${path}. Reinstall it, or set BLITSEN_NATIVE_PATH to an addon.`);
-    }
-    return { path, target, version: manifest.version, package: name, source: "package" };
-  }
-  const built = await repositoryRuntime(target);
-  if (built !== null) return { path: built, target, version: null, package: null, source: "repository" };
-  if (fetch) return fetchRuntime({ target, version: version ?? await packageVersion(), env, run, cacheDir });
-  throw missingRuntime(target);
+  return resolveBinary({
+    target, version, env, resolver, fetch, run, cacheDir, onNotice,
+    variable: "BLITSEN_NATIVE_PATH",
+    executable: false,
+    name,
+    binary: RUNTIME_BINARY,
+    repository,
+    // Version before contents: a mismatched pair is the cause, an odd-looking
+    // package the symptom, and reporting the symptom sends the reader astray.
+    missingPackageBinary: ({ version: found, path, binary }) =>
+      new Error(`${name}@${found} is installed but carries no ${binary}: `
+        + `expected ${path}. Reinstall it, or set BLITSEN_NATIVE_PATH to an addon.`),
+    missing: () => missingRuntime(target),
+  });
 }
 
 // Phase 2 (issue #88): the export links into Blitsen's own executable rather
@@ -363,37 +418,24 @@ export async function resolvePhase2Runtime({
   cacheDir,
   onNotice = reportOverride,
 } = {}) {
-  const configured = env.BLITSEN_RUNTIME_PATH;
-  if (configured) {
-    return environmentRuntime({
-      configured, variable: "BLITSEN_RUNTIME_PATH", target, executable: true, onNotice,
-    });
-  }
   const name = runtimePackage(target);
   const binary = phase2Binary(target);
-  try {
-    const manifestPath = resolver.resolve(`${name}/package.json`);
-    const path = join(dirname(manifestPath), binary);
-    if (await readable(path)) {
-      const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
-      return { path, target, version: manifest.version, package: name, source: "package" };
-    }
-  } catch {} // Not installed is the ordinary case for every non-host target.
-  if (target === hostTarget()) {
-    const path = join(import.meta.dirname, `../../../target/release/${binary}`);
-    if (await readable(path)) {
-      return { path, target, version: null, package: null, source: "repository" };
-    }
-  }
-  if (fetch) {
-    return fetchRuntime({
-      target, version: version ?? await packageVersion(), binary, env, run, cacheDir,
-    });
-  }
-  throw new Error(`no Phase 2 Blitsen runtime for ${target}: ${name} is not installed `
-    + `and this checkout has no target/release/${binary}. `
-    + "From a checkout, build one with `cargo build --release -p blitsen-runtime`, "
-    + "or set BLITSEN_RUNTIME_PATH.");
+  return resolveBinary({
+    target, version, env, resolver, fetch, run, cacheDir, onNotice,
+    variable: "BLITSEN_RUNTIME_PATH",
+    executable: true,
+    name,
+    binary,
+    repository: async (wantedTarget, wantedBinary) => {
+      if (wantedTarget !== hostTarget()) return null;
+      const path = join(import.meta.dirname, `../../../target/release/${wantedBinary}`);
+      return await readable(path) ? path : null;
+    },
+    missing: () => new Error(`no Phase 2 Blitsen runtime for ${target}: `
+      + `${name} is not installed or carries no ${binary}, and this checkout has no `
+      + `target/release/${binary}. From a checkout, build one with `
+      + "`cargo build --release -p blitsen-runtime`, or set BLITSEN_RUNTIME_PATH."),
+  });
 }
 
 /** Loads a resolved addon and adapts the engine to the surface the CLI drives. */

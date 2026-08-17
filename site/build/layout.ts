@@ -35,8 +35,8 @@ export function setCrest(svg: string): void {
     .trim();
 }
 
-function crestMark(className: string, label: string): string {
-  return crest.replace("<svg", `<svg class="${className}" aria-label="${label}"`);
+function crestMark(className: string): string {
+  return crest.replace("<svg", `<svg class="${className}" aria-hidden="true" focusable="false"`);
 }
 
 const THEME_SCRIPT = `(function(){try{var t=localStorage.getItem("blitsen-theme");
@@ -49,11 +49,20 @@ var dark=r.getAttribute("data-theme")==="dark"||
 (!r.getAttribute("data-theme")&&matchMedia("(prefers-color-scheme:dark)").matches);
 var next=dark?"light":"dark";r.setAttribute("data-theme",next);
 try{localStorage.setItem("blitsen-theme",next)}catch(err){}
-b.setAttribute("aria-pressed",String(next==="dark"))});
+b.setAttribute("aria-pressed",String(next==="dark"));
+b.setAttribute("aria-label",next==="dark"?"Use light theme":"Use dark theme")});
 document.addEventListener("click",function(e){
 var n=e.target.closest("[data-nav-toggle]");if(!n)return;
 var open=document.body.classList.toggle("nav-open");
-n.setAttribute("aria-expanded",String(open))});`;
+n.setAttribute("aria-expanded",String(open))});
+(function(){var b=document.querySelector("[data-theme-toggle]");if(!b)return;
+var r=document.documentElement;var dark=r.getAttribute("data-theme")==="dark"||
+(!r.getAttribute("data-theme")&&matchMedia("(prefers-color-scheme:dark)").matches);
+b.setAttribute("aria-pressed",String(dark));
+b.setAttribute("aria-label",dark?"Use light theme":"Use dark theme")})();
+document.addEventListener("keydown",function(e){if(e.key!=="Escape"||!document.body.classList.contains("nav-open"))return;
+document.body.classList.remove("nav-open");var n=document.querySelector("[data-nav-toggle]");
+if(n){n.setAttribute("aria-expanded","false");n.focus()}});`;
 
 function sidebar(activeSlug?: string): string {
   const groups = GROUPS.map((group) => {
@@ -65,7 +74,7 @@ function sidebar(activeSlug?: string): string {
     return `<div class="rail-group"><h2>${escapeHtml(group.name)}</h2><ul>${items}</ul></div>`;
   }).join("");
 
-  return `<nav class="rail" aria-label="Documentation">
+  return `<nav class="rail" id="documentation-nav" aria-label="Documentation">
 <div class="rail-group"><h2>Start</h2><ul>
 <li><a href="${BASE}/"${activeSlug === undefined ? "" : ""}>Overview</a></li>
 <li><a href="${BASE}/docs/"${activeSlug === "index" ? ' aria-current="page"' : ""}>All documentation</a></li>
@@ -89,7 +98,8 @@ function tocFor(headings: Heading[]): string {
 
 export function renderPage(options: PageOptions): string {
   const { title, description, path, body, chrome = "docs", headings = [] } = options;
-  const canonical = `${BASE}${path}`;
+  const origin = process.env.SITE_ORIGIN ?? "https://blitsen.dev";
+  const canonical = `${origin}${BASE}${path}`;
   const full = path === "/" || path === "" ? "Blitsen" : `${title} — Blitsen`;
   const toc = chrome === "docs" ? tocFor(headings) : "";
   const edit = options.sourceFile
@@ -106,7 +116,7 @@ export function renderPage(options: PageOptions): string {
 <meta property="og:title" content="${escapeHtml(full)}">
 <meta property="og:description" content="${escapeHtml(description)}">
 <meta property="og:type" content="website">
-<meta property="og:image" content="${BASE}/assets/blitsen-rampant-512.png">
+<meta property="og:image" content="${origin}${BASE}/assets/blitsen-rampant-512.png">
 <meta name="twitter:card" content="summary">
 <link rel="canonical" href="${canonical}">
 <link rel="icon" href="${BASE}/assets/blitsen.ico" sizes="any">
@@ -119,21 +129,22 @@ export function renderPage(options: PageOptions): string {
 <a class="skip" href="#main">Skip to content</a>
 <header class="masthead">
   <a class="brand" href="${BASE}/">
-    ${crestMark("brand-crest", "Blitsen")}
+    ${crestMark("brand-crest")}
     <span class="brand-name">Blitsen</span>
   </a>
-  <nav class="top" aria-label="Site">
+  <nav class="top" id="site-nav" aria-label="Site">
     <a href="${BASE}/docs/">Documentation</a>
-    <a href="${BASE}/docs/compatibility/">Compatibility</a>
+    <a href="${BASE}/docs/platform-support/">Platform support</a>
     <a href="${REPO}" target="_blank" rel="noopener noreferrer">GitHub</a>
   </nav>
   <div class="mast-actions">
     <button type="button" class="icon-btn" data-theme-toggle aria-pressed="false"
-      aria-label="Toggle dark mode" title="Toggle dark mode">
+      aria-label="Use dark theme" title="Change colour theme">
       <svg viewBox="0 0 24 24" aria-hidden="true" width="18" height="18"><path fill="currentColor"
         d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9Z"/></svg>
     </button>
     <button type="button" class="icon-btn nav-only" data-nav-toggle aria-expanded="false"
+      aria-controls="${chrome === "docs" ? "documentation-nav" : "site-nav"}"
       aria-label="Toggle navigation">
       <svg viewBox="0 0 24 24" aria-hidden="true" width="18" height="18"><path fill="currentColor"
         d="M3 6h18v2H3V6Zm0 5h18v2H3v-2Zm0 5h18v2H3v-2Z"/></svg>
@@ -148,8 +159,8 @@ ${toc}
 <footer class="foot">
   <div class="foot-inner">
     <p class="foot-note">
-      Blitsen is <strong>pre-alpha</strong>, and Linux x64 is the only supported target.
-      It is an independent project built on
+      Blitsen is <strong>pre-alpha</strong>. Check built output with <code>blitsen doctor</code>
+      and test every target before distribution. It is an independent project built on
       <a href="https://github.com/DioxusLabs/blitz" target="_blank" rel="noopener noreferrer">Blitz</a> —
       not an official DioxusLabs project, and not endorsed by DioxusLabs.
     </p>

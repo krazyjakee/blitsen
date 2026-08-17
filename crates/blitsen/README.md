@@ -6,9 +6,9 @@ with Blitz's native HTML/CSS renderer, without embedding Chromium or an
 operating-system WebView.
 
 This Rust facade crate is intentionally minimal and currently exposes only its
-package version. The pre-alpha runtime, CLI and platform implementations live in
-the same repository; this crate does not yet expose their APIs. Follow development
-and read the compatibility profile at
+package version. The pre-alpha runtime, CLI and platform binaries are distributed
+through the [`blitsen` npm package](https://www.npmjs.com/package/blitsen); the
+implementation and compatibility profile live at
 [github.com/krazyjakee/blitsen](https://github.com/krazyjakee/blitsen).
 
 Blitsen is an independent project built on Blitz. It is not an official

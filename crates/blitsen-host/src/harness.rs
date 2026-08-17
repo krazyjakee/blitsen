@@ -26,6 +26,7 @@ use serde::Serialize;
 #[cfg(target_os = "macos")]
 use winit::application::macos::ApplicationHandlerExtMacOS;
 
+use crate::dom_bridge::{DocumentMode, InstallOptions};
 use crate::{DomRuntime, dom_bridge, dom_error, frame_loop};
 
 /// The document the last `execute_document_harness` call left loaded, and the
@@ -168,18 +169,30 @@ pub fn active_document_harness() -> Option<ActiveDocumentHarness> {
 /// disposing whatever the previous document left on the global object. An
 /// exported Phase 2 application has no filesystem to read the external scripts
 /// from; its loader reads the section appended to the executable instead.
-#[allow(clippy::too_many_arguments)]
-pub fn execute_window_scripts_from<E: JsEngine + 'static>(
+/// Inputs that belong to one document-script execution rather than its engine.
+pub(crate) struct WindowScriptOptions<'a> {
+    pub(crate) entrypoint: &'a str,
+    pub(crate) width: u32,
+    pub(crate) height: u32,
+    pub(crate) mode: DocumentMode,
+    pub(crate) loader: &'a dyn blitsen_core::ScriptLoader,
+    pub(crate) reader: Option<crate::app::AppReader>,
+}
+
+pub(crate) fn execute_window_scripts_from<E: JsEngine + 'static>(
     engine: &mut E,
     runtime: DomRuntime,
     scripts: Vec<DocumentScript>,
-    entrypoint: &str,
-    width: u32,
-    height: u32,
-    test_harness: bool,
-    loader: &dyn blitsen_core::ScriptLoader,
-    reader: Option<crate::app::AppReader>,
+    options: WindowScriptOptions<'_>,
 ) -> Result<Rc<RefCell<WindowState>>, JsError> {
+    let WindowScriptOptions {
+        entrypoint,
+        width,
+        height,
+        mode,
+        loader,
+        reader,
+    } = options;
     let module_root = Path::new(entrypoint)
         .parent()
         .unwrap_or_else(|| Path::new("."))
@@ -209,8 +222,11 @@ pub fn execute_window_scripts_from<E: JsEngine + 'static>(
             })()"#
     .replace("__BLITSEN_RELOAD_ROOT__", &module_root);
     engine.evaluate_script(&cleanup, "blitsen:dispose-document-context")?;
-    let window_state =
-        dom_bridge::install(engine, runtime, width, height, 1.0, test_harness, reader)?;
+    let window_state = dom_bridge::install(
+        engine,
+        runtime,
+        InstallOptions::new(width, height, 1.0, mode, reader),
+    )?;
     engine.evaluate_script(
         r#"(() => {
               if (!globalThis.__blitsenRuntimeBaseline) {
@@ -264,7 +280,11 @@ fn boot_harness_document<E: JsEngine + 'static>(
     ));
     let document = runtime.document();
     document.borrow_mut().flush_layout().map_err(dom_error)?;
-    let _window_state = dom_bridge::install(&mut engine, runtime, width, height, 1.0, true, None)?;
+    let _window_state = dom_bridge::install(
+        &mut engine,
+        runtime,
+        InstallOptions::new(width, height, 1.0, DocumentMode::TestHarness, None),
+    )?;
     engine.evaluate_script(script, identifier)?;
     Ok((document, engine))
 }
@@ -481,9 +501,10 @@ pub fn execute_document_harness<E: JsEngine + Clone + 'static>(
     width: u32,
     height: u32,
 ) -> Result<HarnessSnapshot, JsError> {
-    // Mirrors a shipped window exactly, injection surface included, so the
-    // fixture guard against test-only globals leaking stays meaningful.
-    let (_, document) = load_document_harness(engine, entrypoint, width, height, false)?;
+    // Mirrors a shipped window exactly, including the absence of test-only
+    // injection globals, so the fixture guard against them stays meaningful.
+    let (_, document) =
+        load_document_harness(engine, entrypoint, width, height, DocumentMode::Application)?;
     ACTIVE_DOCUMENT_HARNESS.with(|active| {
         *active.borrow_mut() = Some((Rc::clone(&document), width, height));
     });
@@ -505,7 +526,7 @@ pub fn load_document_harness<E: JsEngine + Clone + 'static>(
     entrypoint: &Path,
     width: u32,
     height: u32,
-    test_harness: bool,
+    mode: DocumentMode,
 ) -> Result<(E, Rc<RefCell<BlitzDom>>), JsError> {
     let files = crate::app::AppFiles::directory(entrypoint)?;
     let net_provider = files
@@ -515,10 +536,7 @@ pub fn load_document_harness<E: JsEngine + Clone + 'static>(
         &mut engine,
         &files,
         net_provider,
-        width,
-        height,
-        None,
-        test_harness,
+        crate::app::LoadOptions::new(width, height, mode),
     )?;
     engine.evaluate_script(
         "globalThis.__blitsenDispatchLifecycleEvent('load')",
@@ -538,7 +556,8 @@ pub fn execute_document_animation_harness<E: JsEngine + Clone + 'static>(
     height: u32,
     record_into: Option<&Path>,
 ) -> Result<Vec<HarnessSnapshot>, JsError> {
-    let (mut engine, document) = load_document_harness(engine, entrypoint, width, height, true)?;
+    let (mut engine, document) =
+        load_document_harness(engine, entrypoint, width, height, DocumentMode::TestHarness)?;
     engine.evaluate_script(setup_script, "document-animation-setup.js")?;
 
     let mut frame_loop =

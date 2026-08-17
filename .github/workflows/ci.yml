@@ -15,6 +15,11 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  # `rust-cache` below keeps Cargo's registry small and shared; sccache stores
+  # compiler outputs by their actual inputs, so compatible work is reusable
+  # across jobs instead of living in one large target archive per job.
+  SCCACHE_GHA_ENABLED: "true"
+  RUSTC_WRAPPER: sccache
 
 jobs:
   # Fast feedback: no native toolchain, no display.
@@ -48,7 +53,14 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
+      - uses: mozilla-actions/sccache-action@v0.0.11
+        with:
+          version: v0.17.0
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: cargo
+          cache-targets: false
+          cache-bin: false
       - name: Install Blitz system dependencies
         if: runner.os == 'Linux'
         run: |
@@ -85,7 +97,14 @@ jobs:
         with:
           bun-version: 1.3.14
       - uses: dtolnay/rust-toolchain@stable
+      - uses: mozilla-actions/sccache-action@v0.0.11
+        with:
+          version: v0.17.0
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: cargo
+          cache-targets: false
+          cache-bin: false
       - name: Install Blitz system dependencies
         if: runner.os == 'Linux'
         run: |
@@ -147,7 +166,14 @@ jobs:
         with:
           bun-version: 1.3.14
       - uses: dtolnay/rust-toolchain@stable
+      - uses: mozilla-actions/sccache-action@v0.0.11
+        with:
+          version: v0.17.0
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: cargo
+          cache-targets: false
+          cache-bin: false
       - name: Install Blitz system dependencies
         run: |
           sudo apt-get update
@@ -186,7 +212,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - uses: mozilla-actions/sccache-action@v0.0.11
+        with:
+          version: v0.17.0
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: cargo
+          cache-targets: false
+          cache-bin: false
       # The corpus renders through the CPU rasterizer and needs no display; only
       # Blitz's font enumeration wants a system library, and only on Linux.
       - name: Install Blitz system dependencies
@@ -230,7 +263,14 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.97.1
+      - uses: mozilla-actions/sccache-action@v0.0.11
+        with:
+          version: v0.17.0
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: cargo
+          cache-targets: false
+          cache-bin: false
       - name: Install Blitz system dependencies
         if: runner.os == 'Linux'
         run: |
@@ -318,9 +358,14 @@ jobs:
         with:
           bun-version: 1.3.14
       - uses: dtolnay/rust-toolchain@stable
+      - uses: mozilla-actions/sccache-action@v0.0.11
+        with:
+          version: v0.17.0
       - uses: Swatinem/rust-cache@v2
         with:
-          key: ${{ matrix.target }}
+          shared-key: cargo
+          cache-targets: false
+          cache-bin: false
       - name: Install Blitz system dependencies
         if: runner.os == 'Linux'
         run: |
@@ -333,6 +378,12 @@ jobs:
       # in one build, so the rest of the job runs against what a user would get.
       - name: Build the runtime
         run: cargo build --release -p blitsen-node -p blitsen-runtime
+      # Issue #229: verify the model-based refusal boundary and the supported
+      # Intel renderer lifecycle before JavaScript setup, so a package-lock
+      # failure cannot hide the safety result.
+      - name: Test the Intel macOS renderer safety boundary
+        if: matrix.target == 'darwin-x64'
+        run: cargo test -p blitsen-host
       - run: bun install --frozen-lockfile
       - name: Package tests against this target's artifacts
         run: bun test packages/blitsen
@@ -442,9 +493,16 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-linux-android, x86_64-linux-android
+      - uses: mozilla-actions/sccache-action@v0.0.11
+        with:
+          version: v0.17.0
       - uses: Swatinem/rust-cache@v2
         with:
-          key: android
+          # This job installs cargo-ndk after the cache step. Keep its bin cache
+          # separate so another job cannot win the shared immutable cache first
+          # and leave the tool absent on every later Android run.
+          shared-key: cargo-android
+          cache-targets: false
       # `rquickjs-sys` ships pre-generated bindings for sixteen triples and none
       # is `*-linux-android`, so `crates/blitsen-quickjs/Cargo.toml` turns on its
       # `bindgen` feature for that target — which makes libclang a build-time
@@ -516,9 +574,11 @@ jobs:
             machine="${pair##*:}"
             so="target/$triple/release/libblitsen_android.so"
             test -f "$so" || { echo "$so was not built"; exit 1; }
-            "$readelf" -h "$so" | grep -q "$machine" \
+            header="$("$readelf" -h "$so")"
+            symbols="$("$nm" --dynamic --defined-only "$so")"
+            grep -q "$machine" <<< "$header" \
               || { echo "$so is not $machine"; "$readelf" -h "$so"; exit 1; }
-            "$nm" --dynamic --defined-only "$so" | grep -qw android_main \
+            grep -qw android_main <<< "$symbols" \
               || { echo "$so exports no android_main, so NativeActivity cannot start it"; exit 1; }
             echo "$so: $machine, exports android_main, $(stat -c%s "$so") bytes"
           done

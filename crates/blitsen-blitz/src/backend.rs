@@ -317,10 +317,7 @@ impl DomBackend for BlitzDom {
     }
 
     fn inline_style(&self, node: NodeId, property: &str) -> Result<Option<String>, DomError> {
-        Ok(Self::declarations(&self.style_text(node)?)
-            .into_iter()
-            .find(|(name, _)| name == property)
-            .map(|(_, value)| value))
+        self.style_property_value(node, property)
     }
 
     fn set_inline_style(
@@ -338,28 +335,25 @@ impl DomBackend for BlitzDom {
             value
         };
         let original = self.style_text(node)?;
-        let mut declarations = Self::declarations(&original);
-        declarations.retain(|(name, _)| name != property);
-        declarations.push((property.to_owned(), value.to_owned()));
-        let candidate = declarations
-            .iter()
-            .map(|(name, value)| format!("{name}: {value};"))
-            .collect::<Vec<_>>()
-            .join(" ");
+        // Replace rather than append so a previous `!important` declaration
+        // does not silently win over a CSSOM assignment. Both operations go
+        // through Blitz's Stylo-backed declaration block; serializing it back
+        // into the attribute keeps DOM reads and the cascade on one value.
+        self.document.remove_style_property(node, property);
+        self.document.set_style_property(node, property, value);
+        let valid = self.inline_style(node, property)?.is_some();
+        let candidate = if valid {
+            self.style_text(node)?
+        } else {
+            original
+        };
         self.document.mutate().set_attribute(
             node,
             Self::qual_name(&DomName::attribute("style")),
             &candidate,
         );
-        let valid = self.inline_style(node, property)?.is_some();
         if valid {
             self.mutate(Some(node), Some(node));
-        } else {
-            self.document.mutate().set_attribute(
-                node,
-                Self::qual_name(&DomName::attribute("style")),
-                &original,
-            );
         }
         Ok(valid)
     }
@@ -374,12 +368,8 @@ impl DomBackend for BlitzDom {
         if old.is_none() {
             return Ok(None);
         }
-        let css = Self::declarations(&self.style_text(node)?)
-            .into_iter()
-            .filter(|(name, _)| name != property)
-            .map(|(name, value)| format!("{name}: {value};"))
-            .collect::<Vec<_>>()
-            .join(" ");
+        self.document.remove_style_property(node, property);
+        let css = self.style_text(node)?;
         self.document.mutate().set_attribute(
             node,
             Self::qual_name(&DomName::attribute("style")),
@@ -568,9 +558,7 @@ impl DomBackend for BlitzDom {
     }
 
     fn bounding_rect(&self, node: NodeId, snapshot: LayoutSnapshot) -> Result<Rect, DomError> {
-        if snapshot.revision() != self.revision || self.flushed_revision != self.revision {
-            return Err(DomError::LayoutNotFlushed);
-        }
+        self.ensure_layout_fresh(snapshot)?;
         let element = self.node(node)?;
         let rect = if let Some(rect) = self.document.get_client_bounding_rect(node) {
             Rect {
@@ -593,9 +581,7 @@ impl DomBackend for BlitzDom {
     }
 
     fn client_rects(&self, node: NodeId, snapshot: LayoutSnapshot) -> Result<Vec<Rect>, DomError> {
-        if snapshot.revision() != self.revision || self.flushed_revision != self.revision {
-            return Err(DomError::LayoutNotFlushed);
-        }
+        self.ensure_layout_fresh(snapshot)?;
         // Validates the handle before asking Blitz, which answers a stale one
         // with an empty list rather than an error.
         self.node(node)?;
@@ -622,9 +608,7 @@ impl DomBackend for BlitzDom {
         end: u32,
         snapshot: LayoutSnapshot,
     ) -> Result<Vec<Rect>, DomError> {
-        if snapshot.revision() != self.revision || self.flushed_revision != self.revision {
-            return Err(DomError::LayoutNotFlushed);
-        }
+        self.ensure_layout_fresh(snapshot)?;
         self.text_node_rects(node, start, end)
     }
 
@@ -634,9 +618,7 @@ impl DomBackend for BlitzDom {
         y: f32,
         snapshot: LayoutSnapshot,
     ) -> Result<Option<CaretPosition<NodeId>>, DomError> {
-        if snapshot.revision() != self.revision || self.flushed_revision != self.revision {
-            return Err(DomError::LayoutNotFlushed);
-        }
+        self.ensure_layout_fresh(snapshot)?;
         self.caret_at_point(x, y)
     }
 
@@ -726,9 +708,7 @@ impl DomBackend for BlitzDom {
             };
             return Ok(Some(css_pixels(used)));
         }
-        if snapshot.revision() != self.revision || self.flushed_revision != self.revision {
-            return Err(DomError::LayoutNotFlushed);
-        }
+        self.ensure_layout_fresh(snapshot)?;
         let Ok(id) = PropertyId::parse_enabled_for_all_content(property) else {
             return Ok(None);
         };
@@ -791,9 +771,7 @@ impl DomBackend for BlitzDom {
         top: Option<f64>,
         snapshot: LayoutSnapshot,
     ) -> Result<(), DomError> {
-        if snapshot.revision() != self.revision || self.flushed_revision != self.revision {
-            return Err(DomError::LayoutNotFlushed);
-        }
+        self.ensure_layout_fresh(snapshot)?;
         if self
             .document
             .try_root_element()
@@ -852,9 +830,7 @@ impl DomBackend for BlitzDom {
         y: f32,
         snapshot: LayoutSnapshot,
     ) -> Result<Option<HitTest<NodeId>>, DomError> {
-        if snapshot.revision() != self.revision || self.flushed_revision != self.revision {
-            return Err(DomError::LayoutNotFlushed);
-        }
+        self.ensure_layout_fresh(snapshot)?;
         let Some((_, _, _, target, offset_x, offset_y)) = self.ranked_hit(x, y)? else {
             return Ok(None);
         };
@@ -872,9 +848,7 @@ impl DomBackend for BlitzDom {
     }
 
     fn image_state(&self, node: NodeId, snapshot: LayoutSnapshot) -> Result<ImageState, DomError> {
-        if snapshot.revision() != self.revision || self.flushed_revision != self.revision {
-            return Err(DomError::LayoutNotFlushed);
-        }
+        self.ensure_layout_fresh(snapshot)?;
         let element = self
             .node(node)?
             .element_data()
@@ -910,9 +884,7 @@ impl DomBackend for BlitzDom {
     }
 
     fn link_state(&self, node: NodeId, snapshot: LayoutSnapshot) -> Result<LinkState, DomError> {
-        if snapshot.revision() != self.revision || self.flushed_revision != self.revision {
-            return Err(DomError::LayoutNotFlushed);
-        }
+        self.ensure_layout_fresh(snapshot)?;
         let element = self
             .node(node)?
             .element_data()

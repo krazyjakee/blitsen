@@ -4,7 +4,7 @@
 //! the context state it reaches through is in [`crate::context`].
 
 use std::cell::RefCell;
-use std::ffi::{CString, c_char, c_int, c_void};
+use std::ffi::{CString, c_int, c_void};
 use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -14,7 +14,9 @@ use blitsen_js::{
 };
 use rquickjs_sys as q;
 
-use crate::context::{CallbackData, Inner, InstanceData, QuickJs, context_state, invoke_callback};
+use crate::context::{
+    CallbackData, Inner, InstanceData, QuickJs, context_state, invoke_callback, new_string,
+};
 use crate::value::{QjsClass, QjsValue, QjsWeakRef, TYPED_ARRAY_KINDS, typed_array_constructor};
 
 /// Stops the interpreter when the flag a worker's `terminate()` sets is raised.
@@ -88,14 +90,7 @@ impl JsEngine for QuickJs {
     }
 
     fn string(&mut self, value: &str) -> Result<Self::Value, JsError> {
-        unsafe {
-            let raw = q::JS_NewStringLen(
-                self.ctx(),
-                value.as_ptr().cast::<c_char>(),
-                value.len() as q::size_t,
-            );
-            self.checked(raw)
-        }
+        self.checked(unsafe { new_string(self.ctx(), value) })
     }
 
     fn object(&mut self) -> Result<Self::Value, JsError> {
@@ -296,8 +291,7 @@ impl JsEngine for QuickJs {
             );
             q::JS_FreeValue(self.ctx(), holder);
             let function = self.checked(function)?;
-            let named = CString::new(name).unwrap_or_else(|_| CString::new("native").unwrap());
-            let text = q::JS_NewStringLen(self.ctx(), named.as_ptr(), name.len() as q::size_t);
+            let text = new_string(self.ctx(), name);
             q::JS_DefinePropertyValueStr(
                 self.ctx(),
                 function.raw,
@@ -509,6 +503,59 @@ impl JsEngine for QuickJs {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn embedded_nul_is_preserved_across_owned_string_boundaries() {
+        // Keep this shorter than both former fallback buffers. That makes the
+        // regression detect substitution/truncation deterministically without
+        // asking an old implementation to read out of bounds.
+        const TEXT: &str = "a\0b";
+
+        let mut engine = QuickJs::new().expect("a runtime");
+        let text = engine.string(TEXT).expect("a JavaScript string");
+        assert_eq!(
+            engine.to_string(&text).expect("the string round-trips"),
+            TEXT
+        );
+
+        let function = engine
+            .define_function(TEXT, Box::new(|_| Err(JsError::new(TEXT))))
+            .expect("a native function");
+        let name = engine
+            .get_property(&function, "name")
+            .expect("the function name");
+        assert_eq!(engine.to_string(&name).expect("a string name"), TEXT);
+
+        let error = engine
+            .call(&function, None, &[])
+            .err()
+            .expect("the callback throws");
+        assert_eq!(error.message(), "Error: a\0b");
+    }
+
+    #[test]
+    fn module_resolver_rejects_a_nul_instead_of_substituting_an_empty_name() {
+        let mut engine = QuickJs::new().expect("a runtime");
+        engine
+            .evaluate_script(
+                r#"
+                globalThis.__blitsenModuleResolve = () => "a\0b";
+                globalThis.__blitsenModuleSource = () => "";
+                "#,
+                "registry.js",
+            )
+            .expect("the registry is installed");
+        engine.install_module_loader();
+
+        let error = engine
+            .evaluate_module(r#"import "./dependency.js";"#, "blitsen://app/main.js")
+            .err()
+            .expect("a resolved name containing NUL is rejected");
+        assert_eq!(
+            error.message(),
+            "Error: the resolved module name contains a NUL byte"
+        );
+    }
 
     #[test]
     fn evaluation_preserves_input_errors_and_script_module_flags() {

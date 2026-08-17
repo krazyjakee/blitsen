@@ -116,7 +116,7 @@ before `blitsen` itself, so a scope that refuses them fails the release halfway 
 
 ### The runner labels, and which of them move
 
-GitHub's free `ubuntu-24.04-arm` and `windows-11-arm` runners are **public repositories only**.
+GitHub's free `ubuntu-22.04-arm` and `windows-11-arm` runners are **public repositories only**.
 This repository is public, so both labels schedule for it and the workflow defaults are the ones
 that run.
 
@@ -125,7 +125,7 @@ repository can use, with repository variables:
 
 | Variable | Default |
 | --- | --- |
-| `LINUX_ARM64_RUNNER` | `ubuntu-24.04-arm` |
+| `LINUX_ARM64_RUNNER` | `ubuntu-22.04-arm` |
 | `WIN32_ARM64_RUNNER` | `windows-11-arm` |
 | `DARWIN_X64_RUNNER` | `macos-15-intel` |
 
@@ -133,7 +133,21 @@ The third is there for a different reason: the Intel macOS image is the one that
 `macos-13` queued for 40 minutes without picking up a runner across two dispatches, while every
 other label started inside a minute — so `darwin-x64` names the current Intel image and the
 variable is how it moves again without a commit. `ci.yml` reads the same three variables for its
-smoke jobs, so both files follow one decision.
+smoke jobs; its Linux smoke default may be newer, while the release default stays on the
+compatibility floor below.
+
+Both Linux release jobs deliberately use Ubuntu 22.04 (`ubuntu-22.04` on x64 and
+`ubuntu-22.04-arm` on arm64). Its glibc 2.35 is the binary compatibility floor. After building,
+the workflow reads the version requirements from both `blitsen.node` and `blitsen-runtime` and
+fails if either requires anything newer than `GLIBC_2.35`; each job summary records the highest
+version it found. The gate remains necessary even with the runner pinned, because a toolchain can
+introduce a newer symbol requirement without changing the runner label.
+
+The Windows x64 release job is pinned to `windows-2022`, rather than following
+`windows-latest` across Visual Studio toolsets. Both Windows targets build with Rust's
+`+crt-static`, and the workflow inspects both PE import tables to reject a remaining
+`VCRUNTIME`, `MSVCP`, UCRT or `api-ms-win-crt` dependency. The package therefore does not require
+a separately installed Visual C++ Redistributable.
 
 ## Why six native runners rather than cross-compilation
 

@@ -73,19 +73,65 @@ pub(crate) fn net_lock<T>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<
     net_pool::lock(mutex)
 }
 
+/// Whether a document receives only application globals or test-only helpers too.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DocumentMode {
+    /// An application window or headless production-equivalent document.
+    Application,
+    /// A test document with bridge counters and synthetic input helpers.
+    TestHarness,
+}
+
+impl DocumentMode {
+    fn is_test_harness(self) -> bool {
+        matches!(self, Self::TestHarness)
+    }
+}
+
+/// Everything that varies between bridge installations.
+pub struct InstallOptions {
+    width: u32,
+    height: u32,
+    device_pixel_ratio: f64,
+    mode: DocumentMode,
+    reader: Option<crate::app::AppReader>,
+}
+
+impl InstallOptions {
+    /// Describes one bridge installation without positional flags.
+    pub fn new(
+        width: u32,
+        height: u32,
+        device_pixel_ratio: f64,
+        mode: DocumentMode,
+        reader: Option<crate::app::AppReader>,
+    ) -> Self {
+        Self {
+            width,
+            height,
+            device_pixel_ratio,
+            mode,
+            reader,
+        }
+    }
+}
+
 /// Installs the real DOM object graph into a JavaScript environment.
 pub fn install<E: JsEngine + 'static>(
     engine: &mut E,
     runtime: DomRuntime,
-    width: u32,
-    height: u32,
-    device_pixel_ratio: f64,
-    test_harness: bool,
-    // Issue #125: how `fetch` and a media source read a file the application
-    // shipped. `None` is the bare bridge harness, which has no application
-    // behind it — and is why `fetch` still refuses a `file:` URL there.
-    reader: Option<crate::app::AppReader>,
+    options: InstallOptions,
 ) -> Result<Rc<RefCell<WindowState>>, JsError> {
+    let InstallOptions {
+        width,
+        height,
+        device_pixel_ratio,
+        mode,
+        // Issue #125: how `fetch` and a media source read a file the application
+        // shipped. `None` is the bare bridge harness, which has no application
+        // behind it — and is why `fetch` still refuses a `file:` URL there.
+        reader,
+    } = options;
     let class = Rc::new(engine.register_class(NativeClass::new("BlitsenNode"))?);
     let table = Rc::new(WrapperTable::<NodeId, E::WeakRef>::new());
 
@@ -191,7 +237,7 @@ pub fn install<E: JsEngine + 'static>(
     engine.set_global("__blitsenDevLayoutWarnings", &dev_layout_warnings)?;
     let navigator = json_value(engine, &navigator_state())?;
     engine.set_global("__blitsenNavigatorState", &navigator)?;
-    let test_harness = engine.boolean(test_harness);
+    let test_harness = engine.boolean(mode.is_test_harness());
     engine.set_global("__blitsenTestHarness", &test_harness)?;
     engine.evaluate_script(BOOTSTRAP, "blitsen:dom-bootstrap")?;
 

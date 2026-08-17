@@ -105,5 +105,5 @@ instead of meeting it, and the JSC host has since been deleted.
 | Resolution policy | `crates/blitsen-host/src/modules.rs` | `modules::tests` |
 | Registry, source reading, reload eviction | same | `modules::tests` |
 | Host entry points the loader calls | `ModuleRegistry::install` | `modules::tests` |
-| Files from a directory or an appended bundle | `crates/blitsen-host/src/app.rs` | `app::tests` |
+| Files from a directory or an appended bundle | `crates/blitsen-host/src/app/resources.rs` | `app::resources::tests` |
 | Engine binding and capability check | `crates/blitsen-quickjs/src/modules.rs` | `--engine-report` |

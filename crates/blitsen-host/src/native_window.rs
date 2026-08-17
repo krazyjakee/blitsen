@@ -7,6 +7,9 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+#[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+use std::process::Command;
+
 use blitsen_blitz::BlitzDom;
 use blitsen_core::WindowState;
 use blitsen_dom::{DomBackend, DomName};
@@ -32,6 +35,81 @@ use crate::OpenDirectoryOptions;
 use crate::app::AppFiles;
 use crate::pointer_input::{PendingPointerInput, PointerIds};
 use crate::surface_lifecycle::{SurfaceState, SyntheticPhase};
+
+/// The window renderer used on supported Intel Macs.
+///
+/// Vello's Metal compute path has caused full-session GPU resets on Intel Macs
+/// (#229). Supported machines use the CPU rasterizer and softbuffer. The
+/// affected MacBookPro14,3 is rejected before this renderer or a window is
+/// created because Core Animation presentation also triggered the reset.
+#[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+pub type NativeWindowRenderer = anyrender_vello_cpu::VelloCpuWindowRenderer;
+
+/// The window renderer safe for this target.
+#[cfg(not(all(target_os = "macos", target_arch = "x86_64")))]
+pub type NativeWindowRenderer = anyrender_vello::VelloWindowRenderer;
+
+#[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+fn native_window_renderer() -> NativeWindowRenderer {
+    eprintln!(
+        "blitsen: renderer=vello-cpu window-backend=softbuffer \
+         reason=Intel-macOS-Metal-safety-fallback"
+    );
+    NativeWindowRenderer::new()
+}
+
+/// Why this Intel Mac must not create a window surface.
+///
+/// `MacBookPro14,3` is the 2017 15-inch model on which both Vello/wgpu and the
+/// 0.1.1 CPU renderer's Core Animation presentation triggered Radeon Metal
+/// compute resets and killed WindowServer (#229). An unidentified Intel Mac is
+/// also failed closed: model detection is the safety boundary, so silently
+/// continuing when it fails would turn a diagnostic problem into data loss.
+#[cfg(any(all(target_os = "macos", target_arch = "x86_64"), test))]
+fn unsafe_intel_mac_presentation(model: Option<&str>) -> Option<String> {
+    match model.map(str::trim).filter(|model| !model.is_empty()) {
+        Some("MacBookPro14,3") => Some(
+            "Blitsen windowing is disabled on MacBookPro14,3: both GPU rendering and \
+             0.1.1's CPU/Core Animation presentation have triggered Radeon Pro 560 \
+             Metal compute resets and terminated WindowServer (#229). `blitsen doctor` \
+             and `blitsen build` remain available; opening a window is refused to \
+             prevent another desktop-session loss."
+                .to_string(),
+        ),
+        Some(_) => None,
+        None => Some(
+            "Blitsen could not identify this Intel Mac model, so windowing is disabled: \
+             model detection guards a known Metal/Core Animation desktop-session-loss \
+             failure (#229). `blitsen doctor` and `blitsen build` remain available."
+                .to_string(),
+        ),
+    }
+}
+
+#[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+fn ensure_window_presentation_is_safe() -> Result<(), JsError> {
+    let model = Command::new("/usr/sbin/sysctl")
+        .args(["-n", "hw.model"])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| String::from_utf8(output.stdout).ok());
+    match unsafe_intel_mac_presentation(model.as_deref()) {
+        Some(reason) => Err(JsError::new(reason)),
+        None => Ok(()),
+    }
+}
+
+#[cfg(not(all(target_os = "macos", target_arch = "x86_64")))]
+fn ensure_window_presentation_is_safe() -> Result<(), JsError> {
+    Ok(())
+}
+
+#[cfg(not(all(target_os = "macos", target_arch = "x86_64")))]
+fn native_window_renderer() -> NativeWindowRenderer {
+    eprintln!("blitsen: renderer=vello-gpu backend=wgpu");
+    NativeWindowRenderer::new()
+}
 
 /// Hands the activity to the event loop, before there is one (issue #142).
 ///
@@ -184,6 +262,14 @@ pub(crate) fn take_queued_for<K: PartialEq, T: Clone, Error>(
     Some(taken)
 }
 
+/// Parks an error only when no earlier callback error is waiting to surface.
+fn park_first_error<Error>(parked_error: &RefCell<Option<Error>>, error: Error) {
+    let mut parked_error = parked_error.borrow_mut();
+    if parked_error.is_none() {
+        *parked_error = Some(error);
+    }
+}
+
 fn input_call_script(
     bootstrap: InputBootstrap,
     arguments: &impl Serialize,
@@ -208,7 +294,7 @@ pub struct WindowSession<E: JsEngine + Clone> {
     /// The winit loop, advanced without blocking by [`pump`](Self::pump).
     pub event_loop: EventLoop,
     /// Window, document and input translation.
-    pub application: WindowApplication<anyrender_vello::VelloWindowRenderer, E>,
+    pub application: WindowApplication<NativeWindowRenderer, E>,
     /// The first error raised inside a winit callback, surfaced by `pump`.
     pub error: Rc<RefCell<Option<JsError>>>,
     /// Where the application's files come from, retained for reload.
@@ -224,6 +310,11 @@ impl<E: JsEngine + Clone + 'static> WindowSession<E> {
         files: AppFiles,
         options: OpenDirectoryOptions,
     ) -> Result<Self, JsError> {
+        // Before the event loop, NSView or renderer exists. The 0.1.1 CPU
+        // rasterizer still handed each frame to a CALayer, and Core Animation
+        // submitted Metal compute work on the blocked model. No object that can
+        // create that presentation path may be constructed before this check.
+        ensure_window_presentation_is_safe()?;
         let started_at = Instant::now();
         let runtime = tokio::runtime::Builder::new_multi_thread()
             // Network and audio work are asynchronous rather than CPU-parallel.
@@ -244,12 +335,16 @@ impl<E: JsEngine + Clone + 'static> WindowSession<E> {
             engine,
             &files,
             net_provider,
-            options.width,
-            options.height,
-            None,
-            false,
+            crate::app::LoadOptions::new(
+                options.width,
+                options.height,
+                crate::dom_bridge::DocumentMode::Application,
+            ),
         )?;
-        let renderer = anyrender_vello::VelloWindowRenderer::new();
+        // Renderer selection happens before winit creates a surface. On an
+        // unsafe target this must never construct wgpu: recovering from device
+        // loss is too late when a Metal compute submission wedges WindowServer.
+        let renderer = native_window_renderer();
         let attributes = WindowAttributes::default()
             .with_title(options.title.clone())
             .with_surface_size(LogicalSize::new(options.width, options.height));
@@ -319,10 +414,12 @@ impl<E: JsEngine + Clone + 'static> WindowSession<E> {
             engine,
             &self.files,
             net_provider,
-            logical.width,
-            logical.height,
-            Some(viewport),
-            false,
+            crate::app::LoadOptions::new(
+                logical.width,
+                logical.height,
+                crate::dom_bridge::DocumentMode::Application,
+            )
+            .with_viewport(viewport),
         )?;
 
         let view = self
@@ -438,6 +535,31 @@ impl<E: JsEngine + Clone + 'static> WindowSession<E> {
     }
 }
 
+#[cfg(test)]
+mod presentation_safety_tests {
+    use super::unsafe_intel_mac_presentation;
+
+    #[test]
+    fn blocks_the_model_that_reset_the_radeon_gpu() {
+        let reason = unsafe_intel_mac_presentation(Some("MacBookPro14,3\n"))
+            .expect("the affected model must be blocked");
+        assert!(reason.contains("Radeon Pro 560"));
+        assert!(reason.contains("opening a window is refused"));
+    }
+
+    #[test]
+    fn permits_other_identified_intel_macs_to_keep_the_cpu_renderer() {
+        assert!(unsafe_intel_mac_presentation(Some("MacBookPro15,1")).is_none());
+    }
+
+    #[test]
+    fn fails_closed_when_model_detection_fails() {
+        let reason = unsafe_intel_mac_presentation(None)
+            .expect("unknown Intel hardware must not bypass the safety check");
+        assert!(reason.contains("could not identify this Intel Mac model"));
+    }
+}
+
 /// Forgets the window the `native:window` module addresses.
 ///
 /// Called when a session ends, so a later call reports "no window" instead of
@@ -463,12 +585,30 @@ pub(crate) fn dom_key_code(key: PhysicalKey) -> String {
 }
 
 impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Rend, E> {
+    /// Whether a callback error is waiting for [`WindowSession::pump`] to take it.
+    pub(crate) fn has_parked_error(&self) -> bool {
+        self.error.borrow().is_some()
+    }
+
+    /// Retains the first callback error; later cascade errors cannot replace it.
+    pub(crate) fn park_error(&self, error: JsError) {
+        park_first_error(self.error.as_ref(), error);
+    }
+
+    /// Returns the error that stops JavaScript from running again this turn.
+    fn parked_error(&self) -> Option<JsError> {
+        self.error.borrow().clone()
+    }
+
     /// Calls one typed input entry point with JSON-serialized positional arguments.
     pub(crate) fn call_input_bootstrap(
         &self,
         bootstrap: InputBootstrap,
         arguments: &impl Serialize,
     ) -> Result<bool, JsError> {
+        if let Some(error) = self.parked_error() {
+            return Err(error);
+        }
         let script = input_call_script(bootstrap, arguments)?;
         let mut engine = self.engine.clone();
         let result = engine.evaluate_script(&script, bootstrap.script_name())?;
@@ -547,14 +687,14 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Ren
                 }
             };
             if let Err(error) = result {
-                *self.error.borrow_mut() = Some(error);
+                self.park_error(error);
                 return;
             }
         }
     }
 
     fn animation_frames_pending(&self) -> bool {
-        if self.error.borrow().is_some() {
+        if self.has_parked_error() {
             return false;
         }
         let result = (|| {
@@ -568,14 +708,14 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Ren
         match result {
             Ok(pending) => pending,
             Err(error) => {
-                *self.error.borrow_mut() = Some(error);
+                self.park_error(error);
                 false
             }
         }
     }
 
     fn run_animation_frame(&self) -> bool {
-        if self.error.borrow().is_some() {
+        if self.has_parked_error() {
             return false;
         }
         let timestamp = self.started_at.elapsed().as_secs_f64() * 1_000.0;
@@ -591,14 +731,14 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Ren
         match result {
             Ok(pending) => pending,
             Err(error) => {
-                *self.error.borrow_mut() = Some(error);
+                self.park_error(error);
                 false
             }
         }
     }
 
     fn sync_window(&self, width: u32, height: u32, device_pixel_ratio: f64) {
-        if self.error.borrow().is_some() {
+        if self.has_parked_error() {
             return;
         }
         *self.state.borrow_mut() = WindowState::new(width, height, device_pixel_ratio);
@@ -608,7 +748,7 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Ren
             self.state.borrow().sync(&mut engine, &window)
         })();
         if let Err(error) = result {
-            *self.error.borrow_mut() = Some(error);
+            self.park_error(error);
         }
     }
 
@@ -625,7 +765,7 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Ren
     /// changed at all, which keeps a still pointer over a still document from
     /// paying for a hit test every frame.
     fn sync_cursor(&mut self, window_id: WindowId) {
-        if self.error.borrow().is_some() {
+        if self.has_parked_error() {
             return;
         }
         let Some(&(physical_x, physical_y)) = self.pointer_positions.get(&window_id) else {
@@ -644,7 +784,7 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Ren
         let revision = match self.document.borrow_mut().flush_layout() {
             Ok(snapshot) => snapshot.revision(),
             Err(error) => {
-                *self.error.borrow_mut() = Some(crate::dom_error(error));
+                self.park_error(crate::dom_error(error));
                 return;
             }
         };
@@ -660,7 +800,7 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Ren
         {
             Ok(icon) => icon,
             Err(error) => {
-                *self.error.borrow_mut() = Some(crate::dom_error(error));
+                self.park_error(crate::dom_error(error));
                 return;
             }
         };
@@ -697,6 +837,9 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Ren
     }
 
     fn dispatch_window_event(&self, event_type: &str) -> Result<bool, JsError> {
+        if let Some(error) = self.parked_error() {
+            return Err(error);
+        }
         let event_type =
             serde_json::to_string(event_type).map_err(|error| JsError::new(error.to_string()))?;
         let mut engine = self.engine.clone();
@@ -746,6 +889,10 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Ren
     /// rather than paid for. Winit reports the size again on every configure a
     /// window manager sends, including the ones that only moved it.
     fn apply_pending_resize(&mut self, event_loop: &dyn ActiveEventLoop, window_id: WindowId) {
+        // Leave the resize queued until `pump` has surfaced the earlier error.
+        if self.has_parked_error() {
+            return;
+        }
         let Some(size) = self.pending_resize.remove(&window_id) else {
             return;
         };
@@ -756,8 +903,10 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Ren
         self.inner
             .window_event(event_loop, window_id, WindowEvent::SurfaceResized(size));
         self.sync_native_window(window_id);
-        if let Err(error) = self.dispatch_window_event("resize") {
-            *self.error.borrow_mut() = Some(error);
+        if !self.has_parked_error()
+            && let Err(error) = self.dispatch_window_event("resize")
+        {
+            self.park_error(error);
         }
         if let Some(view) = self.inner.windows.get(&window_id) {
             view.window.request_redraw();
@@ -765,7 +914,7 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Ren
     }
 
     pub(crate) fn maybe_dispatch_load(&mut self) {
-        if self.load_dispatched || self.error.borrow().is_some() {
+        if self.load_dispatched || self.has_parked_error() {
             return;
         }
         if self
@@ -783,7 +932,7 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Ren
                     view.window.request_redraw();
                 }
             }
-            Err(error) => *self.error.borrow_mut() = Some(error),
+            Err(error) => self.park_error(error),
         }
     }
 }
@@ -874,9 +1023,13 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> ApplicationHandler
             self.sync_cursor(window_id);
         }
         if viewport_changed {
-            self.sync_native_window(window_id);
-            if let Err(error) = self.dispatch_window_event("resize") {
-                *self.error.borrow_mut() = Some(error);
+            if !self.has_parked_error() {
+                self.sync_native_window(window_id);
+            }
+            if !self.has_parked_error()
+                && let Err(error) = self.dispatch_window_event("resize")
+            {
+                self.park_error(error);
             }
             if let Some(view) = self.inner.windows.get(&window_id) {
                 view.window.request_redraw();
@@ -980,12 +1133,25 @@ mod tests {
     }
 
     #[test]
-    fn a_parked_error_leaves_queued_input_untouched() {
-        let parked_error = RefCell::new(Some("failed callback"));
+    fn the_first_parked_error_wins_and_leaves_queued_input_untouched() {
+        let parked_error = RefCell::new(None);
+        let first = JsError::with_stack("first callback failed", "first stack");
+        park_first_error(&parked_error, first.clone());
+        park_first_error(&parked_error, JsError::new("cascade failed too"));
         let mut queue = vec![(1, "first"), (2, "other"), (1, "second")];
 
         assert_eq!(take_queued_for(&parked_error, &mut queue, &1), None);
+        assert_eq!(parked_error.borrow().as_ref(), Some(&first));
         assert_eq!(queue, [(1, "first"), (2, "other"), (1, "second")]);
+
+        // Once `pump` surfaces that exact error, the preserved input is what
+        // the next turn drains; neither the first nor the second key was lost.
+        assert_eq!(parked_error.borrow_mut().take(), Some(first));
+        assert_eq!(
+            take_queued_for(&parked_error, &mut queue, &1),
+            Some(vec!["first", "second"])
+        );
+        assert_eq!(queue, [(2, "other")]);
     }
 
     #[test]
