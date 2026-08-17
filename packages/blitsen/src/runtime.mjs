@@ -297,6 +297,7 @@ async function resolveBinary({
     return environmentRuntime({ configured, variable, target, executable, onNotice });
   }
 
+  let packageFailure = null;
   let manifestPath = null;
   try {
     manifestPath = resolver.resolve(`${name}/package.json`);
@@ -304,17 +305,18 @@ async function resolveBinary({
   if (manifestPath !== null) {
     const path = join(dirname(manifestPath), binary);
     const exists = await readable(path);
-    // The addon is mandatory in every published platform package, so a host
-    // install that lacks it is malformed and stops here. A cross-target build
-    // is different: Bun can resolve the source-only platform workspaces before
-    // the release job has staged their binaries. Since that path is already
-    // allowed to fetch the exact version, let it continue to the cache/registry
-    // just as Phase 2 does when an older package lacks that executable.
-    if (exists || (missingPackageBinary !== null && !fetch)) {
+    // The addon is mandatory in every published platform package. Keep its
+    // diagnostic when it is absent, but do not let a source-only workspace
+    // shadow the checkout artifact built beside it. A cross-target build may
+    // likewise continue to its exact-version cache/registry path. If neither
+    // exists, the retained package error remains the most useful diagnosis.
+    if (exists || missingPackageBinary !== null) {
       const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
       assertRuntimeVersion(target, version ?? await packageVersion(), manifest.version);
-      if (!exists) throw missingPackageBinary({ name, version: manifest.version, path, binary });
-      return { path, target, version: manifest.version, package: name, source: "package" };
+      if (exists) {
+        return { path, target, version: manifest.version, package: name, source: "package" };
+      }
+      packageFailure = missingPackageBinary({ name, version: manifest.version, path, binary });
     }
   }
 
@@ -327,6 +329,7 @@ async function resolveBinary({
       target, version: version ?? await packageVersion(), binary, env, run, cacheDir,
     });
   }
+  if (packageFailure !== null) throw packageFailure;
   throw missing({ name, binary });
 }
 
@@ -348,6 +351,7 @@ export async function resolveRuntime({
   run,
   cacheDir,
   onNotice = reportOverride,
+  repository = repositoryRuntime,
 } = {}) {
   const name = runtimePackage(target);
   return resolveBinary({
@@ -356,7 +360,7 @@ export async function resolveRuntime({
     executable: false,
     name,
     binary: RUNTIME_BINARY,
-    repository: repositoryRuntime,
+    repository,
     // Version before contents: a mismatched pair is the cause, an odd-looking
     // package the symptom, and reporting the symptom sends the reader astray.
     missingPackageBinary: ({ version: found, path, binary }) =>
