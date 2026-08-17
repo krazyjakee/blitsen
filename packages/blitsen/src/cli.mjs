@@ -364,9 +364,8 @@ export function watchApplication(root, runtime, output = console, debounceMs = 1
   };
 }
 
-// bin/blitsen.mjs can load an addon staged beside the package without resolution
-// work. Environment paths deliberately come here instead: resolving is what
-// makes their precedence visible and verifies their platform before `require`.
+// Resolve every host addon here so environment precedence, package versions and
+// target compatibility are checked before native code is loaded.
 async function hostRuntime(output) {
   const resolved = await resolveRuntime({ onNotice: message => output.error(message) });
   const waitForNextFrame = globalThis.Bun === undefined

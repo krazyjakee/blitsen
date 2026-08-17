@@ -73,6 +73,12 @@ const readBack = JSON.parse(native.runBridgeHarness(
    </style>
    <div id="resolved">t</div><div id="observed"></div>`,
   `{ const expect = (condition, message) => { if (!condition) throw new Error(message); };
+     const animationChecks = __blitsenDomCallCount("isAnimating");
+     const pendingFrame = requestAnimationFrame(() => {});
+     expect(__blitsenAnimationFramesPending(), "a queued animation frame keeps the host turning");
+     expect(__blitsenDomCallCount("isAnimating") === animationChecks,
+       "pending work short-circuits before querying the renderer");
+     cancelAnimationFrame(pendingFrame);
      const element = document.getElementById("resolved");
      const style = getComputedStyle(element);
      expect(style instanceof CSSStyleDeclaration && getComputedStyle(element) === style,

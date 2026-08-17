@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { main, packageVersion, parseArgs, resolveApplication } from "../src/cli.mjs";
 import { TARGETS } from "../src/runtime.mjs";
-import { icon, capture } from "./cli-support.mjs";
+import { capture } from "./cli-support.mjs";
 
 describe("directory CLI", () => {
   test("prints help", async () => {

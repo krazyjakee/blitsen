@@ -1,6 +1,4 @@
 import { strict as assert } from "node:assert";
-import { join } from "node:path";
-
 import { native } from "./addon.mjs";
 
 const layoutReads = JSON.parse(native.runBridgeHarness(
@@ -119,4 +117,3 @@ assert.deepEqual(
     { natural_width: 8, natural_height: 4, complete: true, errored: false },
     { natural_width: 0, natural_height: 0, complete: true, errored: true }],
   "the JavaScript surface and the backend read report the same three images");
-

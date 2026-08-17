@@ -1,6 +1,4 @@
 import { strict as assert } from "node:assert";
-import { join } from "node:path";
-
 import { native } from "./addon.mjs";
 
 const treeSnapshot = JSON.parse(native.runBridgeHarness(
@@ -379,4 +377,3 @@ assert.equal(gapNodes.get("box").attributes.id, "box",
   "the element filled by replaceChildren reached the Rust tree");
 assert.equal(gapNodes.get("paragraph").text_content, "abcd",
   "the normalized text is one run in the authoritative tree");
-

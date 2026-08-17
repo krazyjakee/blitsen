@@ -487,7 +487,6 @@ dependencies = [
  "anyrender",
  "anyrender_vello",
  "anyrender_vello_cpu",
- "base64",
  "blitsen-blitz",
  "blitsen-core",
  "blitsen-dom",
@@ -496,7 +495,6 @@ dependencies = [
  "blitsen-quickjs",
  "blitz",
  "blitz-paint",
- "data-url",
  "flate2",
  "futures-util",
  "getrandom 0.3.4",
@@ -522,7 +520,6 @@ name = "blitsen-node"
 version = "0.0.0"
 dependencies = [
  "base64",
- "blitsen-blitz",
  "blitsen-core",
  "blitsen-dom",
  "blitsen-host",

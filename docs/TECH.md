@@ -791,7 +791,7 @@ wrapping entirely, and every CLI flag overrides the configured value.
 - `output` is required and resolved against that `package.json`; `name` sets the window title and
   the default output file name; unknown or malformed keys fail before anything runs, naming the
   key and the file.
-- The schema is published as `blitsen/src/config.schema.json` (JSON Schema draft-07) for editor
+- The schema is published as `blitsen/config.schema.json` (JSON Schema draft-07) for editor
   completion, and it is the same object the CLI validates against, so the two cannot drift.
   `defineConfig` from the `blitsen` package runs that validation on a config object written in JS.
 

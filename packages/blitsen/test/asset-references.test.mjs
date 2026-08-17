@@ -2,9 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { planIngest, rewriteRootRelativeReferences } from "../src/application-ingest.mjs";
 import { CSS_ASSET_REFERENCES, HTML_ASSET_ATTRIBUTES } from "../src/asset-references.mjs";
 import { generateApiManifest } from "../src/api-manifest.mjs";
-import { planIngest, rewriteRootRelativeReferences } from "../src/export.mjs";
 
 describe("asset reference rules", () => {
   test("one HTML attribute table drives reachability, rewriting, and remote diagnostics", async () => {
@@ -82,6 +82,26 @@ describe("asset reference rules", () => {
       const remote = manifest.assets.find(item => item.kind === "css");
       expect(new RegExp(remote.pattern, "i").test('url("//cdn.example/a.png")')).toBeTrue();
       expect(new RegExp(remote.pattern, "i").test('@import "//cdn.example/a.css"')).toBeFalse();
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("discovers repeated and cyclic references once in deterministic order", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "blitsen-cyclic-asset-graph-"));
+    try {
+      await writeFile(join(directory, "index.html"), [
+        '<script src="./a.js"></script>',
+        '<script src="./a.js"></script>',
+        '<script src="./b.js"></script>',
+      ].join("\n"));
+      await writeFile(join(directory, "a.js"), 'import "./b.js"; import "./b.js";');
+      await writeFile(join(directory, "b.js"), 'import "./a.js";');
+
+      const plan = await planIngest(directory);
+      expect(plan.files.map(file => file.relative)).toEqual(["a.js", "b.js", "index.html"]);
+      expect([...plan.resolutions.keys()]).toEqual(["index.html", "a.js", "b.js"]);
+      expect(plan.unreferenced).toEqual([]);
     } finally {
       await rm(directory, { recursive: true, force: true });
     }

@@ -2,12 +2,11 @@
 //
 // A plain module rather than a `.test.` one, so the runner does not collect it
 // as a suite of its own.
-import { copyFile, cp, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, writeFile }
+import { mkdir, mkdtemp, readFile, rm, writeFile }
   from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { dirname, extname, join } from "node:path";
-import { pathToFileURL } from "node:url";
+import { extname, join } from "node:path";
 import { packageVersion } from "../src/cli.mjs";
 import { hostTarget } from "../src/runtime.mjs";
 

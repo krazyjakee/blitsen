@@ -13,7 +13,6 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 base64 = "0.22"
-blitsen-blitz = { path = "../blitsen-blitz" }
 blitsen-core = { path = "../blitsen-core" }
 blitsen-dom = { path = "../blitsen-dom" }
 blitsen-host = { path = "../blitsen-host" }

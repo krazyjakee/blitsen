@@ -12,3 +12,6 @@ blitz-traits = { git = "https://github.com/DioxusLabs/blitz", rev = "1efe22d2524
 [patch.crates-io]
 anyrender = { git = "https://github.com/DioxusLabs/anyrender", rev = "dcd219746ff13a5832beab552f3f7f494d1bd84d" }
 usvg = { git = "https://github.com/DioxusLabs/resvg", rev = "3289a9b0c3d3352692bf5acdf5f6e6949cdb57b5" }
+
+# A concluded experiment with its own dependency graph, not a workspace member.
+[workspace]

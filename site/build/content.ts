@@ -191,20 +191,6 @@ export function rewriteDocLink(href: string): string {
   return `${REPO_BLOB}/${clean}${hash}`;
 }
 
-/** Same rules, but for links written from the repo root (the README's frame). */
-export function rewriteRootLink(href: string): string {
-  if (/^(https?:|mailto:|#)/.test(href)) return href;
-  const [pathPart, hash] = splitHash(href);
-  if (/\.(png|gif|jpe?g|svg|webp)$/i.test(pathPart)) {
-    return `${BASE}/assets/${pathPart.split("/").pop()}`;
-  }
-  if (pathPart.startsWith("docs/")) {
-    const page = BY_FILE.get(pathPart.slice("docs/".length));
-    if (page) return `${BASE}/docs/${page.slug}/${hash}`;
-  }
-  return `${REPO_BLOB}/${pathPart}${hash}`;
-}
-
 function splitHash(href: string): [string, string] {
   const at = href.indexOf("#");
   return at === -1 ? [href, ""] : [href.slice(0, at), href.slice(at)];

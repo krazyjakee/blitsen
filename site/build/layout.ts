@@ -1,6 +1,6 @@
 // The page shell: head, masthead, sidebar, table of contents, footer.
 //
-// The visual language is inherited from docs/product.html — paper and ink, an
+// The visual language is implemented in site/assets/site.css — paper and ink, an
 // ultramarine accent, a serif measure with mono display type. The crest is the
 // rampant reindeer from assets/brand, inlined so it takes the surrounding ink
 // colour and needs no second file for dark mode.

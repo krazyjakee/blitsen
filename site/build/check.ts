@@ -105,19 +105,15 @@ async function main(): Promise<void> {
     }
   }
 
-  const anchorMisses = problems.filter((p) => p.kind.startsWith("anchor"));
-  const hard = problems.filter((p) => !p.kind.startsWith("anchor"));
-
   console.log(`checked ${files.length} pages`);
-  for (const p of hard) console.log(`  ✗ ${p.file}: ${p.kind} — ${p.detail}`);
-  for (const p of anchorMisses) console.log(`  ⚠ ${p.file}: ${p.kind} — ${p.detail}`);
+  for (const p of problems) console.log(`  ✗ ${p.file}: ${p.kind} — ${p.detail}`);
 
-  if (hard.length === 0 && anchorMisses.length === 0) {
+  if (problems.length === 0) {
     console.log("  no dead links, no missing images, no unrendered markdown");
   } else {
-    console.log(`\n${hard.length} error(s), ${anchorMisses.length} anchor warning(s)`);
+    console.log(`\n${problems.length} error(s)`);
   }
-  process.exit(hard.length > 0 ? 1 : 0);
+  process.exit(problems.length > 0 ? 1 : 0);
 }
 
 await main();
