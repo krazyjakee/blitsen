@@ -378,10 +378,11 @@ jobs:
       # in one build, so the rest of the job runs against what a user would get.
       - name: Build the runtime
         run: cargo build --release -p blitsen-node -p blitsen-runtime
-      # Issue #229: verify the model-based refusal boundary and the supported
-      # Intel renderer lifecycle before JavaScript setup, so a package-lock
-      # failure cannot hide the safety result.
-      - name: Test the Intel macOS renderer safety boundary
+      # Issue #229: Intel macOS selects the CPU rasterizer before a surface is
+      # created. Exercise the real window/surface lifecycle on that runner
+      # before JavaScript setup, so a package-lock failure cannot hide the
+      # safety fallback's own result.
+      - name: Test the Intel macOS CPU window fallback
         if: matrix.target == 'darwin-x64'
         run: cargo test -p blitsen-host
       - run: bun install --frozen-lockfile
