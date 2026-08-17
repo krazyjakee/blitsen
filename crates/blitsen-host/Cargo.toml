@@ -77,6 +77,13 @@ harness = false
 [target.'cfg(target_os = "android")'.dependencies]
 ndk = { version = "0.9", default-features = false }
 
+# Vello's Metal compute path can wedge the display GPU on Intel Macs before
+# wgpu can report device loss (#229).  Use vello_cpu and copy its finished RGBA
+# buffer to the window through softbuffer on that target: no GPU command is
+# submitted, so the fallback does not depend on the adapter being recoverable.
+[target.'cfg(all(target_os = "macos", target_arch = "x86_64"))'.dependencies]
+anyrender_vello_cpu = { version = "0.15", features = ["softbuffer_window_renderer"] }
+
 [lints]
 workspace = true
 

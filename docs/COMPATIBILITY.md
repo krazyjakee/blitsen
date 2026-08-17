@@ -13,6 +13,19 @@ is Unix-only, and `window.create` is absent. What is *not* v1 is stated as plain
 editing and selection but not IME or the advanced editing surface — see
 [What v1 is not](#what-v1-is-not).
 
+## Window renderer by platform
+
+Blitsen uses the GPU Vello renderer on Windows, Linux, Android and Apple Silicon macOS. Intel
+macOS uses Vello's CPU rasterizer and presents its finished pixel buffer through a software
+window backend. This is an automatic safety fallback: Vello/Metal compute work can wedge the
+display GPU on Intel/Radeon Macs, reset WindowServer and terminate the whole desktop session
+([#229](https://github.com/krazyjakee/blitsen/issues/229)). Adapter or device-loss recovery cannot
+make that path safe because the system can stop responding before wgpu reports an error.
+
+The selected renderer is written to stderr when a window opens. The CPU fallback needs no app
+configuration and has no GPU override on Intel macOS; rendering there may use more CPU than on
+the GPU-backed targets.
+
 Run the check against build output, not source:
 
 ```sh
