@@ -21,8 +21,8 @@
 //
 // # Why the staging loop is not the desktop one
 //
-// `export.mjs` walks the same plan and rewrites the same references, and this
-// deliberately does not call into it. The desktop loop is doing three more jobs
+// The desktop export walks the same plan and rewrites the same references, and
+// this deliberately does not call into its staging loop. That loop does three more jobs
 // at the same time — deciding whether the application needs a module loader,
 // inspecting every carried `.node` addon against the target, and hashing each
 // file into the bundle manifest — and none of the three exists here. There is
@@ -34,12 +34,12 @@
 // Pulling those apart to share the walk would put a fourth set of conditionals
 // through the one loop that produces every shipping desktop artifact, to save
 // about thirty lines. The two things that must not drift — `planIngest` and
-// `rewriteRootRelativeReferences` — are shared, and they are the parts that
-// decide what the application *is*.
+// `rewriteRootRelativeReferences` — are shared through `application-ingest.mjs`,
+// and they are the parts that decide what the application *is*.
 
 import { copyFile, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { dirname, extname, join } from "node:path";
-import { planIngest, rewriteRootRelativeReferences } from "./export.mjs";
+import { planIngest, rewriteRootRelativeReferences } from "./application-ingest.mjs";
 import { REWRITTEN_EXTENSIONS } from "./files.mjs";
 
 /// Where inside `assets/` a Blitsen application is packaged.

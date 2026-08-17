@@ -2,9 +2,9 @@
 //!
 //! # What this establishes
 //!
-//! The handlers in `blitsen_host::surface_lifecycle` model Android's lifecycle,
-//! and Android cannot be run here: there is no entry point yet (#142) and no
-//! APK. So the cycle is driven synthetically instead —
+//! The handlers in `blitsen_host::surface_lifecycle` model Android's lifecycle.
+//! CI builds and inspects an APK, but does not run its lifecycle on a device or
+//! emulator, so the cycle is driven synthetically instead —
 //! [`WindowSession::lose_surface`] and `restore_surface` queue the *real*
 //! handlers, which run from `about_to_wait` with the *real* `ActiveEventLoop`,
 //! against a *real* winit window. `View::suspend` drops the wgpu surface, the

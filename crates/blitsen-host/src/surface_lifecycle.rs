@@ -153,13 +153,12 @@
 //!
 //! ## What is proven, and what still needs a device
 //!
-//! Nothing Android can be run here: there is no entry point yet (#142), so
-//! nothing in this module has been observed on Android. What has been observed
-//! is a synthetic cycle on a desktop window — [`WindowSession::lose_surface`]
-//! and [`WindowSession::restore_surface`] drive the real handlers with the real
+//! Android now has an entry point and CI-built APK, but the lifecycle still has
+//! not been observed on a device or emulator. The local evidence is a synthetic
+//! cycle on a desktop window: [`WindowSession::lose_surface`] and
+//! [`WindowSession::restore_surface`] drive the real handlers with a real
 //! `ActiveEventLoop`, tearing down and rebuilding a real wgpu surface. See
-//! `tests/surface_lifecycle.rs` for what that does and does not establish, and
-//! the `#146` section of that file for the device procedure it cannot replace.
+//! `tests/surface_lifecycle.rs` for the boundary of that evidence.
 //!
 //! [`can_create_surfaces`]: winit::application::ApplicationHandler::can_create_surfaces
 //! [`JsEngine::collect_garbage`]: blitsen_js::JsEngine::collect_garbage
@@ -233,9 +232,9 @@ impl<E: JsEngine + Clone + 'static> WindowSession<E> {
     /// Drives a surface loss the platform did not send, for a test.
     ///
     /// Not a public API and not something an application can reach: it exists
-    /// because the lifecycle this models is Android's, no Android artifact
-    /// exists yet (#142), and a handler nobody has ever run is not evidence of
-    /// anything. The phase is queued rather than run, because the handlers need
+    /// because the lifecycle this models is Android's, and a CI-built APK is
+    /// not evidence that these handlers ran on a device. The phase is queued
+    /// rather than run, because the handlers need
     /// an `ActiveEventLoop` that only a pump can produce — so the effect lands
     /// on the *next* [`pump`](Self::pump), not on this call.
     pub fn lose_surface(&mut self) {

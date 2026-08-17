@@ -40,7 +40,7 @@ export function landingBody(crestSvg: string): string {
 
   return `
 <section class="hero">
-  <div class="hero-intro">
+  <div>
     <div class="hero-title">
       ${hero}
       <div>
@@ -98,7 +98,7 @@ export function landingBody(crestSvg: string): string {
   </p>
 </section>
 
-<section class="band negative">
+<section class="band">
   <p class="section-index" aria-hidden="true">03 / Know the boundary</p>
   <h2>A native runtime, not a general-purpose browser</h2>
   <ol class="boundary-list">

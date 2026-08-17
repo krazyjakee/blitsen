@@ -65,7 +65,7 @@ GitHub — `COMPATIBILITY.md#native-modules` — keep working here without editi
 
 ## Design
 
-The palette and type pairing come from [`docs/product.html`](../docs/product.html):
+The palette and type pairing are defined in [`assets/site.css`](assets/site.css):
 paper and ink, an ultramarine accent, a serif reading measure with mono display type.
 Dark mode follows `prefers-color-scheme` and can be overridden by a toggle that
 persists to `localStorage`.

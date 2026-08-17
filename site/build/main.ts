@@ -12,7 +12,7 @@ import { mkdir, readFile, writeFile, copyFile, rm, readdir } from "node:fs/promi
 import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
-import { ALL_PAGES, BASE, GROUPS, GUIDE_PAGES, REPO, rewriteDocLink, rewriteRootLink } from "./content.ts";
+import { ALL_PAGES, BASE, GROUPS, GUIDE_PAGES, REPO, rewriteDocLink } from "./content.ts";
 import { renderMarkdown, escapeHtml } from "./markdown.ts";
 import { renderPage, setCrest } from "./layout.ts";
 import { landingBody } from "./landing.ts";
