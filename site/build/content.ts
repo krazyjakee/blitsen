@@ -90,6 +90,13 @@ export const GROUPS: DocGroup[] = [
     note: "Getting an application in, and an executable out.",
     pages: [
       {
+        file: "GETTING-STARTED.md",
+        slug: "getting-started",
+        nav: "Run and export",
+        title: "Run and export an app",
+        blurb: "Install Blitsen, check a static build against the compatibility profile, and export a native executable.",
+      },
+      {
         file: "MIGRATION.md",
         slug: "migration",
         nav: "Migration",

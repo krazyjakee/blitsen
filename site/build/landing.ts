@@ -29,36 +29,50 @@ export function landingBody(crestSvg: string): string {
   const hero = crestSvg
     .replace(/\swidth="\d+"/, "")
     .replace(/\sheight="\d+"/, "")
-    .replace("<svg", '<svg class="hero-crest" aria-hidden="true"');
+    .replace(/\srole="img"/, "")
+    .replace(/\saria-label="[^"]*"/, "")
+    .replace(/<title>.*?<\/title>/s, "")
+    .replace("<svg", '<svg class="hero-crest" aria-hidden="true" focusable="false"');
 
   return `
 <section class="hero">
-  ${hero}
-  <p class="eyebrow">Pre-alpha · Linux, macOS and Windows</p>
-  <h1>Blitsen</h1>
-  <p class="lede">
-    Write an app in HTML, CSS and TypeScript. Ship a native executable.
-    <strong>No browser included.</strong>
-  </p>
-  <p class="sub">
-    Blitsen hosts a JavaScript engine directly and pairs it with
-    <a href="https://github.com/DioxusLabs/blitz" target="_blank" rel="noopener noreferrer">Blitz</a>'s
-    native HTML/CSS renderer. It does not embed Chromium, and it does not use the
-    operating system's WebView.
-  </p>
-  <div class="cta">
-    <a class="btn primary" href="${BASE}/docs/">Read the documentation</a>
-    <a class="btn" href="${REPO}" target="_blank" rel="noopener noreferrer">Source on GitHub</a>
+  <div class="hero-intro">
+    <div class="hero-title">
+      ${hero}
+      <div>
+        <p class="eyebrow">Pre-alpha · v0.1.0</p>
+        <h1>Blitsen</h1>
+      </div>
+    </div>
+    <p class="lede">
+      Write an app in HTML, CSS and TypeScript. Ship a native executable.
+      <strong>No browser included.</strong>
+    </p>
+    <p class="sub">
+      Blitsen hosts a JavaScript engine directly and pairs it with
+      <a href="https://github.com/DioxusLabs/blitz" target="_blank" rel="noopener noreferrer">Blitz</a>'s
+      native HTML/CSS renderer. It embeds neither Chromium nor the operating
+      system's WebView.
+    </p>
+    <div class="cta">
+      <a class="btn primary" href="${BASE}/docs/getting-started/">Run an app</a>
+      <a class="text-link" href="${BASE}/docs/compatibility/">Check compatibility →</a>
+    </div>
   </div>
-  <figure class="code hero-code"><span class="code-lang">sh</span><pre><code>${INSTALL}</code></pre></figure>
-  <p class="fineprint">
-    A dev dependency that acts as a native export toolchain. Your project's shape,
-    bundler and framework are not prescribed.
-  </p>
+  <aside class="quickstart" aria-labelledby="quickstart-title">
+    <p class="eyebrow" id="quickstart-title">Install from npm</p>
+    <figure class="code hero-code"><span class="code-lang">sh</span><pre><code>${INSTALL}</code></pre></figure>
+    <p>
+      The package supplies the CLI and downloads the runtime for the current
+      desktop target. It does not compile anything during installation.
+    </p>
+    <a href="${REPO}" target="_blank" rel="noopener noreferrer">Browse the source on GitHub ↗</a>
+  </aside>
 </section>
 
 <section class="band">
-  <h2>Four commands</h2>
+  <p class="section-index" aria-hidden="true">01 / Workflow</p>
+  <h2>Start with the output you already have</h2>
   <figure class="code"><span class="code-lang">sh</span><pre><code>${COMMANDS}</code></pre></figure>
   <p class="band-note">
     With no directory, running and building both read the <code>blitsen</code> config in
@@ -69,39 +83,50 @@ export function landingBody(crestSvg: string): string {
 </section>
 
 <section class="band negative">
+  <p class="section-index" aria-hidden="true">02 / Boundary</p>
   <h2>What it is not</h2>
   <p class="band-lede">
-    Blitsen is not a browser and does not aspire to be one. Three consequences,
-    none of them accidental.
+    Blitsen is a native application runtime, not a general-purpose browser.
+    That choice has concrete consequences.
   </p>
-  <div class="grid-3">
-    <article>
+  <ol class="boundary-list">
+    <li>
+      <span class="item-index" aria-hidden="true">01</span>
+      <div>
       <h3>It renders less of the web than a browser does</h3>
       <p>
-        That is the trade: a renderer you ship and control, at a size that is not
-        absurd, against specification coverage. An application targeting Blitsen is
-        authored against Blitsen, not ported blind from the web.
+        You ship and control the renderer, but accept narrower specification
+        coverage. Target Blitsen deliberately instead of assuming a browser build
+        will work unchanged.
       </p>
       <p class="more"><a href="${BASE}/docs/compatibility/">The boundary, published as capability tiers →</a></p>
-    </article>
-    <article>
+      </div>
+    </li>
+    <li>
+      <span class="item-index" aria-hidden="true">02</span>
+      <div>
       <h3>There is no sandbox by default</h3>
       <p>
         An application is trusted native software, not an untrusted document.
         No same-origin policy, no permission prompts.
       </p>
-    </article>
-    <article>
+      </div>
+    </li>
+    <li>
+      <span class="item-index" aria-hidden="true">03</span>
+      <div>
       <h3>It is not for third-party web content</h3>
       <p>
         Rendering arbitrary pages you did not write is a browser engine's job.
         Use one for that.
       </p>
-    </article>
-  </div>
+      </div>
+    </li>
+  </ol>
 </section>
 
 <section class="band">
+  <p class="section-index" aria-hidden="true">03 / Detection</p>
   <h2>An unimplemented API is <em>absent</em></h2>
   <p class="band-lede">
     The property does not exist, so feature detection works. Never a stub that
@@ -118,6 +143,7 @@ export function landingBody(crestSvg: string): string {
 </section>
 
 <section class="band measured">
+  <p class="section-index" aria-hidden="true">04 / Evidence</p>
   <h2>Measured, not estimated</h2>
   <p class="band-lede">
     Every size figure in this project comes from a measured build. The tracked
@@ -149,30 +175,31 @@ export function landingBody(crestSvg: string): string {
     renderer and JavaScript engine.
   </p>
 
-  <div class="stats">
-    <div class="stat">
-      <span class="stat-n">38.1 MB</span>
-      <span class="stat-l">Standalone Pong export, down from 144.7 MB once the runtime
+  <dl class="evidence-list">
+    <div>
+      <dt>38.1 MB</dt>
+      <dd>Standalone Pong export, down from 144.7 MB once the runtime
       replaced a bundled copy of Bun. The whole download — the JavaScript engine is
-      statically linked, not shipped beside it.</span>
+      statically linked, not shipped beside it.</dd>
     </div>
-    <div class="stat">
-      <span class="stat-n">0.809 ms</span>
-      <span class="stat-l">Median frame cost against a 16.7 ms budget, with the
+    <div>
+      <dt>0.809 ms</dt>
+      <dd>Median frame cost against a 16.7 ms budget, with the
       windowed export sustaining 60 fps.
-      <a href="${BASE}/docs/m3/">M3 evidence →</a></span>
+      <a href="${BASE}/docs/m3/">M3 evidence →</a></dd>
     </div>
-    <div class="stat">
-      <span class="stat-n">6 apps</span>
-      <span class="stat-l">Written by other people — React, Vue 3, Svelte and the three
+    <div>
+      <dt>6 apps</dt>
+      <dd>Written by other people — React, Vue 3, Svelte and the three
       stock <code>create-vite</code> templates — rendered from their own unmodified
       <code>vite build</code> output. All six failed when first measured.
-      <a href="${BASE}/docs/m3b/">M3b evidence →</a></span>
+      <a href="${BASE}/docs/m3b/">M3b evidence →</a></dd>
     </div>
-  </div>
+  </dl>
 </section>
 
 <section class="band showcase">
+  <p class="section-index" aria-hidden="true">05 / Output</p>
   <h2>Rendering real applications</h2>
   <figure class="shot">
     <img src="${BASE}/assets/shadcn-admin.png" alt="Shadcn Admin rendered by Blitsen"
@@ -197,6 +224,7 @@ export function landingBody(crestSvg: string): string {
 </section>
 
 <section class="band">
+  <p class="section-index" aria-hidden="true">06 / Native data</p>
   <h2>Past what a browser can answer</h2>
   <p class="band-lede">
     <code>examples/hardware</code> is a CPU-Z-shaped report on the machine it is running
@@ -212,9 +240,11 @@ export function landingBody(crestSvg: string): string {
 </section>
 
 <section class="band docs-index" id="documentation">
+  <p class="section-index" aria-hidden="true">07 / Reference</p>
   <h2>Documentation</h2>
   <p class="band-lede">
-    Generated from the markdown in the repository, so it cannot drift from the source.
+    Choose a task, specification or evidence record. Every page is generated from
+    the repository's Markdown rather than copied into a second content store.
   </p>
   ${docCards()}
 </section>

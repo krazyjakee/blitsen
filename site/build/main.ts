@@ -54,10 +54,10 @@ function docsIndexBody(): string {
   return `<article class="prose">
 <h1>Documentation</h1>
 <p class="lede">
-  Every page below is generated from the markdown in
-  <a href="${REPO}/tree/main/docs">docs/</a>. The compatibility profile is in turn
-  generated from the runtime itself, so the boundary this site publishes is the one
-  the runtime actually enforces.
+  Start with the task you need to complete, then use the specifications and evidence
+  records for exact behaviour. These pages are generated from
+  <a href="${REPO}/tree/main/docs">docs/</a>; the compatibility profile is generated
+  from the runtime itself.
 </p>
 ${groups}
 </article>`;
