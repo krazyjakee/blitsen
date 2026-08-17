@@ -1,18 +1,22 @@
-// The home page. This is the one hand-authored page on the site.
-//
-// Every number and claim below is transcribed from README.md or the docs it links,
-// which are themselves gated on measurements. Nothing here is rounded, restated
-// from memory, or inferred — if a figure changes in the repo it must be changed
-// here too, which is why the figures are kept few and each one is attributed.
+// The home page is a short route into the task-based documentation. Product
+// contributor records remain in the repository; they are deliberately not part
+// of this path.
 
 import { BASE, GROUPS, REPO } from "./content.ts";
 
 const INSTALL = `npm install -D blitsen`;
 
-const COMMANDS = `npx blitsen .                       # open index.html in a native window
-npx blitsen http://localhost:5173   # point at a running dev server
-npx blitsen doctor dist             # check output against the compatibility profile
-npx blitsen build                   # one executable: runtime + application`;
+const CONFIG = `{
+  "blitsen": {
+    "build": "vite build",
+    "output": "dist",
+    "name": "My App"
+  }
+}`;
+
+const COMMANDS = `npx blitsen                       # build and open a native window
+npx blitsen doctor dist           # check the built application
+npx blitsen build                 # create a desktop executable`;
 
 function docCards(): string {
   return GROUPS.map((group) => {
@@ -49,202 +53,109 @@ export function landingBody(crestSvg: string): string {
       <strong>No browser included.</strong>
     </p>
     <p class="sub">
-      Blitsen hosts a JavaScript engine directly and pairs it with
-      <a href="https://github.com/DioxusLabs/blitz" target="_blank" rel="noopener noreferrer">Blitz</a>'s
-      native HTML/CSS renderer. It embeds neither Chromium nor the operating
-      system's WebView.
+      Keep your framework and build tool. Blitsen opens their static output in a
+      native window and packages it with its own renderer and JavaScript runtime.
     </p>
     <div class="cta">
-      <a class="btn primary" href="${BASE}/docs/getting-started/">Run an app</a>
-      <a class="text-link" href="${BASE}/docs/compatibility/">Check compatibility →</a>
+      <a class="btn primary" href="${BASE}/docs/getting-started/">Get started</a>
+      <a class="text-link" href="${BASE}/docs/platform-support/">Check platform support →</a>
     </div>
   </div>
   <aside class="quickstart" aria-labelledby="quickstart-title">
     <p class="eyebrow" id="quickstart-title">Install from npm</p>
     <figure class="code hero-code"><span class="code-lang">sh</span><pre><code>${INSTALL}</code></pre></figure>
     <p>
-      The package supplies the CLI and downloads the runtime for the current
-      desktop target. It does not compile anything during installation.
+      The package downloads the runtime for the current desktop target. No Rust
+      toolchain or post-install compilation is required.
     </p>
-    <a href="${REPO}" target="_blank" rel="noopener noreferrer">Browse the source on GitHub ↗</a>
+    <a href="${BASE}/docs/getting-started/">Run your first application →</a>
   </aside>
 </section>
 
 <section class="band">
-  <p class="section-index" aria-hidden="true">01 / Workflow</p>
-  <h2>Start with the output you already have</h2>
+  <p class="section-index" aria-hidden="true">01 / Configure</p>
+  <h2>Point Blitsen at built web output</h2>
+  <p class="band-lede">
+    Add one object to <code>package.json</code>. The build command stays yours;
+    Blitsen consumes the directory it leaves behind.
+  </p>
+  <figure class="code"><span class="code-lang">json</span><pre><code>${CONFIG}</code></pre></figure>
+  <p class="band-note">
+    Plain HTML needs no configuration: <code>npx blitsen .</code> opens the directory
+    containing <code>index.html</code>.
+  </p>
+</section>
+
+<section class="band">
+  <p class="section-index" aria-hidden="true">02 / Run and build</p>
+  <h2>Use the same output from first window to release</h2>
   <figure class="code"><span class="code-lang">sh</span><pre><code>${COMMANDS}</code></pre></figure>
   <p class="band-note">
-    With no directory, running and building both read the <code>blitsen</code> config in
-    <code>package.json</code>, run the configured build command and take its output
-    directory. <code>--target</code> builds for another platform, fetching and caching
-    its runtime.
+    During development, point Blitsen at a running server such as
+    <code>http://localhost:5173</code> to keep its transforms and hot reload.
+    Before release, run <code>doctor</code> against static output and test the exported
+    artifact on every target platform.
   </p>
 </section>
 
 <section class="band negative">
-  <p class="section-index" aria-hidden="true">02 / Boundary</p>
-  <h2>What it is not</h2>
-  <p class="band-lede">
-    Blitsen is a native application runtime, not a general-purpose browser.
-    That choice has concrete consequences.
-  </p>
+  <p class="section-index" aria-hidden="true">03 / Know the boundary</p>
+  <h2>A native runtime, not a general-purpose browser</h2>
   <ol class="boundary-list">
     <li>
       <span class="item-index" aria-hidden="true">01</span>
-      <div>
-      <h3>It renders less of the web than a browser does</h3>
-      <p>
-        You ship and control the renderer, but accept narrower specification
-        coverage. Target Blitsen deliberately instead of assuming a browser build
-        will work unchanged.
-      </p>
-      <p class="more"><a href="${BASE}/docs/compatibility/">The boundary, published as capability tiers →</a></p>
-      </div>
+      <div><h3>Use built output</h3><p>Blitsen does not transpile source files or resolve bare npm imports. Vite, webpack or your existing tool must do that first.</p></div>
     </li>
     <li>
       <span class="item-index" aria-hidden="true">02</span>
-      <div>
-      <h3>There is no sandbox by default</h3>
-      <p>
-        An application is trusted native software, not an untrusted document.
-        No same-origin policy, no permission prompts.
-      </p>
-      </div>
+      <div><h3>Check compatibility</h3><p>The runtime implements a deliberate subset of browser APIs. Missing features are absent so feature detection works, and <code>doctor</code> reports what it can see.</p></div>
     </li>
     <li>
       <span class="item-index" aria-hidden="true">03</span>
-      <div>
-      <h3>It is not for third-party web content</h3>
-      <p>
-        Rendering arbitrary pages you did not write is a browser engine's job.
-        Use one for that.
-      </p>
-      </div>
+      <div><h3>Treat it as native software</h3><p>There is no browser sandbox, same-origin policy or permission prompt. Run only application code and content you trust.</p></div>
     </li>
   </ol>
 </section>
 
 <section class="band">
-  <p class="section-index" aria-hidden="true">03 / Detection</p>
-  <h2>An unimplemented API is <em>absent</em></h2>
+  <p class="section-index" aria-hidden="true">04 / Reach the OS</p>
+  <h2>Use native capabilities when the web has no answer</h2>
   <p class="band-lede">
-    The property does not exist, so feature detection works. Never a stub that
-    resolves to nothing, never a silent no-op.
+    Package imports expose window controls, dialogs, clipboard formats,
+    application directories and live operating-system readings.
   </p>
+  <figure class="code"><span class="code-lang">js</span><pre><code>import windowApi from "blitsen/window";
+
+addEventListener("load", () =&gt; {
+  windowApi.setSize?.(1024, 720);
+});</code></pre></figure>
   <p class="band-note">
-    That is enforced rather than reviewed. The API manifest is parsed out of the
-    runtime source, and a test asserts every API the manifest calls absent is
-    genuinely <code>undefined</code> against a real bridge context. The
-    <a href="${BASE}/docs/compatibility/">compatibility profile</a> is generated from
-    the runtime rather than hand-maintained, and <code>blitsen doctor</code> reports
-    what a bundle uses that the runtime lacks before you hit it at runtime.
+    Support varies by version and target, so native members are optional and
+    feature detection is part of the API. <a href="${BASE}/docs/native-apis/">Browse native APIs →</a>
   </p>
-</section>
-
-<section class="band measured">
-  <p class="section-index" aria-hidden="true">04 / Evidence</p>
-  <h2>Measured, not estimated</h2>
-  <p class="band-lede">
-    Every size figure in this project comes from a measured build. The tracked
-    baseline lives in the repository and CI fails on growth beyond 2%.
-  </p>
-
-  <div class="table-scroll">
-    <table>
-      <caption>
-        A release-build “hello” window on Ubuntu x64 (Ryzen 9 5900X, X11), against
-        Electron 43.4.0 and Tauri 2.11.5.
-      </caption>
-      <thead>
-        <tr><th>Runtime</th><th class="num">Disk</th><th class="num">Idle CPU</th>
-        <th class="num">Idle memory (PSS)</th></tr>
-      </thead>
-      <tbody>
-        <tr><td>Electron</td><td class="num">339.4 MB</td><td class="num">0.2%</td><td class="num">284.3 MB</td></tr>
-        <tr><td>Tauri</td><td class="num">4.7 MB</td><td class="num">&lt;0.1%</td><td class="num">191.9 MB</td></tr>
-        <tr class="mine"><td>Blitsen</td><td class="num">38.8 MB</td><td class="num">0.1%</td><td class="num">101.0 MB</td></tr>
-      </tbody>
-    </table>
-  </div>
-  <p class="fineprint">
-    Medians of five runs after a five-second warm-up. CPU is the whole process tree
-    over ten seconds, where 100% is one core; disk is the packaged app's apparent
-    size. Tauri's figures include its host and WebKit processes, and its disk figure
-    excludes the system WebKitGTK it uses. Electron ships Chromium; Blitsen ships its
-    renderer and JavaScript engine.
-  </p>
-
-  <dl class="evidence-list">
-    <div>
-      <dt>38.1 MB</dt>
-      <dd>Standalone Pong export, down from 144.7 MB once the runtime
-      replaced a bundled copy of Bun. The whole download — the JavaScript engine is
-      statically linked, not shipped beside it.</dd>
-    </div>
-    <div>
-      <dt>0.809 ms</dt>
-      <dd>Median frame cost against a 16.7 ms budget, with the
-      windowed export sustaining 60 fps.
-      <a href="${BASE}/docs/m3/">M3 evidence →</a></dd>
-    </div>
-    <div>
-      <dt>6 apps</dt>
-      <dd>Written by other people — React, Vue 3, Svelte and the three
-      stock <code>create-vite</code> templates — rendered from their own unmodified
-      <code>vite build</code> output. All six failed when first measured.
-      <a href="${BASE}/docs/m3b/">M3b evidence →</a></dd>
-    </div>
-  </dl>
-</section>
-
-<section class="band showcase">
-  <p class="section-index" aria-hidden="true">05 / Output</p>
-  <h2>Rendering real applications</h2>
-  <figure class="shot">
-    <img src="${BASE}/assets/shadcn-admin.png" alt="Shadcn Admin rendered by Blitsen"
-      loading="lazy" decoding="async">
-    <figcaption>
-      <a href="https://github.com/satnaing/shadcn-admin" target="_blank" rel="noopener noreferrer">Shadcn
-      Admin</a> (MIT), unmodified, rendered without a browser engine. The empty chart
-      panel is Recharts SVG —
-      <a href="https://github.com/DioxusLabs/blitz/issues/448" target="_blank" rel="noopener noreferrer">tracked
-      upstream</a>.
-    </figcaption>
-  </figure>
-  <figure class="shot">
-    <img src="${BASE}/assets/pong.gif" alt="Pong running in Blitsen" loading="lazy" decoding="async">
-    <figcaption>
-      Every frame is HTML and CSS laid out by Blitz and mutated from JavaScript — the
-      paddles, the ball and the scoreboard are ordinary DOM nodes. The recording comes
-      from the same harness the acceptance gate asserts on, so it cannot drift from
-      what the tests verify.
-    </figcaption>
-  </figure>
 </section>
 
 <section class="band">
-  <p class="section-index" aria-hidden="true">06 / Native data</p>
-  <h2>Past what a browser can answer</h2>
+  <p class="section-index" aria-hidden="true">05 / Distribute</p>
+  <h2>Build for desktop or Android</h2>
   <p class="band-lede">
-    <code>examples/hardware</code> is a CPU-Z-shaped report on the machine it is running
-    on: processor and per-thread load, memory and swap, every mounted volume, kernel
-    and boot time.
+    Desktop exports embed reachable assets in one executable by default. Add
+    platform metadata, connect your signing command, or cross-build for any of
+    the six published desktop targets. Android output is an APK built from a
+    source checkout.
   </p>
   <p class="band-note">
-    None of it has a web spelling — the closest the platform comes is
-    <code>navigator.hardwareConcurrency</code>, one deliberately coarsened number. It is
-    read through <a href="${BASE}/docs/compatibility/#native-modules"><code>blitsen/os</code></a>,
-    and it is three files with no build step.
+    <a href="${BASE}/docs/packaging/">Packaging and release checklist →</a>
   </p>
 </section>
 
 <section class="band docs-index" id="documentation">
-  <p class="section-index" aria-hidden="true">07 / Reference</p>
-  <h2>Documentation</h2>
+  <p class="section-index" aria-hidden="true">06 / Documentation</p>
+  <h2>Find the task you need</h2>
   <p class="band-lede">
-    Choose a task, specification or evidence record. Every page is generated from
-    the repository's Markdown rather than copied into a second content store.
+    Choose a task to get from static web output to a tested native artifact.
+    Each guide is maintained in the
+    <a href="${REPO}/tree/main/docs" target="_blank" rel="noopener noreferrer">repository</a>.
   </p>
   ${docCards()}
 </section>

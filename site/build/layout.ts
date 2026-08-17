@@ -134,7 +134,7 @@ export function renderPage(options: PageOptions): string {
   </a>
   <nav class="top" id="site-nav" aria-label="Site">
     <a href="${BASE}/docs/">Documentation</a>
-    <a href="${BASE}/docs/compatibility/">Compatibility</a>
+    <a href="${BASE}/docs/platform-support/">Platform support</a>
     <a href="${REPO}" target="_blank" rel="noopener noreferrer">GitHub</a>
   </nav>
   <div class="mast-actions">
@@ -159,8 +159,8 @@ ${toc}
 <footer class="foot">
   <div class="foot-inner">
     <p class="foot-note">
-      Blitsen is <strong>pre-alpha</strong>. Six desktop targets are published; three run the
-      full CI suite and three run a smoke tier. It is an independent project built on
+      Blitsen is <strong>pre-alpha</strong>. Check built output with <code>blitsen doctor</code>
+      and test every target before distribution. It is an independent project built on
       <a href="https://github.com/DioxusLabs/blitz" target="_blank" rel="noopener noreferrer">Blitz</a> —
       not an official DioxusLabs project, and not endorsed by DioxusLabs.
     </p>

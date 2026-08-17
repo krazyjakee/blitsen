@@ -2,143 +2,99 @@
 
 > Write an app in HTML, CSS and TypeScript. Ship a native executable. No browser included.
 
-Blitsen is an experimental native runtime for applications built from static HTML, CSS and
-JavaScript output. It hosts a JavaScript engine directly and pairs it with
-[Blitz](https://github.com/DioxusLabs/blitz)'s native HTML/CSS renderer. It does not embed Chromium, and it does not use the operating system's
-WebView.
+Blitsen runs built HTML, CSS and JavaScript in a native window using
+[Blitz](https://github.com/DioxusLabs/blitz) and an embedded JavaScript engine. It does not ship
+Chromium or use the operating system WebView.
 
-**The project is pre-alpha.** Version 0.1.0 is published on npm. All six desktop targets build and
-test in CI — Linux, macOS and Windows on
-x64 and arm64 — with the full suite on `linux-x64`, `darwin-arm64` and `win32-x64` and a smoke tier
-on the other three. Size and startup have a baseline on Linux x64 alone, and every harness is
-headless: no Blitsen window has been watched paint on Windows or macOS outside CI
-([issue #123](https://github.com/krazyjakee/blitsen/issues/123)).
+> **Pre-alpha:** Blitsen implements a deliberate subset of the web platform. Check your built
+> application with `blitsen doctor`, test on every platform you ship, and expect breaking changes.
 
-## What it is not
+## Quick start
 
-**Blitsen is not a browser and does not aspire to be one.** It is a native application runtime that
-happens to use the web platform as its UI model. Three consequences, none of them accidental:
+Install Blitsen in an existing web project:
 
-- **Blitsen will render less of the web than a browser does.** That is the trade: you get a renderer
-  you ship and control, at a size that is not absurd, and you lose specification coverage. An
-  application targeting Blitsen is authored against Blitsen, not ported blind from the web. The
-  boundary is published as [capability tiers](docs/COMPATIBILITY.md), generated from the runtime
-  itself rather than hand-maintained, and `blitsen doctor` reports what a bundle uses that the
-  runtime lacks before you hit it at runtime.
-- **There is no sandbox by default.** An application is trusted native software, not an untrusted
-  document. No same-origin policy, no permission prompts.
-- **It is not for rendering arbitrary third-party web content.** Use a browser engine for that.
+```sh
+npm install -D blitsen
+```
 
-An unimplemented API is *absent* — the property does not exist — so feature detection works. Never
-a stub that resolves to nothing, never a silent no-op. That is enforced rather than reviewed: the
-API manifest is parsed out of the runtime source, and a test asserts every API the manifest calls
-absent is genuinely `undefined` against a real bridge context.
+Tell Blitsen how to produce and find the static build in `package.json`:
 
-## Where it is
+```json
+{
+  "scripts": {
+    "native": "blitsen build"
+  },
+  "blitsen": {
+    "build": "vite build",
+    "output": "dist",
+    "name": "My App"
+  }
+}
+```
 
-**Developing against your own dev server.** `blitsen http://localhost:5173` opens what Vite (or
-anything else serving over HTTP) is serving, rather than a directory of output: modules load as
-they are served, hot reload keeps its channel open, and the window is the tab. Measured against a
-real `vite dev` — React mounts and `[vite] connected.` appears — and gated headlessly by
-`bun run --cwd packages/blitsen test:proxy`. Source-map consumption in stack frames is the one
-part not implemented; see the [compatibility profile](docs/COMPATIBILITY.md#development-your-own-dev-server).
+Open the built application in a native window:
 
-**Rendering real applications.** Six applications written by other people — a React admin dashboard
-using Tailwind 4, Radix, TanStack and Recharts; a Vue 3 app with vue-router and Pinia; a Svelte
-game; and the three stock `create-vite` templates — all render from their own unmodified
-`vite build` output, and all six export with nothing but a dev dependency and a script line. All
-six failed when first measured. See the [M3b evidence](docs/M3B.md).
+```sh
+npx blitsen
+```
 
-![Shadcn Admin rendered by Blitsen](docs/shadcn-admin.png)
+Check it against Blitsen's supported surface, then export it:
 
-*[Shadcn Admin](https://github.com/satnaing/shadcn-admin) (MIT), unmodified, rendered without a
-browser engine. The empty chart panel is Recharts SVG —
-[tracked upstream](https://github.com/DioxusLabs/blitz/issues/448).*
+```sh
+npx blitsen doctor dist
+npm run native
+```
 
-**The architecture proof.** [`examples/pong`](examples/pong) is a two-player Pong app that is
-nothing but `index.html`, `style.css` and `game.js`, and runs from a single exported executable on a
-machine with no toolchain installed. Frame cost is 0.809 ms median against a 16.7 ms budget, and the
-windowed export sustains 60 fps. See the [M3 acceptance evidence](docs/M3.md).
+The default desktop build produces a single executable containing the runtime and the reachable
+application assets. For plain HTML with no build step, point the CLI directly at its directory:
 
-![Pong running in Blitsen](docs/pong.gif)
+```sh
+npx blitsen .
+npx blitsen build . --name "My App"
+```
 
-*Every frame is HTML and CSS laid out by Blitz and mutated from JavaScript — the paddles, the ball
-and the scoreboard are ordinary DOM nodes. The recording comes from the same harness the acceptance
-gate asserts on, so it cannot drift from what the tests verify.*
+During development, Blitsen can replace the browser tab while Vite or another server continues to
+handle transforms and hot reload:
 
-**Past what a browser can answer.** [`examples/hardware`](examples/hardware) is a CPU-Z-shaped
-report on the machine it is running on — processor and per-thread load, memory and swap, every
-mounted volume, kernel and boot time — read through [`blitsen/os`](docs/COMPATIBILITY.md#native-modules).
-None of it has a web spelling: the closest the platform comes is `navigator.hardwareConcurrency`,
-one deliberately coarsened number. It is three files with no build step, and it runs with
-`bun run --cwd packages/blitsen example:hardware`.
+```sh
+npx blitsen http://localhost:5173
+```
 
-Input, animation and restyle are proven together by [`examples/interactive`](examples/interactive),
-whose gate drives the document through the same coordinate hit test the native window uses
-([M2 evidence](docs/M2.md)). Phase 2 — the runtime hosting its own JavaScript engine instead of
-running inside Bun — **is what a build produces now**, and Bun is linked only by an application
-carrying a `.node` addon ([migration note](docs/MIGRATION.md)). The
-[acquisition decision](docs/JSC.md) chose JavaScriptCore and was superseded by
-[`spikes/s8`](spikes/s8/README.md), which measured QuickJS-ng behind the same engine-neutral trait:
-120 golden frames pixel-identical, 59.6 fps windowed, MIT rather than LGPL, and statically linked.
+## What Blitsen expects
 
-## Size
+- A directory of **built static output** containing `index.html`. Blitsen does not transpile
+  TypeScript, JSX, Vue or Svelte source and does not resolve bare npm imports at runtime.
+- An application designed for Blitsen's web-platform subset. Missing APIs are absent so normal
+  feature detection works; `blitsen doctor` reports references it can identify.
+- Trusted application code. A Blitsen application is native software: there is no browser sandbox,
+  same-origin policy or permission prompt.
+- Local application UI, not arbitrary third-party websites.
 
-Every size figure in this project comes from a measured build, never an estimate. The tracked
-baseline lives in
-[`packages/blitsen/test/metrics/size-baseline.json`](packages/blitsen/test/metrics/size-baseline.json)
-and CI fails on growth beyond 2%. An export links Blitsen's own runtime rather than a copy of Bun,
-which took the standalone Pong build from 144.7 MB to **38.1 MB** on Linux x64 — and that is the
-whole download, because the JavaScript engine is statically linked rather than shipped beside it.
-An application still links Bun when only Bun can run it, which now means one thing: it carries a
-`.node` addon ([migration note](docs/MIGRATION.md)). The original 25–50 MB target was withdrawn
-when the [M0 measurement](docs/M0.md) showed it was unreachable against a design that shipped an
-engine library alongside; the shipped total is now inside it, which is a result of the engine
-choice rather than a walk-back of the measurement.
-
-**An export carries the notices it owes.** The third-party notices are generated from the
-dependency graph the runtime was built from, shipped inside the platform package, and embedded in
-the executable — `./MyApp --licenses` prints them back out of the artifact. The
-[LICENSING.md](docs/LICENSING.md) acceptance gate is an automated test
-(`bun run --cwd packages/blitsen test:licensing`): it builds a real export, reads the notices out
-of it, checks every linked package and every licence text against what `cargo` resolved, and
-repeats the check after signing. An export that carries none says so on the build line, which is
-what a Phase 1 export — the one that carries a copy of Bun — still gets.
-
-## Resource comparison
-
-A release-build “hello” window measured on Ubuntu x64 (Ryzen 9 5900X, X11), using Electron 43.4.0,
-Tauri 2.11.5 and this Blitsen checkout:
-
-| Runtime | Disk | Idle CPU | Idle memory (PSS) |
-| --- | ---: | ---: | ---: |
-| Electron | 339.4 MB | 0.2% | 284.3 MB |
-| Tauri | 4.7 MB | <0.1% | 191.9 MB |
-| Blitsen | 38.8 MB | 0.1% | 101.0 MB |
-
-Figures are medians of five runs after a five-second warm-up; CPU is the whole process tree over
-ten seconds (100% is one core), and disk is the packaged app's apparent size. Tauri's CPU and
-memory include its host, WebKit network and WebKit web processes; its disk figure excludes the
-system WebKitGTK it uses. Electron ships Chromium, while Blitsen ships its renderer and JavaScript
-engine. On Linux, Blitsen defaults to Vulkan and asks compatible loaders for only the active DRM
-driver's ICD; hybrid and unknown configurations retain full driver discovery.
+Desktop runtimes are published for Linux, macOS and Windows on x64 and arm64. Android APK output is
+available from a source checkout and requires the Android/Rust toolchain. See
+[platform support](docs/PLATFORM-SUPPORT.md) before distributing an application.
 
 ## Documentation
 
-[Product specification](docs/PRODUCT.md) · [Technical specification](docs/TECH.md) ·
-[Compatibility profile](docs/COMPATIBILITY.md) · [Licensing](docs/LICENSING.md) ·
-[Known Blitz gaps](docs/BLITZ-GAPS.md) · [M0 decision](docs/M0.md)
+| If you want to… | Read |
+| --- | --- |
+| Run your first application | [Getting started](docs/GETTING-STARTED.md) |
+| Understand what Blitsen loads | [Core concepts](docs/CORE-CONCEPTS.md) |
+| Configure a project | [Configuration](docs/CONFIGURATION.md) |
+| Use dialogs, the clipboard, window controls or OS data | [Native APIs](docs/NATIVE-APIS.md) |
+| Solve common integration tasks | [Recipes](docs/RECIPES.md) |
+| Create and distribute an executable or APK | [Packaging and distribution](docs/PACKAGING.md) |
+| Check operating-system requirements and known limits | [Platform support](docs/PLATFORM-SUPPORT.md) |
+| Look up every command and option | [CLI reference](docs/CLI.md) |
+| Diagnose a failure | [Troubleshooting](docs/TROUBLESHOOTING.md) |
 
-## Attribution
+See [Web API support](docs/WEB-APIS.md) for the runtime boundary and the exact generated matrix.
 
-Blitsen is an independent project built on Blitz. **It is not an official DioxusLabs project and is
-not endorsed by DioxusLabs** — the name's proximity to Blitz reflects what it is built on, nothing
-more. Rendering gaps found here are [reported upstream](docs/BLITZ-GAPS.md) with reproductions.
+## Licence and attribution
 
-## Licence
+Blitsen source is dual-licensed under Apache-2.0 or MIT. Exported applications contain third-party
+components with their own terms; read [Licensing](docs/LICENSING.md) before distribution and use
+`./MyApp --licenses` to inspect the notices embedded in an export.
 
-Blitsen source is dual-licensed under Apache-2.0 or MIT. Exported applications also contain
-third-party components with their own terms — the JavaScript engine is MIT, and the most demanding
-term in the tree is Stylo's file-level MPL-2.0. Closed-source applications are supported. An export
-that carries a `.node` addon links the Bun host instead and inherits LGPL obligations through it.
-Read [docs/LICENSING.md](docs/LICENSING.md) before distributing an application.
+Blitsen is an independent project built on Blitz. It is not an official DioxusLabs project and is
+not endorsed by DioxusLabs.

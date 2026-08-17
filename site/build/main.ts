@@ -12,7 +12,7 @@ import { mkdir, readFile, writeFile, copyFile, rm, readdir } from "node:fs/promi
 import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
-import { ALL_PAGES, BASE, GROUPS, REPO, rewriteDocLink, rewriteRootLink } from "./content.ts";
+import { ALL_PAGES, BASE, GROUPS, GUIDE_PAGES, REPO, rewriteDocLink, rewriteRootLink } from "./content.ts";
 import { renderMarkdown, escapeHtml } from "./markdown.ts";
 import { renderPage, setCrest } from "./layout.ts";
 import { landingBody } from "./landing.ts";
@@ -54,10 +54,9 @@ function docsIndexBody(): string {
   return `<article class="prose">
 <h1>Documentation</h1>
 <p class="lede">
-  Start with the task you need to complete, then use the specifications and evidence
-  records for exact behaviour. These pages are generated from
-  <a href="${REPO}/tree/main/docs">docs/</a>; the compatibility profile is generated
-  from the runtime itself.
+  Start with the task you need to complete. The main guide covers running,
+  configuring, building and distributing Blitsen applications. The guides are
+  maintained in <a href="${REPO}/tree/main/docs">the repository</a>.
 </p>
 ${groups}
 </article>`;
@@ -85,7 +84,7 @@ async function build(): Promise<void> {
   // ── documentation index ─────────────────────────────────────────────────────
   await write("docs/index.html", renderPage({
     title: "Documentation",
-    description: "Product and technical specifications, the v1 compatibility profile, and the measurements each milestone was declared on.",
+    description: "Task-based guides for running, configuring, building and distributing Blitsen applications.",
     path: "/docs/",
     activeSlug: "index",
     body: docsIndexBody(),
@@ -158,7 +157,7 @@ that a missing API is <em>absent</em> rather than stubbed, is at least consisten
 
   // ── sitemap and robots ──────────────────────────────────────────────────────
   const origin = process.env.SITE_ORIGIN ?? "https://blitsen.dev";
-  const urls = ["/", "/docs/", ...ALL_PAGES.map((p) => `/docs/${p.slug}/`)];
+  const urls = ["/", "/docs/", ...GUIDE_PAGES.map((p) => `/docs/${p.slug}/`)];
   await write("sitemap.xml",
     `<?xml version="1.0" encoding="UTF-8"?>\n` +
     `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n` +

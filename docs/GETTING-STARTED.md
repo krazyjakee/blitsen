@@ -1,72 +1,79 @@
-# Run and export an app
+# Getting started
 
-Install Blitsen as a development dependency, run your existing web output in a native window,
-then export it as an executable. Blitsen consumes static HTML, CSS and JavaScript; it does not
-replace your framework or build tool.
+Install Blitsen, open a built web application in a native window, check compatibility and export a
+desktop executable.
 
-Blitsen is pre-alpha. Check the [compatibility profile](COMPATIBILITY.md) before treating a browser
-build as a supported Blitsen application. The 0.1.0 runtimes and the executables built from them
-are unsigned.
+> Blitsen is pre-alpha and implements a subset of the web platform. Use `doctor` before every
+> release and test the result on every operating system you plan to support.
+
+## Prerequisites
+
+You need Node.js and a package manager to install and run the CLI. Installing `blitsen` downloads a
+prebuilt runtime for the current desktop platform; it does not compile Rust or run a post-install
+build.
+
+Blitsen accepts static web output with an `index.html`. If your project uses TypeScript, JSX, Vue,
+Svelte or bare npm imports, keep using its existing build tool. Blitsen consumes the directory that
+tool produces.
 
 ## Install Blitsen
+
+From your project directory:
 
 ```sh
 npm install -D blitsen
 ```
 
-The package manager installs the CLI and the runtime for your current desktop platform. There is
-no post-install compilation step or Rust toolchain requirement. Linux, macOS and Windows are
-available on x64 and arm64; see the [0.1.0 release notes](RELEASE-NOTES-0.1.0.md) for the tested
-tier and operating-system requirements of each target.
+The same commands work through another package manager's equivalent executor.
 
-## Run static output
+## Try a plain HTML application
 
-Point Blitsen at a directory containing `index.html`:
+Create a directory containing `index.html`:
 
-```sh
-npx blitsen dist
+```html
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Hello</title>
+    <style>
+      body { display: grid; min-height: 100vh; place-items: center; margin: 0; }
+    </style>
+  </head>
+  <body>
+    <button id="hello">Say hello</button>
+    <script>
+      document.querySelector("#hello").addEventListener("click", (event) => {
+        event.currentTarget.textContent = "Hello from Blitsen";
+      });
+    </script>
+  </body>
+</html>
 ```
 
-For an application with no build step, use its source directory instead:
+Open the directory in a native window:
 
 ```sh
 npx blitsen .
 ```
 
-To use an existing development server and keep its hot reload connection, pass its URL:
+Use `--width`, `--height` and `--title` to change the development window:
 
 ```sh
-npx blitsen http://localhost:5173
+npx blitsen . --width 1024 --height 720 --title "Hello"
 ```
 
-## Check compatibility
+## Add Blitsen to an existing project
 
-Run `doctor` against the static output, not the source directory or development-server URL:
-
-```sh
-npx blitsen doctor dist
-```
-
-Compatibility errors fail an export. Warnings identify behaviour that needs review but do not stop
-the build. The report follows the same capability profile published in this repository.
-
-## Export an executable
-
-Build directly from a static directory:
-
-```sh
-npx blitsen build dist --out MyApp
-```
-
-The default embedded-assets mode produces one executable containing the runtime and application.
-Run that artifact on the target platform to verify the native window, input and application state.
-
-For an existing project, put the build command and output directory in the `blitsen` key of
-`package.json`:
+Add a `blitsen` object to `package.json`. The `build` command can be any command that writes static
+output; `output` is that directory, relative to `package.json`.
 
 ```json
 {
   "scripts": {
+    "dev": "vite",
+    "build": "vite build",
     "native": "blitsen build"
   },
   "blitsen": {
@@ -77,25 +84,76 @@ For an existing project, put the build command and output directory in the `blit
 }
 ```
 
-Then build the web output and native executable in one step:
+Run Blitsen without a directory to execute the configured build and open its output:
+
+```sh
+npx blitsen
+```
+
+Passing a directory bypasses the configured build command:
+
+```sh
+npm run build
+npx blitsen dist
+```
+
+See [Configuration](CONFIGURATION.md) for every supported key.
+
+## Use your development server
+
+Start your usual server, then point Blitsen at it:
+
+```sh
+npm run dev
+npx blitsen http://localhost:5173
+```
+
+The server continues to transform source and provide hot reload. Blitsen supplies the window and
+runtime. A local-directory run watches built files too: CSS changes are swapped when possible and
+other changes reload the document.
+
+Source maps are not currently applied to runtime stack traces. See [Develop with hot
+reload](RECIPES.md#develop-with-hot-reload) for the current workflow.
+
+## Check the built output
+
+Run `doctor` against static output, not source code or a development-server URL:
+
+```sh
+npm run build
+npx blitsen doctor dist
+```
+
+Errors identify output that cannot survive in the current runtime and block export. Warnings name
+unsupported or narrower behavior that needs review. A warning can still represent a real failure
+if your application calls the reported API without a fallback.
+
+For CI or other tools, request JSON:
+
+```sh
+npx blitsen doctor dist --json
+```
+
+## Export a desktop application
+
+With the configuration above:
 
 ```sh
 npm run native
 ```
 
-Blitsen runs the configured command from the directory containing `package.json`, ingests
-`output`, and uses `name` for the window title and default artifact name. A directory passed on the
-command line skips this configured build step.
-
-## Build for another desktop target
-
-Pass one of the six desktop target triples:
+Or build a directory directly:
 
 ```sh
-npx blitsen build dist --target win32-x64 --out MyApp.exe
+npx blitsen build dist --name "My App" --out MyApp
 ```
 
-Blitsen downloads and caches that target's runtime. Cross-building can create the files for another
-platform, but signing and notarisation still require that platform or an external signing service.
-Read [Licensing Blitsen and exported applications](LICENSING.md) before distributing an
-application.
+Embedded assets are the default, so the result is one executable. Run that artifact on the target
+platform and exercise the complete application before distributing it.
+
+## Next steps
+
+- Read [Core concepts](CORE-CONCEPTS.md) before adapting a browser application.
+- Use [Recipes](RECIPES.md) for assets, routing, native modules and persistent data.
+- Read [Packaging and distribution](PACKAGING.md) before adding icons, signing or cross-building.
+- Keep [Troubleshooting](TROUBLESHOOTING.md) nearby when a build or runtime refuses something.

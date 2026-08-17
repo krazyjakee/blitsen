@@ -21,21 +21,23 @@ artifact — nothing is committed back to the repository.
 **Documentation pages are generated from `docs/*.md`. Do not transcribe prose into
 this directory.**
 
-The compatibility profile is already generated from the runtime itself, and the
-milestone documents are gated on measurements. A hand-copied site would quietly
-become a second, wrong source of truth the first time either changed. If a docs page
-needs different words, change the markdown.
+The compatibility profile is generated from the runtime itself. A hand-copied site
+would quietly become a second, wrong source of truth the first time it changed. If a
+docs page needs different words, change the markdown.
 
 The single exception is the home page, [`build/landing.ts`](build/landing.ts), which
-is hand-authored. Every figure on it is transcribed from `README.md` and attributed
-in place, and the figures are kept deliberately few so there is little to drift.
+is hand-authored as a short route into the task-based guides.
 
 ## Adding a page
 
-Add the file to `docs/`, then add an entry to the relevant group in
+Add the file to `docs/`, then add an entry to the relevant user-task group in
 [`build/content.ts`](build/content.ts) with its slug, nav label, title and one-line
 blurb. Nothing else needs touching — the sidebar, the documentation index, the home
 page card grid and the sitemap are all derived from that registry.
+
+Contributor specifications, historical decisions and milestone records belong in
+`INTERNAL_PAGES`. They are still built so existing links work, but are deliberately
+absent from the user navigation and sitemap.
 
 ## Layout
 

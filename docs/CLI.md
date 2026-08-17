@@ -1,0 +1,135 @@
+# CLI reference
+
+The `blitsen` package installs one command with three modes: run, doctor and build.
+
+## Synopsis
+
+```text
+blitsen [directory|url] [options]
+blitsen build [directory] [options]
+blitsen doctor <directory> [--target <triple>] [--json]
+```
+
+Use `npx blitsen`, a package-manager equivalent, or a script in `package.json`.
+
+## Run
+
+```sh
+npx blitsen dist
+npx blitsen http://localhost:5173
+```
+
+A directory must contain `index.html`. A URL must use HTTP or HTTPS and points the runtime at an
+already-running development server. With no argument, Blitsen uses [project
+configuration](CONFIGURATION.md); without configuration it uses the current directory if that
+directory contains `index.html`.
+
+Run accepts:
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `--width <pixels>` | `800` | Initial logical window width |
+| `--height <pixels>` | `600` | Initial logical window height |
+| `--title <text>` | application name or `Blitsen` | Native window title |
+
+## Doctor
+
+```sh
+npx blitsen doctor dist
+npx blitsen doctor dist --target win32-x64
+npx blitsen doctor dist --json
+```
+
+Doctor scans built static output against the compatibility profile. It exits non-zero for errors;
+warnings do not change the exit code. `--target` also grades imports of platform-specific native
+modules.
+
+Desktop targets are `darwin-arm64`, `darwin-x64`, `linux-arm64`, `linux-x64`, `win32-arm64` and
+`win32-x64`. Doctor additionally accepts `android-arm64` and `android-x64`.
+
+## Build
+
+```sh
+npx blitsen build dist --name "My App" --out MyApp
+```
+
+Build runs the same compatibility scan, collects reachable assets, links the runtime and packages
+the result. Compatibility errors stop the build unless `--accept-errors` is supplied.
+
+### Application and output
+
+| Option | Meaning |
+| --- | --- |
+| `--name <text>` | Application name, window title and default output name |
+| `--title <text>` | Override only the window title |
+| `--out <path>` | Output path |
+| `--outfile <path>` | Alias of `--out` |
+| `--width <pixels>` | Initial logical width; default `800` |
+| `--height <pixels>` | Initial logical height; default `600` |
+| `--force` | Replace an existing build output |
+
+### Files and compatibility
+
+| Option | Meaning |
+| --- | --- |
+| `--include <glob>` | Include an otherwise-unreferenced file; repeatable |
+| `--addon <path>` | Carry a `.node` addon; repeatable |
+| `--assets embedded` | Store assets in the executable; this is the default |
+| `--assets side-loaded` | Write assets to `<output>.assets/` beside the executable |
+| `--accept-errors` | Export despite compatibility errors |
+
+Treat `--accept-errors` as an explicit acceptance of broken or degraded behavior, not a normal
+release flag.
+
+### Desktop platform and packaging
+
+| Option | Meaning |
+| --- | --- |
+| `--target <triple>` | Build for another supported desktop target and cache its runtime |
+| `--icon <path>` | PNG or a platform-native `.ico`, `.icns` or `.svg` |
+| `--bundle-id <id>` | macOS bundle identifier; also supplies the Android package ID if one is not set |
+| `--app-version <version>` | Version recorded in platform metadata |
+| `--sign <command>` | Run a signing command with the packaged artifact as its only argument |
+
+Cross-building creates the target's files but does not provide its signing or notarization tools.
+
+### Android
+
+Android produces an APK and does not use `--target`:
+
+| Option | Meaning |
+| --- | --- |
+| `--android` | Build an APK instead of a desktop artifact |
+| `--android-abi <abi>` | Include `arm64-v8a`, `x86_64` or `armeabi-v7a`; repeatable |
+| `--android-package <id>` | Android application ID |
+| `--android-keystore <path>` | Sign with a release keystore |
+| `--android-debug` | Use an unoptimized, debuggable native build |
+
+Without `--android-abi`, Blitsen includes `arm64-v8a` and `x86_64`. Without a release keystore, it
+uses the standard Android debug key. See [Build an Android APK](PACKAGING.md#build-an-android-apk)
+for toolchain and credential variables.
+
+## General options
+
+```text
+-h, --help       Show CLI help
+-v, --version    Show the installed version
+```
+
+## Environment variables
+
+Most users do not need these. They are useful for CI, source checkouts and custom toolchains.
+
+| Variable | Purpose |
+| --- | --- |
+| `BLITSEN_CACHE_DIR` | Override the downloaded cross-target runtime cache |
+| `BLITSEN_NATIVE_PATH` | Override the development runtime addon |
+| `BLITSEN_RUNTIME_PATH` | Override the executable runtime used for ordinary desktop exports |
+| `BLITSEN_ANDROID_CRATE` | Path to the `blitsen-android` crate |
+| `BLITSEN_ANDROID_KEYSTORE_PASSWORD` | Android keystore password |
+| `BLITSEN_ANDROID_KEY_ALIAS` | Key alias when a keystore contains more than one key |
+| `BLITSEN_ANDROID_KEY_PASSWORD` | Key password when it differs from the store password |
+| `BLITSEN_NOTICES_PATH` | Audited third-party notices to embed in an Android APK |
+
+Runtime overrides are unversioned and must match the requested operating system and architecture.
+Blitsen validates them before use and reports that package resolution was bypassed.

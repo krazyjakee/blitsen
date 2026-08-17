@@ -1,0 +1,106 @@
+# Web API support
+
+Blitsen implements the browser APIs needed by its supported application profile, not a complete
+browser. Build-time checks and runtime feature detection are both part of using it safely.
+
+## Check an application
+
+Run doctor against built output:
+
+```sh
+npx blitsen doctor dist
+```
+
+Errors block export because the scanner found a construct the application cannot recover from.
+Warnings identify missing or narrower behavior that may be guarded by a fallback—or may fail when
+the path executes. Review every warning and test the result in Blitsen.
+
+For a machine-readable report or a different target:
+
+```sh
+npx blitsen doctor dist --json
+npx blitsen doctor dist --target win32-x64
+```
+
+## Supported areas
+
+This is a practical summary. The [generated compatibility matrix](COMPATIBILITY.md#capability-tiers)
+lists individual globals, classes and members.
+
+| Area | Current support |
+| --- | --- |
+| DOM | Documents, elements, text, fragments, templates, attributes, selectors, mutation observers and common traversal/mutation APIs |
+| Events | Event targets, custom, mouse, keyboard, focus, input, pointer, wheel, error and submit events |
+| Forms | Basic input, textarea, select, option, button and form state; keyboard editing and selection |
+| Layout reads | Bounding rectangles, client/offset geometry, computed style, scrolling, ranges, carets and selection |
+| Scheduling | `requestAnimationFrame`, timeouts and intervals |
+| Networking | Buffered `fetch`, request/response/headers/blob, abort signals and WebSocket |
+| Workers | Dedicated workers, message channels, structured clone and transferable buffers |
+| Routing | `location`, `history`, hash changes and popstate within the application |
+| Styling | Stylesheets, rule source, media queries, CSS support checks and resize observers |
+| Audio | `<audio>` and a focused Web Audio subset |
+| Storage | `localStorage` and `sessionStorage`, both in-memory for one process |
+
+## Important absences
+
+| Feature | What to use or expect |
+| --- | --- |
+| Canvas 2D, WebGL and WebGPU | Not implemented; a document containing `<canvas>` is a doctor error |
+| WebAssembly and `Intl` | Absent from the standard shipped JavaScript engine |
+| XHR | Use `fetch` |
+| Streams | Responses are buffered; streaming body APIs are absent |
+| FormData, File and FileReader | Absent; use supported request bodies or native file paths |
+| IndexedDB | Absent; use application-owned durable storage |
+| SharedWorker and ServiceWorker | Absent; dedicated `Worker` is supported |
+| Browser modal dialogs | `alert`, `confirm`, `prompt` and `print` are absent; use `blitsen/dialog` where available |
+| Cookies | No cookie jar; `document.cookie` is absent |
+| Custom elements and shadow DOM | Absent; `DOMParser` is supported |
+| Video and text tracks | Absent; audio is supported |
+| Accessibility tree | Not exported to the platform in this release |
+| Full IME and complex text editing | Incomplete; verify every input language and workflow you support |
+
+## Feature detection
+
+Missing APIs are absent rather than installed as no-op stubs:
+
+```js
+if ("ResizeObserver" in globalThis) {
+  const observer = new ResizeObserver(handleResize);
+  observer.observe(element);
+}
+```
+
+The same rule applies to optional native members:
+
+```js
+import dialog from "blitsen/dialog";
+
+if (dialog.openFile) {
+  const path = await dialog.openFile();
+}
+```
+
+Do not infer support from TypeScript's browser library. A package can add Blitsen declarations but
+cannot remove unsupported names from `lib.dom.d.ts`; doctor checks the built application instead.
+
+## Renderer differences
+
+HTML and CSS are rendered by Blitz rather than a browser engine. Some valid browser styles render
+differently or are ignored. Current high-impact areas include transitions, fixed/sticky positioning,
+paint effects, SVG, form-control styling, font fallback and complex text.
+
+Doctor reports patterns it can recognize, but it cannot prove visual equivalence. Keep screenshot or
+interaction tests for important layouts and verify them on each target operating system.
+
+## Local and remote resources
+
+An export has no web server. Local HTML, CSS, modules and assets are loaded from the application
+bundle. Remote `fetch` and WebSocket are supported; remote script/module loading and remote
+subresources are deliberately narrower or refused. Prefer a self-contained application and use
+relative local URLs.
+
+## Security model
+
+A Blitsen application is trusted native software. There is no same-origin policy, browser sandbox,
+permission prompt or safe boundary for untrusted third-party pages. Validate remote data as you
+would in any native application and never use the runtime as a general web-content viewer.
