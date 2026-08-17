@@ -15,6 +15,11 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  # `rust-cache` below keeps Cargo's registry small and shared; sccache stores
+  # compiler outputs by their actual inputs, so compatible work is reusable
+  # across jobs instead of living in one large target archive per job.
+  SCCACHE_GHA_ENABLED: "true"
+  RUSTC_WRAPPER: sccache
 
 jobs:
   # Fast feedback: no native toolchain, no display.
@@ -48,7 +53,14 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
+      - uses: mozilla-actions/sccache-action@v0.0.11
+        with:
+          version: v0.17.0
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: cargo
+          cache-targets: false
+          cache-bin: false
       - name: Install Blitz system dependencies
         if: runner.os == 'Linux'
         run: |
@@ -85,7 +97,14 @@ jobs:
         with:
           bun-version: 1.3.14
       - uses: dtolnay/rust-toolchain@stable
+      - uses: mozilla-actions/sccache-action@v0.0.11
+        with:
+          version: v0.17.0
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: cargo
+          cache-targets: false
+          cache-bin: false
       - name: Install Blitz system dependencies
         if: runner.os == 'Linux'
         run: |
@@ -147,7 +166,14 @@ jobs:
         with:
           bun-version: 1.3.14
       - uses: dtolnay/rust-toolchain@stable
+      - uses: mozilla-actions/sccache-action@v0.0.11
+        with:
+          version: v0.17.0
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: cargo
+          cache-targets: false
+          cache-bin: false
       - name: Install Blitz system dependencies
         run: |
           sudo apt-get update
@@ -186,7 +212,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - uses: mozilla-actions/sccache-action@v0.0.11
+        with:
+          version: v0.17.0
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: cargo
+          cache-targets: false
+          cache-bin: false
       # The corpus renders through the CPU rasterizer and needs no display; only
       # Blitz's font enumeration wants a system library, and only on Linux.
       - name: Install Blitz system dependencies
@@ -230,7 +263,14 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.97.1
+      - uses: mozilla-actions/sccache-action@v0.0.11
+        with:
+          version: v0.17.0
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: cargo
+          cache-targets: false
+          cache-bin: false
       - name: Install Blitz system dependencies
         if: runner.os == 'Linux'
         run: |
@@ -318,9 +358,14 @@ jobs:
         with:
           bun-version: 1.3.14
       - uses: dtolnay/rust-toolchain@stable
+      - uses: mozilla-actions/sccache-action@v0.0.11
+        with:
+          version: v0.17.0
       - uses: Swatinem/rust-cache@v2
         with:
-          key: ${{ matrix.target }}
+          shared-key: cargo
+          cache-targets: false
+          cache-bin: false
       - name: Install Blitz system dependencies
         if: runner.os == 'Linux'
         run: |
@@ -442,9 +487,16 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-linux-android, x86_64-linux-android
+      - uses: mozilla-actions/sccache-action@v0.0.11
+        with:
+          version: v0.17.0
       - uses: Swatinem/rust-cache@v2
         with:
-          key: android
+          # This job installs cargo-ndk after the cache step. Keep its bin cache
+          # separate so another job cannot win the shared immutable cache first
+          # and leave the tool absent on every later Android run.
+          shared-key: cargo-android
+          cache-targets: false
       # `rquickjs-sys` ships pre-generated bindings for sixteen triples and none
       # is `*-linux-android`, so `crates/blitsen-quickjs/Cargo.toml` turns on its
       # `bindgen` feature for that target — which makes libclang a build-time
