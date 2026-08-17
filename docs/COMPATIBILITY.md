@@ -15,16 +15,18 @@ editing and selection but not IME or the advanced editing surface — see
 
 ## Window renderer by platform
 
-Blitsen uses the GPU Vello renderer on Windows, Linux, Android and Apple Silicon macOS. Intel
-macOS uses Vello's CPU rasterizer and presents its finished pixel buffer through a software
-window backend. This is an automatic safety fallback: Vello/Metal compute work can wedge the
-display GPU on Intel/Radeon Macs, reset WindowServer and terminate the whole desktop session
-([#229](https://github.com/krazyjakee/blitsen/issues/229)). Adapter or device-loss recovery cannot
-make that path safe because the system can stop responding before wgpu reports an error.
+Blitsen uses the GPU Vello renderer on Windows, Linux, Android and Apple Silicon macOS. Most Intel
+macOS systems use Vello's CPU rasterizer and present its finished pixel buffer through softbuffer.
+`MacBookPro14,3` is blocked before a window or renderer is created: the Radeon Pro 560 on that model
+has reset under both the original Vello/Metal renderer and the CPU renderer's Core Animation
+presentation path, terminating WindowServer and the whole desktop session
+([#229](https://github.com/krazyjakee/blitsen/issues/229)). `blitsen doctor` and `blitsen build`
+remain available on the blocked model. An Intel Mac whose hardware model cannot be identified is
+also failed closed rather than allowed to bypass the safety boundary.
 
 The selected renderer is written to stderr when a window opens. The CPU fallback needs no app
-configuration and has no GPU override on Intel macOS; rendering there may use more CPU than on
-the GPU-backed targets.
+configuration and has no GPU override on supported Intel Macs; rendering there may use more CPU
+than on the GPU-backed targets. The blocked model has no unsafe override.
 
 Run the check against build output, not source:
 

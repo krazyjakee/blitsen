@@ -7,42 +7,42 @@
     },
     "packages/blitsen": {
       "name": "blitsen",
-      "version": "0.1.1",
+      "version": "0.1.2",
       "bin": {
         "blitsen": "bin/blitsen.mjs",
       },
       "optionalDependencies": {
-        "@blitsen/darwin-arm64": "0.1.1",
-        "@blitsen/darwin-x64": "0.1.1",
-        "@blitsen/linux-arm64": "0.1.1",
-        "@blitsen/linux-x64": "0.1.1",
-        "@blitsen/win32-arm64": "0.1.1",
-        "@blitsen/win32-x64": "0.1.1",
+        "@blitsen/darwin-arm64": "0.1.2",
+        "@blitsen/darwin-x64": "0.1.2",
+        "@blitsen/linux-arm64": "0.1.2",
+        "@blitsen/linux-x64": "0.1.2",
+        "@blitsen/win32-arm64": "0.1.2",
+        "@blitsen/win32-x64": "0.1.2",
       },
     },
     "packages/platforms/darwin-arm64": {
       "name": "@blitsen/darwin-arm64",
-      "version": "0.1.1",
+      "version": "0.1.2",
     },
     "packages/platforms/darwin-x64": {
       "name": "@blitsen/darwin-x64",
-      "version": "0.1.1",
+      "version": "0.1.2",
     },
     "packages/platforms/linux-arm64": {
       "name": "@blitsen/linux-arm64",
-      "version": "0.1.1",
+      "version": "0.1.2",
     },
     "packages/platforms/linux-x64": {
       "name": "@blitsen/linux-x64",
-      "version": "0.1.1",
+      "version": "0.1.2",
     },
     "packages/platforms/win32-arm64": {
       "name": "@blitsen/win32-arm64",
-      "version": "0.1.1",
+      "version": "0.1.2",
     },
     "packages/platforms/win32-x64": {
       "name": "@blitsen/win32-x64",
-      "version": "0.1.1",
+      "version": "0.1.2",
     },
   },
   "packages": {
