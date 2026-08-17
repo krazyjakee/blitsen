@@ -76,9 +76,9 @@ harness = false
 ndk = { version = "0.9", default-features = false }
 
 # Vello's Metal compute path can wedge the display GPU on Intel Macs before
-# wgpu can report device loss (#229). Use vello_cpu and softbuffer on supported
-# Intel Macs. MacBookPro14,3 is rejected before window creation because its
-# Core Animation presentation path can still submit unsafe Metal work.
+# wgpu can report device loss (#229). Use vello_cpu to rasterize on the CPU and
+# present its finished RGBA buffer through softbuffer. Core Animation remains
+# the system compositor, but Blitsen does not create a wgpu/Metal renderer.
 [target.'cfg(all(target_os = "macos", target_arch = "x86_64"))'.dependencies]
 anyrender_vello_cpu = { version = "0.15", features = ["softbuffer_window_renderer"] }
 

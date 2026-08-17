@@ -17,10 +17,7 @@ use winit::event_loop::pump_events::EventLoopExtPumpEvents;
 use winit::keyboard::ModifiersState;
 use winit::window::WindowAttributes;
 
-use super::{
-    NativeWindowRenderer, SharedBlitzDocument, WindowApplication,
-    ensure_window_presentation_is_safe, native_window_renderer,
-};
+use super::{NativeWindowRenderer, SharedBlitzDocument, WindowApplication, native_window_renderer};
 use crate::OpenDirectoryOptions;
 use crate::app::AppFiles;
 use crate::pointer_input::PointerIds;
@@ -54,11 +51,6 @@ impl<E: JsEngine + Clone + 'static> WindowSession<E> {
         files: AppFiles,
         options: OpenDirectoryOptions,
     ) -> Result<Self, JsError> {
-        // Before the event loop, NSView or renderer exists. The 0.1.1 CPU
-        // rasterizer still handed each frame to a CALayer, and Core Animation
-        // submitted Metal compute work on the blocked model. No object that can
-        // create that presentation path may be constructed before this check.
-        ensure_window_presentation_is_safe()?;
         let started_at = Instant::now();
         let runtime = tokio::runtime::Builder::new_multi_thread()
             // Network and audio work are asynchronous rather than CPU-parallel.

@@ -6,9 +6,6 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Instant;
 
-#[cfg(all(target_os = "macos", target_arch = "x86_64"))]
-use std::process::Command;
-
 use blitsen_blitz::BlitzDom;
 use blitsen_core::WindowState;
 use blitsen_dom::DomBackend;
@@ -33,12 +30,11 @@ mod session;
 
 pub use session::WindowSession;
 
-/// The window renderer used on supported Intel Macs.
+/// The window renderer safe for this target.
 ///
 /// Vello's Metal compute path has caused full-session GPU resets on Intel Macs
-/// (#229). Supported machines use the CPU rasterizer and softbuffer. The
-/// affected MacBookPro14,3 is rejected before this renderer or a window is
-/// created because Core Animation presentation also triggered the reset.
+/// (#229). Those machines use the CPU rasterizer and a software framebuffer;
+/// other targets retain the GPU renderer.
 #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
 pub type NativeWindowRenderer = anyrender_vello_cpu::VelloCpuWindowRenderer;
 
@@ -53,53 +49,6 @@ fn native_window_renderer() -> NativeWindowRenderer {
          reason=Intel-macOS-Metal-safety-fallback"
     );
     NativeWindowRenderer::new()
-}
-
-/// Why this Intel Mac must not create a window surface.
-///
-/// `MacBookPro14,3` is the 2017 15-inch model on which both Vello/wgpu and the
-/// 0.1.1 CPU renderer's Core Animation presentation triggered Radeon Metal
-/// compute resets and killed WindowServer (#229). An unidentified Intel Mac is
-/// also failed closed: model detection is the safety boundary, so silently
-/// continuing when it fails would turn a diagnostic problem into data loss.
-#[cfg(any(all(target_os = "macos", target_arch = "x86_64"), test))]
-fn unsafe_intel_mac_presentation(model: Option<&str>) -> Option<String> {
-    match model.map(str::trim).filter(|model| !model.is_empty()) {
-        Some("MacBookPro14,3") => Some(
-            "Blitsen windowing is disabled on MacBookPro14,3: both GPU rendering and \
-             0.1.1's CPU/Core Animation presentation have triggered Radeon Pro 560 \
-             Metal compute resets and terminated WindowServer (#229). `blitsen doctor` \
-             and `blitsen build` remain available; opening a window is refused to \
-             prevent another desktop-session loss."
-                .to_string(),
-        ),
-        Some(_) => None,
-        None => Some(
-            "Blitsen could not identify this Intel Mac model, so windowing is disabled: \
-             model detection guards a known Metal/Core Animation desktop-session-loss \
-             failure (#229). `blitsen doctor` and `blitsen build` remain available."
-                .to_string(),
-        ),
-    }
-}
-
-#[cfg(all(target_os = "macos", target_arch = "x86_64"))]
-fn ensure_window_presentation_is_safe() -> Result<(), JsError> {
-    let model = Command::new("/usr/sbin/sysctl")
-        .args(["-n", "hw.model"])
-        .output()
-        .ok()
-        .filter(|output| output.status.success())
-        .and_then(|output| String::from_utf8(output.stdout).ok());
-    match unsafe_intel_mac_presentation(model.as_deref()) {
-        Some(reason) => Err(JsError::new(reason)),
-        None => Ok(()),
-    }
-}
-
-#[cfg(not(all(target_os = "macos", target_arch = "x86_64")))]
-fn ensure_window_presentation_is_safe() -> Result<(), JsError> {
-    Ok(())
 }
 
 #[cfg(not(all(target_os = "macos", target_arch = "x86_64")))]
@@ -277,31 +226,6 @@ fn input_call_script(
         "globalThis.{}(...{arguments})",
         bootstrap.entry_point()
     ))
-}
-
-#[cfg(test)]
-mod presentation_safety_tests {
-    use super::unsafe_intel_mac_presentation;
-
-    #[test]
-    fn blocks_the_model_that_reset_the_radeon_gpu() {
-        let reason = unsafe_intel_mac_presentation(Some("MacBookPro14,3\n"))
-            .expect("the affected model must be blocked");
-        assert!(reason.contains("Radeon Pro 560"));
-        assert!(reason.contains("opening a window is refused"));
-    }
-
-    #[test]
-    fn permits_other_identified_intel_macs_to_keep_the_cpu_renderer() {
-        assert!(unsafe_intel_mac_presentation(Some("MacBookPro15,1")).is_none());
-    }
-
-    #[test]
-    fn fails_closed_when_model_detection_fails() {
-        let reason = unsafe_intel_mac_presentation(None)
-            .expect("unknown Intel hardware must not bypass the safety check");
-        assert!(reason.contains("could not identify this Intel Mac model"));
-    }
 }
 
 /// Forgets the window the `native:window` module addresses.
