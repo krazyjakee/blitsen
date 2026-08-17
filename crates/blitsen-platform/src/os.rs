@@ -349,7 +349,10 @@ mod tests {
         for volume in &volumes {
             assert!(!volume.mount_point.is_empty(), "{volume:?}");
             assert!(volume.available <= volume.total, "{volume:?}");
-            assert!(["ssd", "hdd", "unknown"].contains(&volume.kind), "{volume:?}");
+            assert!(
+                ["ssd", "hdd", "unknown"].contains(&volume.kind),
+                "{volume:?}"
+            );
         }
     }
 

@@ -28,11 +28,11 @@ use winit::window::Window;
 // Android; see the note above `with`. What is left is the slot itself, which the
 // session publishes into and reads back whatever the platform.
 #[cfg(not(target_os = "android"))]
-use std::str::FromStr;
-#[cfg(not(target_os = "android"))]
 use blitsen_js::JsError;
 #[cfg(not(target_os = "android"))]
 use serde_json::{Value, json};
+#[cfg(not(target_os = "android"))]
+use std::str::FromStr;
 #[cfg(not(target_os = "android"))]
 use winit::cursor::CursorIcon;
 #[cfg(not(target_os = "android"))]

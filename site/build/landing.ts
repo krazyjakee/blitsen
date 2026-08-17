@@ -124,31 +124,6 @@ export function landingBody(crestSvg: string): string {
     baseline lives in the repository and CI fails on growth beyond 2%.
   </p>
 
-  <div class="table-scroll">
-    <table>
-      <caption>
-        A release-build “hello” window on Ubuntu x64 (Ryzen 9 5900X, X11), against
-        Electron 43.4.0 and Tauri 2.11.5.
-      </caption>
-      <thead>
-        <tr><th>Runtime</th><th class="num">Disk</th><th class="num">Idle CPU</th>
-        <th class="num">Idle memory (PSS)</th></tr>
-      </thead>
-      <tbody>
-        <tr><td>Electron</td><td class="num">339.4 MB</td><td class="num">0.2%</td><td class="num">284.3 MB</td></tr>
-        <tr><td>Tauri</td><td class="num">4.7 MB</td><td class="num">&lt;0.1%</td><td class="num">191.9 MB</td></tr>
-        <tr class="mine"><td>Blitsen</td><td class="num">38.8 MB</td><td class="num">0.1%</td><td class="num">101.0 MB</td></tr>
-      </tbody>
-    </table>
-  </div>
-  <p class="fineprint">
-    Medians of five runs after a five-second warm-up. CPU is the whole process tree
-    over ten seconds, where 100% is one core; disk is the packaged app's apparent
-    size. Tauri's figures include its host and WebKit processes, and its disk figure
-    excludes the system WebKitGTK it uses. Electron ships Chromium; Blitsen ships its
-    renderer and JavaScript engine.
-  </p>
-
   <div class="stats">
     <div class="stat">
       <span class="stat-n">38.1 MB</span>

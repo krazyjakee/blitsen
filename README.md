@@ -104,24 +104,6 @@ of it, checks every linked package and every licence text against what `cargo` r
 repeats the check after signing. An export that carries none says so on the build line, which is
 what a Phase 1 export — the one that carries a copy of Bun — still gets.
 
-## Resource comparison
-
-A release-build “hello” window measured on Ubuntu x64 (Ryzen 9 5900X, X11), using Electron 43.4.0,
-Tauri 2.11.5 and this Blitsen checkout:
-
-| Runtime | Disk | Idle CPU | Idle memory (PSS) |
-| --- | ---: | ---: | ---: |
-| Electron | 339.4 MB | 0.2% | 284.3 MB |
-| Tauri | 4.7 MB | <0.1% | 191.9 MB |
-| Blitsen | 38.8 MB | 0.1% | 101.0 MB |
-
-Figures are medians of five runs after a five-second warm-up; CPU is the whole process tree over
-ten seconds (100% is one core), and disk is the packaged app's apparent size. Tauri's CPU and
-memory include its host, WebKit network and WebKit web processes; its disk figure excludes the
-system WebKitGTK it uses. Electron ships Chromium, while Blitsen ships its renderer and JavaScript
-engine. On Linux, Blitsen defaults to Vulkan and asks compatible loaders for only the active DRM
-driver's ICD; hybrid and unknown configurations retain full driver discovery.
-
 ## Documentation
 
 [Product specification](docs/PRODUCT.md) · [Technical specification](docs/TECH.md) ·

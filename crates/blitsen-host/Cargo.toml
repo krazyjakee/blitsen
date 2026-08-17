@@ -12,7 +12,6 @@ publish.workspace = true
 anyrender = "0.12"
 anyrender_vello = "0.13"
 anyrender_vello_cpu = "0.15"
-base64 = "0.22"
 blitsen-blitz = { path = "../blitsen-blitz" }
 blitsen-core = { path = "../blitsen-core" }
 blitsen-dom = { path = "../blitsen-dom" }
@@ -23,7 +22,6 @@ blitz = { git = "https://github.com/DioxusLabs/blitz", rev = "1efe22d2524d71ede5
 # are off because blitz-paint's `svg` default turns on blitz-dom/svg, which does
 # not compile at this pin.
 blitz-paint = { git = "https://github.com/DioxusLabs/blitz", rev = "1efe22d2524d71ede5b94592204c21f0de644219", default-features = false, features = ["custom-widget"] }
-data-url = "0.3.2"
 # The third-party notices an artifact carries are gzipped inside it (#121), and
 # reading them belongs to the application's files rather than to the appended
 # section: an APK carries the same file under `assets/` (#144). Already in the

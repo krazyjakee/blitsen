@@ -51,7 +51,7 @@ your build tool — it runs the command you wrote and consumes the directory it 
 directory argument (`npx blitsen build dist`) skips the wrapping, and every flag overrides the
 configured value. `name` becomes the window title and the default output file name. The `blitsen`
 key of `package.json` is the only config location; its schema ships as
-`blitsen/src/config.schema.json`, and `defineConfig` from the package validates the same shape
+`blitsen/config.schema.json`, and `defineConfig` from the package validates the same shape
 in JS:
 
 ```js

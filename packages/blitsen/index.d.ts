@@ -31,7 +31,7 @@ export interface LoadedConfig {
   config: BlitsenConfig | null;
 }
 
-/** JSON Schema for `BlitsenConfig`, published as `src/config.schema.json`. */
+/** JSON Schema for `BlitsenConfig`, published as `blitsen/config.schema.json`. */
 export declare const CONFIG_SCHEMA: Record<string, unknown>;
 
 /** Validates a config and returns it, throwing an error naming the offending key. */

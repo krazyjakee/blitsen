@@ -273,9 +273,6 @@ thead th {
   border-bottom: 1px solid var(--rule);
 }
 tbody tr + tr td { border-top: 1px solid var(--rule-soft); }
-td .num, th.num, td.num { text-align: right; font-variant-numeric: tabular-nums; }
-tr.mine { background: var(--accent-wash); }
-tr.mine td { font-weight: 600; }
 
 figure.shot { margin: 1.8rem 0; }
 figure.shot img {

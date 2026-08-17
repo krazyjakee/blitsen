@@ -51,12 +51,11 @@ describe("runtime resolution", () => {
     expect(waits).toEqual([12]);
   });
 
-  test("the bin entry point delegates engine adaptation and keeps Bun's wait strategy", async () => {
+  test("the bin entry point delegates runtime resolution to the CLI", async () => {
     const entrypoint = await readFile(join(import.meta.dir, "../bin/blitsen.mjs"), "utf8");
-    expect(entrypoint).toContain("openRuntime(resolved");
-    expect(entrypoint).toContain("waitForNextFrame: delay => Bun.sleep(delay)");
-    expect(entrypoint).toContain("buildStandalone(options, resolved)");
-    expect(entrypoint).not.toContain("new native.Engine");
+    expect(entrypoint).toContain("main(process.argv.slice(2), console)");
+    expect(entrypoint).not.toContain("native/blitsen.node");
+    expect(entrypoint).not.toContain("openRuntime");
   });
 
   test("declares one platform package per target, pinned to this version exactly", async () => {
