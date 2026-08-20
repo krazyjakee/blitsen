@@ -24,11 +24,11 @@ Status values: **open** (reproduced, unfiled), **filed** (upstream issue exists)
 | --- | --- | --- | --- | --- |
 | G1 | Digits absent from some text runs while letters and punctuation render | filed | `spikes/s6/results/blitz-snapshot/react.png` | [blitz#688](https://github.com/DioxusLabs/blitz/issues/688); see below |
 | G2 | A property named by `transition` keeps its pre-stylesheet value for good | filed | `crates/blitsen-blitz/tests/reductions/transition-stale-style.html` | [blitz#689](https://github.com/DioxusLabs/blitz/issues/689); the hidden overlays were a symptom. Now reachable through Blitsen, which it was not when this was written; see below |
-| G3 | `absolute`/`fixed` insets and auto margins resolve against the wrong box | filed | `crates/blitsen-blitz/tests/conformance/cases/defect-*.html` | [blitz#690](https://github.com/DioxusLabs/blitz/issues/690), [blitz#691](https://github.com/DioxusLabs/blitz/issues/691); gated as known-failing cases |
+| G3 | `absolute`/`fixed` insets resolve against the wrong box | filed, half fixed | `crates/blitsen-blitz/tests/conformance/cases/defect-initial-containing-block.html` | [blitz#690](https://github.com/DioxusLabs/blitz/issues/690), [blitz#691](https://github.com/DioxusLabs/blitz/issues/691). The auto-margin half is **fixed** — Taffy's fix arrived with the pin, and its case is now an ordinary oracle. The initial containing block is still wrong and still gated |
 | G4 | Form controls and anchors fall back to native/default styling | open | `crates/blitsen-blitz/src/tests/ua.rs`; `spikes/s6/results/blitz-snapshot/{react,vue}.png` | Blitz ships a trimmed `html.css` and no `forms.css` or `ua.css` at all. The half of that baseline this engine can honour now ships in `crates/blitsen-blitz/src/ua.rs`; the controls with no widget behind them do not. See below |
-| G5 | SVG paints nothing in Blitsen's build; wrong geometry in upstream's | filed upstream | `spikes/s6/results/blitz-snapshot/react.png` | [blitz#448](https://github.com/DioxusLabs/blitz/issues/448); which of the two you get depends on the `svg` feature, and Blitsen cannot enable it (G7). See below |
+| G5 | SVG paints nothing in Blitsen's build | fixed | `crates/blitsen-blitz/src/tests/svg.rs` | The `svg` feature it needed compiles upstream now (G7), so Blitsen enables it: inline `<svg>`, `<img src="*.svg">` and `background-image` all paint, as vectors. What is left unpainted is G16. See below |
 | G6 | Accumulating line-height, antialiasing and vertical spacing differences | open, low priority | `spikes/s6/results/metrics.tsv` | Needs a tolerance corpus before it can be actioned |
-| G7 | `blitz-dom`'s `svg` feature does not compile at the pinned revision | filed | Build failure, reproducible | [blitz#687](https://github.com/DioxusLabs/blitz/issues/687); see below |
+| G7 | `blitz-dom`'s `svg` feature does not compile at the pinned revision | fixed | The build, which now compiles it | [blitz#687](https://github.com/DioxusLabs/blitz/issues/687); upstream re-adopted `svg` as a default feature and moved to usvg 0.48, and the pin moved past it. See below |
 | G8 | `@keyframes` animations never move | withdrawn | `crates/blitsen-blitz/src/lib.rs::tests::animations_stand_still_until_the_host_supplies_a_clock` | Not a Blitz gap: Blitz animates keyframes correctly. Blitsen was resolving every frame at time zero; see below |
 | G9 | `filter` and `backdrop-filter` paint nothing at all | open | `crates/blitsen-blitz/tests/conformance/cases/defect-filter-ignored.html` | Not Blitz: `blitz-paint` builds the filter layer and both anyrender backends drop it. `clip-path` and `mask-image` do work. See below |
 | G10 | Changing checkedness does not invalidate the cascade, so a `:checked` rule never repaints | open | `blitz-dom`'s `stylo.rs`, `document.rs` and `events/pointer.rs` at the pin; measured in pixels | Blitz's own click on its own checkbox has it too; see below |
@@ -36,7 +36,9 @@ Status values: **open** (reproduced, unfiled), **filed** (upstream issue exists)
 | G12 | Blitz has no `[hidden]` user-agent rule | withdrawn | `docs/COMPATIBILITY.md`, "Rendered text, box reads and scrolling" | It has the rule. The probe that said otherwise put an author `display: block` on the element, which correctly wins the cascade |
 | G13 | Link-ness never reaches `ElementState`, so the style-sharing cache hands one anchor's style to another | open | `crates/blitsen-blitz/src/tests/ua.rs::only_an_anchor_with_an_href_is_painted_as_a_link` | stylo's cascade layer: `:any-link` and `:link` are matched ad hoc in `blitz-dom`'s `stylo.rs`, so two sibling anchors of opposite kinds are sharing candidates. Same shape as G10. See below |
 
-| G14 | A replaced element panics in layout the moment it carries a custom widget | filed | `crates/blitsen-blitz/src/tests/canvas.rs::canvas_survives_carrying_a_custom_widget` | [blitz#706](https://github.com/DioxusLabs/blitz/issues/706); patched in a fork rather than worked around, because there is nothing to work around it with. See below |
+| G14 | A replaced element panics in layout the moment it carries a custom widget | fixed | `crates/blitsen-blitz/src/tests/canvas.rs::canvas_survives_carrying_a_custom_widget` | [blitz#706](https://github.com/DioxusLabs/blitz/issues/706), fixed by [blitz#719](https://github.com/DioxusLabs/blitz/pull/719). The fork that carried the patch is retired and the workspace has no `[patch]` section left (#138). See below |
+| G17 | SVG `<text>` is resolved against a font database that can be empty on a host where HTML text renders | open | `crates/blitsen-blitz/src/tests/svg.rs::text_inside_an_svg_is_painted_as_glyphs_wherever_the_host_has_one`; GitHub's Linux runner | `blitz-dom` hands usvg a `fontdb` built by `load_system_fonts()`, while HTML text is shaped by Parley through the platform's own font discovery. The two disagree, and where they do the text vanishes silently. See below |
+| G16 | An SVG paint the renderer cannot convert marks the frame's corner rather than the element | open | `crates/blitsen-blitz/src/tests/svg.rs::an_unsupported_pattern_fill_marks_the_frame_corner_rather_than_the_element` | Not Blitz: `anyrender_svg`'s error handler fills the node's bounding box under the *identity* transform. A `<pattern>` fill anywhere leaves a half-transparent red box at 0,0. See below |
 | G15 | `pointer-events` accepts only `auto` and `none`, so `all` is dropped and the element inherits | open | `crates/blitsen-blitz/src/tests/stylesheets.rs::an_element_that_declares_it_takes_hits_inside_one_that_does_not_is_hit` | stylo's cascade layer: the other nine values are `#[cfg(feature = "gecko")]`, which needs Gecko's bindings and cannot be enabled by an embedder. Worked around in `pointer_events.rs`; see below |
 
 Broad Tailwind/renderer work has an upstream collection in
@@ -120,14 +122,16 @@ instead, and both are now gated as known-failing conformance cases (see
   `position: fixed` does the same, so on a document shorter than the window both stop at the
   content's height instead of reaching the bottom of the viewport.
   [`defect-initial-containing-block.html`](../crates/blitsen-blitz/tests/conformance/cases/defect-initial-containing-block.html).
-- **Auto margins are resolved from the declared width, not the used one.** With both insets given,
-  `margin: auto` and a width that `max-width` clamps, the free space is computed against the
-  unclamped width, which leaves no margin and pins the box to the leading edge instead of centring
-  it. [`defect-absolute-auto-margins.html`](../crates/blitsen-blitz/tests/conformance/cases/defect-absolute-auto-margins.html).
+- **Auto margins were resolved from the declared width, not the used one** — and that half is
+  **fixed**. With both insets given, `margin: auto` and a width that `max-width` clamped, the free
+  space was computed against the unclamped width, which left no margin and pinned the box to the
+  leading edge instead of centring it. The fix is Taffy's and arrived with the Blitz pin; the case
+  is now an ordinary oracle with a golden image rather than a known failure, and lives at
+  [`absolute-auto-margins.html`](../crates/blitsen-blitz/tests/conformance/cases/absolute-auto-margins.html).
 
-Together they are why Wordle+'s modals sit at the left edge and stop short of the viewport. Both
-reproduce in upstream Blitz's `screenshot` example as well as in Blitsen's renderer, and the numbers
-in both cases were confirmed against Chromium at the same viewport.
+The initial containing block is what is left of the row, and it is why Wordle+'s modals stop short
+of the viewport. It reproduces in upstream Blitz's `screenshot` example as well as in Blitsen's
+renderer, and the numbers in both cases were confirmed against Chromium at the same viewport.
 
 ## G4 — the missing sheet is `forms.css`, and half of it we can ship ourselves
 
@@ -165,41 +169,47 @@ The first four, plus `textarea`'s `white-space: pre-wrap`, are pure cascade and 
 writes. The rest need a widget or engine support before a rule would mean anything, and are left
 alone deliberately: a UA rule for a control nobody paints is a lie in a stylesheet.
 
-## G5 — what SVG does depends on a feature Blitsen cannot turn on
+## G5 — SVG paints, and what it does not paint is one list
 
-The s6 catalogue describes icons that are missing or geometrically wrong, and chart fills that are
-the wrong colour. That was measured against upstream Blitz's `screenshot` example, which builds
-`blitz-paint` with its default features — and `blitz-paint`'s default feature *is* `svg`, which is
-what pulls in `anyrender_svg` and rasterises the element.
+The s6 catalogue described icons that were missing or geometrically wrong, and chart fills that were
+the wrong colour. Both descriptions were of a build, not of SVG: upstream's `screenshot` example
+built `blitz-paint` with its default `svg` feature and got the wrong geometry, and Blitsen built
+without it — because it did not compile (G7) — and got a correctly-sized box with nothing at all
+inside it.
 
-Blitsen builds `blitz-paint` with default features off, because its `svg` feature turns on
-`blitz-dom/svg`, which does not compile at this pin (G7). So in Blitsen's own build the failure
-mode is different, and cleaner: an inline `<svg>` takes the box its `width`/`height` ask for and
-paints **nothing at all**. A 100×60 `<svg>` holding one full-bleed red `<rect>` lays out at exactly
-100×60 and every pixel inside it is the page background.
+Both are now history. The feature compiles upstream, the pin has moved past the fix, and Blitsen
+turns it on in both halves: `blitz-dom/svg` parses an `<svg>` subtree and an SVG subresource with
+usvg, and `blitz-paint/svg` paints the parsed tree through `anyrender_svg` into the same scene as
+the rest of the frame. So an SVG is *vector* output rather than a rasterised image, and stays sharp
+at any window scale. `<img src="icon.svg">` and `background-image: url(icon.svg)` work for the same
+reason and take the intrinsic size the file declares.
 
-That is worth keeping straight when reading either the s6 images or an upstream issue: wrong
-geometry is what upstream's build does, blank is what ours does, and neither is what a browser
-does. `doctor`'s `HTML_SVG` warning covers both. SVG *images* — `<img src="icon.svg">` and
-`background-image` — are out for the same reason and are listed as an absent capability tier in
-[`COMPATIBILITY.md`](COMPATIBILITY.md), not as a row here.
+What paints and what does not is measured rather than asserted, in
+[`src/tests/svg.rs`](../crates/blitsen-blitz/src/tests/svg.rs): shapes, paths, `viewBox`,
+transforms, fills and strokes including `currentColor` off the CSS cascade, dash patterns, linear
+and radial gradients, `opacity`, a single-path `clipPath` and `<text>` all paint; `filter`, `mask`,
+SMIL animation, `foreignObject`, multi-path `clipPath` and `<pattern>` fills do not. The list is in
+[COMPATIBILITY.md](COMPATIBILITY.md#svg), and `doctor`'s `HTML_SVG` warning now names those
+constructs rather than every `<svg>` element.
 
-## G7 — `blitz-dom`'s `svg` feature does not compile
+One more thing worth knowing, and it is G16 rather than this row: a `<pattern>` fill does not merely
+fail to paint, it marks the frame.
 
-Enabling `blitz-dom`'s `svg` feature at the pinned revision fails:
+## G7 — `blitz-dom`'s `svg` feature did not compile
+
+Enabling `blitz-dom`'s `svg` feature at the old pin failed:
 
 ```
 error[E0432]: unresolved import `usvg::svgtypes`
 error[E0599]: no method named `intrinsic_dimensions` found for struct `std::sync::Arc<usvg::Tree>`
 ```
 
-The feature has drifted behind its `usvg` dependency. Blitz's own meta-crate never enables
-`blitz-dom/svg` — it takes `blitz-dom` with default features off — so upstream has not hit it.
-Blitsen therefore selects `blitz-dom`'s features explicitly, with `svg` omitted, and keeps
-`blitz-paint`'s defaults off because its default `svg` feature turns `blitz-dom/svg` back on.
-
-Filed as [blitz#687](https://github.com/DioxusLabs/blitz/issues/687), with a suggestion that a
-`--all-features` build of `blitz-dom` in CI would catch this class of drift.
+The feature had drifted behind its `usvg` dependency, and upstream had not hit it because the
+meta-crate never enabled it. Filed as [blitz#687](https://github.com/DioxusLabs/blitz/issues/687)
+and **fixed**: upstream moved to usvg 0.48, took `svgtypes` as a dependency of its own, and made
+`svg` a *default* feature of both `blitz-dom` and `blitz-paint`. Blitsen still names its features
+explicitly rather than taking `default` — the list is a decision this workspace records — but `svg`
+is now in the list, which is what closed G5.
 
 ## G8 — keyframes animate; the clock was ours
 
@@ -368,13 +378,14 @@ with an intrinsic aspect ratio that only `<canvas>` gets. Measured through Blits
 `<canvas width="200" height="100">` lays out at 200×100, and adding `style="width: 50px"` gives
 50×25.
 
-Filed as [blitz#706](https://github.com/DioxusLabs/blitz/issues/706). Until it is resolved upstream,
-the workspace `[patch]` points `blitz*` at
-[a fork](https://github.com/krazyjakee/blitz/tree/custom-widget-replaced-layout) at the pinned
-revision carrying one change: the existing sizing body factored into a `default_object_size` helper,
-called from a new `CustomWidget` arm. The fork is a git source rather than a path, so a fresh clone,
-CI and a release all build without anything alongside them; retire the `[patch]` when the fix lands
-upstream and the pin moves past it.
+Filed as [blitz#706](https://github.com/DioxusLabs/blitz/issues/706) and **fixed upstream** by
+[blitz#719](https://github.com/DioxusLabs/blitz/pull/719), which took the shape the fork carried and
+went further: `Widget` gained `intrinsic_size()` and `aspect_ratio()`, so a widget can size the
+element it is attached to, and the sizing body it shares with `<canvas>` is factored into
+`default_object_size`. The pin has moved past it, the fork is retired, and the workspace has no
+`[patch]` section at all any more — which closes [#138](https://github.com/krazyjakee/blitsen/issues/138)
+as well. What that is worth beyond the panic: a checkout, CI and a release all resolve `blitz*`
+from upstream, so nobody has to trust a second repository for the renderer to build.
 
 ## G15 — `pointer-events: all` is not an invalid value, but the cascade drops it as one
 
@@ -399,6 +410,67 @@ where a browser reports the author's keyword. Rewriting the cascade's input rath
 casing the hit test is deliberate — a rule the hit test honoured but the cascade denied would be a
 divergence between two answers about the same element, which is worse than one honest answer.
 
+## G17 — SVG text and HTML text do not look for fonts in the same place
+
+`blitz-dom` builds one font database for usvg and hands it every SVG it parses:
+
+```rust
+pub(crate) static FONT_DB: LazyLock<Arc<fontdb::Database>> = LazyLock::new(|| {
+    let mut db = fontdb::Database::new();
+    db.load_system_fonts();
+    Arc::new(db)
+});
+```
+
+HTML text does not use it. That goes through Parley, which discovers fonts the platform's own way —
+fontconfig on Linux, Core Text on macOS, DirectWrite on Windows. `fontdb::load_system_fonts` scans a
+fixed list of directories instead, and the two do not always agree.
+
+Where they disagree the failure is silent and total: the `<text>` element lays out, contributes no
+ink, and everything around it paints normally. This is not hypothetical — it is how it was found.
+The layout conformance corpus renders HTML text on GitHub's Linux runner, and on the same runner in
+the same job an `<svg><text>` rendered nothing at all, while both render here. A machine with fonts
+by any ordinary definition can still be a machine where SVG text disappears.
+
+Two things follow. An icon set is unaffected — icons are paths — but a *chart* is not, because axis
+labels are text, and an application that draws its labels inside the SVG can lose them on a machine
+its author never tested. And a test cannot assert SVG glyphs unconditionally, which is why
+`svg.rs`'s text case gates the part that is true everywhere — the shapes beside the text still paint
+and nothing panics — and says on stderr which of the two hosts it ran on.
+
+**Next step:** file against Blitz. The fix is upstream's to choose: seed that database from the same
+discovery Parley uses, or give usvg a fallback face so a resolvable family always exists.
+
+## G16 — an SVG paint that cannot be converted marks the corner of the frame
+
+`anyrender_svg` hands any node whose paint it cannot convert to an error handler, and the default
+handler — the one `blitz-paint` uses — fills that node's bounding box with red at half alpha:
+
+```rust
+pub(crate) fn default_error_handler<S: PaintScene>(scene: &mut S, node: &usvg::Node) {
+    let bb = node.bounding_box();
+    scene.fill(Fill::NonZero, Affine::IDENTITY, RED.multiply_alpha(0.5), None, &rect);
+}
+```
+
+`Affine::IDENTITY` is the bug. Every other paint in that renderer is drawn under the node's own
+transform composed with the element's; the mark is drawn under neither, so it lands at the bounding
+box's *local* coordinates — which for a typical `<rect x="0" y="0">` is the top-left corner of the
+whole frame. The element that could not be painted gets nothing, and something entirely unrelated
+gets a red wash.
+
+`<pattern>` is the paint that reaches it in practice, because `to_brush` returns `None` for
+`usvg::Paint::Pattern`. Measured in
+[`src/tests/svg.rs`](../crates/blitsen-blitz/src/tests/svg.rs): a patterned rect 100px to the right
+of a blue tile paints nothing where the rect is, and turns the tile from `#2563eb` into `#933275` —
+red at half alpha over blue — at the origin.
+
+Two separate things are wrong and both are worth saying upstream: the mark is misplaced, and a
+missing feature that *silently* draws nothing is friendlier than one that stains the page. Neither
+is Blitz's: this is `anyrender_svg`, the same layer G9 lives in. **Next step:** file against
+anyrender, and until then `doctor`'s `HTML_SVG` names `<pattern>` explicitly so a build that has
+one is told before a user sees it.
+
 ## Keeping this list honest
 
 - Every row needs evidence that can be re-examined — a committed image, a test, a build failure, or
@@ -406,7 +478,10 @@ divergence between two answers about the same element, which is worse than one h
 - A row moves to **filed** only with an issue number, and to **withdrawn** with the reason.
 - A row with a reduction says what the reduction shows, not what the first screenshot suggested.
   Four rows have now changed description under reduction — G1, G2, G3 and G5 — and each time the
-  original wording would have sent a maintainer looking for a bug that does not exist.
+  original wording would have sent a maintainer looking for a bug that does not exist. Three have
+  since been fixed upstream and say so rather than being deleted: G5, G7 and G14. A fixed row is
+  evidence that the filing worked, and the pin bump that closed them is the reason to keep reading
+  the rest.
 - **A row names the layer it lives in.** Three rows have now moved between layers: G8 was Blitsen's
   clock, not Blitz's animations; G9 is the anyrender backend, not `blitz-paint`, which builds the
   filter layer correctly; G12 was a probe that styled the element it was probing. Two more —

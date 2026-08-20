@@ -40,6 +40,10 @@
   install("MessageChannel", MessageChannel);
   install("Worker", Worker);
   install("structuredClone", structuredClone);
+  // The same `Intl` the document has, and the same three prototype methods
+  // over the engine's locale-blind ones.
+  install("Intl", Intl);
+  installIntlPrototypes();
   install("Headers", Headers);
   install("Request", Request);
   install("Response", Response);

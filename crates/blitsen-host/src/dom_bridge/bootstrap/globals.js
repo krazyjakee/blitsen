@@ -61,15 +61,18 @@
     CSS, DOMParser,
     scrollTo, scrollBy, scroll: scrollTo,
     Headers, Request, Response, Blob, AbortController, AbortSignal, fetch, stop, WebSocket,
+    EventSource,
     AudioContext, AudioNode, AudioParam, AudioBuffer, AudioBufferSourceNode, AudioDestinationNode,
     GainNode, StereoPannerNode, Audio, HTMLAudioElement,
     Location, History, URL, URLSearchParams,
+    Intl,
     requestAnimationFrame, cancelAnimationFrame,
     setTimeout, clearTimeout, setInterval, clearInterval,
     __blitsenHostUrl: hostUrl,
     __blitsenAnimationFrameTick: animationFrameTick,
     __blitsenAnimationFramesPending: () =>
       animationFrames.size > 0 || inflightFetches.size > 0 || liveSockets.size > 0
+      || liveEventSources.size > 0
       || pendingResizeObservations() > 0 || audioPending()
       || waitingImages() > 0 || waitingLinks() > 0
       || nativePending() || nativeDialogPending() || call("isAnimating")
@@ -96,6 +99,7 @@
       pendingImages.clear();
       inflightFetches.clear();
       liveSockets.clear();
+      liveEventSources.clear();
       livePorts.clear();
       liveWorkers.clear();
       dialogs.clear();
@@ -107,6 +111,7 @@
       secondInstanceHandler = null;
       __blitsenFetchDispose();
       __blitsenSocketDispose();
+      __blitsenEventSourceDispose();
       // Ends the worker threads this document started. A reload that left them
       // running would leave the new document's messages arriving at the old
       // document's workers.
@@ -178,6 +183,11 @@
     ["scrollY", "scrollTop"], ["pageYOffset", "scrollTop"]])
     Object.defineProperty(globalThis, name, {
       get: () => document.scrollingElement[axis], enumerable: true, configurable: true });
+  // `Intl` is a language global rather than a document one, so its three
+  // prototype methods are installed over the engine's locale-blind versions at
+  // the same moment the object itself appears.
+  installIntlPrototypes();
+
   // Absent, not stubbed: an unimplemented API must not exist, so feature
   // detection selects a fallback. The Phase 1 host supplies several of these
   // itself, and leaving those in place would make them disappear at the Phase 2
@@ -186,7 +196,7 @@
   for (const key of ["requestIdleCallback", "cancelIdleCallback", "indexedDB",
     "SharedWorker", "ServiceWorker", "ServiceWorkerContainer",
     "BroadcastChannel",
-    "EventSource", "XMLHttpRequest",
+    "XMLHttpRequest",
     "ReadableStream", "WritableStream", "TransformStream",
     "FormData", "File", "FileReader",
     "HTMLCanvasElement", "CanvasRenderingContext2D", "OffscreenCanvas", "ImageData", "Path2D",
