@@ -8,6 +8,7 @@ mod images;
 mod ranges;
 mod stylesheets;
 mod surfaces;
+mod svg;
 mod text;
 mod ua;
 mod viewport;

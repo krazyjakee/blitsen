@@ -55,6 +55,7 @@ const BOOTSTRAP: &str = concat!(
     include_str!("dom_bridge/bootstrap/fetch.js"),
     include_str!("dom_bridge/bootstrap/clone.js"),
     include_str!("dom_bridge/bootstrap/messaging.js"),
+    include_str!("dom_bridge/bootstrap/intl.js"),
     include_str!("worker/scope.js"),
     "})();\n",
 );

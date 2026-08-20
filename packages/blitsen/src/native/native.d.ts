@@ -307,6 +307,23 @@ export interface NativeOs {
   storage?(): Volume[];
   /** Reads the operating system's identity and this boot of it. */
   host?(): Host;
+  /** Reads the locale and time zone this session is configured for. */
+  locale?(): Locale;
+}
+
+/**
+ * What the session is localised as, which is what `Intl` defaults to.
+ *
+ * Both values are what the platform says, and both are what an application
+ * hands to a formatter: the tag to `Intl.NumberFormat`, the zone to
+ * `Intl.DateTimeFormat`. A machine that states neither reads as `en-US` and
+ * `UTC`, which is what the formatters fall back to as well.
+ */
+export interface Locale {
+  /** BCP-47 language tag, such as `en-GB`. */
+  language: string;
+  /** IANA time zone name, such as `Europe/London`. */
+  timeZone: string;
 }
 
 /**

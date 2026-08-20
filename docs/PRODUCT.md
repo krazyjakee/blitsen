@@ -515,8 +515,9 @@ because the 32 MB system library carries no ICU: it links `libicudata` (30,795,3
 `libicui18n` (3,455,304 B) and `libicuuc` (2,140,336 B) dynamically, plus GLib and GIO, none of
 which exist on a machine that has never had a GTK desktop. A self-contained JSC has to fold that
 in, and S0 measured it at **37,980,984 B** for the engine alone ([`spikes/s0`](../spikes/s0/README.md)).
-QuickJS-ng contributes about **1.5 MB** to the same total and brings no ICU at all — which is also
-why `Intl` is absent from the compatibility profile.
+QuickJS-ng contributes about **1.5 MB** to the same total and brings no ICU at all. `Intl` was
+absent from the compatibility profile for exactly that reason until #237, which supplies it from
+ICU4X instead — at a measured 12 MB rather than JSC's 36, and only because the engine brings none.
 
 ### Android: a different artifact, so a different budget (P1b)
 
@@ -587,6 +588,21 @@ One number above is not Android's and should be read carefully: the `linux-x64` 
 above. That is 3.6% of desktop growth in three days that nothing in this section explains, and it
 is P1's to explain, not P1b's — the figure is here only because a comparison across architectures
 has to come from one commit.
+
+**The Intl and SVG work is +12.0 MB, and the baseline has deliberately not been moved.** Issues
+#236–#238 added CLDR through ICU4X, the platform time-zone database through `jiff`, and the SVG
+stack the Blitz pin bump turned on. Measured on `linux-x64`, the same way every other figure here
+was: **50.8 MB installed against the recorded 38.8 MB (+30.8%), and 19.1 MB gzipped against 15.3 MB
+(+24.6%)**. The size gate fails on both, which is what it is for — "every megabyte added to the
+export has to be an argued-for decision" — and re-recording the baseline is that decision rather
+than a step in landing the work, so it has not been taken. What is bought for it is the whole of
+`Intl` for every CLDR locale with nothing to configure, and SVG that paints. What it can be traded
+against, if the answer is that the number matters more: currency *names* (`currencyDisplay:
+"name"`), localised time-zone names (`timeZoneName`, and `timeStyle: "full"`/`"long"`), and
+collation are the three largest pieces of data linked, and each is a feature that could go.
+
+Worth reading beside the JavaScriptCore comparison above: a self-contained JSC was measured folding
+in **36 MB** of ICU for the same class of capability, and this is 12 MB for it.
 
 **Still outstanding for P1.** Only Linux x64 is measured — the other five targets build and test in
 CI (TECH.md §11) but have no committed size baseline, so the gate reports on them and gates nothing

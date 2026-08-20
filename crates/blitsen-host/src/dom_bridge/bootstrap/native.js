@@ -137,6 +137,7 @@
     memory: () => JSON.parse(__blitsenNativeOsMemory()),
     storage: () => JSON.parse(__blitsenNativeOsStorage()),
     host: () => JSON.parse(__blitsenNativeOsHost()),
+    locale: () => JSON.parse(__blitsenNativeOsLocale()),
   };
 
   // Dialogs. Promise-returning rather than blocking: the call arrives on the

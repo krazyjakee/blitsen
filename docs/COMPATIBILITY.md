@@ -60,7 +60,7 @@ JavaScript comes from the [generated manifest](#capability-tiers) below.
 | Audio | Web Audio — a context, gain, stereo panning and buffer sources over decoded files — and `<audio>`/`new Audio()` for whole-file playback |
 | Routing | In-memory `history` and `location`, `popstate` and `hashchange` |
 | CSS | Static block, flex and grid layout; bounded absolute positioning; spacing, borders, backgrounds, colors and system typography |
-| Subresources | `<img>` and CSS `background-image` (PNG, JPEG, GIF, WebP), and `@font-face` web fonts (WOFF2, WOFF, TTF, OTF), loaded from local files; SVG images and `<video>` are not. Audio is loaded and decoded by Web Audio rather than as a renderer subresource — see [Audio](#audio). A subresource the export cannot serve — a remote URL, or a local file that is missing — is answered with an empty body, so the document paints without it rather than waiting on it |
+| Subresources | `<img>` and CSS `background-image` (PNG, JPEG, GIF, WebP and SVG), and `@font-face` web fonts (WOFF2, WOFF, TTF, OTF), loaded from local files; `<video>` is not. Audio is loaded and decoded by Web Audio rather than as a renderer subresource — see [Audio](#audio). A subresource the export cannot serve — a remote URL, or a local file that is missing — is answered with an empty body, so the document paints without it rather than waiting on it |
 
 The M3b acceptance app intentionally uses the normal Vite default output, including
 root-relative `/assets/...` references and Vite's module-preload bootstrap. It contains no
@@ -290,7 +290,23 @@ in the frame turn that `fetch` results do**. An open socket keeps the host turni
 reason an in-flight request does: its landing point is that turn, so a loop that idled would never
 deliver. A non-`ws:`/`wss:` address is refused with a `SyntaxError` at construction.
 
-`EventSource` is absent. Feature-detect it, or hold the stream open over a socket instead.
+### Server-sent events
+
+`EventSource` is implemented (#236), over the same worker pool `fetch` and `WebSocket` run on and
+delivered at the same point in the frame turn. The whole of it is there: named events through
+`addEventListener`, `MessageEvent` with `data`, `lastEventId` and `origin`, `readyState` and the
+three constants, `close()`, and comment lines that keep an idle connection warm.
+
+**Reconnection is the transport's, not the application's.** A stream whose body ends — a proxy
+timing out, a server restarting — fires `error` with `readyState` back at `CONNECTING`, waits the
+interval a `retry:` field asked for (three seconds if none did), and reconnects carrying
+`Last-Event-ID`, so a feed resumes where it stopped rather than from the top. A response that is
+not a `200 text/event-stream` is a different thing: that fires `error`, settles at `CLOSED` and is
+not retried, because retrying a 404 forever is not a reconnection.
+
+`withCredentials` is reflected and withholds nothing: there is no cookie store and no per-origin
+credential in this runtime, so there is nothing for `false` to keep back. Only `http:` and `https:`
+addresses are accepted; anything else is a `SyntaxError` at construction.
 
 ## Workers and messaging
 
@@ -952,6 +968,77 @@ measurement this runtime never made.
   per-frame animator — and none of that is settled. An application that wants a finger to scroll
   can do it today from `pointermove` and `element.scrollTop`. Tracked in #145.
 
+## SVG
+
+An `<svg>` subtree paints, and so does an SVG named by `<img src>` or by a CSS `background-image`
+(issue #238). The element is parsed with usvg and painted through the same Vello scene the rest of
+the frame is painted into, so a shape is a filled or stroked path rather than a rasterised image:
+it stays sharp at any window scale, and a resize costs nothing but a repaint.
+
+What that gets you, precisely:
+
+| Paints | Does not |
+| --- | --- |
+| `path`, `rect`, `circle`, `ellipse`, `line`, `polygon`, `polyline`, `g`, `use`, `symbol`, `defs` | `foreignObject` |
+| `viewBox`, `preserveAspectRatio`, `transform` on any element | SMIL animation — `animate`, `animateTransform`, `set` |
+| `fill`, `stroke`, `stroke-width`, `stroke-linecap`/`linejoin`/`dasharray`, `fill-rule`, `paint-order` | `filter` and `mask` |
+| `currentColor`, resolved from the CSS `color` the element inherits | `<pattern>` fills |
+| `linearGradient` and `radialGradient`, including `stop-opacity` | A `clipPath` holding more than one path |
+| `opacity`, `mix-blend-mode` and a single-path `clipPath` | |
+| `<text>`, shaped and outlined through the same font database HTML text uses | |
+
+The element is sized like the replaced element it is: its `width`/`height` attributes, or author
+CSS, which wins. A `viewBox`-only `<svg>` with no width, height or CSS box has nothing to size
+itself from and lays out at zero — give it a box.
+
+**One unsupported case is worse than a no-op and worth knowing about.** A `<pattern>` fill does not
+merely fail to paint: the SVG renderer marks unsupported paints with a half-transparent red box
+drawn at the *frame's* top-left corner rather than over the element, so a patterned shape anywhere
+in the document leaves a red mark over whatever is in the corner. `doctor` reports it
+(`HTML_SVG`), and gap G16 in [BLITZ-GAPS.md](BLITZ-GAPS.md) has the detail.
+
+Mutating an SVG subtree from script works — set an attribute on a child and the frame follows,
+which is what a charting library does — but the subtree is re-parsed rather than patched, so a
+chart that rewrites its paths every frame pays a parse every frame. For per-frame drawing, use
+`<canvas>` or `<blitsen-view>`.
+
+## Intl
+
+`Intl` is implemented (issue #237), natively, over CLDR through ICU4X and the platform's own
+time-zone database. It is not the engine's: QuickJS-ng ships no ICU, and the formatters are the
+bridge's, which is why they are in this document rather than in a note about the engine.
+
+| Implemented | Absent |
+| --- | --- |
+| `Intl.NumberFormat` — decimal, percent, currency and compact notation | `formatToParts` and `formatRange`, on every formatter |
+| `Intl.DateTimeFormat` — `dateStyle`/`timeStyle`, the component options, `hour12`/`hourCycle`, and named IANA `timeZone` values | `Intl.Segmenter` |
+| `Intl.RelativeTimeFormat`, `Intl.PluralRules`, `Intl.Collator`, `Intl.ListFormat` | `Intl.DisplayNames`, `Intl.DurationFormat`, `Intl.supportedValuesOf` |
+| `Number.prototype.toLocaleString`, `Date.prototype.toLocale*String`, `String.prototype.localeCompare`, all three over the formatters above | — |
+| `Intl.getCanonicalLocales`, and `supportedLocalesOf` on each formatter | — |
+
+Every CLDR locale is carried; there is no locale list to declare and nothing to configure. That is
+a measured decision rather than a generous one — the whole of the data these formatters use is
+about 3 MB of the export, which is less than a per-application slice of it would be worth in
+build machinery. See [PRODUCT.md](PRODUCT.md) for what it did to the size budget.
+
+Three things are worth knowing before you rely on the details:
+
+- **A currency's fraction digits are the currency's.** `style: "currency"` formats to the minor
+  units CLDR gives the code — two for `USD`, none for `JPY`, three for `KWD` — and
+  `minimumFractionDigits`/`maximumFractionDigits` do not override that. `resolvedOptions()` reports
+  the digits that were actually used, so the disagreement is detectable rather than silent.
+- **`resolvedOptions()` reports what was honoured**, not what was asked for. An option this
+  implementation does not act on is absent from the result rather than echoed back, because an
+  echoed option is indistinguishable from an implemented one.
+- **A time zone that is not in the database is refused**, with the name in the message, rather than
+  silently becoming UTC. `Intl.DateTimeFormat().resolvedOptions().timeZone` and `os.locale()` both
+  report the zone the host is actually in.
+
+Values cross the native boundary as decimal text rather than as doubles, so what is rounded to a
+currency's minor units is the number the application meant. Formatters are shared by their resolved
+options: constructing the same `Intl.NumberFormat` inside a render loop is a lookup after the first
+one.
+
 ## Storage
 
 `localStorage` and `sessionStorage` exist, hold what is put in them, and **lose it when the
@@ -1109,7 +1196,8 @@ determinism gate instead.
 | WEB_STORAGE | `Storage`, `localStorage`, `sessionStorage` | `indexedDB` |
 | WEB_WORKER | `Worker`, `Worker.postMessage`, `Worker.terminate` | `SharedWorker`, `ServiceWorker`, `ServiceWorkerContainer` |
 | WEB_MESSAGING | `MessageChannel`, `MessagePort`, `structuredClone`, `postMessage`, `MessagePort.postMessage`, `MessagePort.start`, `MessagePort.close` | `BroadcastChannel` |
-| WEB_SOCKET | `WebSocket`, `MessageEvent`, `CloseEvent`, `WebSocket.url`, `WebSocket.readyState`, `WebSocket.protocol`, `WebSocket.extensions`, `WebSocket.bufferedAmount`, `WebSocket.binaryType`, `WebSocket.send`, `WebSocket.close` | `EventSource` |
+| WEB_SOCKET | `WebSocket`, `MessageEvent`, `CloseEvent`, `EventSource`, `WebSocket.url`, `WebSocket.readyState`, `WebSocket.protocol`, `WebSocket.extensions`, `WebSocket.bufferedAmount`, `WebSocket.binaryType`, `WebSocket.send`, `WebSocket.close`, `EventSource.url`, `EventSource.readyState`, `EventSource.withCredentials`, `EventSource.close` | — |
+| WEB_INTL | `Intl`, `Intl.NumberFormat`, `Intl.DateTimeFormat`, `Intl.RelativeTimeFormat`, `Intl.PluralRules`, `Intl.Collator`, `Intl.ListFormat`, `Intl.getCanonicalLocales`, `Intl.NumberFormat.format`, `Intl.NumberFormat.resolvedOptions`, `Intl.DateTimeFormat.format`, `Intl.DateTimeFormat.resolvedOptions`, `Intl.Collator.compare`, `Intl.PluralRules.select`, `Intl.ListFormat.format`, `Intl.RelativeTimeFormat.format` | `Intl.NumberFormat.formatToParts`, `Intl.DateTimeFormat.formatToParts`, `Intl.DateTimeFormat.formatRange`, `Intl.Segmenter`, `Intl.DisplayNames`, `Intl.DurationFormat`, `Intl.supportedValuesOf` |
 | WEB_XHR | — | `XMLHttpRequest` |
 | WEB_STREAM | — | `ReadableStream`, `WritableStream`, `TransformStream`, `Response.body`, `Response.clone` |
 | WEB_FORM | — | `FormData`, `File`, `FileReader` |
@@ -1123,7 +1211,6 @@ determinism gate instead.
 | WEB_OBSERVER | `ResizeObserver` | `IntersectionObserver`, `PerformanceObserver` |
 | WEB_STYLE | `getComputedStyle`, `matchMedia`, `MediaQueryList`, `MediaQueryListEvent`, `CSS`, `CSSStyleSheet`, `StyleSheetList`, `CSSRule`, `CSSRuleList`, `HTMLStyleElement`, `document.styleSheets`, `HTMLStyleElement.sheet`, `HTMLLinkElement.sheet`, `CSSStyleSheet.cssRules`, `CSSStyleSheet.insertRule`, `CSSStyleSheet.deleteRule`, `CSSStyleSheet.ownerNode`, `CSSStyleSheet.href`, `CSSStyleSheet.title`, `CSSRule.cssText`, `CSSRule.parentStyleSheet` | `CSSStyleRule`, `CSSKeyframesRule`, `CSSKeyframeRule`, `CSSMediaRule`, `document.adoptedStyleSheets`, `CSSStyleSheet.disabled`, `CSSStyleSheet.replaceSync`, `CSSStyleSheet.replace`, `CSSRule.style`, `CSSRule.selectorText`, `CSSRule.type` |
 | WEB_COMPONENTS | `DOMParser` | `customElements`, `ShadowRoot` |
-| WEB_INTL | — | `Intl` |
 | WEB_WASM | — | `WebAssembly` |
 
 | Diagnostic | Severity | Reported as |
@@ -1138,7 +1225,7 @@ determinism gate instead.
 | `WEB_STORAGE` | warning | IndexedDB is not implemented. |
 | `WEB_WORKER` | warning | Shared and service workers are not implemented; dedicated Worker is. |
 | `WEB_MESSAGING` | warning | BroadcastChannel is not implemented; MessageChannel and Worker are. |
-| `WEB_SOCKET` | warning | Server-sent events are not implemented; WebSocket is. |
+| `WEB_INTL` | warning | This part of Intl is not implemented; the formatters are. |
 | `WEB_XHR` | warning | XMLHttpRequest is not implemented. |
 | `WEB_STREAM` | warning | Streaming bodies are not implemented; a response is buffered whole. |
 | `WEB_FORM` | warning | Multipart form bodies and file objects are not implemented. |
@@ -1152,7 +1239,6 @@ determinism gate instead.
 | `WEB_OBSERVER` | warning | This observer is not implemented; only ResizeObserver is. |
 | `WEB_STYLE` | warning | This part of CSSOM is not implemented; a sheet's rules are its source text. |
 | `WEB_COMPONENTS` | warning | Custom elements and shadow DOM are not implemented; DOMParser is. |
-| `WEB_INTL` | warning | Intl is not implemented by the JavaScript engine Blitsen hosts. |
 | `WEB_WASM` | warning | WebAssembly is not implemented by the JavaScript engine Blitsen hosts. |
 | `CSS_TRANSITION` | warning | A property named by `transition` keeps its pre-stylesheet value (Blitz bug 689). |
 | `CSS_FIXED` | warning | Fixed and sticky boxes resolve against the root box, not the viewport (Blitz bug 690). |
@@ -1160,7 +1246,7 @@ determinism gate instead.
 | `HTML_CANVAS` | error | <canvas> is not implemented. |
 | `HTML_SOURCE_ENTRY` | error | This document loads source, not built output; nothing in Blitsen transpiles it. |
 | `HTML_MEDIA` | warning | Video and text tracks are not implemented; <audio> is. |
-| `HTML_SVG` | warning | SVG rendering is currently limited and not in the strict profile. |
+| `HTML_SVG` | warning | This SVG feature does not paint; shapes, paths, text, gradients and clipPath do. |
 | `ASSET_REMOTE_SCRIPT` | warning | A remote <script src> is not fetched; it is skipped and the rest of the page runs. |
 | `ASSET_REMOTE` | warning | A remote asset is not part of a self-contained export; the request is answered with nothing. |
 
@@ -1272,7 +1358,7 @@ lib. The capability tiers above are the list, and `blitsen doctor` is the check.
 | `blitsen/window` | `setSize`, `setFullscreen`, `isFullscreen`, `setDecorations`, `isDecorated`, `setAlwaysOnTop`, `setCursor`, `setCursorVisible`, `setCursorGrab`, `monitors` | `create`, `setTransparent`, `isAlwaysOnTop` |
 | `blitsen/dialog` | `openFile`, `openFiles`, `saveFile`, `openFolder`, `openFolders`, `message` | — |
 | `blitsen/clipboard` | `readText`, `readHtml`, `readImage`, `writeText`, `writeHtml`, `writeImage`, `clear` | `readMime`, `writeMime` |
-| `blitsen/os` | `cpu`, `memory`, `storage`, `host` | `displays`, `battery`, `locale`, `idleTime` |
+| `blitsen/os` | `cpu`, `memory`, `storage`, `host`, `locale` | `displays`, `battery`, `idleTime` |
 
 | Absent member | Why |
 | --- | --- |
@@ -1288,7 +1374,6 @@ lib. The capability tiers above are the list, and `blitsen doctor` is the check.
 | `clipboard.writeMime` | The counterpart of `readMime`, absent for the same reason. |
 | `os.displays` | The monitors are `window.monitors()`, which already reports each one's size, position and scale factor. A second list here could disagree with that one. |
 | `os.battery` | Nothing behind this module reports power. The processor, the memory and the volumes come from one library that implements all three per platform; the battery is a fourth source on each — UPower's D-Bus service, IOKit, `GetSystemPowerStatus` — and a desktop with no battery has to read as *absent* rather than as an empty reading, which is a distinction only the real source can make. |
-| `os.locale` | Reading the tag is the easy half. Nothing in this runtime consumes it: the JavaScript engine ships no `Intl` (see ENGINE_ABSENT), so `os.locale()` would hand back a string with no formatter behind it and imply support that is not there. |
 | `os.idleTime` | Seconds since the last input is a different mechanism on every platform, and Wayland has no answer at all for a client that is not focused — the idle-notify protocol reports crossing a threshold the compositor was asked about, not a duration. Reporting zero on the sessions that cannot answer would be indistinguishable from a machine in use. |
 
 <!-- /generated -->

@@ -498,12 +498,14 @@ provider over the winit event loop; either way the provider is wrapped so that e
 outcome is recorded, since a failed fetch otherwise drops its handler in silence and leaves an
 `<img>` in exactly the state it had while still loading.
 
-**Image formats: PNG, JPEG, GIF (first frame), WebP.** Blitz decodes with the `image` crate but
+**Image formats: PNG, JPEG, GIF (first frame), WebP, SVG.** Blitz decodes with the `image` crate but
 declares it `default-features = false`, which compiles in *no* codecs at all; the format set is
 chosen by depending on `image` directly from `blitsen-blitz` and letting feature unification
 apply it. Without that every image fails to decode and the element silently lays out at zero
-height — the same shape of failure as the `system-fonts` one. **SVG images are absent**: they
-need blitz-dom's `svg` feature, which does not compile at this pin (upstream blitz#687).
+height — the same shape of failure as the `system-fonts` one. **SVG is not one of those codecs**:
+it is not a raster format, and it arrives through blitz-dom's `svg` feature, which parses it with
+usvg and paints it as vectors (#238). That feature did not compile until upstream fixed it
+(blitz#687), which is why SVG images were absent before the pin moved.
 
 **Font formats: WOFF2, WOFF, TTF, OTF.** SVG and EOT fonts are refused by Blitz and are not
 coming. `@font-face` descriptors — `font-family`, `font-weight`, `font-style` — are what select a
@@ -811,8 +813,9 @@ This requires `fetch` and a module loader that can resolve over HTTP, which is a
 on when it can ship. **S7 decision: proxy mode is v1, not v0.** Bun 1.3.14 can execute a
 pre-scanned Vite graph and connect to `vite-hmr`, but runtime resolver callbacks are synchronous,
 HTTP modules receive a synthetic `file:///http://…` identity, source-map identity is not
-preserved, `EventSource` is absent, and the actual browser-facing HMR client still depends on the
-v1 web-platform surface. Directory mode is the v0 path; see `spikes/s7/README.md`.
+preserved, and the actual browser-facing HMR client still depends on the v1 web-platform surface.
+One of S7's blockers has since gone: `EventSource` is implemented (#236), so the transport an HMR
+client listens on is no longer among the reasons proxy mode waits. Directory mode is the v0 path; see `spikes/s7/README.md`.
 
 Directory mode reload granularity: CSS swaps live via re-cascade with no reload; HTML and JS
 restart the JS context and reparse the document. Preserving JS state across reload is not
