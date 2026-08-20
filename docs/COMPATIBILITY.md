@@ -985,11 +985,18 @@ What that gets you, precisely:
 | `currentColor`, resolved from the CSS `color` the element inherits | `<pattern>` fills |
 | `linearGradient` and `radialGradient`, including `stop-opacity` | A `clipPath` holding more than one path |
 | `opacity`, `mix-blend-mode` and a single-path `clipPath` | |
-| `<text>`, shaped and outlined through the same font database HTML text uses | |
+| `<text>`, outlined through the host's fonts — with the caveat below | |
 
 The element is sized like the replaced element it is: its `width`/`height` attributes, or author
 CSS, which wins. A `viewBox`-only `<svg>` with no width, height or CSS box has nothing to size
 itself from and lays out at zero — give it a box.
+
+**`<text>` inside an SVG finds its fonts differently from HTML text, and can find none.** The two
+go through different font discovery — usvg is given a database built by scanning well-known
+directories, HTML text goes through the platform's own — and on a host where they disagree the SVG
+text lays out, paints nothing, and takes nothing else with it. It happens on GitHub's Linux runner.
+If a chart's axis labels matter, draw them as HTML beside the SVG rather than inside it, or check
+them on the machines you ship to; gap G17 in [BLITZ-GAPS.md](BLITZ-GAPS.md) has the detail.
 
 **One unsupported case is worse than a no-op and worth knowing about.** A `<pattern>` fill does not
 merely fail to paint: the SVG renderer marks unsupported paints with a half-transparent red box

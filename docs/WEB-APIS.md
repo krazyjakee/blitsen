@@ -112,7 +112,9 @@ paint effects, form-control styling, font fallback and complex text.
 rather than as rasterised images. Shapes, paths, `viewBox`, transforms, gradients, dashed strokes,
 `currentColor` and `<text>` all render; `filter`, `mask`, SMIL animation and `<pattern>` fills do
 not, and a `<pattern>` fill additionally leaves a red mark in the frame's corner. `doctor` reports
-those constructs specifically rather than warning about every `<svg>`.
+those constructs specifically rather than warning about every `<svg>`. SVG `<text>` resolves fonts
+through a different database from HTML text and can silently find none — see
+[COMPATIBILITY.md](COMPATIBILITY.md#svg) before putting chart labels inside an `<svg>`.
 
 Doctor reports patterns it can recognize, but it cannot prove visual equivalence. Keep screenshot or
 interaction tests for important layouts and verify them on each target operating system.

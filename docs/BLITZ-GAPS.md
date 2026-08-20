@@ -37,6 +37,7 @@ Status values: **open** (reproduced, unfiled), **filed** (upstream issue exists)
 | G13 | Link-ness never reaches `ElementState`, so the style-sharing cache hands one anchor's style to another | open | `crates/blitsen-blitz/src/tests/ua.rs::only_an_anchor_with_an_href_is_painted_as_a_link` | stylo's cascade layer: `:any-link` and `:link` are matched ad hoc in `blitz-dom`'s `stylo.rs`, so two sibling anchors of opposite kinds are sharing candidates. Same shape as G10. See below |
 
 | G14 | A replaced element panics in layout the moment it carries a custom widget | fixed | `crates/blitsen-blitz/src/tests/canvas.rs::canvas_survives_carrying_a_custom_widget` | [blitz#706](https://github.com/DioxusLabs/blitz/issues/706), fixed by [blitz#719](https://github.com/DioxusLabs/blitz/pull/719). The fork that carried the patch is retired and the workspace has no `[patch]` section left (#138). See below |
+| G17 | SVG `<text>` is resolved against a font database that can be empty on a host where HTML text renders | open | `crates/blitsen-blitz/src/tests/svg.rs::text_inside_an_svg_is_painted_as_glyphs_wherever_the_host_has_one`; GitHub's Linux runner | `blitz-dom` hands usvg a `fontdb` built by `load_system_fonts()`, while HTML text is shaped by Parley through the platform's own font discovery. The two disagree, and where they do the text vanishes silently. See below |
 | G16 | An SVG paint the renderer cannot convert marks the frame's corner rather than the element | open | `crates/blitsen-blitz/src/tests/svg.rs::an_unsupported_pattern_fill_marks_the_frame_corner_rather_than_the_element` | Not Blitz: `anyrender_svg`'s error handler fills the node's bounding box under the *identity* transform. A `<pattern>` fill anywhere leaves a half-transparent red box at 0,0. See below |
 | G15 | `pointer-events` accepts only `auto` and `none`, so `all` is dropped and the element inherits | open | `crates/blitsen-blitz/src/tests/stylesheets.rs::an_element_that_declares_it_takes_hits_inside_one_that_does_not_is_hit` | stylo's cascade layer: the other nine values are `#[cfg(feature = "gecko")]`, which needs Gecko's bindings and cannot be enabled by an embedder. Worked around in `pointer_events.rs`; see below |
 
@@ -408,6 +409,37 @@ only `none` does not. The cost is a readback: `getComputedStyle(el).pointerEvent
 where a browser reports the author's keyword. Rewriting the cascade's input rather than special-
 casing the hit test is deliberate — a rule the hit test honoured but the cascade denied would be a
 divergence between two answers about the same element, which is worse than one honest answer.
+
+## G17 — SVG text and HTML text do not look for fonts in the same place
+
+`blitz-dom` builds one font database for usvg and hands it every SVG it parses:
+
+```rust
+pub(crate) static FONT_DB: LazyLock<Arc<fontdb::Database>> = LazyLock::new(|| {
+    let mut db = fontdb::Database::new();
+    db.load_system_fonts();
+    Arc::new(db)
+});
+```
+
+HTML text does not use it. That goes through Parley, which discovers fonts the platform's own way —
+fontconfig on Linux, Core Text on macOS, DirectWrite on Windows. `fontdb::load_system_fonts` scans a
+fixed list of directories instead, and the two do not always agree.
+
+Where they disagree the failure is silent and total: the `<text>` element lays out, contributes no
+ink, and everything around it paints normally. This is not hypothetical — it is how it was found.
+The layout conformance corpus renders HTML text on GitHub's Linux runner, and on the same runner in
+the same job an `<svg><text>` rendered nothing at all, while both render here. A machine with fonts
+by any ordinary definition can still be a machine where SVG text disappears.
+
+Two things follow. An icon set is unaffected — icons are paths — but a *chart* is not, because axis
+labels are text, and an application that draws its labels inside the SVG can lose them on a machine
+its author never tested. And a test cannot assert SVG glyphs unconditionally, which is why
+`svg.rs`'s text case gates the part that is true everywhere — the shapes beside the text still paint
+and nothing panics — and says on stderr which of the two hosts it ran on.
+
+**Next step:** file against Blitz. The fix is upstream's to choose: seed that database from the same
+discovery Parley uses, or give usvg a fallback face so a resolvable family always exists.
 
 ## G16 — an SVG paint that cannot be converted marks the corner of the frame
 
