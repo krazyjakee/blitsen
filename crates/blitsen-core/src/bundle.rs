@@ -540,8 +540,6 @@ fn read_u64(bytes: &[u8]) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use std::io::Write as _;
-
     use super::*;
 
     fn temporary(name: &str) -> std::path::PathBuf {
