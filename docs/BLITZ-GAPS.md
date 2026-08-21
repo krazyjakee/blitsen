@@ -272,7 +272,7 @@ expansion rect and the backdrop filter are all built. It is the backend that dro
   `multithreading` is enabled.
 
 Enabling `filters` locally does not fix it, and makes it worse: everything that converts —
-`blur`, `drop-shadow`, `grayscale`, `sepia`, `hue-rotate` — panics inside `vello_cpu` 0.0.9
+`blur`, `drop-shadow`, `grayscale`, `sepia`, `hue-rotate` — panics inside the pinned `vello_cpu`
 (`unreachable!()` in `fine/mod.rs`, a `PushZeroClip` command reaching fine rasterisation), and
 everything built as a component transfer stays ignored, because the backend converts that variant
 to `None` — `invert` and `opacity` measured, `brightness` and `contrast` by the same path. So there

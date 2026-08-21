@@ -1076,7 +1076,7 @@ Everything else `navigator` normally carries is capability rather than identity 
 calling something that cannot work. `screen`, `Notification` and `caches` are absent for the same
 reason; the native modules cover what an application actually needs there.
 
-The user-agent string names Blitsen (`Blitsen/0.0.0 (Linux x86_64)`) instead of impersonating a
+The user-agent string names Blitsen (`Blitsen/<version> (Linux x86_64)`) instead of impersonating a
 browser. An application that sniffs it deserves a true answer more than it deserves a code path
 written for someone else's engine.
 

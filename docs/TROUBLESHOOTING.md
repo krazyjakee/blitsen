@@ -92,7 +92,7 @@ or a macOS `.app`; an existing companion can also trigger this refusal.
 Reinstall the CLI with its optional dependencies enabled and keep the lockfile intact:
 
 ```sh
-npm install -D --save-exact blitsen@0.1.0
+npm install -D --save-exact blitsen
 ```
 
 The CLI and native runtime must have exactly the same version. Do not independently update an
@@ -140,7 +140,7 @@ under a directory from `blitsen/app`; the returned directory is not created auto
 
 Cross-built artifacts are unsigned unless a suitable signing service was invoked. Sign on the
 target platform (or through a supported external service), then complete notarization or reputation
-requirements for that OS. The published 0.1.0 Blitsen runtime itself is unsigned.
+requirements for that OS. The published Blitsen runtime itself is unsigned.
 
 ## Android build tools are not found
 
