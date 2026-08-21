@@ -12,7 +12,11 @@ mod workers;
 use std::cell::RefCell;
 
 use blitsen_host::app::AppFiles;
-use blitsen_host::{OpenDirectoryOptions as HostOptions, WindowSession, native_window};
+use blitsen_host::{
+    NativeWindowOptions as HostWindowOptions, OpenDirectoryOptions as HostOptions, TrayAction,
+    TrayMenuItem as HostTrayMenuItem, TrayOptions as HostTrayOptions, WindowSession, WindowType,
+    native_window,
+};
 use blitsen_js::JsError;
 use napi::{Env, Status};
 use napi_derive::napi;
@@ -44,18 +48,125 @@ pub struct OpenDirectoryOptions {
     pub title: String,
     /// Original directory argument, retained for diagnostics.
     pub directory: String,
+    /// Native creation-time window behavior.
+    pub window: Option<NativeWindowOptions>,
+    /// Optional system tray icon and context menu.
+    pub tray: Option<NativeTrayOptions>,
 }
 
-impl From<OpenDirectoryOptions> for HostOptions {
-    fn from(options: OpenDirectoryOptions) -> Self {
-        Self {
+#[napi(object)]
+#[derive(Clone)]
+/// JavaScript-facing native window creation options.
+pub struct NativeWindowOptions {
+    /// Initial presentation type.
+    #[napi(js_name = "type")]
+    pub window_type: Option<String>,
+    /// Whether the window is resizable.
+    pub resizable: Option<bool>,
+    /// Whether the surface preserves alpha.
+    pub transparent: Option<bool>,
+    /// Whether an above-normal stacking level is requested.
+    pub always_on_top: Option<bool>,
+}
+
+#[napi(object)]
+#[derive(Clone)]
+/// JavaScript-facing tray context-menu entry.
+pub struct NativeTrayMenuItem {
+    /// Built-in action name.
+    pub action: String,
+    /// Optional displayed label.
+    pub label: Option<String>,
+    /// Optional enabled state.
+    pub enabled: Option<bool>,
+}
+
+#[napi(object)]
+#[derive(Clone)]
+/// JavaScript-facing system tray options.
+pub struct NativeTrayOptions {
+    /// PNG file path.
+    pub icon: String,
+    /// Optional hover tooltip.
+    pub tooltip: Option<String>,
+    /// Whether primary activation reveals the window.
+    pub open_on_click: Option<bool>,
+    /// Whether the native close control hides the window.
+    pub close_to_tray: Option<bool>,
+    /// Ordered context-menu entries.
+    pub context_menu: Option<Vec<NativeTrayMenuItem>>,
+}
+
+impl TryFrom<OpenDirectoryOptions> for HostOptions {
+    type Error = JsError;
+
+    fn try_from(options: OpenDirectoryOptions) -> Result<Self, Self::Error> {
+        let window = options.window.map_or_else(
+            || Ok(HostWindowOptions::default()),
+            |window| {
+                let window_type = match window.window_type.as_deref().unwrap_or("normal") {
+                    "normal" => WindowType::Normal,
+                    "borderless" => WindowType::Borderless,
+                    "fullscreen" => WindowType::Fullscreen,
+                    "hidden" => WindowType::Hidden,
+                    value => return Err(JsError::new(format!("unknown window type: {value}"))),
+                };
+                Ok(HostWindowOptions {
+                    window_type,
+                    resizable: window.resizable.unwrap_or(true),
+                    transparent: window.transparent.unwrap_or(false),
+                    always_on_top: window.always_on_top.unwrap_or(false),
+                })
+            },
+        )?;
+        let tray = options
+            .tray
+            .map(|tray| {
+                let icon = std::fs::read(&tray.icon).map_err(|error| {
+                    JsError::new(format!("could not read tray icon {}: {error}", tray.icon))
+                })?;
+                let context_menu = tray
+                    .context_menu
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|item| {
+                        let action = match item.action.as_str() {
+                            "show" => TrayAction::Show,
+                            "hide" => TrayAction::Hide,
+                            "quit" => TrayAction::Quit,
+                            "separator" => TrayAction::Separator,
+                            value => {
+                                return Err(JsError::new(format!(
+                                    "unknown tray menu action: {value}"
+                                )));
+                            }
+                        };
+                        Ok(HostTrayMenuItem {
+                            action,
+                            label: item.label,
+                            enabled: item.enabled.unwrap_or(true),
+                        })
+                    })
+                    .collect::<Result<Vec<_>, JsError>>()?;
+                Ok(HostTrayOptions {
+                    icon,
+                    tooltip: tray.tooltip,
+                    open_on_click: tray.open_on_click.unwrap_or(true),
+                    close_to_tray: tray.close_to_tray.unwrap_or(false),
+                    context_menu,
+                })
+            })
+            .transpose()?;
+        Ok(Self {
             root: options.root,
             entrypoint: options.entrypoint,
             width: options.width,
             height: options.height,
             title: options.title,
             directory: options.directory,
-        }
+            window,
+            tray,
+        })
     }
 }
 
@@ -81,7 +192,7 @@ impl Engine {
                 "a native window session is already open",
             ));
         }
-        let options: HostOptions = options.into();
+        let options: HostOptions = options.try_into().map_err(napi_error)?;
         // A URL is a dev server to read the application from rather than a
         // directory to read it from (#67). Both hosts take the same branch,
         // because both open the same session over the same `AppFiles`.

@@ -9,6 +9,38 @@ export type {
   NativeClipboard,
 } from "./src/native/native.js";
 
+export interface BlitsenWindowConfig {
+  /** Initial presentation. Defaults to `normal`. */
+  type?: "normal" | "borderless" | "fullscreen" | "hidden";
+  /** Whether the user can resize the window. Defaults to true. */
+  resizable?: boolean;
+  /** Request a transparent native surface. Support depends on the compositor. */
+  transparent?: boolean;
+  /** Request that the window stay above normal windows. */
+  alwaysOnTop?: boolean;
+}
+
+export interface BlitsenTrayMenuItem {
+  /** Built-in action, or a visual separator. */
+  action: "show" | "hide" | "quit" | "separator";
+  /** Menu label. Show, Hide and Quit have matching defaults. */
+  label?: string;
+  /** Whether the item can be selected. Defaults to true. */
+  enabled?: boolean;
+}
+
+export interface BlitsenTrayConfig {
+  /** PNG tray icon, relative to this `package.json`. */
+  icon: string;
+  tooltip?: string;
+  /** Show and focus the window when the tray icon is activated. Defaults to true. */
+  openOnClick?: boolean;
+  /** Hide the window instead of exiting when its close control is used. */
+  closeToTray?: boolean;
+  /** Ordered built-in actions in the tray context menu. */
+  contextMenu?: BlitsenTrayMenuItem[];
+}
+
 /** The `blitsen` key of `package.json`, the one place Blitsen reads configuration from. */
 export interface BlitsenConfig {
   /**
@@ -22,6 +54,10 @@ export interface BlitsenConfig {
   name?: string;
   /** Native `.node` addons carried into the export, relative to this `package.json`. */
   addons?: string[];
+  /** Native window creation options. */
+  window?: BlitsenWindowConfig;
+  /** System tray icon and context menu. */
+  tray?: BlitsenTrayConfig;
 }
 
 /** The discovered configuration, or `config: null` when no `blitsen` key exists. */

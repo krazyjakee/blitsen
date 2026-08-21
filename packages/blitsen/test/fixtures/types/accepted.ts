@@ -50,5 +50,20 @@ frame[0] = surface.width + surface.height + surface.devicePixelRatio + surface.g
 surface.write(frame);
 surface.release();
 
-void defineConfig({ output: "dist", name: "Demo", build: "vite build" });
+void defineConfig({
+  output: "dist",
+  name: "Demo",
+  build: "vite build",
+  window: { type: "borderless", resizable: false, transparent: true, alwaysOnTop: true },
+  tray: {
+    icon: "native/tray.png",
+    openOnClick: true,
+    closeToTray: true,
+    contextMenu: [
+      { label: "Open", action: "show" },
+      { action: "separator" },
+      { label: "Quit", action: "quit", enabled: true },
+    ],
+  },
+});
 export type { ClipboardImage };

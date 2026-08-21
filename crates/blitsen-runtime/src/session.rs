@@ -19,7 +19,9 @@ use blitsen_host::apk::ApkAssets;
 use blitsen_host::app::AppFiles;
 use blitsen_host::modules::ModuleRegistry;
 use blitsen_host::runtime_services::RuntimeServices;
+use blitsen_host::{NativeWindowOptions, TrayMenuItem, TrayOptions};
 use blitsen_host::{OpenDirectoryOptions, WindowSession, native_window};
+use serde::Deserialize;
 
 use crate::engine;
 use crate::loop_pacing::Pacer;
@@ -39,6 +41,8 @@ struct Settings {
     /// The runtime this application was linked against (#73), as the exporter
     /// recorded it. A directory run has no record and reports this executable.
     runtime: String,
+    window: NativeWindowOptions,
+    tray: Option<TrayOptions>,
 }
 
 impl Default for Settings {
@@ -49,6 +53,8 @@ impl Default for Settings {
             title: "Blitsen".to_owned(),
             layout: "embedded".to_owned(),
             runtime: concat!("blitsen-runtime ", env!("CARGO_PKG_VERSION")).to_owned(),
+            window: NativeWindowOptions::default(),
+            tray: None,
         }
     }
 }
@@ -87,6 +93,42 @@ impl Settings {
             }
             if let Some(title) = config.get("title").and_then(serde_json::Value::as_str) {
                 settings.title = title.to_owned();
+            }
+            if let Some(window) = config.get("window").filter(|value| !value.is_null()) {
+                settings.window = serde_json::from_value(window.clone())
+                    .map_err(|error| format!("invalid window configuration: {error}"))?;
+            }
+            if let Some(tray) = config.get("tray").filter(|value| !value.is_null()) {
+                #[derive(Deserialize)]
+                #[serde(rename_all = "camelCase")]
+                struct RecordedTray {
+                    icon: String,
+                    tooltip: Option<String>,
+                    #[serde(default = "enabled")]
+                    open_on_click: bool,
+                    #[serde(default)]
+                    close_to_tray: bool,
+                    #[serde(default)]
+                    context_menu: Vec<TrayMenuItem>,
+                }
+                fn enabled() -> bool {
+                    true
+                }
+                let tray: RecordedTray = serde_json::from_value(tray.clone())
+                    .map_err(|error| format!("invalid tray configuration: {error}"))?;
+                let icon = files.source().read(&tray.icon).ok_or_else(|| {
+                    format!(
+                        "configured tray icon is missing from the application: {}",
+                        tray.icon
+                    )
+                })?;
+                settings.tray = Some(TrayOptions {
+                    icon,
+                    tooltip: tray.tooltip,
+                    open_on_click: tray.open_on_click,
+                    close_to_tray: tray.close_to_tray,
+                    context_menu: tray.context_menu,
+                });
             }
             if let Some(layout) = config.get("layout").and_then(serde_json::Value::as_str) {
                 settings.layout = layout.to_owned();
@@ -218,6 +260,8 @@ fn run(files: AppFiles, arguments: &[String]) -> Result<ExitCode, String> {
         height: settings.height,
         title: settings.title,
         directory: files.entrypoint_name(),
+        window: settings.window,
+        tray: settings.tray,
     };
     let mut session =
         WindowSession::open(&mut engine, files, options).map_err(|error| error.to_string())?;

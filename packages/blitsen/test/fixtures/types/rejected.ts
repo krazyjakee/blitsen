@@ -49,3 +49,7 @@ import { defineConfig } from "blitsen";
 defineConfig({ name: "Demo" });
 // @ts-expect-error
 defineConfig({ output: "dist", unknownKey: true });
+// @ts-expect-error
+defineConfig({ output: "dist", window: { type: "frameless" } });
+// @ts-expect-error
+defineConfig({ output: "dist", tray: { icon: "tray.png", contextMenu: [{ action: "launch" }] } });
