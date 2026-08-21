@@ -73,7 +73,9 @@ fn an_assigned_value_is_the_one_the_renderer_paints() {
     // whether or not there is anything in it.
     let inked = |pixels: Vec<u8>| {
         pixels
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .filter(|pixel| pixel[3] > 0 && pixel[..3].iter().all(|channel| *channel < 100))
             .count()
     };

@@ -19,7 +19,12 @@ fn text_paints_glyphs_rather_than_nothing() {
         300,
         80,
     );
-    let inked = pixels.chunks_exact(4).filter(|pixel| pixel[3] > 0).count();
+    let inked = pixels
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .filter(|pixel| pixel[3] > 0)
+        .count();
     assert!(
         inked > 200,
         "text rendered {inked} non-transparent pixels; system fonts are not loaded"

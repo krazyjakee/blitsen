@@ -69,7 +69,9 @@ fn pixel(pixels: &[u8], width: u32, x: u32, y: u32) -> [u8; 4] {
 /// font actually get used" answerable from pixels alone.
 fn inked_bounds(pixels: &[u8], width: u32) -> Option<(u32, u32, u32, u32)> {
     let inked = pixels
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .enumerate()
         .filter(|(_, pixel)| pixel[3] > 0)
         .map(|(index, _)| (index as u32 % width, index as u32 / width));

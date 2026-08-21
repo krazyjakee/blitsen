@@ -454,8 +454,10 @@ fn encode(path: &Path, pixels: &[u8], width: u32, height: u32) {
 /// everywhere else, so a CI artifact shows *where* a case moved.
 fn difference(golden: &[u8], actual: &[u8]) -> Vec<u8> {
     golden
-        .chunks_exact(4)
-        .zip(actual.chunks_exact(4))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(actual.as_chunks::<4>().0)
         .flat_map(|(golden, actual)| {
             if golden == actual {
                 let grey = 128 + golden[..3].iter().map(|c| u32::from(*c) / 12).sum::<u32>() as u8;
@@ -542,8 +544,10 @@ fn layout_conformance_corpus() {
             continue;
         }
         let differing = expected
-            .chunks_exact(4)
-            .zip(pixels.chunks_exact(4))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .zip(pixels.as_chunks::<4>().0)
             .filter(|(golden, actual)| golden != actual)
             .count();
         failures.push(format!(
