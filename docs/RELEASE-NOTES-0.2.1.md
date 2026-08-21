@@ -26,6 +26,9 @@ system tray icon without application-side native code.
   silently ignoring it.
 - The JSON Schema, JavaScript validator, TypeScript definitions, CLI, exporter, Bun-hosted runtime,
   and standalone QuickJS runtime share the same configuration shape.
+- On Linux, native tray support adds 3.7 MB to the installed standalone runtime and 1.4 MB to its
+  compressed size. It uses the StatusNotifierItem D-Bus protocol without requiring GTK or
+  AppIndicator development libraries on the user's system.
 
 Tray menus are intentionally declarative in this release: entries invoke the built-in window and
 session actions above rather than arbitrary JavaScript callbacks. Published artifacts remain
