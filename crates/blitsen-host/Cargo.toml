@@ -63,6 +63,7 @@ jiff = "0.2"
 # three platforms and no dependencies in this crate.
 sys-locale = "0.3"
 writeable = "0.6"
+image = { version = "0.25", default-features = false, features = ["png"] }
 peniko = "0.6"
 png = "0.18"
 # Blitsen's own `fetch`, so the Phase 2 host swap does not change what the
@@ -106,6 +107,16 @@ harness = false
 # directory standing in for one, which is what the tests run against.
 [target.'cfg(target_os = "android")'.dependencies]
 ndk = { version = "0.9", default-features = false }
+
+# Linux's StatusNotifierItem protocol is D-Bus based and needs no GTK or
+# appindicator development libraries. Windows and macOS use their native tray
+# implementations; keeping these target-specific avoids irrelevant platform
+# dependencies in every runtime.
+[target.'cfg(target_os = "linux")'.dependencies]
+ksni = "0.3.6"
+
+[target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
+tray-icon = { version = "0.24.2", default-features = false }
 
 # Vello's Metal compute path can wedge the display GPU on Intel Macs before
 # wgpu can report device loss (#229). Use vello_cpu to rasterize on the CPU and

@@ -14,7 +14,18 @@ separate configuration file.
     "build": "vite build",
     "output": "dist",
     "name": "My App",
-    "addons": ["native/physics.node"]
+    "addons": ["native/physics.node"],
+    "window": { "type": "borderless", "resizable": false },
+    "tray": {
+      "icon": "native/tray.png",
+      "tooltip": "My App",
+      "closeToTray": true,
+      "contextMenu": [
+        { "label": "Open", "action": "show" },
+        { "action": "separator" },
+        { "label": "Quit", "action": "quit" }
+      ]
+    }
   }
 }
 ```
@@ -29,8 +40,22 @@ Only `output` is required.
 | `build` | string | Command to run before ingesting `output` |
 | `name` | string | Application name, default window title and default output filename |
 | `addons` | string array | `.node` addons to carry, with paths relative to `package.json` |
+| `window` | object | Native window type and creation options |
+| `tray` | object | System tray icon and context menu |
 
 Unknown keys and empty values are rejected instead of ignored.
+
+## Native window and tray
+
+`window.type` accepts `normal` (the default), `borderless`, `fullscreen`, or `hidden`.
+The same object can set `resizable`, `transparent`, and `alwaysOnTop`. A hidden window requires a
+tray configuration so the application is not launched without a way to reveal it.
+
+`tray.icon` is a PNG path relative to `package.json`. Blitsen carries it into standalone exports.
+`openOnClick` defaults to true. The optional `contextMenu` is an ordered list of `show`, `hide`,
+`quit`, and `separator` actions; action items may override their default label and set `enabled`.
+When `closeToTray` is true, the native close control hides the window and the context menu must
+include a `quit` action.
 
 ## How configuration is found
 

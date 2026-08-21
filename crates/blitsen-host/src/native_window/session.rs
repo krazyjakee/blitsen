@@ -15,13 +15,14 @@ use winit::dpi::LogicalSize;
 use winit::event_loop::EventLoop;
 use winit::event_loop::pump_events::EventLoopExtPumpEvents;
 use winit::keyboard::ModifiersState;
-use winit::window::WindowAttributes;
+use winit::monitor::Fullscreen;
+use winit::window::{WindowAttributes, WindowLevel};
 
 use super::{NativeWindowRenderer, SharedBlitzDocument, WindowApplication, native_window_renderer};
-use crate::OpenDirectoryOptions;
 use crate::app::AppFiles;
 use crate::pointer_input::PointerIds;
 use crate::surface_lifecycle::SurfaceState;
+use crate::{OpenDirectoryOptions, WindowType};
 
 /// One open native window, its document, and the I/O runtime behind them.
 ///
@@ -62,6 +63,19 @@ impl<E: JsEngine + Clone + 'static> WindowSession<E> {
             .map_err(|error| JsError::new(error.to_string()))?;
         let guard = runtime.enter();
         let event_loop = create_default_event_loop();
+        let tray = options
+            .tray
+            .clone()
+            .map(|tray| {
+                super::tray::TrayController::new(
+                    tray,
+                    &options.title,
+                    event_loop.create_proxy(),
+                    &runtime,
+                )
+            })
+            .transpose()
+            .map_err(JsError::new)?;
         let (proxy, receiver) = BlitzShellProxy::new(event_loop.create_proxy());
         let net_provider = files.net_provider().unwrap_or_else(|| {
             Arc::new(blitz::net::Provider::new(Some(Arc::new(proxy.clone()))))
@@ -81,9 +95,23 @@ impl<E: JsEngine + Clone + 'static> WindowSession<E> {
         // unsafe target this must never construct wgpu: recovering from device
         // loss is too late when a Metal compute submission wedges WindowServer.
         let renderer = native_window_renderer();
+        let window_options = &options.window;
         let attributes = WindowAttributes::default()
             .with_title(options.title.clone())
-            .with_surface_size(LogicalSize::new(options.width, options.height));
+            .with_surface_size(LogicalSize::new(options.width, options.height))
+            .with_decorations(window_options.window_type != WindowType::Borderless)
+            .with_fullscreen(
+                (window_options.window_type == WindowType::Fullscreen)
+                    .then(|| Fullscreen::Borderless(None)),
+            )
+            .with_visible(window_options.window_type != WindowType::Hidden)
+            .with_resizable(window_options.resizable)
+            .with_transparent(window_options.transparent)
+            .with_window_level(if window_options.always_on_top {
+                WindowLevel::AlwaysOnTop
+            } else {
+                WindowLevel::Normal
+            });
         let window = WindowConfig::with_attributes(
             Box::new(SharedBlitzDocument(Rc::clone(&document.document))),
             renderer,
@@ -111,6 +139,8 @@ impl<E: JsEngine + Clone + 'static> WindowSession<E> {
             load_dispatched: false,
             surface: SurfaceState::Initial,
             synthetic_phase: None,
+            tray,
+            quit_requested: false,
         };
         drop(guard);
         Ok(Self {
@@ -249,13 +279,19 @@ impl<E: JsEngine + Clone + 'static> WindowSession<E> {
     /// turns. Callers embedded in another event loop should use [`Self::pump`].
     pub fn pump_for(&mut self, timeout: Option<Duration>) -> Result<bool, JsError> {
         let _guard = self.runtime.enter();
+        let timeout = if timeout.is_none() && self.application.tray.is_some() {
+            Some(Duration::from_millis(100))
+        } else {
+            timeout
+        };
         self.event_loop
             .pump_app_events(timeout, &mut self.application);
         if let Some(error) = self.error.borrow_mut().take() {
             return Err(error);
         }
-        Ok(!self.application.inner.windows.is_empty()
-            || !self.application.inner.pending_windows.is_empty())
+        Ok(!self.application.quit_requested
+            && (!self.application.inner.windows.is_empty()
+                || !self.application.inner.pending_windows.is_empty()))
     }
 
     /// Reports whether JavaScript has an animation-frame callback to run.

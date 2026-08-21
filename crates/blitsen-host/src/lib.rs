@@ -39,9 +39,114 @@ use blitsen_blitz::BlitzDom;
 use blitsen_dom::{DomBackend, DomError};
 use blitsen_js::JsError;
 use blitz::dom::NodeId;
+use serde::{Deserialize, Serialize};
 
 pub use assets::validate_local_assets;
 pub use native_window::{WindowApplication, WindowSession};
+
+/// How the application's first native window is presented.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum WindowType {
+    /// A decorated, visible window.
+    #[default]
+    Normal,
+    /// A visible window without system decorations.
+    Borderless,
+    /// Borderless fullscreen on the current monitor.
+    Fullscreen,
+    /// Created without initially being shown.
+    Hidden,
+}
+
+/// Options applied while the native window is created.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct NativeWindowOptions {
+    /// Initial presentation type.
+    #[serde(rename = "type")]
+    pub window_type: WindowType,
+    /// Whether the user may resize the window.
+    pub resizable: bool,
+    /// Whether the compositor should preserve surface alpha.
+    pub transparent: bool,
+    /// Whether the window requests an above-normal stacking level.
+    pub always_on_top: bool,
+}
+
+impl Default for NativeWindowOptions {
+    fn default() -> Self {
+        Self {
+            window_type: WindowType::Normal,
+            resizable: true,
+            transparent: false,
+            always_on_top: false,
+        }
+    }
+}
+
+/// A built-in operation a declarative tray menu can perform.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TrayAction {
+    /// Reveal and focus the application window.
+    Show,
+    /// Hide the application window.
+    Hide,
+    /// End the native window session.
+    Quit,
+    /// Draw a visual separator rather than an actionable entry.
+    Separator,
+}
+
+impl TrayAction {
+    /// Default user-facing label for an actionable entry.
+    pub fn default_label(self) -> &'static str {
+        match self {
+            Self::Show => "Show",
+            Self::Hide => "Hide",
+            Self::Quit => "Quit",
+            Self::Separator => "",
+        }
+    }
+}
+
+/// One configured entry in the system tray context menu.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct TrayMenuItem {
+    /// Operation selected by this entry.
+    pub action: TrayAction,
+    /// Optional label overriding the action's default.
+    pub label: Option<String>,
+    /// Whether the item accepts input.
+    pub enabled: bool,
+}
+
+impl Default for TrayMenuItem {
+    fn default() -> Self {
+        Self {
+            action: TrayAction::Separator,
+            label: None,
+            enabled: true,
+        }
+    }
+}
+
+/// Decoded tray configuration ready for the platform implementation.
+#[derive(Clone, Debug)]
+pub struct TrayOptions {
+    /// Encoded PNG bytes.
+    pub icon: Vec<u8>,
+    /// Optional platform tooltip.
+    pub tooltip: Option<String>,
+    /// Whether primary activation reveals the application window.
+    pub open_on_click: bool,
+    /// Whether the native close control hides rather than exits.
+    pub close_to_tray: bool,
+    /// Ordered context-menu entries.
+    pub context_menu: Vec<TrayMenuItem>,
+}
 
 /// What a host needs to open a directory of static output in a native window.
 #[derive(Clone, Debug)]
@@ -58,6 +163,10 @@ pub struct OpenDirectoryOptions {
     pub title: String,
     /// Original directory argument, retained for diagnostics.
     pub directory: String,
+    /// Native creation-time window behavior.
+    pub window: NativeWindowOptions,
+    /// Optional system tray icon and menu.
+    pub tray: Option<TrayOptions>,
 }
 
 /// Wraps a DOM backend failure as a JavaScript-visible error.

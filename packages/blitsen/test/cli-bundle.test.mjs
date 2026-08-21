@@ -149,12 +149,23 @@ describe("Phase 2 link step", () => {
 
   test("links the small host for an application any engine can run", async () => {
     await withStubbedExport(async ({ directory, outfile, nativePath }) => {
-      const root = await staticApp(directory, CLASSIC_APP);
+      const trayIcon = Buffer.from("configured tray PNG");
+      const root = await staticApp(directory, CLASSIC_APP, { "tray.png": trayIcon });
+      const window = { type: "borderless", resizable: false, alwaysOnTop: true };
+      const tray = {
+        icon: join(root, "tray.png"), tooltip: "Classic", openOnClick: true,
+        contextMenu: [{ action: "show" }, { action: "separator" }, { action: "quit" }],
+      };
       const built = await buildStandalone(
-        { root, width: 800, height: 600, title: "Classic", outfile }, nativePath);
+        { root, width: 800, height: 600, title: "Classic", outfile, window, tray }, nativePath);
       expect(built.host).toBe("blitsen");
       // Linked by appending to the runtime, so the artifact carries the bundle.
-      expect(readBundle(await readFile(built.outfile))).not.toBeNull();
+      const bundle = readBundle(await readFile(built.outfile));
+      expect(bundle).not.toBeNull();
+      expect(bundle.files.get("blitsen.tray.png")).toEqual(trayIcon);
+      const runtime = JSON.parse(bundle.files.get("blitsen.runtime.json").toString("utf8"));
+      expect(runtime.window).toEqual(window);
+      expect(runtime.tray).toEqual({ ...tray, icon: "blitsen.tray.png" });
     });
   }, 120_000);
 

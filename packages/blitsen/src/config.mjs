@@ -9,11 +9,40 @@ export const CONFIG_SCHEMA = {
   $schema: "http://json-schema.org/draft-07/schema#",
   $id: "https://raw.githubusercontent.com/krazyjakee/blitsen/main/packages/blitsen/src/config.schema.json",
   title: "Blitsen configuration",
-  description: "The \"blitsen\" key of package.json: the command Blitsen runs before ingest, "
-    + "and the directory of static web output it ingests.",
+  description: "The \"blitsen\" key of package.json: build and static-output settings plus "
+    + "native desktop presentation options.",
   type: "object",
   additionalProperties: false,
   required: ["output"],
+  allOf: [
+    {
+      if: {
+        required: ["window"],
+        properties: { window: { required: ["type"], properties: { type: { const: "hidden" } } } },
+      },
+      then: { required: ["tray"] },
+    },
+    {
+      if: {
+        required: ["tray"],
+        properties: {
+          tray: { required: ["closeToTray"], properties: { closeToTray: { const: true } } },
+        },
+      },
+      then: {
+        properties: {
+          tray: {
+            required: ["contextMenu"],
+            properties: {
+              contextMenu: {
+                contains: { required: ["action"], properties: { action: { const: "quit" } } },
+              },
+            },
+          },
+        },
+      },
+    },
+  ],
   properties: {
     build: {
       type: "string",
@@ -40,6 +69,64 @@ export const CONFIG_SCHEMA = {
         + "They live outside the output directory more often than not, so ingest cannot reach "
         + "them and they have to be declared.",
     },
+    window: {
+      type: "object",
+      additionalProperties: false,
+      description: "Native window creation options.",
+      properties: {
+        type: {
+          type: "string",
+          enum: ["normal", "borderless", "fullscreen", "hidden"],
+          description: "Initial native window presentation. Defaults to normal.",
+        },
+        resizable: { type: "boolean", description: "Whether the user can resize the window." },
+        transparent: {
+          type: "boolean",
+          description: "Request a transparent native surface. Support depends on the compositor.",
+        },
+        alwaysOnTop: {
+          type: "boolean",
+          description: "Request that the window stay above normal windows.",
+        },
+      },
+    },
+    tray: {
+      type: "object",
+      additionalProperties: false,
+      required: ["icon"],
+      description: "System tray icon and its built-in context-menu actions.",
+      properties: {
+        icon: {
+          type: "string",
+          minLength: 1,
+          pattern: "\\.png$",
+          description: "PNG tray icon, relative to this package.json.",
+        },
+        tooltip: { type: "string", minLength: 1 },
+        openOnClick: {
+          type: "boolean",
+          description: "Show and focus the window when the tray icon is activated. Defaults to true.",
+        },
+        closeToTray: {
+          type: "boolean",
+          description: "Hide the window instead of exiting when its close control is used.",
+        },
+        contextMenu: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: false,
+            required: ["action"],
+            properties: {
+              action: { type: "string", enum: ["show", "hide", "quit", "separator"] },
+              label: { type: "string", minLength: 1 },
+              enabled: { type: "boolean" },
+            },
+          },
+          description: "Ordered show, hide, quit and separator entries for the tray context menu.",
+        },
+      },
+    },
   },
 };
 
@@ -61,16 +148,52 @@ export function validateConfig(config, source) {
   for (const key of CONFIG_SCHEMA.required) {
     if (!(key in config)) fail(`missing required key "${key}"`);
   }
-  const checkString = (label, value, rule) => {
-    if (typeof value !== rule.type) fail(`${label} must be a ${rule.type}, found ${describeType(value)}`);
-    if (value.trim().length < rule.minLength) fail(`${label} must not be empty`);
+  const checkValue = (label, value, rule) => {
+    if (rule.type === "array") {
+      if (!Array.isArray(value)) fail(`${label} must be an array, found ${describeType(value)}`);
+      value.forEach((item, index) => checkValue(`${label.slice(0, -1)}[${index}]"`, item, rule.items));
+      return;
+    }
+    if (rule.type === "object") {
+      if (typeof value !== "object" || value === null || Array.isArray(value)) {
+        fail(`${label} must be an object, found ${describeType(value)}`);
+      }
+      const objectKeys = Object.keys(rule.properties);
+      for (const key of Object.keys(value)) {
+        if (!objectKeys.includes(key)) {
+          fail(`${label.slice(0, -1)}.${key}" is unknown (known keys: ${objectKeys.join(", ")})`);
+        }
+      }
+      for (const key of rule.required ?? []) {
+        if (!(key in value)) fail(`${label} is missing required key "${key}"`);
+      }
+      for (const [key, childRule] of Object.entries(rule.properties)) {
+        if (key in value) checkValue(`${label.slice(0, -1)}.${key}"`, value[key], childRule);
+      }
+      return;
+    }
+    if (typeof value !== rule.type) {
+      fail(`${label} must be a ${rule.type}, found ${describeType(value)}`);
+    }
+    if (rule.minLength !== undefined && value.trim().length < rule.minLength) {
+      fail(`${label} must not be empty`);
+    }
+    if (rule.enum && !rule.enum.includes(value)) {
+      fail(`${label} must be one of ${rule.enum.join(", ")}, found ${JSON.stringify(value)}`);
+    }
+    if (rule.pattern && !(new RegExp(rule.pattern)).test(value)) {
+      fail(`${label} must match ${rule.pattern}`);
+    }
   };
   for (const [key, rule] of Object.entries(CONFIG_SCHEMA.properties)) {
-    if (!(key in config)) continue;
-    const value = config[key];
-    if (rule.type !== "array") checkString(`"${key}"`, value, rule);
-    else if (!Array.isArray(value)) fail(`"${key}" must be an array, found ${describeType(value)}`);
-    else value.forEach((item, index) => checkString(`"${key}[${index}]"`, item, rule.items));
+    if (key in config) checkValue(`"${key}"`, config[key], rule);
+  }
+  if (config.window?.type === "hidden" && !config.tray) {
+    fail('"window.type" hidden requires a "tray" configuration');
+  }
+  if (config.tray?.closeToTray
+    && !config.tray.contextMenu?.some(item => item.action === "quit")) {
+    fail('"tray.closeToTray" requires a quit action in "tray.contextMenu"');
   }
   return config;
 }

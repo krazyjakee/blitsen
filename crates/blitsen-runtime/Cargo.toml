@@ -30,6 +30,7 @@ blitsen-js = { path = "../blitsen-js" }
 # golden frames in `spikes/s8`. It reaches the rest of the tree through the
 # engine-neutral `JsEngine` trait, so `engine.rs` is the only file that names it.
 blitsen-quickjs = { path = "../blitsen-quickjs" }
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
 [target.'cfg(all(target_os = "linux", target_env = "gnu"))'.dependencies]

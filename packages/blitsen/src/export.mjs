@@ -29,6 +29,7 @@ const BUN_TARGETS = {
 };
 
 const ADDON_EXTENSION = ".node";
+const TRAY_BUNDLE_ICON = "blitsen.tray.png";
 const NAPI_ENTRYPOINT = "napi_register_module_v1";
 // Every other asset in an export is portable bytes; a .node is a host shared
 // library, and is the one thing that can be architecturally wrong. Checked
@@ -136,6 +137,8 @@ for (const asset of assets) {
     throw new Error("missing side-loaded asset: " + asset.path + " (expected under " + root + ")");
 }`;
   const { path: _path, ...stamp } = options.runtime;
+  const windowOptions = JSON.stringify(options.window ?? null);
+  const trayOptions = JSON.stringify(options.tray ?? null);
   return `import addonPath from "./blitsen.node" with { type: "file" };
 import { createRequire } from "node:module";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -193,6 +196,10 @@ try {
       width: ${options.width},
       height: ${options.height},
       title: ${JSON.stringify(options.title)},
+      ...(${windowOptions} === null ? {} : { window: ${windowOptions} }),
+      ...(${trayOptions} === null ? {} : {
+        tray: { ...${trayOptions}, icon: join(root, ${JSON.stringify(TRAY_BUNDLE_ICON)}) },
+      }),
     });
     const frameLimit = Number(process.env.BLITSEN_STANDALONE_FRAMES || 0);
     const warmupFrames = Number(process.env.BLITSEN_STANDALONE_WARMUP_FRAMES || 0);
@@ -327,7 +334,7 @@ async function prepareStandaloneBuild({ root, outfile, force, assets, target, pl
   };
 }
 
-async function planApplication(root, include, addons) {
+async function planApplication(root, include, addons, trayIcon) {
   const plan = await planIngest(root, { include });
   const carried = new Map(plan.files.map(file => [file.relative, file.absolute]));
   for (const [path, source] of await planAddons(root, addons)) {
@@ -337,10 +344,20 @@ async function planApplication(root, include, addons) {
     }
     carried.set(path, source);
   }
+  if (trayIcon) {
+    if (!(await stat(trayIcon).catch(() => null))?.isFile()) {
+      throw new Error(`tray icon does not exist: ${trayIcon}`);
+    }
+    if (carried.has(TRAY_BUNDLE_ICON) && carried.get(TRAY_BUNDLE_ICON) !== trayIcon) {
+      throw new Error(`${TRAY_BUNDLE_ICON} is reserved for the configured tray icon`);
+    }
+    carried.set(TRAY_BUNDLE_ICON, trayIcon);
+  }
   return {
     plan,
     carried,
-    unreferenced: plan.unreferenced.filter(path => !carried.has(path)),
+    unreferenced: plan.unreferenced.filter(path => !carried.has(path)
+      && (!trayIcon || resolve(root, ...path.split("/")) !== resolve(trayIcon))),
   };
 }
 
@@ -404,7 +421,7 @@ function reportCollection(progress, { manifest, assets, unreferenced, carriedAdd
 
 async function linkPhase2({
   buildTarget, targetPlatform, targetArchitecture, onNotice, manifest, staging,
-  linkedRuntime, width, height, title, assets, destination,
+  linkedRuntime, width, height, title, window, tray, assets, destination,
 }) {
   // After the checks above, deliberately: `fetch` is on the same terms as the
   // addon's own resolution (#72) — a build for this host never reaches the
@@ -447,7 +464,7 @@ async function linkPhase2({
   // linking path, which is machine-local.
   const { path: _linkedPath, ...stamp } = linkedRuntime;
   files.set("blitsen.runtime.json", Buffer.from(
-    `${JSON.stringify({ width, height, title, layout: assets, runtime: stamp })}\n`));
+    `${JSON.stringify({ width, height, title, window, tray, layout: assets, runtime: stamp })}\n`));
   // Issue #121: the notices the artifact owes travel inside it. They are copied
   // from the runtime package because a user's machine has no toolchain to
   // derive them.
@@ -458,13 +475,13 @@ async function linkPhase2({
 }
 
 async function linkPhase1({
-  nativePath, staging, manifest, width, height, title, assets, assetDirectory,
+  nativePath, staging, manifest, width, height, title, window, tray, assets, assetDirectory,
   linkedRuntime, destination, buildTarget,
 }) {
   await copyFile(nativePath, join(staging, "blitsen.node"));
   const launcher = join(staging, "launcher.mjs");
   await writeFile(launcher, launcherSource(manifest, {
-    width, height, title, layout: assets, assetDirectory, runtime: linkedRuntime,
+    width, height, title, window, tray, layout: assets, assetDirectory, runtime: linkedRuntime,
   }));
   // The Bun host is the one thing here that only Bun can build: `Bun.build`
   // links the launcher into that target's Bun. The CLI otherwise runs anywhere
@@ -540,7 +557,7 @@ export async function buildStandalone(
   {
     root, width, height, title, outfile, force = false, include = [], addons = [],
     assets = "embedded", icon = null, bundleId = null, appVersion = null, sign = null,
-    target = null, platform, progress = () => {}, onNotice,
+    target = null, platform, window = null, tray = null, progress = () => {}, onNotice,
   },
   runtime,
 ) {
@@ -550,7 +567,8 @@ export async function buildStandalone(
     linkedRuntime, buildTarget, buildPlatform, nativePath, requested,
     targetPlatform, targetArchitecture, destination, assetDirectory, sideLoaded,
   } = prepared;
-  const { plan, carried, unreferenced } = await planApplication(root, include, addons);
+  const runtimeTray = tray ? { ...tray, icon: TRAY_BUNDLE_ICON } : null;
+  const { plan, carried, unreferenced } = await planApplication(root, include, addons, tray?.icon);
   // Bun records the compiled entrypoint's path in the executable, so staging has
   // to be a stable location rather than a temporary one for reproducible output.
   const staging = join(dirname(destination), `.${basename(destination)}.blitsen-build`);
@@ -576,11 +594,12 @@ export async function buildStandalone(
     if (host === "blitsen") {
       notices = await linkPhase2({
         buildTarget, targetPlatform, targetArchitecture, onNotice, manifest, staging,
-        linkedRuntime, width, height, title, assets, destination,
+        linkedRuntime, width, height, title, window, tray: runtimeTray, assets, destination,
       });
     } else {
       await linkPhase1({
-        nativePath, staging, manifest, width, height, title, assets, assetDirectory,
+        nativePath, staging, manifest, width, height, title, window, tray: runtimeTray,
+        assets, assetDirectory,
         linkedRuntime, destination, buildTarget,
       });
     }

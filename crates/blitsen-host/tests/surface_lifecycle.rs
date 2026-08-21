@@ -140,6 +140,8 @@ fn run_cycle(entrypoint: &Path) {
         height: 240,
         title: "surface lifecycle".to_owned(),
         directory: entrypoint.to_string_lossy().into_owned(),
+        window: Default::default(),
+        tray: None,
     };
     let mut session = WindowSession::open(&mut engine, files, options).expect("a window opens");
 
