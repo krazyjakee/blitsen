@@ -95,6 +95,14 @@ try {
     globalThis.__blitsenAnimationFrameTick(0);
     await Bun.sleep(5);
   }
+  // `done` is set by a microtask of the turn that resolved the last request,
+  // which is not necessarily the turn that retires the last bookkeeping entry
+  // behind it. What is asserted is that the queue stops asking for frames, so
+  // it is waited for rather than demanded of one particular turn.
+  for (let turn = 0; turn < 200 && globalThis.__blitsenAnimationFramesPending(); turn++) {
+    globalThis.__blitsenAnimationFrameTick(0);
+    await Bun.sleep(5);
+  }
   assert.equal(globalThis.__blitsenAnimationFramesPending(), false,
     "a settled queue stops asking for frames");
   const settled = new Map(globalThis.__blitsenNetwork.settled.map(entry => [entry[0], entry]));

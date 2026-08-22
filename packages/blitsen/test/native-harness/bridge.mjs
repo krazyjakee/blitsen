@@ -116,7 +116,13 @@ native.runBridgeHarness(
   100,
   60,
 );
-await Bun.sleep(25);
+// Waited for rather than slept through: what is asserted below is the order
+// these land in and that the interval stops itself, not how long a loaded
+// runner takes to deliver two 2ms periods. A fixed sleep asserts the second
+// thing by accident, and fails on the machine that was busy.
+const timersSettled = performance.now() + 2000;
+while (!globalThis.__blitsenTimerOrder.includes("interval:2")
+  && performance.now() < timersSettled) await Bun.sleep(1);
 assert.deepEqual(globalThis.__blitsenTimerOrder.slice(0, 2), ["timeout:a:2", "microtask"],
   "Bun timer arguments are forwarded and microtasks drain after the macrotask");
 assert.deepEqual(globalThis.__blitsenTimerOrder.filter(entry => entry.startsWith("interval")),
