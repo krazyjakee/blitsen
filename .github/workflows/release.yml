@@ -32,9 +32,9 @@ env:
   CARGO_TERM_COLOR: always
   BUN_VERSION: 1.3.14
   RUST_VERSION: 1.98.0
-  # Cargo downloads are shared separately below; compiled objects use sccache's
-  # content keys, allowing release to reuse the caches written by CI without
-  # six publishing jobs contending to update the GitHub cache.
+  # Release persists only compact Cargo registries. Compiled objects may reuse
+  # existing sccache entries, but publishing never adds per-object writes to the
+  # GitHub cache or restores a target tree containing a staged binary.
   SCCACHE_GHA_ENABLED: "true"
   SCCACHE_GHA_RW_MODE: READ_ONLY
   RUSTC_WRAPPER: sccache
@@ -106,12 +106,10 @@ jobs:
           version: v0.17.0
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: cargo-native
-          # CI's seed jobs own the target archives. Release restores Cargo's
-          # registry and uses sccache, but never risks reusing a staged binary.
+          shared-key: cargo-release-registry
           cache-targets: false
           cache-bin: false
-          save-if: false
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       # Blitz links these directly on Linux; macOS and Windows carry their own.
       - name: Install Blitz system dependencies
