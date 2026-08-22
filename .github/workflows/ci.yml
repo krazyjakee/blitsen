@@ -16,11 +16,10 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   RUST_VERSION: 1.98.0
-  # Every Rust job restores dependency artifacts from `rust-cache`. sccache
-  # stores compiler outputs by their actual inputs, but its GitHub backend is
-  # deliberately read-only by default: concurrent per-object writes hit the
-  # Actions cache rate limit and make a cold run slower. The six native seed
-  # jobs override this on main and refresh one cache per OS/architecture.
+  # Primary-platform jobs restore dependency artifacts from `rust-cache`.
+  # sccache remains read-only: its per-object writes created thousands of cache
+  # entries, exhausted the repository quota and were routinely rate-limited.
+  # One target archive per primary OS is both smaller and cheaper to restore.
   SCCACHE_GHA_ENABLED: "true"
   SCCACHE_GHA_RW_MODE: READ_ONLY
   RUSTC_WRAPPER: sccache
@@ -48,8 +47,6 @@ jobs:
   rust:
     name: Rust (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    env:
-      SCCACHE_GHA_RW_MODE: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 'READ_WRITE' || 'READ_ONLY' }}
     strategy:
       fail-fast: false
       matrix:
@@ -289,8 +286,10 @@ jobs:
           version: v0.17.0
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: cargo-metrics
-          cache-targets: true
+          # Metrics uses a different compiler and has no same-run consumer.
+          # Keep its small registry cache, not another three target archives.
+          shared-key: cargo-metrics-registry
+          cache-targets: false
           cache-bin: false
           save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
       - name: Install Blitz system dependencies
@@ -358,8 +357,6 @@ jobs:
     name: ${{ matrix.target }} (smoke)
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
-    env:
-      SCCACHE_GHA_RW_MODE: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 'READ_WRITE' || 'READ_ONLY' }}
     strategy:
       fail-fast: false
       matrix:
@@ -389,8 +386,12 @@ jobs:
           version: v0.17.0
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: cargo-native
-          cache-targets: true
+          # Six full target archives do not fit GitHub's repository cache
+          # quota. Preserve Cargo downloads for secondary architectures, plus
+          # the target tree for Intel macOS: its cold smoke path is more than
+          # twice as long as the other secondary runners.
+          shared-key: cargo-architecture-registry
+          cache-targets: ${{ matrix.target == 'darwin-x64' }}
           cache-bin: false
           save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
       - name: Install Blitz system dependencies
@@ -530,8 +531,10 @@ jobs:
           # This job installs cargo-ndk after the cache step. Keep its bin cache
           # separate so another job cannot win the shared immutable cache first
           # and leave the tool absent on every later Android run.
-          shared-key: cargo-android
-          cache-targets: true
+          shared-key: cargo-android-registry
+          # cargo-ndk and the registry are compact; two Android target trees are
+          # larger than the benefit once the primary native caches are present.
+          cache-targets: false
           save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
       # `rquickjs-sys` ships pre-generated bindings for sixteen triples and none
       # is `*-linux-android`, so `crates/blitsen-quickjs/Cargo.toml` turns on its
