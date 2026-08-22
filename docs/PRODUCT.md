@@ -68,7 +68,7 @@ That distinction drives every scoping decision:
 | --- | --- | --- | --- | --- |
 | Renderer you control & ship | ✗ | ✓ | ✗ | ✓ |
 | Consistent across OS versions | ✗ | ✓ | ✗ | ✓ |
-| Bare app size | n/a | ~150–250 MB | ~5–15 MB | **38.1 MB, measured on Linux x64** (§9) |
+| Bare app size | n/a | ~150–250 MB | ~5–15 MB | **55.8 MB, measured on Linux x64** (§9) |
 | Full OS access | ✗ | ✓ | ✓ | ✓ |
 | npm ecosystem | ✓ | ✓ | ✓ | ✓ |
 | Adopt without restructuring the project | n/a | partial | partial | compatible apps: one dev dependency |
@@ -422,7 +422,7 @@ workspace and a clean `cargo ndk check` without scaffolding.
 
 | # | Requirement | Target | Notes |
 | --- | --- | --- | --- |
-| P1 | Bare exported app size | **54.6 MB installed, 20.5 MB compressed** — measured on Linux x64, against 131.6 MB for the same app on Phase 1. It was 38.1 MB before `Intl` and SVG added 12.0 MB, then Linux tray support added 3.7 MB; §9 has both trades and what could be given back | S0 disproved the original ≤50 MB target against a design that shipped an engine library alongside; statically linking QuickJS-ng put the shipped total well inside it, and production capabilities have taken it back out — that estimate is withdrawn either way, and this row is a measurement rather than a target. Five targets unmeasured, and no measured Electron or Tauri comparison yet; see §9. Android is not one of the five and never joins this row: an APK is a different artifact, and it is P1b. |
+| P1 | Bare exported app size | **55.8 MB installed, 20.9 MB compressed** — measured on Linux x64, against 131.6 MB for the same app on Phase 1. It was 38.1 MB before `Intl` and SVG added 12.0 MB, Linux tray support added 3.7 MB and `<canvas>` 2D added 1.2 MB; §9 has each trade and what could be given back | S0 disproved the original ≤50 MB target against a design that shipped an engine library alongside; statically linking QuickJS-ng put the shipped total well inside it, and production capabilities have taken it back out — that estimate is withdrawn either way, and this row is a measurement rather than a target. Five targets unmeasured, and no measured Electron or Tauri comparison yet; see §9. Android is not one of the five and never joins this row: an APK is a different artifact, and it is P1b. |
 | P1b | Bare APK size, per ABI | **35.2 MB installed, 14.7 MB downloaded** — measured `arm64-v8a`, release, on the same bare application P1 uses (#150) | The budget is one ABI's, because a device installs one ABI and runs it. The two-ABI APK `blitsen build --android` defaults to is **74.6 MB**, and the half of it the device cannot use is carried anyway — so `--android-abi arm64-v8a` is the shipping build and the default set is the one a developer can also put on an emulator. Both numbers are stated because they answer different questions: the APK is what a sideload transfers, and 14.7 MB is what Play's own `bundletool get-size` reports a per-ABI split delivering. Android's vendored OpenSSL is measured rather than asserted, at **≥3.6 MB** of the library, and it does not show up as a premium: at equal architecture the whole APK is *smaller* than the desktop executable. Play measures every limit on the compressed download, and this is 3% of the 500 MB base-module ceiling — size is not the argument for an AAB. Breakdown, method and limits in §9. |
 | P2 | Cold start to first frame | < 500 ms on mid-range hardware | Should beat Electron decisively or the pitch weakens. |
 | P3 | Idle RAM, bare app | < 100 MB | |
@@ -604,6 +604,17 @@ depend on GTK or AppIndicator development libraries being present on the user's 
 exists even when an individual application does not configure a tray, because the runtime is one
 prebuilt binary. The baseline was re-recorded at **54.6 MB installed and 20.5 MB compressed**, so
 the gate measures drift from the accepted capability cost rather than staying red.
+
+**`<canvas>` 2D is +1.2 MB installed and +0.4 MB compressed.** Three things account for it, and
+none is the drawing itself — recording a display list is the scene the renderer already builds.
+`skrifa` reads glyph outlines, which is what `measureText` reports as its actual bounding box; the
+CPU rasteriser answers the readbacks the specification demands a synchronous answer for
+(`getImageData`, `toDataURL`, `toBlob`, and one canvas drawn into another); and the PNG and JPEG
+encoders are what `toDataURL` hands back. The baseline was re-recorded at **55.8 MB installed and
+20.9 MB compressed** so the gate measures drift from the accepted cost rather than staying red.
+The rasteriser is the piece that could be given back — it exists for the readback paths, and an
+application that never reads a canvas back never reaches it — but it is linked either way, because
+the runtime is one prebuilt binary.
 
 What can still be traded, if the number later matters more than the coverage: currency *names*
 (`currencyDisplay: "name"`), localised time-zone names (`timeZoneName`, and
