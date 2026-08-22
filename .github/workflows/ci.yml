@@ -387,10 +387,11 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           # Six full target archives do not fit GitHub's repository cache
-          # quota. Preserve Cargo downloads for secondary architectures and
-          # reserve target caching for the three primary-platform seed jobs.
+          # quota. Preserve Cargo downloads for secondary architectures, plus
+          # the target tree for Intel macOS: its cold smoke path is more than
+          # twice as long as the other secondary runners.
           shared-key: cargo-architecture-registry
-          cache-targets: false
+          cache-targets: ${{ matrix.target == 'darwin-x64' }}
           cache-bin: false
           save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
       - name: Install Blitz system dependencies
