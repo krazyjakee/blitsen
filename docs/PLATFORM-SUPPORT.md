@@ -62,7 +62,8 @@ APK](PACKAGING.md#build-an-android-apk) for prerequisites and signing.
 
 ## Important runtime limitations
 
-- `<canvas>` 2D, WebGL, WebGPU and WebRTC are not implemented.
+- WebGL, WebGPU and WebRTC are not implemented. `<canvas>` 2D is, without shadows or
+  `ctx.filter`.
 - There is no platform accessibility tree, so screen readers cannot access the application.
 - Text input lacks complete IME/composition, clipboard editing, undo/redo, `contenteditable` and
   complex-script support.

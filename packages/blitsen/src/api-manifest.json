@@ -2474,16 +2474,58 @@
     {
       "api": "HTMLCanvasElement",
       "kind": "global",
-      "status": "absent",
+      "status": "implemented",
       "code": "WEB_CANVAS",
       "pattern": "(?<![.\\w$])HTMLCanvasElement\\b"
     },
     {
       "api": "CanvasRenderingContext2D",
       "kind": "global",
-      "status": "absent",
+      "status": "implemented",
       "code": "WEB_CANVAS",
       "pattern": "(?<![.\\w$])CanvasRenderingContext2D\\b"
+    },
+    {
+      "api": "ImageData",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_CANVAS",
+      "pattern": "(?<![.\\w$])ImageData\\b"
+    },
+    {
+      "api": "Path2D",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_CANVAS",
+      "pattern": "(?<![.\\w$])Path2D\\b"
+    },
+    {
+      "api": "CanvasGradient",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_CANVAS",
+      "pattern": "(?<![.\\w$])CanvasGradient\\b"
+    },
+    {
+      "api": "CanvasPattern",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_CANVAS",
+      "pattern": "(?<![.\\w$])CanvasPattern\\b"
+    },
+    {
+      "api": "TextMetrics",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_CANVAS",
+      "pattern": "(?<![.\\w$])TextMetrics\\b"
+    },
+    {
+      "api": "DOMMatrix",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_CANVAS",
+      "pattern": "(?<![.\\w$])DOMMatrix\\b"
     },
     {
       "api": "OffscreenCanvas",
@@ -2493,18 +2535,817 @@
       "pattern": "(?<![.\\w$])OffscreenCanvas\\b"
     },
     {
-      "api": "ImageData",
+      "api": "OffscreenCanvasRenderingContext2D",
       "kind": "global",
       "status": "absent",
       "code": "WEB_CANVAS",
-      "pattern": "(?<![.\\w$])ImageData\\b"
+      "pattern": "(?<![.\\w$])OffscreenCanvasRenderingContext2D\\b"
     },
     {
-      "api": "Path2D",
+      "api": "ImageBitmap",
       "kind": "global",
       "status": "absent",
       "code": "WEB_CANVAS",
-      "pattern": "(?<![.\\w$])Path2D\\b"
+      "pattern": "(?<![.\\w$])ImageBitmap\\b"
+    },
+    {
+      "api": "createImageBitmap",
+      "kind": "global",
+      "status": "absent",
+      "code": "WEB_CANVAS",
+      "pattern": "\\bcreateImageBitmap\\s*\\("
+    },
+    {
+      "api": "HTMLCanvasElement.width",
+      "kind": "member",
+      "owner": "HTMLCanvasElement.prototype",
+      "member": "width",
+      "status": "implemented",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "HTMLCanvasElement.height",
+      "kind": "member",
+      "owner": "HTMLCanvasElement.prototype",
+      "member": "height",
+      "status": "implemented",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "HTMLCanvasElement.getContext",
+      "kind": "member",
+      "owner": "HTMLCanvasElement.prototype",
+      "member": "getContext",
+      "status": "implemented",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "HTMLCanvasElement.toDataURL",
+      "kind": "member",
+      "owner": "HTMLCanvasElement.prototype",
+      "member": "toDataURL",
+      "status": "implemented",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "HTMLCanvasElement.toBlob",
+      "kind": "member",
+      "owner": "HTMLCanvasElement.prototype",
+      "member": "toBlob",
+      "status": "implemented",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "HTMLCanvasElement.captureStream",
+      "kind": "member",
+      "owner": "HTMLCanvasElement.prototype",
+      "member": "captureStream",
+      "status": "absent",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "HTMLCanvasElement.transferControlToOffscreen",
+      "kind": "member",
+      "owner": "HTMLCanvasElement.prototype",
+      "member": "transferControlToOffscreen",
+      "status": "absent",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "CanvasRenderingContext2D.canvas",
+      "kind": "member",
+      "owner": "CanvasRenderingContext2D.prototype",
+      "member": "canvas",
+      "status": "implemented",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "CanvasRenderingContext2D.save",
+      "kind": "member",
+      "owner": "CanvasRenderingContext2D.prototype",
+      "member": "save",
+      "status": "implemented",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "CanvasRenderingContext2D.restore",
+      "kind": "member",
+      "owner": "CanvasRenderingContext2D.prototype",
+      "member": "restore",
+      "status": "implemented",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "CanvasRenderingContext2D.reset",
+      "kind": "member",
+      "owner": "CanvasRenderingContext2D.prototype",
+      "member": "reset",
+      "status": "implemented",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "CanvasRenderingContext2D.scale",
+      "kind": "member",
+      "owner": "CanvasRenderingContext2D.prototype",
+      "member": "scale",
+      "status": "implemented",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "CanvasRenderingContext2D.rotate",
+      "kind": "member",
+      "owner": "CanvasRenderingContext2D.prototype",
+      "member": "rotate",
+      "status": "implemented",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "CanvasRenderingContext2D.translate",
+      "kind": "member",
+      "owner": "CanvasRenderingContext2D.prototype",
+      "member": "translate",
+      "status": "implemented",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "CanvasRenderingContext2D.transform",
+      "kind": "member",
+      "owner": "CanvasRenderingContext2D.prototype",
+      "member": "transform",
+      "status": "implemented",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "CanvasRenderingContext2D.setTransform",
+      "kind": "member",
+      "owner": "CanvasRenderingContext2D.prototype",
+      "member": "setTransform",
+      "status": "implemented",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "CanvasRenderingContext2D.resetTransform",
+      "kind": "member",
+      "owner": "CanvasRenderingContext2D.prototype",
+      "member": "resetTransform",
+      "status": "implemented",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "CanvasRenderingContext2D.getTransform",
+      "kind": "member",
+      "owner": "CanvasRenderingContext2D.prototype",
+      "member": "getTransform",
+      "status": "implemented",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "CanvasRenderingContext2D.globalAlpha",
+      "kind": "member",
+      "owner": "CanvasRenderingContext2D.prototype",
+      "member": "globalAlpha",
+      "status": "implemented",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "CanvasRenderingContext2D.globalCompositeOperation",
+      "kind": "member",
+      "owner": "CanvasRenderingContext2D.prototype",
+      "member": "globalCompositeOperation",
+      "status": "implemented",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "CanvasRenderingContext2D.fillStyle",
+      "kind": "member",
+      "owner": "CanvasRenderingContext2D.prototype",
+      "member": "fillStyle",
+      "status": "implemented",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "CanvasRenderingContext2D.strokeStyle",
+      "kind": "member",
+      "owner": "CanvasRenderingContext2D.prototype",
+      "member": "strokeStyle",
+      "status": "implemented",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "CanvasRenderingContext2D.lineWidth",
+      "kind": "member",
+      "owner": "CanvasRenderingContext2D.prototype",
+      "member": "lineWidth",
+      "status": "implemented",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "CanvasRenderingContext2D.lineCap",
+      "kind": "member",
+      "owner": "CanvasRenderingContext2D.prototype",
+      "member": "lineCap",
+      "status": "implemented",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "CanvasRenderingContext2D.lineJoin",
+      "kind": "member",
+      "owner": "CanvasRenderingContext2D.prototype",
+      "member": "lineJoin",
+      "status": "implemented",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "CanvasRenderingContext2D.miterLimit",
+      "kind": "member",
+      "owner": "CanvasRenderingContext2D.prototype",
+      "member": "miterLimit",
+      "status": "implemented",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "CanvasRenderingContext2D.setLineDash",
+      "kind": "member",
+      "owner": "CanvasRenderingContext2D.prototype",
+      "member": "setLineDash",
+      "status": "implemented",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "CanvasRenderingContext2D.getLineDash",
+      "kind": "member",
+      "owner": "CanvasRenderingContext2D.prototype",
+      "member": "getLineDash",
+      "status": "implemented",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "CanvasRenderingContext2D.lineDashOffset",
+      "kind": "member",
+      "owner": "CanvasRenderingContext2D.prototype",
+      "member": "lineDashOffset",
+      "status": "implemented",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "CanvasRenderingContext2D.font",
+      "kind": "member",
+      "owner": "CanvasRenderingContext2D.prototype",
+      "member": "font",
+      "status": "implemented",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "CanvasRenderingContext2D.textAlign",
+      "kind": "member",
+      "owner": "CanvasRenderingContext2D.prototype",
+      "member": "textAlign",
+      "status": "implemented",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "CanvasRenderingContext2D.textBaseline",
+      "kind": "member",
+      "owner": "CanvasRenderingContext2D.prototype",
+      "member": "textBaseline",
+      "status": "implemented",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "CanvasRenderingContext2D.direction",
+      "kind": "member",
+      "owner": "CanvasRenderingContext2D.prototype",
+      "member": "direction",
+      "status": "implemented",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "CanvasRenderingContext2D.imageSmoothingEnabled",
+      "kind": "member",
+      "owner": "CanvasRenderingContext2D.prototype",
+      "member": "imageSmoothingEnabled",
+      "status": "implemented",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "CanvasRenderingContext2D.imageSmoothingQuality",
+      "kind": "member",
+      "owner": "CanvasRenderingContext2D.prototype",
+      "member": "imageSmoothingQuality",
+      "status": "implemented",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "CanvasRenderingContext2D.beginPath",
+      "kind": "member",
+      "owner": "CanvasRenderingContext2D.prototype",
+      "member": "beginPath",
+      "status": "implemented",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "CanvasRenderingContext2D.closePath",
+      "kind": "member",
+      "owner": "CanvasRenderingContext2D.prototype",
+      "member": "closePath",
+      "status": "implemented",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "CanvasRenderingContext2D.moveTo",
+      "kind": "member",
+      "owner": "CanvasRenderingContext2D.prototype",
+      "member": "moveTo",
+      "status": "implemented",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "CanvasRenderingContext2D.lineTo",
+      "kind": "member",
+      "owner": "CanvasRenderingContext2D.prototype",
+      "member": "lineTo",
+      "status": "implemented",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "CanvasRenderingContext2D.quadraticCurveTo",
+      "kind": "member",
+      "owner": "CanvasRenderingContext2D.prototype",
+      "member": "quadraticCurveTo",
+      "status": "implemented",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "CanvasRenderingContext2D.bezierCurveTo",
+      "kind": "member",
+      "owner": "CanvasRenderingContext2D.prototype",
+      "member": "bezierCurveTo",
+      "status": "implemented",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "CanvasRenderingContext2D.arc",
+      "kind": "member",
+      "owner": "CanvasRenderingContext2D.prototype",
+      "member": "arc",
+      "status": "implemented",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "CanvasRenderingContext2D.arcTo",
+      "kind": "member",
+      "owner": "CanvasRenderingContext2D.prototype",
+      "member": "arcTo",
+      "status": "implemented",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "CanvasRenderingContext2D.ellipse",
+      "kind": "member",
+      "owner": "CanvasRenderingContext2D.prototype",
+      "member": "ellipse",
+      "status": "implemented",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "CanvasRenderingContext2D.rect",
+      "kind": "member",
+      "owner": "CanvasRenderingContext2D.prototype",
+      "member": "rect",
+      "status": "implemented",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "CanvasRenderingContext2D.roundRect",
+      "kind": "member",
+      "owner": "CanvasRenderingContext2D.prototype",
+      "member": "roundRect",
+      "status": "implemented",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "CanvasRenderingContext2D.fill",
+      "kind": "member",
+      "owner": "CanvasRenderingContext2D.prototype",
+      "member": "fill",
+      "status": "implemented",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "CanvasRenderingContext2D.stroke",
+      "kind": "member",
+      "owner": "CanvasRenderingContext2D.prototype",
+      "member": "stroke",
+      "status": "implemented",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "CanvasRenderingContext2D.clip",
+      "kind": "member",
+      "owner": "CanvasRenderingContext2D.prototype",
+      "member": "clip",
+      "status": "implemented",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "CanvasRenderingContext2D.isPointInPath",
+      "kind": "member",
+      "owner": "CanvasRenderingContext2D.prototype",
+      "member": "isPointInPath",
+      "status": "implemented",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "CanvasRenderingContext2D.isPointInStroke",
+      "kind": "member",
+      "owner": "CanvasRenderingContext2D.prototype",
+      "member": "isPointInStroke",
+      "status": "implemented",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "CanvasRenderingContext2D.fillRect",
+      "kind": "member",
+      "owner": "CanvasRenderingContext2D.prototype",
+      "member": "fillRect",
+      "status": "implemented",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "CanvasRenderingContext2D.strokeRect",
+      "kind": "member",
+      "owner": "CanvasRenderingContext2D.prototype",
+      "member": "strokeRect",
+      "status": "implemented",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "CanvasRenderingContext2D.clearRect",
+      "kind": "member",
+      "owner": "CanvasRenderingContext2D.prototype",
+      "member": "clearRect",
+      "status": "implemented",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "CanvasRenderingContext2D.fillText",
+      "kind": "member",
+      "owner": "CanvasRenderingContext2D.prototype",
+      "member": "fillText",
+      "status": "implemented",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "CanvasRenderingContext2D.strokeText",
+      "kind": "member",
+      "owner": "CanvasRenderingContext2D.prototype",
+      "member": "strokeText",
+      "status": "implemented",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "CanvasRenderingContext2D.measureText",
+      "kind": "member",
+      "owner": "CanvasRenderingContext2D.prototype",
+      "member": "measureText",
+      "status": "implemented",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "CanvasRenderingContext2D.drawImage",
+      "kind": "member",
+      "owner": "CanvasRenderingContext2D.prototype",
+      "member": "drawImage",
+      "status": "implemented",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "CanvasRenderingContext2D.createLinearGradient",
+      "kind": "member",
+      "owner": "CanvasRenderingContext2D.prototype",
+      "member": "createLinearGradient",
+      "status": "implemented",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "CanvasRenderingContext2D.createRadialGradient",
+      "kind": "member",
+      "owner": "CanvasRenderingContext2D.prototype",
+      "member": "createRadialGradient",
+      "status": "implemented",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "CanvasRenderingContext2D.createConicGradient",
+      "kind": "member",
+      "owner": "CanvasRenderingContext2D.prototype",
+      "member": "createConicGradient",
+      "status": "implemented",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "CanvasRenderingContext2D.createPattern",
+      "kind": "member",
+      "owner": "CanvasRenderingContext2D.prototype",
+      "member": "createPattern",
+      "status": "implemented",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "CanvasRenderingContext2D.createImageData",
+      "kind": "member",
+      "owner": "CanvasRenderingContext2D.prototype",
+      "member": "createImageData",
+      "status": "implemented",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "CanvasRenderingContext2D.getImageData",
+      "kind": "member",
+      "owner": "CanvasRenderingContext2D.prototype",
+      "member": "getImageData",
+      "status": "implemented",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "CanvasRenderingContext2D.putImageData",
+      "kind": "member",
+      "owner": "CanvasRenderingContext2D.prototype",
+      "member": "putImageData",
+      "status": "implemented",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "CanvasRenderingContext2D.shadowBlur",
+      "kind": "member",
+      "owner": "CanvasRenderingContext2D.prototype",
+      "member": "shadowBlur",
+      "status": "absent",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "CanvasRenderingContext2D.shadowColor",
+      "kind": "member",
+      "owner": "CanvasRenderingContext2D.prototype",
+      "member": "shadowColor",
+      "status": "absent",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "CanvasRenderingContext2D.shadowOffsetX",
+      "kind": "member",
+      "owner": "CanvasRenderingContext2D.prototype",
+      "member": "shadowOffsetX",
+      "status": "absent",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "CanvasRenderingContext2D.shadowOffsetY",
+      "kind": "member",
+      "owner": "CanvasRenderingContext2D.prototype",
+      "member": "shadowOffsetY",
+      "status": "absent",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "CanvasRenderingContext2D.filter",
+      "kind": "member",
+      "owner": "CanvasRenderingContext2D.prototype",
+      "member": "filter",
+      "status": "absent",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "CanvasRenderingContext2D.letterSpacing",
+      "kind": "member",
+      "owner": "CanvasRenderingContext2D.prototype",
+      "member": "letterSpacing",
+      "status": "absent",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "CanvasRenderingContext2D.wordSpacing",
+      "kind": "member",
+      "owner": "CanvasRenderingContext2D.prototype",
+      "member": "wordSpacing",
+      "status": "absent",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "CanvasRenderingContext2D.fontKerning",
+      "kind": "member",
+      "owner": "CanvasRenderingContext2D.prototype",
+      "member": "fontKerning",
+      "status": "absent",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "CanvasRenderingContext2D.getContextAttributes",
+      "kind": "member",
+      "owner": "CanvasRenderingContext2D.prototype",
+      "member": "getContextAttributes",
+      "status": "absent",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "CanvasRenderingContext2D.drawFocusIfNeeded",
+      "kind": "member",
+      "owner": "CanvasRenderingContext2D.prototype",
+      "member": "drawFocusIfNeeded",
+      "status": "absent",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "Path2D.moveTo",
+      "kind": "member",
+      "owner": "Path2D.prototype",
+      "member": "moveTo",
+      "status": "implemented",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "Path2D.lineTo",
+      "kind": "member",
+      "owner": "Path2D.prototype",
+      "member": "lineTo",
+      "status": "implemented",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "Path2D.bezierCurveTo",
+      "kind": "member",
+      "owner": "Path2D.prototype",
+      "member": "bezierCurveTo",
+      "status": "implemented",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "Path2D.quadraticCurveTo",
+      "kind": "member",
+      "owner": "Path2D.prototype",
+      "member": "quadraticCurveTo",
+      "status": "implemented",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "Path2D.arc",
+      "kind": "member",
+      "owner": "Path2D.prototype",
+      "member": "arc",
+      "status": "implemented",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "Path2D.arcTo",
+      "kind": "member",
+      "owner": "Path2D.prototype",
+      "member": "arcTo",
+      "status": "implemented",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "Path2D.ellipse",
+      "kind": "member",
+      "owner": "Path2D.prototype",
+      "member": "ellipse",
+      "status": "implemented",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "Path2D.rect",
+      "kind": "member",
+      "owner": "Path2D.prototype",
+      "member": "rect",
+      "status": "implemented",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "Path2D.roundRect",
+      "kind": "member",
+      "owner": "Path2D.prototype",
+      "member": "roundRect",
+      "status": "implemented",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "Path2D.closePath",
+      "kind": "member",
+      "owner": "Path2D.prototype",
+      "member": "closePath",
+      "status": "implemented",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "Path2D.addPath",
+      "kind": "member",
+      "owner": "Path2D.prototype",
+      "member": "addPath",
+      "status": "implemented",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "CanvasGradient.addColorStop",
+      "kind": "member",
+      "owner": "CanvasGradient.prototype",
+      "member": "addColorStop",
+      "status": "implemented",
+      "code": "WEB_CANVAS",
+      "pattern": null
+    },
+    {
+      "api": "CanvasPattern.setTransform",
+      "kind": "member",
+      "owner": "CanvasPattern.prototype",
+      "member": "setTransform",
+      "status": "implemented",
+      "code": "WEB_CANVAS",
+      "pattern": null
     },
     {
       "api": "WebGLRenderingContext",
@@ -3608,9 +4449,9 @@
     },
     "WEB_CANVAS": {
       "severity": "warning",
-      "message": "Canvas is not in the v1 compatibility profile.",
-      "guidance": "Use DOM/CSS rendering or a native viewport until canvas support lands.",
-      "extra": "\\.getContext\\s*\\("
+      "message": "This canvas API is not implemented; the 2D context is.",
+      "guidance": "Draw through getContext(\"2d\"), and feature-detect anything that needs a second rendering target or a blur.",
+      "extra": "\\.getContext\\s*\\(\\s*[\"'](?:webgl2?|webgpu|bitmaprenderer)"
     },
     "WEB_GPU": {
       "severity": "warning",
@@ -3713,14 +4554,6 @@
       "pattern": "(?:^|[;{])\\s*(?:filter|backdrop-filter|clip-path|mask(?:-image)?)\\s*:",
       "message": "This paint effect is ignored rather than applied.",
       "guidance": "Check the element is still legible without it; use borders and backgrounds where it is not."
-    },
-    {
-      "kind": "html",
-      "code": "HTML_CANVAS",
-      "severity": "error",
-      "pattern": "<canvas\\b",
-      "message": "<canvas> is not implemented.",
-      "guidance": "Use ordinary DOM/CSS elements or a native viewport."
     },
     {
       "kind": "html",

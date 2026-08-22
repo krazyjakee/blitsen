@@ -40,12 +40,15 @@ lists individual globals, classes and members.
 | Styling | Stylesheets, rule source, media queries, CSS support checks and resize observers |
 | Audio | `<audio>` and a focused Web Audio subset |
 | Storage | `localStorage` and `sessionStorage`, both in-memory for one process |
+| Canvas | `<canvas>` with a full 2D context: paths, text, images, gradients, patterns, compositing, `getImageData` and `toDataURL` |
 
 ## Important absences
 
 | Feature | What to use or expect |
 | --- | --- |
-| Canvas 2D, WebGL and WebGPU | Not implemented; a document containing `<canvas>` is a doctor error |
+| WebGL and WebGPU | Not implemented; `getContext("webgl")` answers `null`. Use the 2D context, or `<blitsen-view>` for GPU output |
+| Canvas shadows and `ctx.filter` | Absent, so a feature test selects a fallback; both need a blur the renderer has none of |
+| `OffscreenCanvas` and `ImageBitmap` | Absent; a `<canvas>` that is never in the document draws, reads back and encodes |
 | WebAssembly and `Intl` | Absent from the standard shipped JavaScript engine |
 | XHR | Use `fetch` |
 | Streams | Responses are buffered; streaming body APIs are absent |

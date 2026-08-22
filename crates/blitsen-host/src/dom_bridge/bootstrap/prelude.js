@@ -122,6 +122,10 @@
       catch (error) { console.error("Uncaught exception in requestAnimationFrame callback", error); }
     }
     runningAnimationFrames = null;
+    // After the callbacks and before the frame is painted, which is the only
+    // moment a canvas drawn inside one can still reach this frame.
+    flushCanvases();
+    canvasPaintPending = false;
     if (__blitsenDevLayoutWarnings && forcedLayoutsThisFrame > 0)
       console.warn(`Blitsen: ${forcedLayoutsThisFrame} forced synchronous layout(s) in this frame`);
     forcedLayoutsThisFrame = 0;

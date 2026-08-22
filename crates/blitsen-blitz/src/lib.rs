@@ -7,6 +7,7 @@
 mod backend;
 mod canvas;
 mod cursor;
+mod fonts;
 mod forms;
 mod hit_test;
 mod pointer_events;
@@ -33,7 +34,7 @@ use blitsen_dom::{
 use blitz::dom::{DocumentConfig, NodeId};
 use blitz::html::{HtmlDocument, HtmlProvider};
 
-use canvas::CanvasState;
+use canvas::{CanvasState, TextEngine};
 use forms::FormState;
 use resources::ResourceLog;
 use ua::BASELINE_UA_CSS;
@@ -68,6 +69,10 @@ pub struct BlitzDom {
     js_references: HashMap<NodeId, u32>,
     native_viewports: HashMap<NodeId, Rc<RefCell<ViewportState>>>,
     canvases: HashMap<NodeId, Rc<RefCell<CanvasState>>>,
+    /// The font collection canvas text shapes from — see [`fonts`].
+    canvas_fonts: parley::FontContext,
+    /// Parley's shaping caches, built the first time a canvas draws text.
+    text_engine: Option<TextEngine>,
     resources: ResourceLog,
     form_state: HashMap<NodeId, FormState>,
     animation_time: f64,
@@ -89,7 +94,13 @@ impl BlitzDom {
         // real one — audio loading, for instance — needs the same base the
         // cascade and the subresource loader are using.
         let base_url = config.base_url.clone();
+        // Blitz builds a font context of its own when it is not given one, and
+        // keeps it private. Supplying one is the only way a canvas can shape
+        // from the same faces the document does, `@font-face` included.
+        let (document_fonts, canvas_fonts) = fonts::shared_context();
+        config.font_ctx = Some(document_fonts);
         let mut dom = Self::new(HtmlDocument::from_html(html, config));
+        dom.canvas_fonts = canvas_fonts;
         dom.resources = log;
         dom.base_url = base_url;
         dom.normalize_pointer_events();
@@ -121,6 +132,11 @@ impl BlitzDom {
             js_references: HashMap::new(),
             native_viewports: HashMap::new(),
             canvases: HashMap::new(),
+            // Replaced by `from_html`, which builds one the document shares.
+            // A document wrapped after the fact cannot share Blitz's, so canvas
+            // text in one falls back to a collection of its own.
+            canvas_fonts: fonts::shared_context().1,
+            text_engine: None,
             resources: ResourceLog::default(),
             form_state: HashMap::new(),
             animation_time: 0.0,

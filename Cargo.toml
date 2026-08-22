@@ -35,9 +35,11 @@ anyrender = { git = "https://github.com/DioxusLabs/anyrender", rev = "dcd219746f
 # A fork of Blitz at the pinned revision, carrying one fix: replaced layout
 # reaches `unreachable!()` when a replaced element carries a custom widget,
 # because the widget takes the `SpecialElementData` slot the `<canvas>` branch
-# matches on. That panic is what stands between `<canvas>` and the compositing
-# seam `<blitsen-view>` already proves, and there is no workaround on this side
-# of the boundary. Filed upstream; see docs/BLITZ-GAPS.md G14.
+# matches on. That panic is what stood between `<canvas>` and the compositing
+# seam `<blitsen-view>` proves, and there is no workaround on this side of the
+# boundary. `<canvas>` 2D ships over that seam now (issue #99), so every
+# document with a canvas in it depends on this patch. Filed upstream; see
+# docs/BLITZ-GAPS.md G14.
 #
 # The revision below is `1efe22d2` — the same commit the `blitz*` dependencies
 # pin — plus that one commit, so the patch changes the fix and nothing else. It

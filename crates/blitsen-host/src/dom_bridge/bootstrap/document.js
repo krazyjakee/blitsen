@@ -4,6 +4,7 @@
   };
   const wrapperCache = new Map();
   const TAG_INTERFACES = { "blitsen-view": BlitsenViewElement, button: HTMLButtonElement,
+    canvas: HTMLCanvasElement,
     form: HTMLFormElement, img: HTMLImageElement, input: HTMLInputElement, link: HTMLLinkElement,
     option: HTMLOptionElement, select: HTMLSelectElement, style: HTMLStyleElement,
     template: HTMLTemplateElement, textarea: HTMLTextAreaElement };

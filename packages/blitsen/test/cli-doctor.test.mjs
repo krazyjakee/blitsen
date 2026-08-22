@@ -33,14 +33,24 @@ describe("directory CLI", () => {
     const compatible = await doctorApplication(join(fixtures, "compatible"));
     expect(compatible).toMatchObject({ profile: "v1-strict", errors: 0, warnings: 0, files: 3 });
 
+    // A canvas is no longer one of these (issue #99): what is left in this
+    // fixture degrades, so the build is graded and not refused.
     const { lines, output } = capture();
-    expect(await main(["doctor", join(fixtures, "unsupported")], output)).toBe(1);
-    expect(lines.some(([, line]) => line.includes("HTML_CANVAS") && line.includes("native viewport")))
+    expect(await main(["doctor", join(fixtures, "unsupported")], output)).toBe(0);
+    expect(lines.some(([, line]) => line.includes("WEB_CANVAS") && line.includes("2D context is")))
       .toBeTrue();
     expect(lines.some(([, line]) =>
       line.includes("WEB_STORAGE_MEMORY") && line.includes("gone when the application exits")))
       .toBeTrue();
-    expect(lines.at(-1)[1]).toContain("1 errors, 2 warnings");
+    expect(lines.at(-1)[1]).toContain("0 errors, 2 warnings");
+
+    // What still blocks: an entry point that names source rather than output,
+    // because nothing in the runtime transpiles it and the window stays blank.
+    const blocked = capture();
+    expect(await main(["doctor", join(fixtures, "source-entry")], blocked.output)).toBe(1);
+    expect(blocked.lines.some(([, line]) =>
+      line.includes("HTML_SOURCE_ENTRY") && line.includes("vite build"))).toBeTrue();
+    expect(blocked.lines.at(-1)[1]).toContain("1 errors, 0 warnings");
   });
 
   // The severities the third-party evidence settled. Every remote subresource
@@ -74,7 +84,7 @@ describe("directory CLI", () => {
         `typeof customElements<"u"&&customElements.get(n);`,
         `try{document.cookie="theme=dark"}catch{}`,
         `typeof SharedWorker<"u"&&new SharedWorker(u);`,
-        `if(t.getContext)t.getContext("2d");`,
+        `typeof OffscreenCanvas<"u"&&new OffscreenCanvas(1,1);`,
         `e?window.open(u,"_blank"):0;`,
         `typeof indexedDB<"u"&&indexedDB.open("x");`,
       ].join("\n"));

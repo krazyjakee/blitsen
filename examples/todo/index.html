@@ -1,0 +1,67 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Blitsen Todo</title>
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <div class="ambient">
+      <span class="blob violet"></span>
+      <span class="blob cyan"></span>
+      <span class="blob rose"></span>
+    </div>
+
+    <main class="app">
+      <header class="head">
+        <div class="brand">
+          <span class="logo"><span class="logo-inner"></span></span>
+          <span class="brand-text">
+            <span class="eyebrow">BLITSEN</span>
+            <h1>Today</h1>
+          </span>
+        </div>
+
+        <div class="gauge">
+          <div class="track"><div id="bar" class="fill"></div></div>
+          <p class="tally">
+            <strong id="remaining">0</strong>
+            <span id="tally-word">tasks left</span>
+            <span class="sep"></span>
+            <span id="finished">0 done</span>
+          </p>
+        </div>
+      </header>
+
+      <div class="compose">
+        <span id="compose-dot" class="compose-dot"></span>
+        <span class="field">
+          <span id="ghost" class="ghost">What needs doing?</span>
+          <input id="entry" type="text" autocomplete="off">
+        </span>
+        <button id="add" type="button">Add</button>
+      </div>
+
+      <nav id="filters" class="filters">
+        <span id="thumb" class="thumb"></span>
+        <button type="button" data-filter="all" class="on">All</button>
+        <button type="button" data-filter="active">Active</button>
+        <button type="button" data-filter="done">Done</button>
+      </nav>
+
+      <ul id="list" class="list"></ul>
+
+      <div id="empty" class="empty">
+        <span class="empty-dot"></span>
+        <span id="empty-text">Nothing here yet.</span>
+      </div>
+
+      <footer class="foot">
+        <span id="hint" class="hint">Enter to add &nbsp;·&nbsp; click a row to complete it</span>
+        <button id="clear" type="button" class="clear">Clear completed</button>
+      </footer>
+    </main>
+
+    <script src="./app.js"></script>
+  </body>
+</html>

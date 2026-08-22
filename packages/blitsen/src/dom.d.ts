@@ -9,7 +9,7 @@
 //    framework's markup both type it as itself rather than as `HTMLElement`.
 //
 // What it deliberately does *not* do is redeclare the absent APIs as `never`.
-// `lib.dom.d.ts` will still offer `IndexedDB` and `HTMLCanvasElement`, because
+// `lib.dom.d.ts` will still offer `IndexedDB` and `OffscreenCanvas`, because
 // removing a global from an ambient lib is not something a package can do. The
 // list of what is genuinely absent is generated from the runtime — see
 // `src/api-manifest.json` and the capability tiers in COMPATIBILITY.md — and

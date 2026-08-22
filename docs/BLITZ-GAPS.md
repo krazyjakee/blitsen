@@ -6,9 +6,9 @@ catalogue in [`spikes/s6/README.md`](../spikes/s6/README.md), which was a dated 
 run and is kept only as the evidence behind the initial triage.
 
 **Scope.** A gap belongs here when the renderer draws something differently from a browser, or not
-at all. Things Blitsen has simply not implemented — `<canvas>`, `<video>`, navigation — are
-capability tiers, not gaps; those live in [`COMPATIBILITY.md`](COMPATIBILITY.md). (`fetch`, images
-and web fonts were in that sentence once and are implemented now.)
+at all. Things Blitsen has simply not implemented — `<video>`, WebGL, navigation — are capability
+tiers, not gaps; those live in [`COMPATIBILITY.md`](COMPATIBILITY.md). (`fetch`, images, web fonts
+and `<canvas>` were in that sentence once and are implemented now.)
 
 **"Blitz" here is four layers, and a row has to say which one it sits in**, because that decides
 where it gets filed: stylo's cascade, `blitz-dom`'s layout and DOM, `blitz-paint`'s scene building,
@@ -38,6 +38,8 @@ Status values: **open** (reproduced, unfiled), **filed** (upstream issue exists)
 
 | G14 | A replaced element panics in layout the moment it carries a custom widget | filed | `crates/blitsen-blitz/src/tests/canvas.rs::canvas_survives_carrying_a_custom_widget` | [blitz#706](https://github.com/DioxusLabs/blitz/issues/706); patched in a fork rather than worked around, because there is nothing to work around it with. See below |
 | G15 | `pointer-events` accepts only `auto` and `none`, so `all` is dropped and the element inherits | open | `crates/blitsen-blitz/src/tests/stylesheets.rs::an_element_that_declares_it_takes_hits_inside_one_that_does_not_is_hit` | stylo's cascade layer: the other nine values are `#[cfg(feature = "gecko")]`, which needs Gecko's bindings and cannot be enabled by an embedder. Worked around in `pointer_events.rs`; see below |
+| G16 | An opacity on an image paint aborts the process rather than drawing | open | `packages/blitsen/test/native-harness/canvas.mjs`, the half-transparent `drawImage` | anyrender backend: `vello_common`'s encoder reaches `unimplemented!("Applying opacity to image commands")`, which is a panic across the native boundary. Worked around in `canvas/wire.rs`; see below |
+| G17 | A compose function applies outside its own layer's clip | open | `crates/blitsen-blitz/src/tests/canvas.rs::a_clear_erases_a_rectangle_and_leaves_the_rest_of_the_canvas` | anyrender backend: a `Copy` or `Clear` layer clipped to a rectangle clears the whole surface. Worked around in `canvas/record.rs`; see below |
 
 Broad Tailwind/renderer work has an upstream collection in
 [blitz#389](https://github.com/DioxusLabs/blitz/issues/389).
@@ -421,3 +423,47 @@ divergence between two answers about the same element, which is worse than one h
   a browser, but whether it matches itself on every platform. A gap belongs here when a browser
   disagrees with Blitz; a conformance case belongs there when Blitsen has to keep agreeing with
   itself.
+
+## G16 — an opacity on an image paint is a panic, not a slow path
+
+`peniko::ImageSampler` carries an `alpha`, and every path through Blitsen that could set it now
+sets `1.0` instead. Not as a simplification: `vello_common`'s paint encoder reaches
+
+```rust
+if sampler.alpha != 1.0 {
+    unimplemented!("Applying opacity to image commands");
+}
+```
+
+which is a panic, and a panic raised from inside a paint is not a wrong picture — it is the
+process. It was found by the canvas demo the first time it drew a pattern at `globalAlpha = 0.35`.
+
+The encoding is what carries the fix rather than a check at the call site. `canvas::wire`'s image
+paint has no alpha field at all and `canvas::record` writes `1.0` literally, so there is no
+argument to get wrong: an opacity on an image is a compositing layer the caller opens, which the
+backend does implement. That costs one layer per drawn image at less than full opacity, and
+nothing at all at full opacity — which is what a canvas does almost all of the time.
+
+## G17 — a destructive compose function is not bounded by its layer
+
+`push_layer` takes a blend mode *and* a clip, which reads as "compose these two things inside this
+shape". The backend composes them everywhere: a layer with `Compose::Copy` and a 4×4 clip replaces
+the destination inside that rectangle **and clears the rest of the surface**. Measured directly —
+fill the canvas red, push a `Copy` layer clipped to a small square, draw into it, pop: the square
+is right and everything outside it is transparent.
+
+For canvas this is half a defect. The five compose functions that clear where their source is
+absent — `copy`, `source-in`, `source-out`, `destination-in`, `destination-atop` — are canvas's own
+destructive operations and *want* the whole-canvas scope, so a `globalCompositeOperation` set to
+one of them is correct as it stands; a canvas that records one is composited as a group, so it
+erases itself rather than the document behind it.
+
+What it costs is the two operations that must be bounded. `clearRect` and `putImageData` erase a
+rectangle and nothing else, so neither can be written as `Clear` or `Copy`. Both go through
+`destination-out` instead — whose result for an absent source is the destination unchanged, which
+makes the unbounded application a no-op outside the shape. A full-canvas `clearRect` does not even
+reach that: it is recorded as "forget everything", which is cheaper than any layer.
+
+What is still visibly wrong is a destructive composite operation used *inside* a `clip()`. The clip
+is a layer, the erasure sees it as a backdrop, and the result differs from a browser's.
+COMPATIBILITY.md states it under the canvas surface.

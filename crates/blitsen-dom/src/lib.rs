@@ -14,6 +14,7 @@ pub use invalidation::{
     FrameInvalidation, InvalidationMetrics, InvalidationMode, InvalidationTracker,
 };
 pub use types::{
+    CANVAS_TAG, CanvasCommands, CanvasEncoding, CanvasSurface, CanvasTextMetrics, CanvasTextStyle,
     CaretPosition, DomError, DomName, HitTest, ImageState, LayoutMetrics, LayoutSnapshot,
     LinkState, MediaQueryMatch, NATIVE_VIEWPORT_BYTES_PER_PIXEL, NATIVE_VIEWPORT_TAG, Namespace,
     NodeId, NodeKind, Rect, SelectionDirection, TextEdit, TextMotion, TextSelection,
@@ -372,4 +373,59 @@ pub trait DomBackend {
     /// The slice must be exactly [`ViewportSurface::byte_length`] long: a
     /// partial write has no meaning for a surface that is composited whole.
     fn write_native_viewport(&mut self, node: Self::NodeId, pixels: &[u8]) -> Result<(), DomError>;
+
+    /// Returns a [`CANVAS_TAG`] element's backing store, creating it if needed.
+    ///
+    /// Not snapshot gated, and that is the difference between this and
+    /// [`Self::native_viewport_surface`]: a viewport is sized by layout, so
+    /// reading one before layout resolves would read the previous frame's box.
+    /// A canvas is sized by its own content attributes and by nothing else, so
+    /// the answer does not depend on a flush — which is what lets a canvas that
+    /// has never been in the document be drawn on at all.
+    fn canvas_surface(&mut self, node: Self::NodeId) -> Result<CanvasSurface, DomError>;
+    /// Records one submission of 2D context drawing commands.
+    fn submit_canvas(
+        &mut self,
+        node: Self::NodeId,
+        commands: CanvasCommands<'_>,
+    ) -> Result<(), DomError>;
+    /// Reads a rectangle of a canvas back as straight-alpha RGBA8 rows.
+    ///
+    /// The rectangle may extend past the backing store, which `getImageData`
+    /// allows: nothing was drawn there, so it reads transparent black.
+    fn canvas_pixels(
+        &mut self,
+        node: Self::NodeId,
+        x: f64,
+        y: f64,
+        width: u32,
+        height: u32,
+    ) -> Result<Vec<u8>, DomError>;
+    /// Encodes a whole canvas as an image file of the named type.
+    fn encode_canvas(
+        &mut self,
+        node: Self::NodeId,
+        mime_type: &str,
+        quality: f64,
+    ) -> Result<CanvasEncoding, DomError>;
+    /// Encodes a whole canvas as a `data:` URL.
+    fn canvas_data_url(
+        &mut self,
+        node: Self::NodeId,
+        mime_type: &str,
+        quality: f64,
+    ) -> Result<String, DomError>;
+    /// Measures a run of text in a 2D context's font.
+    fn measure_canvas_text(
+        &mut self,
+        style: CanvasTextStyle<'_>,
+        text: &str,
+    ) -> Result<CanvasTextMetrics, DomError>;
+    /// Answers `isPointInPath`, or `isPointInStroke` when `stroked`.
+    ///
+    /// The geometry is a slice of the same command encoding
+    /// [`CanvasCommands::numbers`] carries, for the same reason: a path is a
+    /// variable-length run of numbers and the two sides already agree on how to
+    /// write one.
+    fn canvas_contains(&mut self, stroked: bool, geometry: &[f64]) -> Result<bool, DomError>;
 }

@@ -4,6 +4,7 @@
 //! modules; the helpers it leans on live beside it in sibling files.
 
 use blitsen_dom::{
+    CanvasCommands, CanvasEncoding, CanvasSurface, CanvasTextMetrics, CanvasTextStyle,
     CaretPosition, DomBackend, DomError, DomName, HitTest, ImageState, LayoutMetrics,
     LayoutSnapshot, LinkState, MediaQueryMatch, NATIVE_VIEWPORT_TAG, NodeKind, Rect, TextEdit,
     TextMotion, TextSelection, ViewportSurface,
@@ -190,6 +191,7 @@ impl DomBackend for BlitzDom {
             .mutate()
             .set_attribute(node, Self::qual_name(name), value);
         self.restore_form_state(node, name);
+        self.resize_canvas_backing_store(node, name);
         self.mutate(Some(node), Some(node));
         Ok(())
     }
@@ -201,6 +203,7 @@ impl DomBackend for BlitzDom {
                 .mutate()
                 .clear_attribute(node, Self::qual_name(name));
             self.restore_form_state(node, name);
+            self.resize_canvas_backing_store(node, name);
             self.mutate(Some(node), Some(node));
         }
         Ok(existed)
@@ -959,5 +962,58 @@ impl DomBackend for BlitzDom {
             .ok_or(DomError::InvalidNodeType)?
             .borrow_mut()
             .write(pixels)
+    }
+
+    fn canvas_surface(&mut self, node: NodeId) -> Result<CanvasSurface, DomError> {
+        self.canvas_backing_store(node)
+    }
+
+    fn submit_canvas(
+        &mut self,
+        node: NodeId,
+        commands: CanvasCommands<'_>,
+    ) -> Result<(), DomError> {
+        self.record_canvas(node, commands)
+    }
+
+    fn canvas_pixels(
+        &mut self,
+        node: NodeId,
+        x: f64,
+        y: f64,
+        width: u32,
+        height: u32,
+    ) -> Result<Vec<u8>, DomError> {
+        self.read_canvas_pixels(node, x, y, width, height)
+    }
+
+    fn encode_canvas(
+        &mut self,
+        node: NodeId,
+        mime_type: &str,
+        quality: f64,
+    ) -> Result<CanvasEncoding, DomError> {
+        self.encode_canvas_image(node, mime_type, quality)
+    }
+
+    fn canvas_data_url(
+        &mut self,
+        node: NodeId,
+        mime_type: &str,
+        quality: f64,
+    ) -> Result<String, DomError> {
+        self.canvas_image_url(node, mime_type, quality)
+    }
+
+    fn measure_canvas_text(
+        &mut self,
+        style: CanvasTextStyle<'_>,
+        text: &str,
+    ) -> Result<CanvasTextMetrics, DomError> {
+        Ok(self.canvas_text_metrics(style, text))
+    }
+
+    fn canvas_contains(&mut self, stroked: bool, geometry: &[f64]) -> Result<bool, DomError> {
+        self.path_contains_point(stroked, geometry)
     }
 }

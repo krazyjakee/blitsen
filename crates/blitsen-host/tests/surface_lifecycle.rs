@@ -150,6 +150,10 @@ fn run_cycle(entrypoint: &Path) {
         session.renderer_is_active(),
         "the renderer never built a surface, so there is nothing to destroy"
     );
+    assert!(
+        session.startup_revealed(),
+        "the first complete frame never revealed the native window"
+    );
     assert_eq!(marker(&mut engine), "set by script");
     let frames_before = probe(&mut engine, "frames");
     let timers_before = probe(&mut engine, "timers");
@@ -191,6 +195,10 @@ fn run_cycle(entrypoint: &Path) {
     assert!(
         session.renderer_is_active(),
         "the surface was never rebuilt"
+    );
+    assert!(
+        session.startup_revealed(),
+        "restoring a surface hid the window behind the startup gate again"
     );
     assert_eq!(
         marker(&mut engine),

@@ -107,6 +107,14 @@ pub struct WindowApplication<Rend: anyrender::WindowRenderer, E: JsEngine + Clon
     pub(crate) pointer_ids: PointerIds,
     pub(crate) modifiers: ModifiersState,
     pub(crate) load_dispatched: bool,
+    /// Whether the application's first complete frame has been presented.
+    ///
+    /// The native window is created hidden. Mapping it before the renderer has
+    /// a frame lets the compositor expose its uninitialised/default contents;
+    /// on a cold wgpu start that is several visibly broken frames. The first
+    /// redraw after critical resources and `load` paints while it is still
+    /// hidden, then reveals it in the same callback.
+    pub(crate) startup_revealed: bool,
     /// Whether the window has a surface to paint into; see `surface_lifecycle`.
     pub(crate) surface: SurfaceState,
     /// A synthetic surface cycle a test asked for, run at the next pump.
@@ -603,6 +611,80 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Ren
             Err(error) => self.park_error(error),
         }
     }
+
+    /// Makes the next redraw the startup frame, if everything it needs is ready.
+    ///
+    /// `blitz-shell` suppresses ordinary redraws for a view it considers
+    /// invisible, so its view-side flag is raised before painting while the
+    /// actual platform window remains hidden. [`finish_startup_reveal`] maps it
+    /// only after that paint has returned.
+    fn prepare_startup_reveal(&mut self, window_id: WindowId) -> bool {
+        if self.startup_revealed
+            || !self.load_dispatched
+            || self.has_parked_error()
+            || self.surface.is_lost()
+            || self
+                .document
+                .borrow()
+                .document_ref()
+                .has_pending_critical_resources()
+        {
+            return false;
+        }
+        let Some(view) = self.inner.windows.get_mut(&window_id) else {
+            return false;
+        };
+        if !view.renderer.is_active() {
+            return false;
+        }
+        view.is_visible = true;
+        true
+    }
+
+    /// Asks for the hidden paint once renderer and document readiness coincide.
+    fn request_startup_redraw_if_ready(&self) {
+        if self.startup_revealed
+            || !self.load_dispatched
+            || self.has_parked_error()
+            || self.surface.is_lost()
+            || self
+                .document
+                .borrow()
+                .document_ref()
+                .has_pending_critical_resources()
+        {
+            return;
+        }
+        for view in self.inner.windows.values() {
+            if view.renderer.is_active() {
+                view.window.request_redraw();
+            }
+        }
+    }
+
+    /// Maps the native window after its prepared startup redraw was submitted.
+    fn finish_startup_reveal(&mut self, window_id: WindowId) {
+        if self.has_parked_error()
+            || self
+                .document
+                .borrow()
+                .document_ref()
+                .has_pending_critical_resources()
+        {
+            // A first-frame callback may have started another critical load.
+            // Keep the native window hidden and let that resource's wake-up ask
+            // for the eventual startup frame.
+            if let Some(view) = self.inner.windows.get_mut(&window_id) {
+                view.is_visible = false;
+            }
+            return;
+        }
+        let Some(view) = self.inner.windows.get(&window_id) else {
+            return;
+        };
+        view.window.set_visible(true);
+        self.startup_revealed = true;
+    }
 }
 
 /// Adapts Blitsen's shared document to the Blitz shell's document interface.
@@ -649,6 +731,9 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> ApplicationHandler
     fn proxy_wake_up(&mut self, event_loop: &dyn ActiveEventLoop) {
         self.inner.proxy_wake_up(event_loop);
         self.maybe_dispatch_load();
+        // Renderer readiness and resource completion both arrive through the
+        // proxy. Whichever one was last now schedules the hidden startup paint.
+        self.request_startup_redraw_if_ready();
     }
 
     fn window_event(
@@ -671,6 +756,7 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> ApplicationHandler
         let queued_keyboard_input = self.queue_keyboard_input(window_id, &event);
         let viewport_changed = matches!(&event, WindowEvent::ScaleFactorChanged { .. });
         let redraw = matches!(&event, WindowEvent::RedrawRequested);
+        let startup_paint = redraw && self.prepare_startup_reveal(window_id);
         if redraw {
             // Before the frame rather than after it: a redraw that painted the
             // size before last would be a frame the drag visibly lagged by.
@@ -683,8 +769,29 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> ApplicationHandler
         // dispatching redraws entirely while the app is stopped; the desktop
         // backends have no such gate, so the rule is applied here instead and
         // means the same thing on every target (see `surface_lifecycle`).
-        let animation_pending = redraw && !self.surface.is_lost() && self.run_animation_frame();
+        let animation_pending = redraw
+            && !self.surface.is_lost()
+            && (self.startup_revealed || startup_paint)
+            && self.run_animation_frame();
+        // A startup rAF is allowed to discover another critical resource. Do
+        // not let blitz-shell paint (or the platform map) until it has settled.
+        let startup_paint = startup_paint
+            && !self.has_parked_error()
+            && !self
+                .document
+                .borrow()
+                .document_ref()
+                .has_pending_critical_resources();
+        if !startup_paint
+            && !self.startup_revealed
+            && let Some(view) = self.inner.windows.get_mut(&window_id)
+        {
+            view.is_visible = false;
+        }
         self.inner.window_event(event_loop, window_id, event);
+        if startup_paint {
+            self.finish_startup_reveal(window_id);
+        }
         // After Blitz has had the frame, because painting it re-resolves Blitz's
         // own hover state and sets a cursor from it.
         if redraw {

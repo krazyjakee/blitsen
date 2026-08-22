@@ -19,6 +19,7 @@ await import("./native-harness/read-back-and-scrolling.mjs");
 await import("./native-harness/ranges.mjs");
 const { styled } = await import("./native-harness/style.mjs");
 await import("./native-harness/layout-and-images.mjs");
+await import("./native-harness/canvas.mjs");
 await import("./native-harness/runtime-surface.mjs");
 await import("./native-harness/network.mjs");
 await import("./native-harness/web-socket.mjs");

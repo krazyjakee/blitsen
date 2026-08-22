@@ -10,6 +10,11 @@ publish.workspace = true
 
 [dependencies]
 anyrender = "0.12"
+# Canvas readback rasterises on the CPU: `getImageData` and `toDataURL` have to
+# answer before the call returns, and reading a texture back off the GPU stalls
+# the pipeline for a frame or more. `blitsen-host` already links this renderer
+# for its own headless and CPU-fallback paths, so the binary carries it once.
+anyrender_vello_cpu = "0.15"
 blitsen-dom = { path = "../blitsen-dom" }
 blitz = { git = "https://github.com/DioxusLabs/blitz", rev = "1efe22d2524d71ede5b94592204c21f0de644219" }
 # The meta-crate pulls blitz-dom with default features off, which drops
@@ -39,6 +44,11 @@ kurbo = "0.13"
 # version blitz-dom takes, so both crates name one `Layout`.
 parley = "0.10"
 peniko = "0.6"
+# Glyph bounding boxes, which is what `measureText` reports as its actual
+# bounding box and what an application vertically centres text with. Parley
+# reads outlines through this crate already; it is named here to ask it the one
+# question Parley's own layout does not answer.
+skrifa = "0.42"
 style = { package = "stylo", version = "0.20" }
 
 [dev-dependencies]

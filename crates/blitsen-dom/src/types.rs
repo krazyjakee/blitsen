@@ -169,6 +169,94 @@ impl ViewportSurface {
     }
 }
 
+/// Local name of the element a 2D drawing context is obtained from.
+pub const CANVAS_TAG: &str = "canvas";
+
+/// The backing store behind one `<canvas>` element, in canvas pixels.
+///
+/// Independent of the element's box: `width` and `height` are what the content
+/// attributes say, and CSS scales what was drawn into whatever size the layout
+/// gives the element.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct CanvasSurface {
+    /// Backing store width in canvas pixels.
+    pub width: u32,
+    /// Backing store height in canvas pixels.
+    pub height: u32,
+}
+
+/// One submission of 2D context drawing commands.
+///
+/// The encoding is private to the pair that speak it — the bootstrap writes it
+/// and the renderer reads it — which is why this carries three opaque buffers
+/// rather than a list of operations. What it is *not* is a rendering API: the
+/// numbers are one canvas frame's worth of drawing, and describing them as
+/// named calls here would put a third party between two halves of one file.
+#[derive(Clone, Copy, Debug)]
+pub struct CanvasCommands<'a> {
+    /// The command stream itself.
+    pub numbers: &'a [f64],
+    /// Strings the stream refers to by index: font stacks and text.
+    pub strings: &'a [String],
+    /// Straight-alpha RGBA8 rows the stream refers to by offset.
+    pub pixels: &'a [u8],
+}
+
+/// The font one text operation on a 2D context is drawn in.
+#[derive(Clone, Copy, Debug)]
+pub struct CanvasTextStyle<'a> {
+    /// The `font-family` list, in CSS syntax.
+    pub families: &'a str,
+    /// Used font size in canvas pixels.
+    pub size: f64,
+    /// Numeric `font-weight`.
+    pub weight: f64,
+    /// `font-style`: 0 normal, 1 italic, 2 oblique.
+    pub style: u8,
+    /// `font-stretch` as a percentage, where 100 is normal.
+    pub stretch: f64,
+    /// `textAlign`: 0 start, 1 end, 2 left, 3 right, 4 center.
+    pub align: u8,
+    /// `textBaseline`: 0 alphabetic, 1 top, 2 hanging, 3 middle, 4 ideographic,
+    /// 5 bottom.
+    pub baseline: u8,
+    /// Whether `direction` resolved to right-to-left.
+    pub rtl: bool,
+}
+
+/// What `measureText` reports about a run of text.
+///
+/// Every distance is relative to the anchor the text would be drawn at, after
+/// `textAlign` and `textBaseline` have moved it, and positive away from that
+/// anchor in the direction the name gives — which is what makes them add up
+/// into a box.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct CanvasTextMetrics {
+    /// Total advance width.
+    pub width: f64,
+    /// Ink extent to the left of the anchor.
+    pub actual_left: f64,
+    /// Ink extent to the right of the anchor.
+    pub actual_right: f64,
+    /// Ink extent above the anchor.
+    pub actual_ascent: f64,
+    /// Ink extent below the anchor.
+    pub actual_descent: f64,
+    /// Typographic ascent of the font, relative to the anchor.
+    pub font_ascent: f64,
+    /// Typographic descent of the font, relative to the anchor.
+    pub font_descent: f64,
+}
+
+/// A canvas encoded as a complete image file.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CanvasEncoding {
+    /// The MIME type the bytes are in, which may not be the one asked for.
+    pub mime_type: &'static str,
+    /// The encoded file, or nothing for a canvas with no pixels to encode.
+    pub bytes: Vec<u8>,
+}
+
 /// Loading state and intrinsic size of one `<img>` element.
 ///
 /// The three fields answer HTML's `naturalWidth`/`naturalHeight` and

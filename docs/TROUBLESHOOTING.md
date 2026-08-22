@@ -50,6 +50,18 @@ HTTP or HTTPS URL.
 If the page loads but hot reload does not connect, configure the server's explicit HMR host and
 client port. Vite projects use `server.hmr.host` and `server.hmr.clientPort`.
 
+## No window appears for a moment after launch
+
+This is deliberate. A window is created hidden and mapped only after the first complete frame has
+been painted, so the application is never seen as an empty or half-drawn rectangle. The wait is
+whatever it takes to load the document's critical subresources — stylesheets and web fonts — and
+to bring up the GPU surface, which is slowest on a cold start.
+
+A wait long enough to look like a hang usually means a stylesheet or font is still outstanding.
+Check the paths in the built output, and remember that a remote subresource is not fetched: it is
+answered empty rather than waited on. Against a development-server URL, look at the server terminal
+for requests that never complete.
+
 ## Doctor reports warnings but exits successfully
 
 Warnings describe behavior that may degrade or may be protected by feature detection. Doctor does

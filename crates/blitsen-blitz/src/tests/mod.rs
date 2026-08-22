@@ -45,7 +45,12 @@ fn resolved(dom: &BlitzDom, snapshot: LayoutSnapshot, id: &str, property: &str) 
         .expect("property is resolvable")
 }
 
-/// Renders a document and returns straight-alpha RGBA8 rows.
+/// Renders a document and returns premultiplied-alpha RGBA8 rows.
+///
+/// Premultiplied because that is what the renderer's own buffer is, and these
+/// assertions are about what was composited rather than about what an
+/// application would read back. `getImageData` is the one that has to divide it
+/// out again, and it does — see `canvas::readback`.
 fn render(dom: &mut BlitzDom, width: u32, height: u32) -> Vec<u8> {
     anyrender::render_to_buffer::<VelloCpuImageRenderer, _>(
         |scene| {

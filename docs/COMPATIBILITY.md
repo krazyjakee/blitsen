@@ -8,10 +8,9 @@ The tier this profile publishes is [PRODUCT.md §7](PRODUCT.md#7-scope-by-tier)'
 architecture surface plus `fetch`, `WebSocket`, images, web fonts, audio playback and the
 `blitsen/{app,window,dialog,clipboard}` modules. Three of its members are partial by design and
 say so where they are documented: `dialog.*` is Linux/BSD only, `app.requestSingleInstanceLock`
-is Unix-only, and `window.create` is absent. What is *not* v1 is stated as plainly:
-**`<canvas>` is a `doctor` error**, accessibility is absent, and text controls provide basic
-editing and selection but not IME or the advanced editing surface — see
-[What v1 is not](#what-v1-is-not).
+is Unix-only, and `window.create` is absent. What is *not* v1 is stated as plainly: WebGL and
+WebGPU are absent, accessibility is absent, and text controls provide basic editing and selection
+but not IME or the advanced editing surface — see [What v1 is not](#what-v1-is-not).
 
 ## Window renderer by platform
 
@@ -952,6 +951,66 @@ measurement this runtime never made.
   per-frame animator — and none of that is settled. An application that wants a finger to scroll
   can do it today from `pointermove` and `element.scrollTop`. Tracked in #145.
 
+## Canvas
+
+`getContext("2d")` returns a real 2D context: paths, fills, strokes, gradients, patterns, images,
+text, transforms, clipping and all 27 composite operations. Its contents are composited into the
+same frame as the DOM, at the element's own paint position, so z-order, ancestor `overflow` and
+`border-radius` apply to a canvas exactly as they apply to an image.
+
+What is drawn is recorded as a display list rather than rasterised into a bitmap, and that is the
+one structural difference from a browser worth knowing about. Painting a canvas costs no
+rasterisation and no upload — the recorded commands are replayed into the frame the renderer was
+already drawing — and a canvas scaled by CSS is drawn at the scaled size rather than sampled from
+a smaller bitmap. Rasterisation happens only where the specification demands a readback:
+`getImageData`, `toDataURL`, `toBlob`, and using one canvas as another's image source.
+
+A canvas that is not in the document draws, reads back and encodes:
+`document.createElement("canvas")`, draw, `toDataURL()` works without it ever being connected.
+That is also what stands in for `OffscreenCanvas`, which is absent.
+
+Canvas text is shaped from the same font collection the document is laid out with, so a family the
+document registered with `@font-face` is available to `ctx.font` under its own name. The family
+list is passed on as CSS — quoted names, fallback lists and the generic families are all
+understood — and the default is the specification's `10px sans-serif`. `measureText` reports the
+box that same shaping produced, ink extents included, so a measurement cannot disagree with what
+`fillText` then draws.
+
+### Where the canvas surface is narrower than its name
+
+- **Shadows and `filter` are absent**, and absent means the property does not exist:
+  `"shadowBlur" in ctx` is false. Both need a blur, and nothing in the paint pipeline under this
+  runtime has one — the same reason `doctor` reports CSS `filter` as ignored rather than applied.
+- **`clip("evenodd")` clips as if it were non-zero.** A clip is a layer in the recorded scene and
+  the renderer's layer takes a path, not a fill rule. Everything else honours the rule it is
+  given: `fill("evenodd")`, `isPointInPath(…, "evenodd")` and a `Path2D` with a hole in it are all
+  correct — it is only the clip that cannot express it.
+- **`ctx.font` resolves relative sizes against 16px**, not against the canvas element's own
+  computed font. `16px`, `1.5rem` and `120%` all parse; the last two are 24px and 19.2px here
+  rather than whatever the element inherited. Absolute units — `px`, `pt`, `pc`, `in`, `cm`, `mm`,
+  `q` — and the `small`/`large` keywords are exact. Reading the element's computed font would be a
+  forced style resolution on every assignment to `ctx.font`, which is a line inside draw loops.
+- **`fillStyle` and `strokeStyle` parse hex, `rgb()`, `rgba()`, `hsl()`, `hwb()` and the CSS colour
+  keywords.** The CSS Color 4 spaces — `lab()`, `oklch()`, `color()` — do not parse, and an
+  unparseable colour is *ignored*, which is what the canvas specification says to do with one. The
+  previous colour stays in effect; nothing throws.
+- **A destructive composite operation inside a `clip()` composites against the backdrop.**
+  `copy`, `source-in`, `source-out`, `destination-in` and `destination-atop` clear the canvas
+  wherever their source is absent, which is correct, and a canvas that uses one is composited as a
+  group so it erases itself rather than the page behind it. Combined with an active clip the
+  result differs from a browser's, because the clip is a layer and the erasure sees it as the
+  backdrop.
+- **`letterSpacing`, `wordSpacing`, `fontKerning`, `fontStretch`, `fontVariantCaps` and
+  `textRendering` are absent**, and `direction: "inherit"` resolves to `ltr` rather than reading
+  the element's own direction.
+- **`toDataURL` and `toBlob` encode PNG and JPEG.** Any other type — `image/webp` among them —
+  encodes PNG, which is what the specification says to do with a type an implementation does not
+  support; the data URL's prefix and the blob's `type` say which format came back. The `quality`
+  argument applies to JPEG, and anything outside 0–1 means the encoder's own default.
+- **`ImageBitmap`, `createImageBitmap`, `OffscreenCanvas`, `captureStream` and
+  `transferControlToOffscreen` are absent.** `drawImage` and `createPattern` take an `<img>` or
+  another `<canvas>`, which is what a bitmap source is here.
+
 ## Storage
 
 `localStorage` and `sessionStorage` exist, hold what is put in them, and **lose it when the
@@ -1021,7 +1080,6 @@ be able to see that the construct is unconditional — a guarded one is not one 
 | Error | Why the page does not come back from it |
 | --- | --- |
 | `WEB_FETCH` | A literal server-root URL at a `fetch` call site is not a capability test, so nothing selects a fallback. The data never arrives, and what renders from it never renders. |
-| `HTML_CANVAS` | `<canvas>` is in the document the export ships, and the renderer paints nothing inside it. Unlike an image or a font, the element has no degraded appearance to fall back to. |
 | `HTML_SOURCE_ENTRY` | The document loads `.tsx`, `.jsx`, `.vue` or `.svelte` — source, which nothing here transpiles and no browser would run either. Blitsen was pointed at a source tree rather than at build output, and the fix is one command: `vite build`, then point it at `dist`. |
 
 `ASSET_REMOTE_SCRIPT` used to be the third, on the reading that the loader refusing one remote
@@ -1057,15 +1115,17 @@ actually draws it rather than where the pitch would prefer.
 
 | Not in v1 | What a build sees | Tracked as |
 | --- | --- | --- |
-| `<canvas>` 2D | `HTML_CANVAS`, an **error**: the element is in the shipped document and nothing paints inside it. Referencing `HTMLCanvasElement` or calling `.getContext()` from script is `WEB_CANVAS`, a warning, because a guarded reference selects a fallback | [#99](https://github.com/krazyjakee/blitsen/issues/99) |
+| Canvas shadows and `filter` | The four `shadow*` properties and `ctx.filter` are **absent**, so `"shadowBlur" in ctx` is false and a feature test selects a fallback. Both need a blur, and the paint pipeline under this renderer has none — the same reason CSS `filter` is reported ignored | [#99](https://github.com/krazyjakee/blitsen/issues/99) |
+| `OffscreenCanvas`, `ImageBitmap` | `WEB_CANVAS`, a warning. A canvas that is never in the document is the supported way to draw off-screen: `document.createElement("canvas")` draws, reads back and encodes without being connected | [#99](https://github.com/krazyjakee/blitsen/issues/99) |
 | Advanced text input and IME | Text controls support keyboard editing, caret movement, click placement, drag selection and `beforeinput`/`input`; clipboard editing, undo/redo, composition/IME, `contenteditable`, `selectionchange`, target ranges and complex-script coverage remain incomplete | [#103](https://github.com/krazyjakee/blitsen/issues/103) |
 | Accessibility | No accessibility tree is exported to the platform, so a screen reader finds nothing | [#102](https://github.com/krazyjakee/blitsen/issues/102) |
 | WebGL, WebGPU, WebRTC | `WEB_GPU`, a warning. `<blitsen-view>` is the supported way to put GPU output on screen | — |
 
-"v1 makes real apps possible" and "`<canvas>` is an error" are both true, and they are in tension:
-an application that draws is the single most common thing this profile refuses, and refuses at the
-point of export rather than quietly at run time. If your UI is DOM and CSS, v1 is the whole of what
-you need; if it is a drawing surface, wait for #99 or put the pixels in a `<blitsen-view>`.
+`<canvas>` used to be the first row of this table and a build-blocking `HTML_CANVAS` error, on the
+reading that an element the renderer paints nothing inside has no degraded appearance to fall back
+to. It paints now (issue #99), so the error is gone: an application that draws is no longer the
+thing this profile refuses. What is still refused is a GPU context — `getContext("webgl")` answers
+`null`, and `<blitsen-view>` is the supported way to put GPU output on screen.
 
 ## Capability tiers
 
@@ -1113,7 +1173,7 @@ determinism gate instead.
 | WEB_XHR | — | `XMLHttpRequest` |
 | WEB_STREAM | — | `ReadableStream`, `WritableStream`, `TransformStream`, `Response.body`, `Response.clone` |
 | WEB_FORM | — | `FormData`, `File`, `FileReader` |
-| WEB_CANVAS | — | `HTMLCanvasElement`, `CanvasRenderingContext2D`, `OffscreenCanvas`, `ImageData`, `Path2D` |
+| WEB_CANVAS | `HTMLCanvasElement`, `CanvasRenderingContext2D`, `ImageData`, `Path2D`, `CanvasGradient`, `CanvasPattern`, `TextMetrics`, `DOMMatrix`, `HTMLCanvasElement.width`, `HTMLCanvasElement.height`, `HTMLCanvasElement.getContext`, `HTMLCanvasElement.toDataURL`, `HTMLCanvasElement.toBlob`, `CanvasRenderingContext2D.canvas`, `CanvasRenderingContext2D.save`, `CanvasRenderingContext2D.restore`, `CanvasRenderingContext2D.reset`, `CanvasRenderingContext2D.scale`, `CanvasRenderingContext2D.rotate`, `CanvasRenderingContext2D.translate`, `CanvasRenderingContext2D.transform`, `CanvasRenderingContext2D.setTransform`, `CanvasRenderingContext2D.resetTransform`, `CanvasRenderingContext2D.getTransform`, `CanvasRenderingContext2D.globalAlpha`, `CanvasRenderingContext2D.globalCompositeOperation`, `CanvasRenderingContext2D.fillStyle`, `CanvasRenderingContext2D.strokeStyle`, `CanvasRenderingContext2D.lineWidth`, `CanvasRenderingContext2D.lineCap`, `CanvasRenderingContext2D.lineJoin`, `CanvasRenderingContext2D.miterLimit`, `CanvasRenderingContext2D.setLineDash`, `CanvasRenderingContext2D.getLineDash`, `CanvasRenderingContext2D.lineDashOffset`, `CanvasRenderingContext2D.font`, `CanvasRenderingContext2D.textAlign`, `CanvasRenderingContext2D.textBaseline`, `CanvasRenderingContext2D.direction`, `CanvasRenderingContext2D.imageSmoothingEnabled`, `CanvasRenderingContext2D.imageSmoothingQuality`, `CanvasRenderingContext2D.beginPath`, `CanvasRenderingContext2D.closePath`, `CanvasRenderingContext2D.moveTo`, `CanvasRenderingContext2D.lineTo`, `CanvasRenderingContext2D.quadraticCurveTo`, `CanvasRenderingContext2D.bezierCurveTo`, `CanvasRenderingContext2D.arc`, `CanvasRenderingContext2D.arcTo`, `CanvasRenderingContext2D.ellipse`, `CanvasRenderingContext2D.rect`, `CanvasRenderingContext2D.roundRect`, `CanvasRenderingContext2D.fill`, `CanvasRenderingContext2D.stroke`, `CanvasRenderingContext2D.clip`, `CanvasRenderingContext2D.isPointInPath`, `CanvasRenderingContext2D.isPointInStroke`, `CanvasRenderingContext2D.fillRect`, `CanvasRenderingContext2D.strokeRect`, `CanvasRenderingContext2D.clearRect`, `CanvasRenderingContext2D.fillText`, `CanvasRenderingContext2D.strokeText`, `CanvasRenderingContext2D.measureText`, `CanvasRenderingContext2D.drawImage`, `CanvasRenderingContext2D.createLinearGradient`, `CanvasRenderingContext2D.createRadialGradient`, `CanvasRenderingContext2D.createConicGradient`, `CanvasRenderingContext2D.createPattern`, `CanvasRenderingContext2D.createImageData`, `CanvasRenderingContext2D.getImageData`, `CanvasRenderingContext2D.putImageData`, `Path2D.moveTo`, `Path2D.lineTo`, `Path2D.bezierCurveTo`, `Path2D.quadraticCurveTo`, `Path2D.arc`, `Path2D.arcTo`, `Path2D.ellipse`, `Path2D.rect`, `Path2D.roundRect`, `Path2D.closePath`, `Path2D.addPath`, `CanvasGradient.addColorStop`, `CanvasPattern.setTransform` | `OffscreenCanvas`, `OffscreenCanvasRenderingContext2D`, `ImageBitmap`, `createImageBitmap`, `HTMLCanvasElement.captureStream`, `HTMLCanvasElement.transferControlToOffscreen`, `CanvasRenderingContext2D.shadowBlur`, `CanvasRenderingContext2D.shadowColor`, `CanvasRenderingContext2D.shadowOffsetX`, `CanvasRenderingContext2D.shadowOffsetY`, `CanvasRenderingContext2D.filter`, `CanvasRenderingContext2D.letterSpacing`, `CanvasRenderingContext2D.wordSpacing`, `CanvasRenderingContext2D.fontKerning`, `CanvasRenderingContext2D.getContextAttributes`, `CanvasRenderingContext2D.drawFocusIfNeeded` |
 | WEB_GPU | — | `WebGLRenderingContext`, `WebGL2RenderingContext`, `GPUCanvasContext` |
 | WEB_MEDIA | `Audio`, `AudioContext`, `AudioNode`, `AudioParam`, `AudioBuffer`, `AudioBufferSourceNode`, `AudioDestinationNode`, `GainNode`, `StereoPannerNode`, `HTMLAudioElement`, `AudioContext.decodeAudioData`, `AudioContext.createGain`, `AudioContext.createStereoPanner`, `AudioContext.createBufferSource`, `AudioContext.destination`, `AudioContext.currentTime`, `AudioContext.sampleRate`, `AudioContext.resume`, `AudioContext.suspend`, `AudioContext.close` | `webkitAudioContext`, `HTMLMediaElement` |
 | WEB_DIALOG | — | `alert`, `confirm`, `prompt`, `print` |
@@ -1142,7 +1202,7 @@ determinism gate instead.
 | `WEB_XHR` | warning | XMLHttpRequest is not implemented. |
 | `WEB_STREAM` | warning | Streaming bodies are not implemented; a response is buffered whole. |
 | `WEB_FORM` | warning | Multipart form bodies and file objects are not implemented. |
-| `WEB_CANVAS` | warning | Canvas is not in the v1 compatibility profile. |
+| `WEB_CANVAS` | warning | This canvas API is not implemented; the 2D context is. |
 | `WEB_GPU` | warning | WebGL and WebGPU are not implemented. |
 | `WEB_MEDIA` | warning | This media API is not implemented; Web Audio and <audio> are. |
 | `WEB_DIALOG` | warning | Modal browser dialogs are not implemented. |
@@ -1157,7 +1217,6 @@ determinism gate instead.
 | `CSS_TRANSITION` | warning | A property named by `transition` keeps its pre-stylesheet value (Blitz bug 689). |
 | `CSS_FIXED` | warning | Fixed and sticky boxes resolve against the root box, not the viewport (Blitz bug 690). |
 | `CSS_EFFECT` | warning | This paint effect is ignored rather than applied. |
-| `HTML_CANVAS` | error | <canvas> is not implemented. |
 | `HTML_SOURCE_ENTRY` | error | This document loads source, not built output; nothing in Blitsen transpiles it. |
 | `HTML_MEDIA` | warning | Video and text tracks are not implemented; <audio> is. |
 | `HTML_SVG` | warning | SVG rendering is currently limited and not in the strict profile. |

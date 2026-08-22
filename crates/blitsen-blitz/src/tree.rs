@@ -23,11 +23,8 @@ impl BlitzDom {
             self,
             NATIVE_VIEWPORT_TAG,
             |dom| &mut dom.native_viewports,
-            |_dom, _node| {
-                let state = Rc::new(RefCell::new(ViewportState::default()));
-                let widget = Box::new(ViewportWidget::new(Rc::clone(&state)));
-                Ok((state, widget))
-            },
+            |_dom, _node| Ok(Rc::new(RefCell::new(ViewportState::default()))),
+            |state| Box::new(ViewportWidget::new(state)),
         )
     }
 

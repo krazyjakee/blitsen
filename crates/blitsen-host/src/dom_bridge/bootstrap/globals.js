@@ -52,6 +52,8 @@
     HTMLInputElement, HTMLTextAreaElement, HTMLSelectElement, HTMLOptionElement,
     HTMLButtonElement, HTMLFormElement,
     BlitsenViewElement, BlitsenViewSurface,
+    HTMLCanvasElement, CanvasRenderingContext2D, ImageData, Path2D, DOMMatrix,
+    CanvasGradient, CanvasPattern, TextMetrics,
     Range, Selection, CaretPosition, getSelection,
     getComputedStyle, matchMedia, MediaQueryList, MediaQueryListEvent,
     Event, MouseEvent, KeyboardEvent, CustomEvent, SubmitEvent, PopStateEvent, HashChangeEvent,
@@ -73,6 +75,9 @@
       || pendingResizeObservations() > 0 || audioPending()
       || waitingImages() > 0 || waitingLinks() > 0
       || nativePending() || nativeDialogPending() || call("isAnimating")
+      // A canvas drawn outside a frame callback is owed a paint, and nothing
+      // else here would ask for one.
+      || canvasPaintPending
       // A message from a worker lands in the frame turn, so a loop that idled
       // would never deliver it — the same reason an open socket is listed.
       || portsPending(),
@@ -93,6 +98,8 @@
       resizeObservers.clear();
       mediaQueryLists.clear();
       wrapperCache.clear();
+      drawnCanvases.clear();
+      canvasPaintPending = false;
       pendingImages.clear();
       inflightFetches.clear();
       liveSockets.clear();
@@ -189,7 +196,7 @@
     "EventSource", "XMLHttpRequest",
     "ReadableStream", "WritableStream", "TransformStream",
     "FormData", "File", "FileReader",
-    "HTMLCanvasElement", "CanvasRenderingContext2D", "OffscreenCanvas", "ImageData", "Path2D",
+    "OffscreenCanvas", "ImageBitmap", "createImageBitmap", "OffscreenCanvasRenderingContext2D",
     "WebGLRenderingContext", "WebGL2RenderingContext", "GPUCanvasContext",
     "webkitAudioContext", "HTMLMediaElement",
     "alert", "confirm", "prompt", "print",

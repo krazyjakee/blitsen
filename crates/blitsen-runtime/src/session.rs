@@ -240,8 +240,16 @@ fn run(files: AppFiles, arguments: &[String]) -> Result<ExitCode, String> {
         {
             break;
         }
-        if pacer.finished() {
+        let startup_revealed = session.startup_revealed();
+        if startup_revealed && pacer.finished() {
             break;
+        }
+        // A frame budget measures presented frames, not the event-loop turns
+        // which initialise the surface. Keep advancing readiness immediately
+        // until the hidden startup paint has been submitted and revealed.
+        if pacer.forcing_frames() && !startup_revealed {
+            pump_timeout = Some(std::time::Duration::ZERO);
+            continue;
         }
         let next_timer = services.next_timer_delay();
         if crate::loop_pacing::paces_a_frame(

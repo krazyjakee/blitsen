@@ -362,6 +362,7 @@ vsync / timer tick
   ├─ drain OS input → dispatch DOM events
   ├─ run expired timers, drain microtasks
   ├─ run requestAnimationFrame callbacks   ← app mutates DOM here
+  ├─ flush canvas command batches          ← 2D drawing joins this frame
   ├─ restyle dirty nodes        (Stylo)
   ├─ layout dirty subtrees      (Taffy)
   ├─ paint → display list
@@ -376,6 +377,15 @@ animation is a frame behind and games feel wrong.
 
 If a frame overruns budget, timers and rAF are not run twice to catch up; `dt` is passed
 honestly and the app decides.
+
+**The first frame is painted before the window is mapped.** The native window is created hidden,
+because one mapped before the renderer has a frame shows whatever the compositor finds in it — on
+a cold wgpu start, several visibly broken frames. The redraw taken once `load` has been dispatched
+and no critical subresource is still outstanding paints while the window is still hidden, and the
+same callback maps it afterwards. A first-frame `requestAnimationFrame` callback that starts
+another critical load defers the reveal again rather than showing a half-built document. A frame
+budget counts presented frames, so a frame-limited run keeps advancing readiness until that first
+frame exists instead of spending its budget on surface setup.
 
 In Phase 1, Bun owns `setTimeout`, `setInterval`, cancellation, callback arguments and the
 microtask checkpoint after each timer macrotask. The CLI yields to Bun between non-blocking
@@ -402,9 +412,11 @@ responsible for high-performance rendering.
 - Its contents are drawn by the app into a texture, composited into the same wgpu frame as the
   painted DOM — one swapchain, one present, correct interleaving with DOM content above and
   below it.
-- This is the seam through which `<canvas>`, WebGL and WebGPU later arrive. Get the compositing
-  correct once, and each of those is an API over an existing mechanism rather than a new
-  pipeline.
+- This is the seam through which `<canvas>`, WebGL and WebGPU arrive. Get the compositing correct
+  once, and each of those is an API over an existing mechanism rather than a new pipeline.
+  `<canvas>` 2D is the first to land ("The 2D context" in §8): it uses the same custom-widget seam
+  and pays *less* than this element does, because it records a display list rather than uploading
+  a frame.
 
 **Deliberately out of scope:** turning HTML elements into a 3D scene graph, or expressing
 real-time transform state through CSS. CSS is not a good channel for per-frame 3D state. An
@@ -435,7 +447,6 @@ What remains here is what a table cannot express: why a thing sits where it does
 | Clipboard, drag & drop | arboard, winit |
 | `navigator.getGamepads` | gilrs |
 | Pointer lock, fullscreen | winit |
-| `<canvas>` 2D | vello / tiny-skia into the viewport |
 | WebGL / WebGPU | wgpu through the viewport |
 | WebRTC | webrtc-rs |
 
@@ -482,6 +493,56 @@ reads the same manifest, so a diagnostic cannot describe a capability the runtim
 Enforcement was worth building: it found the Phase 1 host leaking `Worker`, `WebSocket`,
 `FormData`, `ReadableStream`, `MessageChannel`, `alert` and more into every application, all of
 which would have vanished at the Phase 2 engine swap.
+
+### The 2D context
+
+`<canvas>` is the viewport's argument made concrete: an API over an existing compositing mechanism
+rather than a new pipeline. It is a replaced element with a Blitz custom widget, exactly as
+`<blitsen-view>` is — and it costs less, because what the widget hands back is a recorded
+[`anyrender::Scene`] rather than an uploaded frame. Painting a canvas is a display list appended
+into the frame the renderer was already building. No rasterisation, no upload, no second pass.
+Rasterisation happens only where the specification demands a readback: `getImageData`,
+`toDataURL`, `toBlob`, and using one canvas as another's image source.
+
+**The renderer holds no context state.** The transform stack, the paint styles, the current path,
+`save`/`restore`, the `font` shorthand and the colour grammar are all JavaScript's, in
+`dom_bridge/bootstrap/canvas*.js`. What crosses the boundary is drawing: each command carries the
+transform and the paint it is drawn with, so a command means the same thing wherever it appears.
+That split is where the state is read and written — a `save` costs an object copy rather than a
+host call — and it means the renderer half is a decoder with no memory to get out of step.
+
+**The boundary is one `Float64Array` per batch, not one call per operation.** A canvas frame is
+hundreds to thousands of operations, and the DOM bridge's own channel costs a string conversion per
+argument and a JSON parse per answer; a canvas that paid that per `fillRect` would spend more time
+at the boundary than drawing. Commands accumulate in a growing typed array with a side table for
+the strings and image sources they name, and are submitted before the frame is painted, before
+anything reads pixels back, and at the end of whatever task drew. A batch is *balanced*: it closes
+every layer it opens, and the JavaScript side reopens its clips for the next one, which is what
+lets a canvas's contents be a sequence of independent submissions rather than one endless scene.
+
+**Canvas text is shaped from the document's own font collection.** Blitz builds a private font
+context when it is not given one, and a canvas that built a second would mean a second system-font
+scan at startup, a second copy of every face in memory and no sight of the `@font-face` families
+the document registered — `ctx.font = "16px MyWebFont"` would silently fall back while the same
+family rendered correctly in the DOM. Blitsen builds the collection instead and hands Blitz a
+clone that reads through the same shared registry, so a web font reaches a canvas as soon as the
+document has it. What is not shared is the layout: a canvas text run is one line with no wrapping,
+no inline boxes and no styled ranges, and `measureText` reports the box that same shaping
+produced rather than a second measurement that could disagree with what was drawn.
+
+**A full-canvas `clearRect` is recorded as "forget everything".** Most canvas frames start with
+one, and recording it as an erasing layer instead would grow the scene by a layer per frame for
+the life of the application.
+
+Two things the renderer underneath cannot express are worth stating here rather than in the
+compatibility table, because they are the pipeline's shape rather than a missing feature.
+Shadows and `ctx.filter` need a blur and there is none — the same reason CSS `filter` is reported
+ignored. And a compose function is applied to the whole surface rather than only inside its layer's
+clip, so `clearRect` and `putImageData` erase through `destination-out` — whose result for an
+absent source is the destination unchanged — rather than through `clear` or `copy`, which would
+erase the canvas. The five compose functions that genuinely do clear the rest of the canvas are
+canvas's own destructive operations, which want exactly that; a canvas that records one is
+composited as a group so it erases itself and not the document behind it.
 
 ### Subresources: images and web fonts
 

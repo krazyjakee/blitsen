@@ -106,7 +106,7 @@ describe("directory CLI", () => {
   });
 
   test("refuses to build output with compatibility errors", async () => {
-    const fixture = join(import.meta.dir, "fixtures/doctor/unsupported");
+    const fixture = join(import.meta.dir, "fixtures/doctor/source-entry");
     let built = false;
     const { lines, output } = capture();
     const runtime = { build: async () => { built = true; return {}; } };
@@ -114,7 +114,7 @@ describe("directory CLI", () => {
     expect(built).toBeFalse();
     // The blocking diagnostic names its file, on stderr, under the step that found it.
     expect(lines.some(([stream, line]) => stream === "err"
-      && line.trimStart().startsWith("index.html:") && line.includes("HTML_CANVAS")))
+      && line.trimStart().startsWith("index.html:") && line.includes("HTML_SOURCE_ENTRY")))
       .toBeTrue();
     expect(lines.at(-1)[1]).toContain("1 compatibility error blocks this build");
   });

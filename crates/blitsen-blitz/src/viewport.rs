@@ -54,12 +54,21 @@ pub(crate) struct ViewportState {
     device_pixel_ratio: f64,
     generation: u64,
     revision: u64,
+    attached: bool,
     contents: Option<ImageData>,
 }
 
 impl Surface for ViewportState {
     fn revision(&self) -> u64 {
         self.revision
+    }
+
+    fn is_attached(&self) -> bool {
+        self.attached
+    }
+
+    fn mark_attached(&mut self) {
+        self.attached = true;
     }
 }
 

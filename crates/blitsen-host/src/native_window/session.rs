@@ -83,7 +83,11 @@ impl<E: JsEngine + Clone + 'static> WindowSession<E> {
         let renderer = native_window_renderer();
         let attributes = WindowAttributes::default()
             .with_title(options.title.clone())
-            .with_surface_size(LogicalSize::new(options.width, options.height));
+            .with_surface_size(LogicalSize::new(options.width, options.height))
+            // blitz-shell otherwise maps the window in `View::init`, before
+            // wgpu has a surface or a frame. Blitsen reveals it after the first
+            // complete redraw; see `prepare_startup_reveal`.
+            .with_visible(false);
         let window = WindowConfig::with_attributes(
             Box::new(SharedBlitzDocument(Rc::clone(&document.document))),
             renderer,
@@ -109,6 +113,7 @@ impl<E: JsEngine + Clone + 'static> WindowSession<E> {
             pointer_ids: PointerIds::default(),
             modifiers: ModifiersState::empty(),
             load_dispatched: false,
+            startup_revealed: false,
             surface: SurfaceState::Initial,
             synthetic_phase: None,
         };
@@ -268,5 +273,13 @@ impl<E: JsEngine + Clone + 'static> WindowSession<E> {
         for view in self.application.inner.windows.values() {
             view.window.request_redraw();
         }
+    }
+
+    /// Whether the first complete frame has been submitted and the window mapped.
+    ///
+    /// Frame-limited acceptance runs use this to avoid counting surface-setup
+    /// turns as frames and exiting before the application was ever visible.
+    pub fn startup_revealed(&self) -> bool {
+        self.application.startup_revealed
     }
 }

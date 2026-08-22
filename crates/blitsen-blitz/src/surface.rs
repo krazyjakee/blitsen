@@ -16,7 +16,7 @@
 //! shared attachment lifecycle: a detached-but-live node retains its state for
 //! reparenting, while a node the document has dropped is swept from the map.
 
-use std::cell::{Ref, RefCell, RefMut};
+use std::cell::{Ref, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -26,19 +26,36 @@ use blitz::dom::{NodeId, Widget};
 use crate::BlitzDom;
 
 /// Attaches one kind of surface widget and forgets states whose nodes are stale.
-pub(crate) fn attach_widgets<S>(
+///
+/// Building the state and building the widget are two closures rather than one
+/// because they happen at different moments. A `<canvas>` may have contents
+/// before it is ever in the document — an application draws into one it made
+/// with `createElement` and reads the pixels back — so the state can already
+/// exist by the time the element first appears here, and only the widget is
+/// owed. `is_attached` is what tells the two apart; without it a canvas that
+/// was drawn on before it was inserted would be found in the map, skipped, and
+/// never painted.
+pub(crate) fn attach_widgets<S: Surface>(
     dom: &mut BlitzDom,
     tag: &str,
     states: fn(&mut BlitzDom) -> &mut HashMap<NodeId, Rc<RefCell<S>>>,
-    mut make: impl FnMut(&mut BlitzDom, NodeId) -> Result<(Rc<RefCell<S>>, Box<dyn Widget>), DomError>,
+    mut make: impl FnMut(&mut BlitzDom, NodeId) -> Result<Rc<RefCell<S>>, DomError>,
+    widget: fn(Rc<RefCell<S>>) -> Box<dyn Widget>,
 ) -> Result<(), DomError> {
     for node in dom.query_selector_all(dom.document(), tag)? {
-        if states(dom).contains_key(&node) {
+        let state = match states(dom).get(&node) {
+            Some(state) => Rc::clone(state),
+            None => {
+                let state = make(dom, node)?;
+                states(dom).insert(node, Rc::clone(&state));
+                state
+            }
+        };
+        if state.borrow().is_attached() {
             continue;
         }
-        let (state, widget) = make(dom, node)?;
-        dom.document.mutate().set_custom_widget(node, widget);
-        states(dom).insert(node, state);
+        state.borrow_mut().mark_attached();
+        dom.document.mutate().set_custom_widget(node, widget(state));
     }
 
     // A detached node remains in the document arena while JavaScript holds it,
@@ -52,10 +69,15 @@ pub(crate) fn attach_widgets<S>(
     Ok(())
 }
 
-/// Contents that can say when they last changed.
+/// Contents that can say when they last changed, and whether anything paints
+/// them yet.
 pub(crate) trait Surface {
     /// Increments whenever what should be painted differs from before.
     fn revision(&self) -> u64;
+    /// Whether the widget that paints these contents has been installed.
+    fn is_attached(&self) -> bool;
+    /// Records that the widget has been installed.
+    fn mark_attached(&mut self);
 }
 
 /// The bookkeeping half of a surface-backed custom widget.
@@ -86,10 +108,5 @@ impl<S: Surface> SurfaceWidget<S> {
         let state = self.state.borrow();
         self.painted_revision = state.revision();
         state
-    }
-
-    /// Borrows the contents to change them, as an attribute change does.
-    pub(crate) fn state_mut(&self) -> RefMut<'_, S> {
-        self.state.borrow_mut()
     }
 }

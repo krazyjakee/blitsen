@@ -324,18 +324,17 @@ drag & drop (with real filesystem paths, not browser `File` abstractions) · gam
 notifications.
 
 **Later — as demand justifies**
-`<canvas>` 2D · WebGL / WebGPU · WebRTC · anything else earning its size.
+WebGL / WebGPU · WebRTC · anything else earning its size. `<canvas>` 2D was on this list and has
+landed early (#99).
 
-**Where the v1 line was drawn, stated plainly.** `<canvas>` (#99), advanced text input and IME
-(#103), and accessibility (#102) are **not v1**. Basic keyboard editing, caret placement and drag
-selection in text controls have landed; clipboard editing, undo/redo, composition and
-`contenteditable` have not. `<canvas>` in particular is a `doctor` **error** rather than a
-warning — the element ships in the document and nothing paints inside it, and unlike an image or a
-font it has no degraded appearance to fall back to. So "v1 makes real apps possible" and "canvas is
-an error" are true at the same time, and that is the one place the tiers can be read as more
-generous than the runtime is: a DOM-and-CSS application is inside v1 whole, and an application that
-draws is refused at export until #99. [COMPATIBILITY.md](COMPATIBILITY.md#what-v1-is-not) carries
-the same table.
+**Where the v1 line was drawn, stated plainly.** Advanced text input and IME (#103) and
+accessibility (#102) are **not v1**. Basic keyboard editing, caret placement and drag selection in
+text controls have landed; clipboard editing, undo/redo, composition and `contenteditable` have
+not. `<canvas>` was the third entry here, and the sharpest one: the element shipped in the document
+and nothing painted inside it, so it was a `doctor` **error** rather than a warning, and an
+application that drew was refused at export. It draws now — a full 2D context composited into the
+same frame as the DOM — so the error is gone and what is still refused is a GPU context.
+[COMPATIBILITY.md](COMPATIBILITY.md#what-v1-is-not) carries the same table.
 
 ### The compatibility boundary is the runtime, never the exporter
 
@@ -345,7 +344,8 @@ exporter. It is always: **does the runtime implement the web APIs that this code
 | Library | Gated on |
 | --- | --- |
 | React, Vue, Svelte, Solid, HTMX, jQuery | v0 DOM + events. These are the target of v0. |
-| Pixi, Phaser, Three.js | `<canvas>` / WebGL — the "later" tier. Not v0 or v1. |
+| Pixi (canvas renderer), Phaser (canvas renderer) | The 2D context, which landed with #99. |
+| Three.js, and anything WebGL-only | WebGL — still the "later" tier. |
 | State, utility, data libraries (lodash, zustand, …) | Nothing. Plain JS runs today. |
 
 This is worth stating loudly because it sets honest expectations: a DOM-driven React dashboard
@@ -414,7 +414,7 @@ workspace and a clean `cargo ndk check` without scaffolding.
 - iOS. Android is a goal (below); iOS is not, and nothing in the Android work should be
   read as a step toward it — the packaging, the entry point and the store model all differ.
 - Prescribing how anything is drawn inside the app. CSS transforms, a physics library, a WASM
-  build of Box2D, a native addon and (eventually) `<canvas>` are all equally valid.
+  build of Box2D, a native addon and `<canvas>` are all equally valid.
 
 ---
 
@@ -660,7 +660,7 @@ dashboard) is built by someone who is not us.
 | --- | --- | --- |
 | Blitz's DOM is not designed for external mutation at JS frequency | High — undermines the core bridge | Spike first (M1). Upstream contribution may be required; Blitz already intends to support custom widgets and extensibility. |
 | Blitz is pre-alpha; CSS coverage may not survive contact with real framework CSS | High — a drop-in exporter that renders real apps wrong is worse than one that refuses them | Golden-image corpus built from actual React/Vue/Svelte output early, not synthetic cases. Treat CSS gaps as upstream contributions. |
-| "Drop-in" invites projects the runtime cannot yet render (Three.js, canvas-heavy apps) | Medium — disappointed first impressions | `blitsen doctor` reports unsupported API usage before the user hits it at runtime; capability tiers published prominently. |
+| "Drop-in" invites projects the runtime cannot yet render (Three.js, WebGL-heavy apps) | Medium — disappointed first impressions | `blitsen doctor` reports unsupported API usage before the user hits it at runtime; capability tiers published prominently. |
 | The original Phase 2 size target is unreachable; the measured floor is already 52.48 MB | High — removes the numeric headline | Withdraw the 25–50 MB claim. Measure the complete host, set a platform budget, and use only the fallback positioning: materially below Electron. |
 | Partial web platform frustrates users who expect browser parity | Medium | Documented capability tiers; absent APIs absent, never half-working. Positioning never says "browser". |
 | Upstream churn in Blitz or Bun | Medium | Pin versions; keep the bridge behind our own interface so upstream shape changes are contained. |

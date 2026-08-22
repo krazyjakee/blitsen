@@ -23,6 +23,7 @@ mod native;
 // The thread pool the network runs on. Not a web worker — those are
 // [`crate::worker`], and the two were one name for long enough to be worth
 // spelling out.
+mod canvas;
 mod net_pool;
 mod ops;
 mod web_socket;
@@ -44,6 +45,9 @@ const BOOTSTRAP: &str = concat!(
     include_str!("dom_bridge/bootstrap/element.js"),
     include_str!("dom_bridge/bootstrap/cssom.js"),
     include_str!("dom_bridge/bootstrap/forms.js"),
+    include_str!("dom_bridge/bootstrap/canvas.js"),
+    include_str!("dom_bridge/bootstrap/canvas_context.js"),
+    include_str!("dom_bridge/bootstrap/canvas_element.js"),
     include_str!("dom_bridge/bootstrap/text_editing.js"),
     include_str!("dom_bridge/bootstrap/document.js"),
     include_str!("dom_bridge/bootstrap/range.js"),
@@ -224,6 +228,7 @@ pub fn install<E: JsEngine + 'static>(
             Ok(call.this)
         }),
     )?;
+    canvas::install(engine, runtime.clone())?;
     install_text_codec(engine)?;
     install_fetch(engine, reader.clone())?;
     install_messaging(engine, reader.clone())?;
