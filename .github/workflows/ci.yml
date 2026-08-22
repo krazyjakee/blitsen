@@ -15,10 +15,14 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  # `rust-cache` below keeps Cargo's registry small and shared; sccache stores
-  # compiler outputs by their actual inputs, so compatible work is reusable
-  # across jobs instead of living in one large target archive per job.
+  RUST_VERSION: 1.98.0
+  # Every Rust job restores dependency artifacts from `rust-cache`. sccache
+  # stores compiler outputs by their actual inputs, but its GitHub backend is
+  # deliberately read-only by default: concurrent per-object writes hit the
+  # Actions cache rate limit and make a cold run slower. The six native seed
+  # jobs override this on main and refresh one cache per OS/architecture.
   SCCACHE_GHA_ENABLED: "true"
+  SCCACHE_GHA_RW_MODE: READ_ONLY
   RUSTC_WRAPPER: sccache
 
 jobs:
@@ -44,6 +48,8 @@ jobs:
   rust:
     name: Rust (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    env:
+      SCCACHE_GHA_RW_MODE: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 'READ_WRITE' || 'READ_ONLY' }}
     strategy:
       fail-fast: false
       matrix:
@@ -52,15 +58,17 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
+          toolchain: ${{ env.RUST_VERSION }}
           components: clippy, rustfmt
       - uses: mozilla-actions/sccache-action@v0.0.11
         with:
           version: v0.17.0
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: cargo
-          cache-targets: false
+          shared-key: cargo-native
+          cache-targets: true
           cache-bin: false
+          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
       - name: Install Blitz system dependencies
         if: runner.os == 'Linux'
         run: |
@@ -73,6 +81,10 @@ jobs:
         if: runner.os == 'Linux'
         run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
+      # Prime the release-profile dependencies used by acceptance and release.
+      # `rust-cache` omits workspace outputs, so consumers still build and test
+      # Blitsen itself while avoiding another full dependency compilation.
+      - run: cargo build --release -p blitsen-node -p blitsen-runtime
 
   # The M3 acceptance evidence, and the P5/P6 claim it stands on. Both harnesses
   # are headless: the bridge harness renders through the CPU rasterizer, and the
@@ -97,14 +109,17 @@ jobs:
         with:
           bun-version: 1.3.14
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
       - uses: mozilla-actions/sccache-action@v0.0.11
         with:
           version: v0.17.0
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: cargo
-          cache-targets: false
+          shared-key: cargo-native
+          cache-targets: true
           cache-bin: false
+          save-if: false
       - name: Install Blitz system dependencies
         if: runner.os == 'Linux'
         run: |
@@ -166,14 +181,17 @@ jobs:
         with:
           bun-version: 1.3.14
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
       - uses: mozilla-actions/sccache-action@v0.0.11
         with:
           version: v0.17.0
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: cargo
-          cache-targets: false
+          shared-key: cargo-native
+          cache-targets: true
           cache-bin: false
+          save-if: false
       - name: Install Blitz system dependencies
         run: |
           sudo apt-get update
@@ -212,14 +230,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
       - uses: mozilla-actions/sccache-action@v0.0.11
         with:
           version: v0.17.0
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: cargo
-          cache-targets: false
+          shared-key: cargo-native
+          cache-targets: true
           cache-bin: false
+          save-if: false
       # The corpus renders through the CPU rasterizer and needs no display; only
       # Blitz's font enumeration wants a system library, and only on Linux.
       - name: Install Blitz system dependencies
@@ -268,9 +289,10 @@ jobs:
           version: v0.17.0
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: cargo
-          cache-targets: false
+          shared-key: cargo-metrics
+          cache-targets: true
           cache-bin: false
+          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
       - name: Install Blitz system dependencies
         if: runner.os == 'Linux'
         run: |
@@ -336,6 +358,8 @@ jobs:
     name: ${{ matrix.target }} (smoke)
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
+    env:
+      SCCACHE_GHA_RW_MODE: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 'READ_WRITE' || 'READ_ONLY' }}
     strategy:
       fail-fast: false
       matrix:
@@ -358,14 +382,17 @@ jobs:
         with:
           bun-version: 1.3.14
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
       - uses: mozilla-actions/sccache-action@v0.0.11
         with:
           version: v0.17.0
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: cargo
-          cache-targets: false
+          shared-key: cargo-native
+          cache-targets: true
           cache-bin: false
+          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
       - name: Install Blitz system dependencies
         if: runner.os == 'Linux'
         run: |
@@ -493,6 +520,7 @@ jobs:
           bun-version: 1.3.14
       - uses: dtolnay/rust-toolchain@stable
         with:
+          toolchain: ${{ env.RUST_VERSION }}
           targets: aarch64-linux-android, x86_64-linux-android
       - uses: mozilla-actions/sccache-action@v0.0.11
         with:
@@ -503,7 +531,8 @@ jobs:
           # separate so another job cannot win the shared immutable cache first
           # and leave the tool absent on every later Android run.
           shared-key: cargo-android
-          cache-targets: false
+          cache-targets: true
+          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
       # `rquickjs-sys` ships pre-generated bindings for sixteen triples and none
       # is `*-linux-android`, so `crates/blitsen-quickjs/Cargo.toml` turns on its
       # `bindgen` feature for that target — which makes libclang a build-time
