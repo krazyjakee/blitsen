@@ -543,10 +543,12 @@ fn a_destructive_composite_erases_the_canvas_and_not_the_page_behind_it() {
     let mut commands = Commands::new();
     commands.push([1.0]).solid([1.0, 0.0, 0.0, 1.0]).push([0.0]);
     commands.push(IDENTITY).rect(0.0, 0.0, 60.0, 60.0);
-    // `copy` over a small square: everywhere else on the canvas is cleared,
-    // which is what a browser does, and the page behind it is not.
+    // `copy` in a layer over the whole canvas, which is the scope the encoder
+    // gives a composite operation, with a small square as its source:
+    // everywhere else on the canvas is cleared, which is what a browser does,
+    // and the page behind it is not.
     commands.push([4.0, 9.0, 1.0]).push(IDENTITY);
-    commands.rect(0.0, 0.0, 20.0, 20.0);
+    commands.rect(0.0, 0.0, 60.0, 60.0);
     commands.push([1.0]).solid([0.0, 1.0, 0.0, 1.0]).push([0.0]);
     commands.push(IDENTITY).rect(0.0, 0.0, 20.0, 20.0);
     commands.push([5.0]);

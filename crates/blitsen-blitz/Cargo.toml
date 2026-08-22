@@ -9,21 +9,20 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
-anyrender = "0.12"
+anyrender = "0.13"
 # Canvas readback rasterises on the CPU: `getImageData` and `toDataURL` have to
 # answer before the call returns, and reading a texture back off the GPU stalls
 # the pipeline for a frame or more. `blitsen-host` already links this renderer
 # for its own headless and CPU-fallback paths, so the binary carries it once.
-anyrender_vello_cpu = "0.15"
+anyrender_vello_cpu = "0.16"
 blitsen-dom = { path = "../blitsen-dom" }
-blitz = { git = "https://github.com/DioxusLabs/blitz", rev = "1efe22d2524d71ede5b94592204c21f0de644219" }
+blitz = { git = "https://github.com/DioxusLabs/blitz", rev = "111ed2f7224e49cd3177ef3cb5990efc279d3e73" }
 # The meta-crate pulls blitz-dom with default features off, which drops
 # system-fonts — without it Parley has no font sources and every glyph renders
-# blank. Taken explicitly rather than via `default`, because blitz-dom's `svg`
-# feature does not compile at this pin (usvg::svgtypes is gone and
-# Tree::intrinsic_dimensions no longer exists); the meta-crate never enables it,
-# so upstream has not noticed. custom-widget is the seam `<blitsen-view>` uses.
-blitz-dom = { git = "https://github.com/DioxusLabs/blitz", rev = "1efe22d2524d71ede5b94592204c21f0de644219", default-features = false, features = ["system-fonts", "woff", "accessibility", "file-input", "custom-widget"] }
+# blank. Taken explicitly rather than via `default` so the list is the one
+# Blitsen has decided on: `svg` is what parses an `<svg>` subtree and an SVG
+# subresource (#238), and custom-widget is the seam `<blitsen-view>` uses.
+blitz-dom = { git = "https://github.com/DioxusLabs/blitz", rev = "111ed2f7224e49cd3177ef3cb5990efc279d3e73", default-features = false, features = ["system-fonts", "woff", "accessibility", "file-input", "custom-widget", "svg"] }
 # The cursor a resolved `cursor` keyword names. Blitz keeps its own copy of
 # this mapping private, and the enum is what the shell takes, so it is named
 # here directly rather than through a re-export that does not exist.
@@ -35,14 +34,14 @@ html-escape = "0.2"
 # all: every image fails to decode and the element silently lays out at zero
 # height. Depending on it here selects the formats through feature unification.
 # Not `default`, which drags in TIFF/EXR/AVIF and friends that no drop-in
-# framework build emits. SVG images are out because they need blitz-dom's `svg`
-# feature, which does not compile at this pin (see the blitz-dom entry above).
+# framework build emits. SVG is not among them: it is not a raster format and
+# arrives through blitz-dom's `svg` feature above, which parses it with usvg.
 image = { version = "0.25", default-features = false, features = ["gif", "jpeg", "png", "webp"] }
 kurbo = "0.13"
 # The text layout blitz-dom builds is Parley's, and its geometry is only
 # readable through Parley's own cursor and selection types. Taken at the
 # version blitz-dom takes, so both crates name one `Layout`.
-parley = "0.10"
+parley = "0.11"
 peniko = "0.6"
 # Glyph bounding boxes, which is what `measureText` reports as its actual
 # bounding box and what an application vertically centres text with. Parley
@@ -52,9 +51,9 @@ skrifa = "0.42"
 style = { package = "stylo", version = "0.20" }
 
 [dev-dependencies]
-anyrender_vello_cpu = "0.15"
+anyrender_vello_cpu = "0.16"
 blitsen-core = { path = "../blitsen-core" }
-blitz-paint = { git = "https://github.com/DioxusLabs/blitz", rev = "1efe22d2524d71ede5b94592204c21f0de644219", default-features = false, features = ["custom-widget"] }
+blitz-paint = { git = "https://github.com/DioxusLabs/blitz", rev = "111ed2f7224e49cd3177ef3cb5990efc279d3e73", default-features = false, features = ["custom-widget", "svg"] }
 png = "0.18"
 serde_json = "1"
 

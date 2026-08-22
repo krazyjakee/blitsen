@@ -312,6 +312,13 @@ fn a_linked_stylesheet_reports_whether_its_sheet_arrived() {
 /// once the sheet is in the cascade. The resolved width is the whole point of
 /// the snapshot gate — a `load` handler that ran a flush too early would read
 /// the style the sheet was about to replace.
+///
+/// While the sheet is still in flight there is no resolved style at all, rather
+/// than the pre-sheet one. A render-blocking resource blocks the cascade as
+/// well as the paint, so no element has been styled yet — Blitz adopted the
+/// browser behaviour in DioxusLabs/blitz#689, and the alternative it replaced
+/// was worse: styles computed from an incomplete cascade become the
+/// before-change styles of every transition the sheet then starts.
 #[test]
 fn a_linked_stylesheet_is_in_the_cascade_by_the_time_it_says_it_loaded() {
     let network = DeferredResources::default();
@@ -325,8 +332,8 @@ fn a_linked_stylesheet_is_in_the_cascade_by_the_time_it_says_it_loaded() {
     assert_eq!(dom.link_state(sheet, snapshot), Ok(LinkState::LOADING));
     assert_eq!(
         dom.resolved_style(box_id, "width", snapshot),
-        Ok(Some("400px".to_owned())),
-        "the sheet has not applied yet, so the block is still viewport wide"
+        Ok(None),
+        "a sheet the document is blocked on leaves the cascade unrun, not stale"
     );
 
     network.deliver();

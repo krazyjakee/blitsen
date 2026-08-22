@@ -31,9 +31,12 @@ on:
 env:
   CARGO_TERM_COLOR: always
   BUN_VERSION: 1.3.14
-  # Cargo downloads are shared separately below; compiled objects use sccache's
-  # content keys, allowing CI and release to reuse compatible work safely.
+  RUST_VERSION: 1.98.0
+  # Release persists only compact Cargo registries. Compiled objects may reuse
+  # existing sccache entries, but publishing never adds per-object writes to the
+  # GitHub cache or restores a target tree containing a staged binary.
   SCCACHE_GHA_ENABLED: "true"
+  SCCACHE_GHA_RW_MODE: READ_ONLY
   RUSTC_WRAPPER: sccache
 
 jobs:
@@ -96,14 +99,17 @@ jobs:
         with:
           bun-version: ${{ env.BUN_VERSION }}
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
       - uses: mozilla-actions/sccache-action@v0.0.11
         with:
           version: v0.17.0
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: cargo
+          shared-key: cargo-release-registry
           cache-targets: false
           cache-bin: false
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       # Blitz links these directly on Linux; macOS and Windows carry their own.
       - name: Install Blitz system dependencies

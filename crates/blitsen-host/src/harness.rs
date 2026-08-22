@@ -435,7 +435,7 @@ pub fn snapshot_document(
         Ok(())
     })?;
     let mut paint_colors = BTreeMap::<[u8; 4], usize>::new();
-    for pixel in pixels.chunks_exact(4) {
+    for pixel in pixels.as_chunks::<4>().0 {
         *paint_colors
             .entry([pixel[0], pixel[1], pixel[2], pixel[3]])
             .or_default() += 1;

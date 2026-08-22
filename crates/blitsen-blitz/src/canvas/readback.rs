@@ -68,7 +68,7 @@ pub(crate) fn rasterize(scene: &Scene, x: f64, y: f64, width: u32, height: u32) 
         width,
         height,
     );
-    for pixel in pixels.chunks_exact_mut(4) {
+    for pixel in pixels.as_chunks_mut::<4>().0 {
         let alpha = u32::from(pixel[3]);
         if alpha == 0 || alpha == 255 {
             continue;
@@ -112,7 +112,9 @@ pub(crate) fn encode(
             .map_err(|error| CanvasError::Encode(error.to_string()))?,
         CanvasImageFormat::Jpeg => {
             let opaque: Vec<u8> = pixels
-                .chunks_exact(4)
+                .as_chunks::<4>()
+                .0
+                .iter()
                 .flat_map(|pixel| {
                     let alpha = f32::from(pixel[3]) / 255.0;
                     [

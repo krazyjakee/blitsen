@@ -103,8 +103,10 @@ meanwhile.
 ## What is in the corpus
 
 Eleven of the twelve cases are correctness oracles. `react-vite` is a change detector, and says so.
-The two `defect-*` cases are oracles too — their numbers came from the CSS and were confirmed
-against a browser — but what they gate is that Blitz still gets them wrong.
+The remaining `defect-*` case is an oracle too — its numbers came from the CSS and were confirmed
+against a browser — but what it gates is that Blitz still gets it wrong. `absolute-auto-margins`
+was the second of those until the Blitz pin moved past the Taffy fix for it, and is now an ordinary
+oracle with a golden of the centred box.
 
 | Case | Covers | Kind |
 | --- | --- | --- |
@@ -118,8 +120,8 @@ against a browser — but what they gate is that Blitz still gets them wrong.
 | `images` | `<img>` intrinsic ratio, `background-image`, `background-size`/`position`/`repeat` | Oracle |
 | `host-typography` | Text painting through the host's own fonts | Oracle, no golden |
 | `react-vite` | Real React output: centred shell, flex card row, borders, radii, wrapping | Change detector |
+| `absolute-auto-margins` | Auto margins against a `max-width`-clamped used width | Oracle |
 | `defect-initial-containing-block` | `absolute`/`fixed` insets resolved against the viewport | Known defect |
-| `defect-absolute-auto-margins` | Auto margins against a `max-width`-clamped used width | Known defect |
 
 Every golden image in this repository was rendered on the machine that recorded it and then looked
 at. They are not recordings of whatever the renderer happened to do.

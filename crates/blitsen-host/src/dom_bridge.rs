@@ -18,7 +18,9 @@ use serde_json::{Value, json};
 use crate::DomRuntime;
 
 mod audio;
+mod event_source;
 mod fetch;
+mod intl;
 mod native;
 // The thread pool the network runs on. Not a web worker — those are
 // [`crate::worker`], and the two were one name for long enough to be worth
@@ -53,6 +55,8 @@ const BOOTSTRAP: &str = concat!(
     include_str!("dom_bridge/bootstrap/range.js"),
     include_str!("dom_bridge/bootstrap/fetch.js"),
     include_str!("dom_bridge/bootstrap/web_socket.js"),
+    include_str!("dom_bridge/bootstrap/event_source.js"),
+    include_str!("dom_bridge/bootstrap/intl.js"),
     include_str!("dom_bridge/bootstrap/clone.js"),
     include_str!("dom_bridge/bootstrap/messaging.js"),
     include_str!("dom_bridge/bootstrap/audio.js"),
@@ -234,6 +238,8 @@ pub fn install<E: JsEngine + 'static>(
     install_messaging(engine, reader.clone())?;
     install_audio(engine, reader)?;
     install_web_socket(engine)?;
+    install_event_source(engine)?;
+    install_intl(engine)?;
     native::install(engine)?;
     let dev_layout_warnings = std::env::var("BLITSEN_DEV_LAYOUT_WARNINGS").is_ok_and(|value| {
         !value.is_empty() && value != "0" && !value.eq_ignore_ascii_case("false")
@@ -321,6 +327,10 @@ pub fn install_worker_services<E: JsEngine + 'static>(
 ) -> Result<(), JsError> {
     install_text_codec(engine)?;
     install_fetch(engine, reader)?;
+    // `Intl` is a language global rather than a document one, so a worker has
+    // the same one — and formatting a table of numbers off the main thread is
+    // exactly the work a worker is for.
+    install_intl(engine)?;
     // The same three facts the document's `navigator` states. A worker has one
     // in a browser, and library code reaches for it to decide what it is running
     // on — Monaco's platform detection gives up without it.
@@ -698,6 +708,134 @@ fn socket_id<E: JsEngine>(engine: &mut E, call: &NativeCall<E::Value>) -> Result
     argument(engine, call, 0, "socket id")?
         .parse::<u64>()
         .map_err(|_| JsError::new("invalid WebSocket id"))
+}
+
+/// Installs the transport the bootstrap's `EventSource` class calls through.
+fn install_event_source<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsError> {
+    let host = Rc::new(event_source::EventSourceHost::new()?);
+
+    let open_host = Rc::clone(&host);
+    engine.define_global_function(
+        "__blitsenEventSourceOpen",
+        Box::new(move |call| {
+            let mut engine = E::from_value(&call.this);
+            let url = argument(&mut engine, &call, 0, "EventSource address")?;
+            let id = open_host.open(&url)?;
+            Ok(engine.number(id as f64))
+        }),
+    )?;
+
+    let close_host = Rc::clone(&host);
+    engine.define_global_function(
+        "__blitsenEventSourceClose",
+        Box::new(move |call| {
+            let mut engine = E::from_value(&call.this);
+            close_host.close(stream_id(&mut engine, &call)?);
+            Ok(call.this)
+        }),
+    )?;
+
+    let poll_host = Rc::clone(&host);
+    engine.define_global_function(
+        "__blitsenEventSourcePoll",
+        Box::new(move |call| {
+            let mut engine = E::from_value(&call.this);
+            json_value(&mut engine, &poll_host.poll())
+        }),
+    )?;
+
+    engine.define_global_function(
+        "__blitsenEventSourceDispose",
+        Box::new(move |call| {
+            host.dispose();
+            Ok(call.this)
+        }),
+    )
+}
+
+fn stream_id<E: JsEngine>(engine: &mut E, call: &NativeCall<E::Value>) -> Result<u64, JsError> {
+    argument(engine, call, 0, "stream id")?
+        .parse::<u64>()
+        .map_err(|_| JsError::new("invalid EventSource id"))
+}
+
+/// Installs the formatters the bootstrap's `Intl` object calls through.
+///
+/// Shared with the worker scope through [`install_worker_services`]: `Intl` is
+/// a language global rather than a document one, and a worker that formats a
+/// number is the ordinary case rather than an exotic one.
+pub(crate) fn install_intl<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsError> {
+    let host = Rc::new(intl::IntlHost::default());
+
+    let resolve_host = Rc::clone(&host);
+    engine.define_global_function(
+        "__blitsenIntlResolve",
+        Box::new(move |call| {
+            let mut engine = E::from_value(&call.this);
+            let kind = argument(&mut engine, &call, 0, "formatter kind")?;
+            let options = argument(&mut engine, &call, 1, "formatter options")?;
+            let options: Value = serde_json::from_str(&options)
+                .map_err(|error| JsError::new(format!("invalid Intl options: {error}")))?;
+            let resolved = resolve_host.resolve(&kind, &options)?;
+            json_value(&mut engine, &resolved)
+        }),
+    )?;
+
+    let format_host = Rc::clone(&host);
+    engine.define_global_function(
+        "__blitsenIntlFormat",
+        Box::new(move |call| {
+            let mut engine = E::from_value(&call.this);
+            let handle = intl_handle(&mut engine, &call)?;
+            let value = argument(&mut engine, &call, 1, "value")?;
+            let formatted = format_host.format(handle, &value)?;
+            engine.string(&formatted)
+        }),
+    )?;
+
+    let select_host = Rc::clone(&host);
+    engine.define_global_function(
+        "__blitsenIntlSelect",
+        Box::new(move |call| {
+            let mut engine = E::from_value(&call.this);
+            let handle = intl_handle(&mut engine, &call)?;
+            let value = argument(&mut engine, &call, 1, "value")?;
+            let category = select_host.select(handle, &value)?;
+            engine.string(&category)
+        }),
+    )?;
+
+    let compare_host = Rc::clone(&host);
+    engine.define_global_function(
+        "__blitsenIntlCompare",
+        Box::new(move |call| {
+            let mut engine = E::from_value(&call.this);
+            let handle = intl_handle(&mut engine, &call)?;
+            let left = argument(&mut engine, &call, 1, "left string")?;
+            let right = argument(&mut engine, &call, 2, "right string")?;
+            let ordering = compare_host.compare(handle, &left, &right)?;
+            Ok(engine.number(f64::from(ordering)))
+        }),
+    )?;
+
+    engine.define_global_function(
+        "__blitsenIntlJoin",
+        Box::new(move |call| {
+            let mut engine = E::from_value(&call.this);
+            let handle = intl_handle(&mut engine, &call)?;
+            let items = argument(&mut engine, &call, 1, "list items")?;
+            let items: Vec<String> = serde_json::from_str(&items)
+                .map_err(|error| JsError::new(format!("invalid list: {error}")))?;
+            let joined = host.join(handle, &items)?;
+            engine.string(&joined)
+        }),
+    )
+}
+
+fn intl_handle<E: JsEngine>(engine: &mut E, call: &NativeCall<E::Value>) -> Result<usize, JsError> {
+    argument(engine, call, 0, "formatter handle")?
+        .parse::<usize>()
+        .map_err(|_| JsError::new("invalid Intl formatter handle"))
 }
 
 /// Reads a required string argument, refusing a value that is not one.

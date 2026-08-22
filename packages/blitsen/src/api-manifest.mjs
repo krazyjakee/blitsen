@@ -155,14 +155,22 @@ const CATALOGUE = {
     ["postMessage", "\\b(?:window|globalThis|self)\\.postMessage\\s*\\("],
     "MessagePort.postMessage", "MessagePort.start", "MessagePort.close",
     "BroadcastChannel"],
-  // `MessageEvent` is here rather than with the messaging APIs because a socket
-  // is the only thing in this runtime that delivers one. The four readyState
+  // `MessageEvent` is here rather than with the messaging APIs because the two
+  // transports below are the only things in this runtime that deliver one — a
+  // socket frame and a server-sent event both arrive as one. The readyState
   // constants are not listed: they are installed onto the constructor and the
   // prototype rather than declared in the class body, which is not a shape this
   // file's reader can verify, and `readyState` covers what a bundle reads.
   WEB_SOCKET: ["WebSocket", "MessageEvent", "CloseEvent", "EventSource",
     "WebSocket.url", "WebSocket.readyState", "WebSocket.protocol", "WebSocket.extensions",
-    "WebSocket.bufferedAmount", "WebSocket.binaryType", "WebSocket.send", "WebSocket.close"],
+    "WebSocket.bufferedAmount", "WebSocket.binaryType", "WebSocket.send", "WebSocket.close",
+    "EventSource.url", "EventSource.readyState", "EventSource.withCredentials",
+    "EventSource.close"],
+  // `Intl` is the bridge's now rather than the engine's (#237): the formatters
+  // are native, over CLDR through ICU4X and the platform's own time-zone
+  // database. What each of them can and cannot do is declared in DECLARED
+  // below, because the classes live inside the object rather than beside it.
+  WEB_INTL: ["Intl"],
   WEB_XHR: ["XMLHttpRequest"],
   WEB_STREAM: ["ReadableStream", "WritableStream", "TransformStream", "Response.body",
     "Response.clone"],
@@ -332,9 +340,6 @@ const NATIVE_ABSENT = {
     + "fourth source on each — UPower's D-Bus service, IOKit, `GetSystemPowerStatus` — and a "
     + "desktop with no battery has to read as *absent* rather than as an empty reading, which is "
     + "a distinction only the real source can make.",
-  "os.locale": "Reading the tag is the easy half. Nothing in this runtime consumes it: the "
-    + "JavaScript engine ships no `Intl` (see ENGINE_ABSENT), so `os.locale()` would hand back a "
-    + "string with no formatter behind it and imply support that is not there.",
   "os.idleTime": "Seconds since the last input is a different mechanism on every platform, and "
     + "Wayland has no answer at all for a client that is not focused — the idle-notify protocol "
     + "reports crossing a threshold the compositor was asked about, not a duration. Reporting "
@@ -351,8 +356,47 @@ const NATIVE_ABSENT = {
 // and fails if it disagrees, which is what keeps this list from drifting into
 // fiction the way an unverified declaration would.
 const ENGINE_ABSENT = {
-  WEB_INTL: ["Intl"],
   WEB_WASM: ["WebAssembly"],
+};
+
+// The `Intl` surface, declared rather than read out of the bootstrap.
+//
+// Everything else in this file is derived, and for a good reason — a claim and
+// an implementation kept side by side drift. `Intl`'s formatters cannot be:
+// they are classes inside a frozen object rather than globals, and the reader
+// walks classes and globals. So they are declared here, with the owner each is
+// reached through, and `runtime-surface.mjs` resolves every one of them against
+// the real runtime and fails on a disagreement — the same guard ENGINE_ABSENT
+// stands on, and the reason a declaration here is not a free claim.
+const DECLARED = {
+  WEB_INTL: [
+    ["Intl.NumberFormat", "Intl", "NumberFormat", true],
+    ["Intl.DateTimeFormat", "Intl", "DateTimeFormat", true],
+    ["Intl.RelativeTimeFormat", "Intl", "RelativeTimeFormat", true],
+    ["Intl.PluralRules", "Intl", "PluralRules", true],
+    ["Intl.Collator", "Intl", "Collator", true],
+    ["Intl.ListFormat", "Intl", "ListFormat", true],
+    ["Intl.getCanonicalLocales", "Intl", "getCanonicalLocales", true],
+    ["Intl.NumberFormat.format", "Intl.NumberFormat.prototype", "format", true],
+    ["Intl.NumberFormat.resolvedOptions", "Intl.NumberFormat.prototype", "resolvedOptions", true],
+    ["Intl.DateTimeFormat.format", "Intl.DateTimeFormat.prototype", "format", true],
+    ["Intl.DateTimeFormat.resolvedOptions", "Intl.DateTimeFormat.prototype", "resolvedOptions",
+      true],
+    ["Intl.Collator.compare", "Intl.Collator.prototype", "compare", true],
+    ["Intl.PluralRules.select", "Intl.PluralRules.prototype", "select", true],
+    ["Intl.ListFormat.format", "Intl.ListFormat.prototype", "format", true],
+    ["Intl.RelativeTimeFormat.format", "Intl.RelativeTimeFormat.prototype", "format", true],
+    // Absent, and each one for a reason COMPATIBILITY.md gives: the parts APIs
+    // need pattern data ICU4X does not expose for every notation, and the three
+    // formatters below are ICU4X components Blitsen does not link.
+    ["Intl.NumberFormat.formatToParts", "Intl.NumberFormat.prototype", "formatToParts", false],
+    ["Intl.DateTimeFormat.formatToParts", "Intl.DateTimeFormat.prototype", "formatToParts", false],
+    ["Intl.DateTimeFormat.formatRange", "Intl.DateTimeFormat.prototype", "formatRange", false],
+    ["Intl.Segmenter", "Intl", "Segmenter", false],
+    ["Intl.DisplayNames", "Intl", "DisplayNames", false],
+    ["Intl.DurationFormat", "Intl", "DurationFormat", false],
+    ["Intl.supportedValuesOf", "Intl", "supportedValuesOf", false],
+  ],
 };
 
 // What `doctor` says about a group whose APIs turn out to be absent, plus an
@@ -377,10 +421,12 @@ const ENGINE_ABSENT = {
 // declared per group: the day an absence is fatal however it is written, it is
 // graded here rather than around here.
 const DIAGNOSTICS = {
-  WEB_INTL: ["warning", "Intl is not implemented by the JavaScript engine Blitsen hosts.",
-    "Format in application code or ship a polyfill. The `toLocale*` methods still exist and "
-    + "still return a string, but they ignore the locale they are given — (1234.5)"
-    + ".toLocaleString('de-DE') is '1234.5' — so a missed one is wrong output, not an error."],
+  WEB_INTL: ["warning", "This part of Intl is not implemented; the formatters are.",
+    "NumberFormat, DateTimeFormat — including named IANA time zones — RelativeTimeFormat, "
+    + "PluralRules, Collator and ListFormat are implemented over CLDR, and so are the "
+    + "`toLocale*` methods and `localeCompare` built on them. What is absent is the "
+    + "`formatToParts`/`formatRange` family, Segmenter, DisplayNames and DurationFormat: "
+    + "feature-detect them, or format the whole string and split it yourself."],
   WEB_WASM: ["warning", "WebAssembly is not implemented by the JavaScript engine Blitsen hosts.",
     "Ship a JavaScript build of the module, or keep the work in a native addon."],
   WEB_DOM: ["warning", "This DOM method is not implemented.",
@@ -398,8 +444,6 @@ const DIAGNOSTICS = {
   WEB_MESSAGING: ["warning", "BroadcastChannel is not implemented; MessageChannel and Worker are.",
     "There is one document behind an application, so a channel between two of them has nothing "
     + "to connect; pass a MessagePort to whoever needs one."],
-  WEB_SOCKET: ["warning", "Server-sent events are not implemented; WebSocket is.",
-    "Feature-detect EventSource, or hold the stream open over a WebSocket instead."],
   WEB_URL: ["warning", "Object URLs are not implemented; URL and URLSearchParams are.",
     "Pass the Blob itself to whatever was going to fetch the URL, or build a data: URL."],
   WEB_XHR: ["warning", "XMLHttpRequest is not implemented.", "Use fetch with an absolute URL."],
@@ -526,9 +570,19 @@ const RENDERER_RULES = [
   ["html", "HTML_MEDIA", "warning", "<(?:video|track)\\b",
     "Video and text tracks are not implemented; <audio> is.",
     "Ship moving pictures as DOM, images and CSS, or feature-detect the media path."],
-  ["html", "HTML_SVG", "warning", "<svg\\b",
-    "SVG rendering is currently limited and not in the strict profile.",
-    "Verify this asset visually or replace it with profiled HTML/CSS."],
+  // Issue #238: an `<svg>` element paints now — shapes, paths, `viewBox`,
+  // `transform`, fills and strokes including `currentColor`, gradients, a
+  // single-path `clipPath`, and text — so warning about every one of them
+  // would be warning about the working case. What is left is this list, and it
+  // is narrow on purpose: a `<pattern>` fill is not merely unpainted but marks
+  // the frame's top-left corner with a half-transparent red box (gap G16), and
+  // filters, masks and SMIL animation paint nothing.
+  ["html", "HTML_SVG", "warning",
+    "<(?:pattern|filter|mask|animate|animateTransform|animateMotion|set|foreignObject)\\b",
+    "This SVG feature does not paint; shapes, paths, text, gradients and clipPath do.",
+    "Flatten the effect into the shapes themselves, or rasterise this asset to PNG. A "
+    + "`<pattern>` fill also leaves a red mark in the frame's corner, so it is worth removing "
+    + "rather than tolerating."],
 ];
 
 // Everything below reads the bootstrap as the JavaScript it is, rather than a
@@ -870,6 +924,15 @@ export function buildManifest(script) {
   const engineApis = Object.entries(ENGINE_ABSENT).flatMap(([code, names]) => names.map(api =>
     ({ api, kind: "global", status: "absent", origin: "engine", code,
       pattern: `(?<![.\\w$])${api}\\b` })));
+  // Declared members of an installed global. The pattern is the dotted name a
+  // bundle actually writes, escaped, so `doctor` finds `Intl.Segmenter` without
+  // matching every other `Intl.` reference.
+  const declaredApis = Object.entries(DECLARED).flatMap(([code, members]) =>
+    members.map(([api, owner, member, implemented]) => ({
+      api, kind: "member", owner, member,
+      status: implemented ? "implemented" : "absent", code,
+      pattern: implemented ? null : `\\b${api.replace(/\./g, "\\.")}\\b`,
+    })));
 
   const described = new Set(apis.filter(entry => entry.kind === "global").map(entry => entry.api));
   const undescribed = surface.globals.filter(name => !described.has(name));
@@ -892,7 +955,7 @@ export function buildManifest(script) {
   return {
     generatedBy: `packages/blitsen/src/api-manifest.mjs from ${SOURCE_NAME}`,
     profile: "v1-strict",
-    apis: [...apis, ...engineApis],
+    apis: [...apis, ...engineApis, ...declaredApis],
     native: nativeEntries(surface),
     diagnostics: Object.fromEntries(Object.entries(DIAGNOSTICS)
       .map(([code, [severity, message, guidance, extra]]) =>

@@ -2328,7 +2328,7 @@
     {
       "api": "EventSource",
       "kind": "global",
-      "status": "absent",
+      "status": "implemented",
       "code": "WEB_SOCKET",
       "pattern": "(?<![.\\w$])EventSource\\b"
     },
@@ -2403,6 +2403,49 @@
       "status": "implemented",
       "code": "WEB_SOCKET",
       "pattern": null
+    },
+    {
+      "api": "EventSource.url",
+      "kind": "member",
+      "owner": "EventSource.prototype",
+      "member": "url",
+      "status": "implemented",
+      "code": "WEB_SOCKET",
+      "pattern": null
+    },
+    {
+      "api": "EventSource.readyState",
+      "kind": "member",
+      "owner": "EventSource.prototype",
+      "member": "readyState",
+      "status": "implemented",
+      "code": "WEB_SOCKET",
+      "pattern": null
+    },
+    {
+      "api": "EventSource.withCredentials",
+      "kind": "member",
+      "owner": "EventSource.prototype",
+      "member": "withCredentials",
+      "status": "implemented",
+      "code": "WEB_SOCKET",
+      "pattern": null
+    },
+    {
+      "api": "EventSource.close",
+      "kind": "member",
+      "owner": "EventSource.prototype",
+      "member": "close",
+      "status": "implemented",
+      "code": "WEB_SOCKET",
+      "pattern": null
+    },
+    {
+      "api": "Intl",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_INTL",
+      "pattern": "(?<![.\\w$])Intl\\b"
     },
     {
       "api": "XMLHttpRequest",
@@ -4060,20 +4103,210 @@
       "pattern": "(?<![.\\w$])DOMParser\\b"
     },
     {
-      "api": "Intl",
-      "kind": "global",
-      "status": "absent",
-      "origin": "engine",
-      "code": "WEB_INTL",
-      "pattern": "(?<![.\\w$])Intl\\b"
-    },
-    {
       "api": "WebAssembly",
       "kind": "global",
       "status": "absent",
       "origin": "engine",
       "code": "WEB_WASM",
       "pattern": "(?<![.\\w$])WebAssembly\\b"
+    },
+    {
+      "api": "Intl.NumberFormat",
+      "kind": "member",
+      "owner": "Intl",
+      "member": "NumberFormat",
+      "status": "implemented",
+      "code": "WEB_INTL",
+      "pattern": null
+    },
+    {
+      "api": "Intl.DateTimeFormat",
+      "kind": "member",
+      "owner": "Intl",
+      "member": "DateTimeFormat",
+      "status": "implemented",
+      "code": "WEB_INTL",
+      "pattern": null
+    },
+    {
+      "api": "Intl.RelativeTimeFormat",
+      "kind": "member",
+      "owner": "Intl",
+      "member": "RelativeTimeFormat",
+      "status": "implemented",
+      "code": "WEB_INTL",
+      "pattern": null
+    },
+    {
+      "api": "Intl.PluralRules",
+      "kind": "member",
+      "owner": "Intl",
+      "member": "PluralRules",
+      "status": "implemented",
+      "code": "WEB_INTL",
+      "pattern": null
+    },
+    {
+      "api": "Intl.Collator",
+      "kind": "member",
+      "owner": "Intl",
+      "member": "Collator",
+      "status": "implemented",
+      "code": "WEB_INTL",
+      "pattern": null
+    },
+    {
+      "api": "Intl.ListFormat",
+      "kind": "member",
+      "owner": "Intl",
+      "member": "ListFormat",
+      "status": "implemented",
+      "code": "WEB_INTL",
+      "pattern": null
+    },
+    {
+      "api": "Intl.getCanonicalLocales",
+      "kind": "member",
+      "owner": "Intl",
+      "member": "getCanonicalLocales",
+      "status": "implemented",
+      "code": "WEB_INTL",
+      "pattern": null
+    },
+    {
+      "api": "Intl.NumberFormat.format",
+      "kind": "member",
+      "owner": "Intl.NumberFormat.prototype",
+      "member": "format",
+      "status": "implemented",
+      "code": "WEB_INTL",
+      "pattern": null
+    },
+    {
+      "api": "Intl.NumberFormat.resolvedOptions",
+      "kind": "member",
+      "owner": "Intl.NumberFormat.prototype",
+      "member": "resolvedOptions",
+      "status": "implemented",
+      "code": "WEB_INTL",
+      "pattern": null
+    },
+    {
+      "api": "Intl.DateTimeFormat.format",
+      "kind": "member",
+      "owner": "Intl.DateTimeFormat.prototype",
+      "member": "format",
+      "status": "implemented",
+      "code": "WEB_INTL",
+      "pattern": null
+    },
+    {
+      "api": "Intl.DateTimeFormat.resolvedOptions",
+      "kind": "member",
+      "owner": "Intl.DateTimeFormat.prototype",
+      "member": "resolvedOptions",
+      "status": "implemented",
+      "code": "WEB_INTL",
+      "pattern": null
+    },
+    {
+      "api": "Intl.Collator.compare",
+      "kind": "member",
+      "owner": "Intl.Collator.prototype",
+      "member": "compare",
+      "status": "implemented",
+      "code": "WEB_INTL",
+      "pattern": null
+    },
+    {
+      "api": "Intl.PluralRules.select",
+      "kind": "member",
+      "owner": "Intl.PluralRules.prototype",
+      "member": "select",
+      "status": "implemented",
+      "code": "WEB_INTL",
+      "pattern": null
+    },
+    {
+      "api": "Intl.ListFormat.format",
+      "kind": "member",
+      "owner": "Intl.ListFormat.prototype",
+      "member": "format",
+      "status": "implemented",
+      "code": "WEB_INTL",
+      "pattern": null
+    },
+    {
+      "api": "Intl.RelativeTimeFormat.format",
+      "kind": "member",
+      "owner": "Intl.RelativeTimeFormat.prototype",
+      "member": "format",
+      "status": "implemented",
+      "code": "WEB_INTL",
+      "pattern": null
+    },
+    {
+      "api": "Intl.NumberFormat.formatToParts",
+      "kind": "member",
+      "owner": "Intl.NumberFormat.prototype",
+      "member": "formatToParts",
+      "status": "absent",
+      "code": "WEB_INTL",
+      "pattern": "\\bIntl\\.NumberFormat\\.formatToParts\\b"
+    },
+    {
+      "api": "Intl.DateTimeFormat.formatToParts",
+      "kind": "member",
+      "owner": "Intl.DateTimeFormat.prototype",
+      "member": "formatToParts",
+      "status": "absent",
+      "code": "WEB_INTL",
+      "pattern": "\\bIntl\\.DateTimeFormat\\.formatToParts\\b"
+    },
+    {
+      "api": "Intl.DateTimeFormat.formatRange",
+      "kind": "member",
+      "owner": "Intl.DateTimeFormat.prototype",
+      "member": "formatRange",
+      "status": "absent",
+      "code": "WEB_INTL",
+      "pattern": "\\bIntl\\.DateTimeFormat\\.formatRange\\b"
+    },
+    {
+      "api": "Intl.Segmenter",
+      "kind": "member",
+      "owner": "Intl",
+      "member": "Segmenter",
+      "status": "absent",
+      "code": "WEB_INTL",
+      "pattern": "\\bIntl\\.Segmenter\\b"
+    },
+    {
+      "api": "Intl.DisplayNames",
+      "kind": "member",
+      "owner": "Intl",
+      "member": "DisplayNames",
+      "status": "absent",
+      "code": "WEB_INTL",
+      "pattern": "\\bIntl\\.DisplayNames\\b"
+    },
+    {
+      "api": "Intl.DurationFormat",
+      "kind": "member",
+      "owner": "Intl",
+      "member": "DurationFormat",
+      "status": "absent",
+      "code": "WEB_INTL",
+      "pattern": "\\bIntl\\.DurationFormat\\b"
+    },
+    {
+      "api": "Intl.supportedValuesOf",
+      "kind": "member",
+      "owner": "Intl",
+      "member": "supportedValuesOf",
+      "status": "absent",
+      "code": "WEB_INTL",
+      "pattern": "\\bIntl\\.supportedValuesOf\\b"
     }
   ],
   "native": [
@@ -4357,8 +4590,7 @@
       "api": "os.locale",
       "module": "os",
       "member": "locale",
-      "status": "absent",
-      "reason": "Reading the tag is the easy half. Nothing in this runtime consumes it: the JavaScript engine ships no `Intl` (see ENGINE_ABSENT), so `os.locale()` would hand back a string with no formatter behind it and imply support that is not there."
+      "status": "implemented"
     },
     {
       "api": "os.idleTime",
@@ -4371,8 +4603,8 @@
   "diagnostics": {
     "WEB_INTL": {
       "severity": "warning",
-      "message": "Intl is not implemented by the JavaScript engine Blitsen hosts.",
-      "guidance": "Format in application code or ship a polyfill. The `toLocale*` methods still exist and still return a string, but they ignore the locale they are given — (1234.5).toLocaleString('de-DE') is '1234.5' — so a missed one is wrong output, not an error.",
+      "message": "This part of Intl is not implemented; the formatters are.",
+      "guidance": "NumberFormat, DateTimeFormat — including named IANA time zones — RelativeTimeFormat, PluralRules, Collator and ListFormat are implemented over CLDR, and so are the `toLocale*` methods and `localeCompare` built on them. What is absent is the `formatToParts`/`formatRange` family, Segmenter, DisplayNames and DurationFormat: feature-detect them, or format the whole string and split it yourself.",
       "extra": null
     },
     "WEB_WASM": {
@@ -4415,12 +4647,6 @@
       "severity": "warning",
       "message": "BroadcastChannel is not implemented; MessageChannel and Worker are.",
       "guidance": "There is one document behind an application, so a channel between two of them has nothing to connect; pass a MessagePort to whoever needs one.",
-      "extra": null
-    },
-    "WEB_SOCKET": {
-      "severity": "warning",
-      "message": "Server-sent events are not implemented; WebSocket is.",
-      "guidance": "Feature-detect EventSource, or hold the stream open over a WebSocket instead.",
       "extra": null
     },
     "WEB_URL": {
@@ -4575,9 +4801,9 @@
       "kind": "html",
       "code": "HTML_SVG",
       "severity": "warning",
-      "pattern": "<svg\\b",
-      "message": "SVG rendering is currently limited and not in the strict profile.",
-      "guidance": "Verify this asset visually or replace it with profiled HTML/CSS."
+      "pattern": "<(?:pattern|filter|mask|animate|animateTransform|animateMotion|set|foreignObject)\\b",
+      "message": "This SVG feature does not paint; shapes, paths, text, gradients and clipPath do.",
+      "guidance": "Flatten the effect into the shapes themselves, or rasterise this asset to PNG. A `<pattern>` fill also leaves a red mark in the frame's corner, so it is worth removing rather than tolerating."
     }
   ],
   "assets": [

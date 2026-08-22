@@ -168,8 +168,10 @@ fn numbers<E: JsEngine>(
     }
     Ok(array
         .bytes
-        .chunks_exact(8)
-        .map(|chunk| f64::from_ne_bytes(chunk.try_into().expect("eight bytes")))
+        .as_chunks::<8>()
+        .0
+        .iter()
+        .map(|chunk| f64::from_ne_bytes(*chunk))
         .collect())
 }
 

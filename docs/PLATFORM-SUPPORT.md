@@ -35,7 +35,7 @@ runtime throws when a requested mode is unavailable.
 
 ## macOS requirements
 
-Blitsen publishes Intel and Apple silicon runtimes. The published 0.1.0 artifacts are unsigned, and
+Blitsen publishes Intel and Apple silicon runtimes. The published artifacts are unsigned, and
 an application you export is unsigned unless your build runs an appropriate signing command.
 
 Distribute a macOS application only after signing its `.app` bundle and completing notarization on
@@ -68,7 +68,10 @@ APK](PACKAGING.md#build-an-android-apk) for prerequisites and signing.
 - Text input lacks complete IME/composition, clipboard editing, undo/redo, `contenteditable` and
   complex-script support.
 - Cross-platform font fallback is incomplete. Verify typography on every target.
-- `Intl` and WebAssembly are absent from the standard shipped JavaScript engine.
+- WebAssembly is absent from the standard shipped JavaScript engine. `Intl` is not: the formatters
+  are the runtime's own, over CLDR and the platform's time-zone database, and are the same on every
+  target — the database is the system's on Unix, Android's concatenated `tzdata` there, and bundled
+  on Windows.
 - `localStorage` and `sessionStorage` are in-memory and reset when the process exits.
 - The runtime is not a browser sandbox and must not run untrusted third-party pages.
 
@@ -77,7 +80,7 @@ This list calls out release-level constraints, not every missing web API. Use `b
 
 ## Unsigned artifacts
 
-The published 0.1.0 runtimes are unsigned, and Blitsen does not own or manage your certificates.
+The published runtimes are unsigned, and Blitsen does not own or manage your certificates.
 Use `--sign` to connect your build to a signing command, then follow the target platform's normal
 distribution and notarization process. A cross-target build can generate packaging files but needs
 the target's tools or an external signing service to establish publisher identity.

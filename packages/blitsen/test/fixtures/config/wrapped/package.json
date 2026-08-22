@@ -5,6 +5,12 @@
     "build": "node emit-dist.mjs",
     "output": "dist",
     "name": "Wrapped App",
-    "addons": ["native/greet.node"]
+    "addons": ["native/greet.node"],
+    "window": { "type": "borderless", "resizable": false },
+    "tray": {
+      "icon": "native/tray.png",
+      "closeToTray": true,
+      "contextMenu": [{ "action": "show" }, { "action": "quit" }]
+    }
   }
 }

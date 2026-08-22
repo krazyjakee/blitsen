@@ -75,7 +75,12 @@ pub fn print_licenses(bundle: Option<&AppBundle>) -> Result<ExitCode, String> {
 /// `api-manifest.json` cannot derive them the way it derives everything else
 /// and declares them instead. Reporting them here is what lets
 /// `cli-doctor.test.mjs` fail when the declaration and the engine disagree.
-const ENGINE_GLOBALS: &[&str] = &["Intl", "WebAssembly"];
+///
+/// `Intl` was here until #237. The engine still ships none — what changed is
+/// whose claim it is: the bridge installs formatters over CLDR, so `Intl` is
+/// derived from the bridge's own surface like every other web API, and listing
+/// it here would report it absent from a runtime that has it.
+const ENGINE_GLOBALS: &[&str] = &["WebAssembly"];
 
 /// Prints which engine this build hosts and what it supports.
 pub fn print_engine() {

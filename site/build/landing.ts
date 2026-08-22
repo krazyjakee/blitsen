@@ -44,7 +44,7 @@ export function landingBody(crestSvg: string): string {
     <div class="hero-title">
       ${hero}
       <div>
-        <p class="eyebrow">Pre-alpha · v0.1.0</p>
+        <p class="eyebrow">Pre-alpha</p>
         <h1>Blitsen</h1>
       </div>
     </div>

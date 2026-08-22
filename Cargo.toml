@@ -29,38 +29,6 @@ missing_docs = "warn"
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
 
-[patch.crates-io]
-anyrender = { git = "https://github.com/DioxusLabs/anyrender", rev = "dcd219746ff13a5832beab552f3f7f494d1bd84d" }
-
-# A fork of Blitz at the pinned revision, carrying one fix: replaced layout
-# reaches `unreachable!()` when a replaced element carries a custom widget,
-# because the widget takes the `SpecialElementData` slot the `<canvas>` branch
-# matches on. That panic is what stood between `<canvas>` and the compositing
-# seam `<blitsen-view>` proves, and there is no workaround on this side of the
-# boundary. `<canvas>` 2D ships over that seam now (issue #99), so every
-# document with a canvas in it depends on this patch. Filed upstream; see
-# docs/BLITZ-GAPS.md G14.
-#
-# The revision below is `1efe22d2` — the same commit the `blitz*` dependencies
-# pin — plus that one commit, so the patch changes the fix and nothing else. It
-# is a git source rather than a path because a `path` here is a local checkout
-# that no runner and no second clone has: CI, a release and a fresh `git clone`
-# all resolve this, and none of them can resolve `../blitz`. Retire the whole
-# section when the fix lands upstream and the pin moves past it.
-#
-# Issue #135: the revision is also tagged `blitsen-0.1.0` on the fork. The pin
-# stays a `rev` because that is what is immutable — a tag can be moved and a
-# branch can be force-pushed — and the tag exists so the object survives the
-# branch: a released binary whose source cannot be fetched back is not
-# reproducible, and `custom-widget-replaced-layout` is one deletion from that.
-[patch."https://github.com/DioxusLabs/blitz"]
-blitz = { git = "https://github.com/krazyjakee/blitz", rev = "df1e6594d24f73baadfacb1248122760529844ec" }
-blitz-dom = { git = "https://github.com/krazyjakee/blitz", rev = "df1e6594d24f73baadfacb1248122760529844ec" }
-blitz-html = { git = "https://github.com/krazyjakee/blitz", rev = "df1e6594d24f73baadfacb1248122760529844ec" }
-blitz-paint = { git = "https://github.com/krazyjakee/blitz", rev = "df1e6594d24f73baadfacb1248122760529844ec" }
-blitz-shell = { git = "https://github.com/krazyjakee/blitz", rev = "df1e6594d24f73baadfacb1248122760529844ec" }
-blitz-traits = { git = "https://github.com/krazyjakee/blitz", rev = "df1e6594d24f73baadfacb1248122760529844ec" }
-
 # Symbols are 13.1 MB of the 50.1 MB Phase 2 runtime and nothing that ships
 # reads them: the executable is what a user downloads, and a backtrace taken
 # from it names frames the reporter cannot map to a source line anyway. Dropped

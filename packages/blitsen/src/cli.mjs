@@ -280,6 +280,9 @@ async function applyConfiguration(options, output) {
     throw new Error("missing application directory: pass one, or add an index.html here, "
       + `or add a "blitsen" config to ${location}`);
   }
+  if (options.android && (config.window || config.tray)) {
+    throw new Error("window and tray configuration is only available to desktop builds");
+  }
   if (config.build) {
     reportStep(output, { step: "build", detail: `${config.build} (configured in ${path})` });
     await runBuildCommand(config.build, root);
@@ -287,6 +290,10 @@ async function applyConfiguration(options, output) {
   options.directory = resolve(root, config.output);
   options.addons = [...config.addons?.map(addon => resolve(root, addon)) ?? [], ...options.addons ?? []];
   options.name ??= config.name;
+  options.window = config.window;
+  options.tray = config.tray
+    ? { ...config.tray, icon: resolve(root, config.tray.icon) }
+    : undefined;
   applyName(options);
 }
 
@@ -470,6 +477,9 @@ export async function main(args, output = console, runtime = null) {
     // A run that found its application differently from the build beside it is a
     // run that proves nothing about what ships.
     if (options.directory === null) await applyConfiguration(options, output);
+    if (options.android && (options.window || options.tray)) {
+      throw new Error("window and tray configuration is only available to desktop builds");
+    }
     const application = await resolveApplication(options.directory);
     // Proxy mode is a way to *run* an application, and neither of the other two
     // commands has anything to read: `doctor` grades files on disk and `build`

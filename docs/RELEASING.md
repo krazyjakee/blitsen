@@ -88,9 +88,9 @@ whole path.
 | `WINDOWS_CERTIFICATE_PFX` | Windows signing, base64 of the `.pfx` | Unsigned Windows runtimes |
 | `WINDOWS_CERTIFICATE_PASSWORD` | Its passphrase | — |
 
-### 0.1.0 ships unsigned, and says so
+### Published runtimes are unsigned, and say so
 
-**Decided for 0.1.0: no platform is signed.** No Apple Developer ID and no Windows code-signing
+No platform runtime is signed. No Apple Developer ID and no Windows code-signing
 certificate exist for this project, and the workflow's signing steps are no-ops that warn per
 target (issue \#132). Two things follow, and the release notes have to carry both:
 
@@ -206,7 +206,7 @@ evidence those steps have.
 ## Before the first real release
 
 - [x] Decide the repository's visibility, or set the runner variables — public, defaults
-- [x] Decide whether 0.1.0 ships signed, or unsigned and says so — unsigned, and it says so
+- [x] Decide whether releases ship signed, or unsigned and say so — unsigned, and they say so
 - [x] Run once with `publish: false` and read the six job summaries (\#134) — four clean runs
 - [x] Confirm `blitsen` and all six `@blitsen/*` manifests carry the same version — asserted by
       the package tests, and again by the publish job before it publishes anything
@@ -233,7 +233,7 @@ message naming it, which is the cheapest place for it to fail.
 ### Rehearsing the install without the registry
 
 The last box is the only real check, and most of it can be had before the scope exists — which is
-where the two worst faults in 0.1.0 were found. Run a local registry, publish all seven packages
+where the two worst first-release faults were found. Run a local registry, publish all seven packages
 to it in release order, and install from it into an empty project:
 
 ```sh

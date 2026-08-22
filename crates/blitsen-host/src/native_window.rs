@@ -27,6 +27,7 @@ use crate::pointer_input::{PendingPointerInput, PointerIds};
 use crate::surface_lifecycle::{SurfaceState, SyntheticPhase};
 
 mod session;
+mod tray;
 
 pub use session::WindowSession;
 
@@ -115,10 +116,18 @@ pub struct WindowApplication<Rend: anyrender::WindowRenderer, E: JsEngine + Clon
     /// redraw after critical resources and `load` paints while it is still
     /// hidden, then reveals it in the same callback.
     pub(crate) startup_revealed: bool,
+    /// Whether that first frame ends with the window being mapped.
+    ///
+    /// False for a `hidden` window type, which asks to start unmapped: it still
+    /// paints its first frame — the tray or `window.show()` must have something
+    /// to reveal — but nothing maps it until one of them does.
+    pub(crate) reveal_on_startup: bool,
     /// Whether the window has a surface to paint into; see `surface_lifecycle`.
     pub(crate) surface: SurfaceState,
     /// A synthetic surface cycle a test asked for, run at the next pump.
     pub(crate) synthetic_phase: Option<SyntheticPhase>,
+    pub(crate) tray: Option<tray::TrayController>,
+    pub(crate) quit_requested: bool,
 }
 
 #[derive(Clone)]
@@ -261,6 +270,35 @@ pub(crate) fn dom_key_code(key: PhysicalKey) -> String {
 }
 
 impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Rend, E> {
+    fn apply_tray_action(&mut self, event_loop: &dyn ActiveEventLoop) {
+        let Some(tray) = &self.tray else {
+            return;
+        };
+        tray.poll();
+        let Some(action) = tray.take_action() else {
+            return;
+        };
+        match action {
+            crate::TrayAction::Show => {
+                for view in self.inner.windows.values() {
+                    view.window.set_visible(true);
+                    view.window.focus_window();
+                    view.window.request_redraw();
+                }
+            }
+            crate::TrayAction::Hide => {
+                for view in self.inner.windows.values() {
+                    view.window.set_visible(false);
+                }
+            }
+            crate::TrayAction::Quit => {
+                self.quit_requested = true;
+                event_loop.exit();
+            }
+            crate::TrayAction::Separator => {}
+        }
+    }
+
     /// Whether a callback error is waiting for [`WindowSession::pump`] to take it.
     pub(crate) fn has_parked_error(&self) -> bool {
         self.error.borrow().is_some()
@@ -682,7 +720,11 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Ren
         let Some(view) = self.inner.windows.get(&window_id) else {
             return;
         };
-        view.window.set_visible(true);
+        if self.reveal_on_startup {
+            view.window.set_visible(true);
+        }
+        // Set either way: what it gates below is ordinary redraws, and a hidden
+        // window that never set it would never animate or paint again.
         self.startup_revealed = true;
     }
 }
@@ -718,6 +760,13 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> ApplicationHandler
 {
     fn new_events(&mut self, event_loop: &dyn ActiveEventLoop, cause: StartCause) {
         self.inner.new_events(event_loop, cause);
+        if cause == StartCause::Init
+            && let Some(tray) = &mut self.tray
+            && let Err(error) = tray.initialize()
+        {
+            self.park_error(JsError::new(error));
+        }
+        self.apply_tray_action(event_loop);
     }
 
     fn resumed(&mut self, event_loop: &dyn ActiveEventLoop) {
@@ -730,6 +779,7 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> ApplicationHandler
 
     fn proxy_wake_up(&mut self, event_loop: &dyn ActiveEventLoop) {
         self.inner.proxy_wake_up(event_loop);
+        self.apply_tray_action(event_loop);
         self.maybe_dispatch_load();
         // Renderer readiness and resource completion both arrive through the
         // proxy. Whichever one was last now schedules the hidden startup paint.
@@ -742,6 +792,17 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> ApplicationHandler
         window_id: WindowId,
         event: WindowEvent,
     ) {
+        if matches!(event, WindowEvent::CloseRequested)
+            && self
+                .tray
+                .as_ref()
+                .is_some_and(tray::TrayController::close_to_tray)
+        {
+            if let Some(view) = self.inner.windows.get(&window_id) {
+                view.window.set_visible(false);
+            }
+            return;
+        }
         // Held rather than acted on, and applied below once the turn's last one
         // is known. Winit has already coalesced the redraw requests that follow
         // it, so the frame this turn paints is the one that pays for the size.
@@ -834,6 +895,7 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> ApplicationHandler
         // the platform sent, so it runs before the turn's other work, exactly
         // where a real `destroy_surfaces` would have landed.
         self.run_synthetic_phase(event_loop);
+        self.apply_tray_action(event_loop);
         self.inner.about_to_wait(event_loop);
         self.settle_native_resize(event_loop);
         // The turn's last reported size, applied once. A redraw in the same

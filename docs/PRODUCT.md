@@ -422,7 +422,7 @@ workspace and a clean `cargo ndk check` without scaffolding.
 
 | # | Requirement | Target | Notes |
 | --- | --- | --- | --- |
-| P1 | Bare exported app size | **38.1 MB, and that is the whole download** — measured on Linux x64, against 131.6 MB for the same app on Phase 1 | S0 disproved the original ≤50 MB target against a design that shipped an engine library alongside; statically linking QuickJS-ng put the shipped total back inside it. Five targets unmeasured, and no measured Electron or Tauri comparison yet; see §9. Android is not one of the five and never joins this row: an APK is a different artifact, and it is P1b. |
+| P1 | Bare exported app size | **54.6 MB installed, 20.5 MB compressed** — measured on Linux x64, against 131.6 MB for the same app on Phase 1. It was 38.1 MB before `Intl` and SVG added 12.0 MB, then Linux tray support added 3.7 MB; §9 has both trades and what could be given back | S0 disproved the original ≤50 MB target against a design that shipped an engine library alongside; statically linking QuickJS-ng put the shipped total well inside it, and production capabilities have taken it back out — that estimate is withdrawn either way, and this row is a measurement rather than a target. Five targets unmeasured, and no measured Electron or Tauri comparison yet; see §9. Android is not one of the five and never joins this row: an APK is a different artifact, and it is P1b. |
 | P1b | Bare APK size, per ABI | **35.2 MB installed, 14.7 MB downloaded** — measured `arm64-v8a`, release, on the same bare application P1 uses (#150) | The budget is one ABI's, because a device installs one ABI and runs it. The two-ABI APK `blitsen build --android` defaults to is **74.6 MB**, and the half of it the device cannot use is carried anyway — so `--android-abi arm64-v8a` is the shipping build and the default set is the one a developer can also put on an emulator. Both numbers are stated because they answer different questions: the APK is what a sideload transfers, and 14.7 MB is what Play's own `bundletool get-size` reports a per-ABI split delivering. Android's vendored OpenSSL is measured rather than asserted, at **≥3.6 MB** of the library, and it does not show up as a premium: at equal architecture the whole APK is *smaller* than the desktop executable. Play measures every limit on the compressed download, and this is 3% of the 500 MB base-module ceiling — size is not the argument for an AAB. Breakdown, method and limits in §9. |
 | P2 | Cold start to first frame | < 500 ms on mid-range hardware | Should beat Electron decisively or the pitch weakens. |
 | P3 | Idle RAM, bare app | < 100 MB | |
@@ -515,8 +515,9 @@ because the 32 MB system library carries no ICU: it links `libicudata` (30,795,3
 `libicui18n` (3,455,304 B) and `libicuuc` (2,140,336 B) dynamically, plus GLib and GIO, none of
 which exist on a machine that has never had a GTK desktop. A self-contained JSC has to fold that
 in, and S0 measured it at **37,980,984 B** for the engine alone ([`spikes/s0`](../spikes/s0/README.md)).
-QuickJS-ng contributes about **1.5 MB** to the same total and brings no ICU at all — which is also
-why `Intl` is absent from the compatibility profile.
+QuickJS-ng contributes about **1.5 MB** to the same total and brings no ICU at all. `Intl` was
+absent from the compatibility profile for exactly that reason until #237, which supplies it from
+ICU4X instead — at a measured 12 MB rather than JSC's 36, and only because the engine brings none.
 
 ### Android: a different artifact, so a different budget (P1b)
 
@@ -587,6 +588,30 @@ One number above is not Android's and should be read carefully: the `linux-x64` 
 above. That is 3.6% of desktop growth in three days that nothing in this section explains, and it
 is P1's to explain, not P1b's — the figure is here only because a comparison across architectures
 has to come from one commit.
+
+**The Intl and SVG work is +12.0 MB, and the budget was moved to take it.** Issues #236–#238 added
+CLDR through ICU4X, the platform time-zone database through `jiff`, and the SVG stack the Blitz pin
+bump turned on. Measured on `linux-x64`, the same way every other figure here was: **50.9 MB
+installed against the previous 38.8 MB (+30.8%), and 19.2 MB gzipped against 15.3 MB (+24.6%)**.
+The size gate failed on both, which is what it is for — "every megabyte added to the export has to
+be an argued-for decision" — and the argument was made and accepted when the features landed
+rather than waved through: what it buys is the whole of `Intl` for every CLDR locale with nothing
+to configure, and SVG that paints.
+
+**Native Linux tray support is +3.7 MB installed and +1.4 MB compressed.** The StatusNotifierItem
+implementation brings its D-Bus protocol stack into the standalone runtime so a tray icon does not
+depend on GTK or AppIndicator development libraries being present on the user's system. That cost
+exists even when an individual application does not configure a tray, because the runtime is one
+prebuilt binary. The baseline was re-recorded at **54.6 MB installed and 20.5 MB compressed**, so
+the gate measures drift from the accepted capability cost rather than staying red.
+
+What can still be traded, if the number later matters more than the coverage: currency *names*
+(`currencyDisplay: "name"`), localised time-zone names (`timeZoneName`, and
+`timeStyle: "full"`/`"long"`), and collation are the three largest pieces of data linked, and each
+is a feature that could go rather than a saving to be found in the build.
+
+Worth reading beside the JavaScriptCore comparison above: a self-contained JSC was measured folding
+in **36 MB** of ICU for the same class of capability, and this is 12 MB for it.
 
 **Still outstanding for P1.** Only Linux x64 is measured — the other five targets build and test in
 CI (TECH.md §11) but have no committed size baseline, so the gate reports on them and gates nothing

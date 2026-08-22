@@ -16,8 +16,18 @@ describe("directory CLI", () => {
   test("publishes the schema it validates against", async () => {
     const published = join(import.meta.dir, "../src/config.schema.json");
     expect(JSON.parse(await readFile(published, "utf8"))).toEqual(CONFIG_SCHEMA);
-    expect(defineConfig({ build: "vite build", output: "dist", name: "My App" }))
-      .toEqual({ build: "vite build", output: "dist", name: "My App" });
+    const config = {
+      build: "vite build", output: "dist", name: "My App",
+      window: { type: "borderless", resizable: false, transparent: true, alwaysOnTop: true },
+      tray: {
+        icon: "native/tray.png", tooltip: "My App", openOnClick: true, closeToTray: true,
+        contextMenu: [
+          { label: "Open", action: "show" }, { action: "separator" },
+          { label: "Quit", action: "quit", enabled: true },
+        ],
+      },
+    };
+    expect(defineConfig(config)).toEqual(config);
   });
 
   test("rejects a malformed config naming the key and the file it came from", async () => {
@@ -35,17 +45,32 @@ describe("directory CLI", () => {
       .toThrow('invalid blitsen config in defineConfig(): "addons[1]" must be a string, found a number');
     expect(defineConfig({ output: "dist", addons: ["native/physics.node"] }).addons)
       .toEqual(["native/physics.node"]);
+    expect(() => defineConfig({ output: "dist", window: { type: "frameless" } }))
+      .toThrow('"window.type" must be one of normal, borderless, fullscreen, hidden');
+    expect(() => defineConfig({ output: "dist", tray: { icon: "tray.ico" } }))
+      .toThrow('"tray.icon" must match \\.png$');
+    expect(() => defineConfig({ output: "dist", tray: { icon: "tray.png", nope: true } }))
+      .toThrow('"tray.nope" is unknown');
+    expect(() => defineConfig({ output: "dist", window: { type: "hidden" } }))
+      .toThrow('"window.type" hidden requires a "tray" configuration');
+    expect(() => defineConfig({ output: "dist", tray: { icon: "tray.png", closeToTray: true } }))
+      .toThrow('"tray.closeToTray" requires a quit action');
     const misspelled = join(configFixtures, "misspelled");
     await expect(loadConfig(misspelled)).rejects.toThrow(
       `invalid blitsen config in ${join(misspelled, "package.json")}: `
-      + 'unknown key "outputs" (known keys: build, output, name, addons)');
+      + 'unknown key "outputs" (known keys: build, output, name, addons, window, tray)');
   });
 
   test("discovers the config in the nearest package.json declaring it", async () => {
     const found = await loadConfig(join(configFixtures, "wrapped"));
     expect(found.root).toBe(join(configFixtures, "wrapped"));
     expect(found.config).toEqual({ build: "node emit-dist.mjs", output: "dist",
-      name: "Wrapped App", addons: ["native/greet.node"] });
+      name: "Wrapped App", addons: ["native/greet.node"],
+      window: { type: "borderless", resizable: false },
+      tray: {
+        icon: "native/tray.png", closeToTray: true,
+        contextMenu: [{ action: "show" }, { action: "quit" }],
+      } });
     // A package.json without the key is not a config, and neither is no package.json.
     const bare = await mkdtemp(join(tmpdir(), "blitsen-config-"));
     try {
@@ -96,6 +121,11 @@ describe("directory CLI", () => {
       expect(built.outfile).toBe(join(here, "Wrapped App"));
       // Configured addon paths are the user's, relative to their package.json.
       expect(built.addons).toEqual([join(project, "native/greet.node")]);
+      expect(built.window).toEqual({ type: "borderless", resizable: false });
+      expect(built.tray).toEqual({
+        icon: join(project, "native/tray.png"), closeToTray: true,
+        contextMenu: [{ action: "show" }, { action: "quit" }],
+      });
     } finally {
       process.chdir(cwd);
       await rm(workspace, { recursive: true, force: true });
@@ -127,6 +157,8 @@ describe("directory CLI", () => {
       // way: the run proves what ships rather than something beside it.
       expect(opened.root).toBe(await realpath(join(project, "dist")));
       expect(opened.title).toBe("Wrapped App");
+      expect(opened.window).toEqual({ type: "borderless", resizable: false });
+      expect(opened.tray.icon).toBe(join(project, "native/tray.png"));
     } finally {
       process.chdir(cwd);
       await rm(workspace, { recursive: true, force: true });

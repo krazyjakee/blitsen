@@ -534,15 +534,16 @@ produced rather than a second measurement that could disagree with what was draw
 one, and recording it as an erasing layer instead would grow the scene by a layer per frame for
 the life of the application.
 
-Two things the renderer underneath cannot express are worth stating here rather than in the
-compatibility table, because they are the pipeline's shape rather than a missing feature.
-Shadows and `ctx.filter` need a blur and there is none — the same reason CSS `filter` is reported
-ignored. And a compose function is applied to the whole surface rather than only inside its layer's
-clip, so `clearRect` and `putImageData` erase through `destination-out` — whose result for an
-absent source is the destination unchanged — rather than through `clear` or `copy`, which would
-erase the canvas. The five compose functions that genuinely do clear the rest of the canvas are
-canvas's own destructive operations, which want exactly that; a canvas that records one is
-composited as a group so it erases itself and not the document behind it.
+Two things about the renderer underneath are worth stating here rather than in the compatibility
+table, because they are the pipeline's shape rather than a missing feature. Shadows and
+`ctx.filter` need a blur and there is none — the same reason CSS `filter` is reported ignored. And
+compositing is scoped by the layer a draw is opened in: a composite operation other than
+`source-over` becomes a layer over the *whole* canvas, because that is the scope the specification
+gives it — `source-in` clears the canvas everywhere the drawn shape is not. A canvas that records
+one of the five destructive operations is composited as a group, so it erases itself and not the
+document behind it. `clearRect` and `putImageData` are the two that must not reach that far, and
+they erase through `destination-out` — whose result for an absent source is the destination
+unchanged — rather than through `clear` or `copy`, which would take the whole canvas with them.
 
 ### Subresources: images and web fonts
 
@@ -559,12 +560,14 @@ provider over the winit event loop; either way the provider is wrapped so that e
 outcome is recorded, since a failed fetch otherwise drops its handler in silence and leaves an
 `<img>` in exactly the state it had while still loading.
 
-**Image formats: PNG, JPEG, GIF (first frame), WebP.** Blitz decodes with the `image` crate but
+**Image formats: PNG, JPEG, GIF (first frame), WebP, SVG.** Blitz decodes with the `image` crate but
 declares it `default-features = false`, which compiles in *no* codecs at all; the format set is
 chosen by depending on `image` directly from `blitsen-blitz` and letting feature unification
 apply it. Without that every image fails to decode and the element silently lays out at zero
-height — the same shape of failure as the `system-fonts` one. **SVG images are absent**: they
-need blitz-dom's `svg` feature, which does not compile at this pin (upstream blitz#687).
+height — the same shape of failure as the `system-fonts` one. **SVG is not one of those codecs**:
+it is not a raster format, and it arrives through blitz-dom's `svg` feature, which parses it with
+usvg and paints it as vectors (#238). That feature did not compile until upstream fixed it
+(blitz#687), which is why SVG images were absent before the pin moved.
 
 **Font formats: WOFF2, WOFF, TTF, OTF.** SVG and EOT fonts are refused by Blitz and are not
 coming. `@font-face` descriptors — `font-family`, `font-weight`, `font-style` — are what select a
@@ -872,8 +875,9 @@ This requires `fetch` and a module loader that can resolve over HTTP, which is a
 on when it can ship. **S7 decision: proxy mode is v1, not v0.** Bun 1.3.14 can execute a
 pre-scanned Vite graph and connect to `vite-hmr`, but runtime resolver callbacks are synchronous,
 HTTP modules receive a synthetic `file:///http://…` identity, source-map identity is not
-preserved, `EventSource` is absent, and the actual browser-facing HMR client still depends on the
-v1 web-platform surface. Directory mode is the v0 path; see `spikes/s7/README.md`.
+preserved, and the actual browser-facing HMR client still depends on the v1 web-platform surface.
+One of S7's blockers has since gone: `EventSource` is implemented (#236), so the transport an HMR
+client listens on is no longer among the reasons proxy mode waits. Directory mode is the v0 path; see `spikes/s7/README.md`.
 
 Directory mode reload granularity: CSS swaps live via re-cascade with no reload; HTML and JS
 restart the JS context and reparse the document. Preserving JS state across reload is not

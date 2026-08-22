@@ -62,11 +62,14 @@ the old one recorded.
 
 ## The two things to know
 
-**`Intl` and `WebAssembly` are not there.** The engine Blitsen hosts does not implement either.
-`blitsen doctor` reports both as warnings against your built output, so you find out at build time
-rather than in front of a user. The `toLocale*` methods still exist and still return strings — but
-they ignore the locale they are given, so `(1234.5).toLocaleString('de-DE')` is `'1234.5'`. A
-missed one is wrong output rather than an error, which is why doctor names them.
+**`WebAssembly` is not there.** The engine Blitsen hosts does not implement it, and `blitsen
+doctor` reports it as a warning against your built output, so you find out at build time rather
+than in front of a user.
+
+`Intl` *is* there, and it is the runtime's rather than the engine's: number, date, currency,
+relative-time, plural, collation and list formatting over CLDR, with named IANA time zones, and
+`toLocaleString`/`localeCompare` built on the same formatters. What is absent is the
+`formatToParts` family, `Segmenter`, `DisplayNames` and `DurationFormat` — doctor names those.
 
 **Your export is one file.** There is no engine library to keep beside it, no replacement override
 to preserve, and no relinking material to ship. All three were required by the JavaScriptCore

@@ -9,19 +9,20 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
-anyrender = "0.12"
-anyrender_vello = "0.13"
-anyrender_vello_cpu = "0.15"
+anyrender = "0.13"
+anyrender_vello = "0.14"
+anyrender_vello_cpu = "0.16"
 blitsen-blitz = { path = "../blitsen-blitz" }
 blitsen-core = { path = "../blitsen-core" }
 blitsen-dom = { path = "../blitsen-dom" }
 blitsen-js = { path = "../blitsen-js" }
 blitsen-platform = { path = "../blitsen-platform" }
-blitz = { git = "https://github.com/DioxusLabs/blitz", rev = "1efe22d2524d71ede5b94592204c21f0de644219" }
-# `<blitsen-view>` composites through the paint-side custom-widget seam. Defaults
-# are off because blitz-paint's `svg` default turns on blitz-dom/svg, which does
-# not compile at this pin.
-blitz-paint = { git = "https://github.com/DioxusLabs/blitz", rev = "1efe22d2524d71ede5b94592204c21f0de644219", default-features = false, features = ["custom-widget"] }
+blitz = { git = "https://github.com/DioxusLabs/blitz", rev = "111ed2f7224e49cd3177ef3cb5990efc279d3e73" }
+# `<blitsen-view>` composites through the paint-side custom-widget seam, and
+# `svg` is what paints an `<svg>` subtree once blitz-dom has parsed it (#238).
+# Both are named rather than taken through `default`, so the feature list is a
+# decision this file records instead of whatever upstream defaults to next.
+blitz-paint = { git = "https://github.com/DioxusLabs/blitz", rev = "111ed2f7224e49cd3177ef3cb5990efc279d3e73", default-features = false, features = ["custom-widget", "svg"] }
 # The third-party notices an artifact carries are gzipped inside it (#121), and
 # reading them belongs to the application's files rather than to the appended
 # section: an APK carries the same file under `assets/` (#144). Already in the
@@ -33,11 +34,43 @@ futures-util = { version = "0.3", default-features = false, features = ["std", "
 # and tokens are built on. Already in the tree behind `rand_core`, so linking it
 # directly compiles no new crate.
 getrandom = "0.3"
+# `Intl` (#237). CLDR through ICU4X, which is what a browser's own ICU build
+# reads: the placement of a currency symbol, the minor units a currency has and
+# the name of a time zone in a locale are data, and an implementation that
+# derived them would be wrong rather than approximate. Taken as the individual
+# components rather than the `icu` meta-crate so the baked data that is linked
+# is the data these formatters ask for. `icu_experimental` carries currency,
+# percent and relative-time formatting, which ICU4X has not stabilised yet and
+# which `Intl` cannot be implemented without.
+fixed_decimal = "0.7"
+icu_collator = { version = "2", features = ["compiled_data"] }
+# `unstable_jiff_0_2` is the pairing with the `jiff` version below, which is
+# what lets an instant in a named IANA zone be formatted without converting it
+# twice. The feature is semver-unstable because jiff 0.2 is; the pin is exact
+# on both sides for that reason.
+icu_datetime = { version = "2", features = ["compiled_data", "unstable_jiff_0_2"] }
+icu_decimal = { version = "2", features = ["compiled_data"] }
+icu_experimental = "0.6"
+icu_list = { version = "2", features = ["compiled_data"] }
+icu_locale_core = "2"
+icu_plurals = { version = "2", features = ["compiled_data"] }
+# The time-zone database, which is the platform's own where it has one — the
+# system `tzdb` on Unix, the concatenated one on Android — and bundled where it
+# does not. That is the difference between a zone that follows a government's
+# next daylight-saving change and one frozen at the build.
+jiff = "0.2"
+# The locale the host is configured for, which is three different questions on
+# three platforms and no dependencies in this crate.
+sys-locale = "0.3"
+writeable = "0.6"
+image = { version = "0.25", default-features = false, features = ["png"] }
 peniko = "0.6"
 png = "0.18"
 # Blitsen's own `fetch`, so the Phase 2 host swap does not change what the
 # application sees. Same version Blitz's net provider already resolves to.
-reqwest = { version = "0.13", default-features = false, features = ["charset", "native-tls"] }
+# `stream` is what `EventSource` reads a response body through (#236): a feed is
+# a body that never ends, so the one thing it cannot do is await the whole of it.
+reqwest = { version = "0.13", default-features = false, features = ["charset", "native-tls", "stream"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1.42", features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
@@ -75,12 +108,22 @@ harness = false
 [target.'cfg(target_os = "android")'.dependencies]
 ndk = { version = "0.9", default-features = false }
 
+# Linux's StatusNotifierItem protocol is D-Bus based and needs no GTK or
+# appindicator development libraries. Windows and macOS use their native tray
+# implementations; keeping these target-specific avoids irrelevant platform
+# dependencies in every runtime.
+[target.'cfg(target_os = "linux")'.dependencies]
+ksni = "0.3.6"
+
+[target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
+tray-icon = { version = "0.24.2", default-features = false }
+
 # Vello's Metal compute path can wedge the display GPU on Intel Macs before
 # wgpu can report device loss (#229). Use vello_cpu to rasterize on the CPU and
 # present its finished RGBA buffer through softbuffer. Core Animation remains
 # the system compositor, but Blitsen does not create a wgpu/Metal renderer.
 [target.'cfg(all(target_os = "macos", target_arch = "x86_64"))'.dependencies]
-anyrender_vello_cpu = { version = "0.15", features = ["softbuffer_window_renderer"] }
+anyrender_vello_cpu = { version = "0.16", features = ["softbuffer_window_renderer"] }
 
 [lints]
 workspace = true

@@ -78,6 +78,23 @@ fn install_os<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsError> {
             let mut engine = E::from_value(&call.this);
             json_value(&mut engine, &json!(os::host()))
         }),
+    )?;
+
+    // The locale and zone this session is configured for. Absent until `Intl`
+    // was implemented (#237), because a tag with no formatter behind it implies
+    // a capability that is not there; these are the two values an application
+    // now passes straight into `Intl.NumberFormat` and `Intl.DateTimeFormat`,
+    // and they are read from the same sources those default to.
+    engine.define_global_function(
+        "__blitsenNativeOsLocale",
+        Box::new(move |call| {
+            let mut engine = E::from_value(&call.this);
+            let locale = json!({
+                "language": super::intl::default_locale().to_string(),
+                "timeZone": super::intl::default_time_zone(),
+            });
+            json_value(&mut engine, &locale)
+        }),
     )
 }
 
