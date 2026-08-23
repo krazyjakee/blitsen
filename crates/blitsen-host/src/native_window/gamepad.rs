@@ -12,12 +12,14 @@ pub(crate) trait Backend {
         strong: f64,
         weak: f64,
         duration_ms: u32,
+        start_delay_ms: u32,
     ) -> Result<(), String>;
 }
 
 pub(crate) struct Controller {
     backend: Box<dyn Backend>,
     registry: Registry,
+    active_vibrations: std::collections::HashMap<String, u64>,
 }
 
 impl Controller {
@@ -25,6 +27,7 @@ impl Controller {
         Self {
             backend,
             registry: Registry::default(),
+            active_vibrations: std::collections::HashMap::new(),
         }
     }
 
@@ -34,7 +37,20 @@ impl Controller {
 
     /// Polls exactly once for this redraw and publishes one atomic registry view.
     pub(crate) fn poll(&mut self, now_ms: f64) {
-        let messages = self.registry.apply(self.backend.poll(), now_ms);
+        let frame = self.backend.poll();
+        for key in &frame.vibration_completed {
+            if let Some(command_id) = self.active_vibrations.remove(key) {
+                gamepad::complete(command_id, Ok("complete"));
+            }
+        }
+        for change in &frame.changes {
+            if let ConnectionChange::Disconnected(key) = change
+                && let Some(command_id) = self.active_vibrations.remove(key)
+            {
+                gamepad::complete(command_id, Ok("preempted"));
+            }
+        }
+        let messages = self.registry.apply(frame, now_ms);
         gamepad::publish(self.registry.snapshots(), messages);
     }
 
@@ -42,28 +58,50 @@ impl Controller {
         let requests = gamepad::take_requests();
         let any = !requests.is_empty();
         for request in requests {
-            let result = self.apply_request(&request);
-            gamepad::complete(request.command_id, result);
+            self.apply_request(&request);
         }
         any
     }
 
-    fn apply_request(&mut self, request: &VibrationRequest) -> Result<(), (&'static str, String)> {
+    fn apply_request(&mut self, request: &VibrationRequest) {
         let Some((key, vibration)) = self.registry.key_for_index(request.index) else {
-            return Err((
-                "NotFoundError",
-                format!("gamepad slot {} is not connected", request.index),
-            ));
+            gamepad::complete(
+                request.command_id,
+                Err((
+                    "NotFoundError",
+                    format!("gamepad slot {} is not connected", request.index),
+                )),
+            );
+            return;
         };
+        let key = key.to_owned();
         if !vibration {
-            return Err((
-                "NotSupportedError",
-                format!("gamepad slot {} has no vibration actuator", request.index),
-            ));
+            gamepad::complete(
+                request.command_id,
+                Err((
+                    "NotSupportedError",
+                    format!("gamepad slot {} has no vibration actuator", request.index),
+                )),
+            );
+            return;
         }
-        self.backend
-            .vibrate(key, request.strong, request.weak, request.duration_ms)
-            .map_err(|message| ("OperationError", message))
+        let result = self.backend.vibrate(
+            &key,
+            request.strong,
+            request.weak,
+            request.duration_ms,
+            request.start_delay_ms,
+        );
+        if let Some(command_id) = self.active_vibrations.remove(&key) {
+            gamepad::complete(command_id, Ok("preempted"));
+        }
+        if let Err(message) = result {
+            gamepad::complete(request.command_id, Err(("OperationError", message)));
+        } else if request.duration_ms == 0 || (request.strong == 0.0 && request.weak == 0.0) {
+            gamepad::complete(request.command_id, Ok("complete"));
+        } else {
+            self.active_vibrations.insert(key, request.command_id);
+        }
     }
 }
 
@@ -96,6 +134,7 @@ impl Backend for DisabledBackend {
         _strong: f64,
         _weak: f64,
         _duration_ms: u32,
+        _start_delay_ms: u32,
     ) -> Result<(), String> {
         Err("the gamepad backend is unavailable".to_owned())
     }
@@ -104,6 +143,7 @@ impl Backend for DisabledBackend {
 #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
 struct GilrsBackend {
     gilrs: gilrs::Gilrs,
+    force_feedback_enabled: bool,
     known: std::collections::HashMap<String, gilrs::GamepadId>,
     effects: std::collections::HashMap<String, gilrs::ff::Effect>,
 }
@@ -113,11 +153,15 @@ impl GilrsBackend {
     fn new() -> Result<Self, String> {
         let gilrs = gilrs::GilrsBuilder::new()
             .with_default_filters(true)
-            .with_force_feedback(true)
+            // gilrs' separate force-feedback server wakes every 50ms even
+            // without a device or effect. Its platform hot-plug worker is
+            // still needed here, but the periodic server starts on first use.
+            .with_force_feedback(false)
             .build()
             .map_err(|error| error.to_string())?;
         Ok(Self {
             gilrs,
+            force_feedback_enabled: false,
             known: std::collections::HashMap::new(),
             effects: std::collections::HashMap::new(),
         })
@@ -186,6 +230,31 @@ impl GilrsBackend {
             vibration_actuator: gamepad.is_ff_supported(),
         }
     }
+
+    fn enable_force_feedback(&mut self, key: &str) -> Result<(), String> {
+        if self.force_feedback_enabled {
+            return Ok(());
+        }
+        let replacement = gilrs::GilrsBuilder::new()
+            .with_default_filters(true)
+            .with_force_feedback(true)
+            .build()
+            .map_err(|error| error.to_string())?;
+        let id = *self
+            .known
+            .get(key)
+            .ok_or_else(|| "the gamepad disconnected before vibration started".to_owned())?;
+        let gamepad = replacement.gamepad(id);
+        if !gamepad.is_connected() {
+            return Err("the gamepad disconnected before vibration started".to_owned());
+        }
+        if !gamepad.is_ff_supported() {
+            return Err("the gamepad driver no longer reports force feedback".to_owned());
+        }
+        self.gilrs = replacement;
+        self.force_feedback_enabled = true;
+        Ok(())
+    }
 }
 
 #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
@@ -194,6 +263,7 @@ impl Backend for GilrsBackend {
         use gilrs::EventType;
 
         let mut changes = Vec::new();
+        let mut vibration_completed = Vec::new();
         while let Some(event) = self.gilrs.next_event() {
             let key = Self::key(event.id);
             match event.event {
@@ -206,8 +276,14 @@ impl Backend for GilrsBackend {
                 }
                 EventType::Disconnected => {
                     self.known.remove(&key);
-                    self.effects.remove(&key);
+                    if let Some(effect) = self.effects.remove(&key) {
+                        let _ = effect.stop();
+                    }
                     changes.push(ConnectionChange::Disconnected(key));
+                }
+                EventType::ForceFeedbackEffectCompleted => {
+                    self.effects.remove(&key);
+                    vibration_completed.push(key);
                 }
                 _ => {}
             }
@@ -218,8 +294,8 @@ impl Backend for GilrsBackend {
         connected.sort_by_key(|(id, _)| usize::from(*id));
         for (id, gamepad) in &connected {
             let key = Self::key(*id);
-            if !self.known.contains_key(&key) {
-                self.known.insert(key, *id);
+            if let std::collections::hash_map::Entry::Vacant(entry) = self.known.entry(key) {
+                entry.insert(*id);
                 changes.push(ConnectionChange::Connected(Self::snapshot(*id, gamepad)));
             }
         }
@@ -228,7 +304,11 @@ impl Backend for GilrsBackend {
             .map(|(id, gamepad)| Self::snapshot(id, &gamepad))
             .collect();
         self.gilrs.inc();
-        BackendFrame { changes, connected }
+        BackendFrame {
+            changes,
+            connected,
+            vibration_completed,
+        }
     }
 
     fn vibrate(
@@ -237,6 +317,7 @@ impl Backend for GilrsBackend {
         strong: f64,
         weak: f64,
         duration_ms: u32,
+        start_delay_ms: u32,
     ) -> Result<(), String> {
         use gilrs::ff::{BaseEffect, BaseEffectType, EffectBuilder, Repeat, Replay, Ticks};
 
@@ -246,11 +327,13 @@ impl Backend for GilrsBackend {
         if duration_ms == 0 || (strong == 0.0 && weak == 0.0) {
             return Ok(());
         }
+        self.enable_force_feedback(key)?;
         let id = *self
             .known
             .get(key)
             .ok_or_else(|| "the gamepad disconnected before vibration started".to_owned())?;
         let ticks = Ticks::from_ms(duration_ms.max(1));
+        let delay = Ticks::from_ms(start_delay_ms);
         let magnitude = |value: f64| (value.clamp(0.0, 1.0) * f64::from(u16::MAX)).round() as u16;
         let mut builder = EffectBuilder::new();
         builder
@@ -259,6 +342,7 @@ impl Backend for GilrsBackend {
                     magnitude: magnitude(strong),
                 },
                 scheduling: Replay {
+                    after: delay,
                     play_for: ticks,
                     ..Default::default()
                 },
@@ -269,13 +353,14 @@ impl Backend for GilrsBackend {
                     magnitude: magnitude(weak),
                 },
                 scheduling: Replay {
+                    after: delay,
                     play_for: ticks,
                     ..Default::default()
                 },
                 ..Default::default()
             })
             .gamepads(&[id])
-            .repeat(Repeat::For(ticks));
+            .repeat(Repeat::For(delay + ticks));
         let effect = builder
             .finish(&mut self.gilrs)
             .map_err(|error| error.to_string())?;
@@ -296,7 +381,7 @@ mod tests {
     struct FakeBackend {
         polls: Rc<RefCell<usize>>,
         frames: VecDeque<BackendFrame>,
-        vibrations: Rc<RefCell<Vec<(String, f64, f64, u32)>>>,
+        vibrations: Rc<RefCell<Vec<(String, f64, f64, u32, u32)>>>,
     }
 
     impl Backend for FakeBackend {
@@ -311,10 +396,15 @@ mod tests {
             strong: f64,
             weak: f64,
             duration_ms: u32,
+            start_delay_ms: u32,
         ) -> Result<(), String> {
-            self.vibrations
-                .borrow_mut()
-                .push((key.to_owned(), strong, weak, duration_ms));
+            self.vibrations.borrow_mut().push((
+                key.to_owned(),
+                strong,
+                weak,
+                duration_ms,
+                start_delay_ms,
+            ));
             Ok(())
         }
     }
@@ -352,6 +442,23 @@ mod tests {
         assert_eq!(*polls.borrow(), 1, "one frame is exactly one backend poll");
     }
 
+    #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+    #[test]
+    fn platform_backend_defers_the_periodic_force_feedback_server() {
+        let mut backend = GilrsBackend::new().expect("the platform gamepad backend starts");
+        assert!(
+            !backend.force_feedback_enabled,
+            "ordinary discovery must not start gilrs' 50ms force-feedback loop"
+        );
+        backend
+            .vibrate("not-connected", 0.0, 0.0, 0, 0)
+            .expect("an already-quiet reset needs no device");
+        assert!(
+            !backend.force_feedback_enabled,
+            "a no-op reset must not pay the force-feedback worker cost"
+        );
+    }
+
     #[test]
     fn slots_identity_reconnection_normalization_and_fifo_are_deterministic() {
         let mut registry = Registry::default();
@@ -362,6 +469,7 @@ mod tests {
                     ConnectionChange::Connected(raw("b", 0.25, false)),
                 ],
                 connected: vec![raw("a", 0.75, true), raw("b", 0.25, false)],
+                ..BackendFrame::default()
             },
             10.0,
         );
@@ -386,6 +494,7 @@ mod tests {
             BackendFrame {
                 changes: vec![ConnectionChange::Disconnected("a".into())],
                 connected: vec![raw("b", 0.25, false)],
+                ..BackendFrame::default()
             },
             20.0,
         );
@@ -398,6 +507,7 @@ mod tests {
             BackendFrame {
                 changes: vec![ConnectionChange::Connected(raw("a", 0.5, true))],
                 connected: vec![raw("a", 0.5, true), raw("b", 0.25, false)],
+                ..BackendFrame::default()
             },
             30.0,
         );
@@ -415,6 +525,7 @@ mod tests {
             BackendFrame {
                 changes: vec![ConnectionChange::Disconnected("a".into())],
                 connected: vec![raw("b", 0.25, false)],
+                ..BackendFrame::default()
             },
             40.0,
         );
@@ -422,6 +533,7 @@ mod tests {
             BackendFrame {
                 changes: vec![ConnectionChange::Connected(raw("c", 0.0, false))],
                 connected: vec![raw("b", 0.25, false), raw("c", 0.0, false)],
+                ..BackendFrame::default()
             },
             50.0,
         );
@@ -434,6 +546,7 @@ mod tests {
                     raw("b", 0.25, false),
                     raw("c", 0.0, false),
                 ],
+                ..BackendFrame::default()
             },
             60.0,
         );
@@ -445,6 +558,7 @@ mod tests {
 
     #[test]
     fn vibration_targets_the_registry_identity_and_refuses_unsupported_slots() {
+        gamepad::reset();
         let polls = Rc::new(RefCell::new(0));
         let vibrations = Rc::new(RefCell::new(Vec::new()));
         let mut controller = Controller::with_backend(Box::new(FakeBackend {
@@ -455,32 +569,103 @@ mod tests {
                     ConnectionChange::Connected(raw("b", 0.0, false)),
                 ],
                 connected: vec![raw("a", 0.0, true), raw("b", 0.0, false)],
+                ..BackendFrame::default()
             }]),
             vibrations: Rc::clone(&vibrations),
         }));
         controller.poll(1.0);
-        controller
-            .apply_request(&VibrationRequest {
-                command_id: 1,
-                index: 0,
-                strong: 0.8,
-                weak: 0.3,
-                duration_ms: 250,
-            })
-            .expect("the actuator starts");
-        assert_eq!(&*vibrations.borrow(), &[("a".to_owned(), 0.8, 0.3, 250)]);
+        controller.apply_request(&VibrationRequest {
+            command_id: 1,
+            index: 0,
+            strong: 0.8,
+            weak: 0.3,
+            duration_ms: 250,
+            start_delay_ms: 75,
+        });
         assert_eq!(
-            controller
-                .apply_request(&VibrationRequest {
-                    command_id: 2,
-                    index: 1,
-                    strong: 1.0,
-                    weak: 1.0,
-                    duration_ms: 10,
-                })
-                .unwrap_err()
-                .0,
-            "NotSupportedError"
+            &*vibrations.borrow(),
+            &[("a".to_owned(), 0.8, 0.3, 250, 75)]
+        );
+        assert_eq!(controller.active_vibrations.get("a"), Some(&1));
+        controller.apply_request(&VibrationRequest {
+            command_id: 2,
+            index: 1,
+            strong: 1.0,
+            weak: 1.0,
+            duration_ms: 10,
+            start_delay_ms: 0,
+        });
+        assert_eq!(controller.active_vibrations.get("a"), Some(&1));
+        assert_eq!(
+            gamepad::take_completion_results(),
+            [(2, None, Some("NotSupportedError".to_owned()))]
+        );
+    }
+
+    #[test]
+    fn vibration_settles_on_backend_completion_and_preemption_not_a_clock() {
+        gamepad::reset();
+        let mut controller = Controller::with_backend(Box::new(FakeBackend {
+            polls: Rc::new(RefCell::new(0)),
+            frames: VecDeque::from([
+                BackendFrame {
+                    changes: vec![ConnectionChange::Connected(raw("a", 0.0, true))],
+                    connected: vec![raw("a", 0.0, true)],
+                    ..BackendFrame::default()
+                },
+                BackendFrame {
+                    connected: vec![raw("a", 0.0, true)],
+                    vibration_completed: vec!["a".to_owned()],
+                    ..BackendFrame::default()
+                },
+            ]),
+            vibrations: Rc::new(RefCell::new(Vec::new())),
+        }));
+        controller.poll(1.0);
+        let request = |command_id, duration_ms| VibrationRequest {
+            command_id,
+            index: 0,
+            strong: 1.0,
+            weak: 0.5,
+            duration_ms,
+            start_delay_ms: 40,
+        };
+
+        controller.apply_request(&request(1, 1_000));
+        assert!(
+            gamepad::take_completion_results().is_empty(),
+            "accepting the effect does not complete its promise"
+        );
+        controller.apply_request(&request(2, 2_000));
+        assert_eq!(
+            gamepad::take_completion_results(),
+            [(1, Some("preempted".to_owned()), None)]
+        );
+        assert_eq!(controller.active_vibrations.get("a"), Some(&2));
+
+        controller.poll(2.0);
+        assert_eq!(
+            gamepad::take_completion_results(),
+            [(2, Some("complete".to_owned()), None)],
+            "only the backend's completion event settles the active effect"
+        );
+
+        controller.apply_request(&request(3, 1_000));
+        controller.apply_request(&VibrationRequest {
+            command_id: 4,
+            index: 0,
+            strong: 0.0,
+            weak: 0.0,
+            duration_ms: 0,
+            start_delay_ms: 0,
+        });
+        assert_eq!(
+            gamepad::take_completion_results(),
+            [
+                (3, Some("preempted".to_owned()), None),
+                (4, Some("complete".to_owned()), None),
+            ],
+            "reset settles after the backend accepts the physical stop"
         );
     }
 }

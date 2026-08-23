@@ -32,6 +32,7 @@ pub(crate) enum ConnectionChange {
 pub(crate) struct BackendFrame {
     pub(crate) changes: Vec<ConnectionChange>,
     pub(crate) connected: Vec<RawGamepad>,
+    pub(crate) vibration_completed: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -208,12 +209,14 @@ pub(crate) struct VibrationRequest {
     pub(crate) strong: f64,
     pub(crate) weak: f64,
     pub(crate) duration_ms: u32,
+    pub(crate) start_delay_ms: u32,
 }
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct VibrationCompletion {
     command_id: u64,
+    result: Option<String>,
     error: Option<String>,
     error_name: Option<String>,
 }
@@ -237,14 +240,15 @@ pub(crate) fn take_requests() -> Vec<VibrationRequest> {
     BRIDGE.with_borrow_mut(|state| std::mem::take(&mut state.requests))
 }
 
-pub(crate) fn complete(command_id: u64, result: Result<(), (&'static str, String)>) {
-    let (error_name, error) = match result {
-        Ok(()) => (None, None),
-        Err((name, message)) => (Some(name.to_owned()), Some(message)),
+pub(crate) fn complete(command_id: u64, result: Result<&'static str, (&'static str, String)>) {
+    let (value, error_name, error) = match result {
+        Ok(value) => (Some(value.to_owned()), None, None),
+        Err((name, message)) => (None, Some(name.to_owned()), Some(message)),
     };
     BRIDGE.with_borrow_mut(|state| {
         state.completions.push(VibrationCompletion {
             command_id,
+            result: value,
             error,
             error_name,
         });
@@ -253,6 +257,22 @@ pub(crate) fn complete(command_id: u64, result: Result<(), (&'static str, String
 
 pub(crate) fn pending() -> bool {
     BRIDGE.with_borrow(|state| !state.messages.is_empty() || !state.completions.is_empty())
+}
+
+#[cfg(test)]
+pub(crate) fn take_completion_results() -> Vec<(u64, Option<String>, Option<String>)> {
+    BRIDGE.with_borrow_mut(|state| {
+        std::mem::take(&mut state.completions)
+            .into_iter()
+            .map(|completion| {
+                (
+                    completion.command_id,
+                    completion.result,
+                    completion.error_name,
+                )
+            })
+            .collect()
+    })
 }
 
 #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
@@ -295,6 +315,7 @@ pub(super) fn install<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsErr
                             serde_json::json!({
                                 "type": "completion",
                                 "commandId": completion.command_id,
+                                "result": completion.result,
                                 "error": completion.error,
                                 "errorName": completion.error_name,
                             })
@@ -330,15 +351,21 @@ pub(super) fn install<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsErr
                 argument(&mut engine, &call, 3, "vibration duration")?,
                 "vibration duration",
             )?;
+            let start_delay = parse(
+                argument(&mut engine, &call, 4, "vibration start delay")?,
+                "vibration start delay",
+            )?;
             if !strong.is_finite()
                 || !weak.is_finite()
                 || !duration.is_finite()
+                || !start_delay.is_finite()
                 || !(0.0..=1.0).contains(&strong)
                 || !(0.0..=1.0).contains(&weak)
                 || !(0.0..=60_000.0).contains(&duration)
+                || !(0.0..=60_000.0).contains(&start_delay)
             {
                 return Err(JsError::new(
-                    "gamepad magnitudes must be 0..1 and duration must be 0..60000ms",
+                    "gamepad magnitudes must be 0..1 and duration/start delay must be 0..60000ms",
                 ));
             }
             let command_id = BRIDGE.with_borrow_mut(|state| {
@@ -350,6 +377,7 @@ pub(super) fn install<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsErr
                     strong,
                     weak,
                     duration_ms: duration.round() as u32,
+                    start_delay_ms: start_delay.round() as u32,
                 });
                 command_id
             });
@@ -386,6 +414,7 @@ mod tests {
             BackendFrame {
                 changes: vec![ConnectionChange::Connected(raw.clone())],
                 connected: vec![raw],
+                ..BackendFrame::default()
             },
             12.5,
         );
@@ -444,15 +473,16 @@ mod tests {
         assert_eq!(
             requests.len(),
             1,
-            "a delayed replacement stops the old effect now"
+            "the effect delay is sent to the backend, not a JavaScript timer"
         );
         assert_eq!(
             (
                 requests[0].strong,
                 requests[0].weak,
-                requests[0].duration_ms
+                requests[0].duration_ms,
+                requests[0].start_delay_ms,
             ),
-            (0.0, 0.0, 0)
+            (1.0, 0.0, 100, 500)
         );
         reset();
     }

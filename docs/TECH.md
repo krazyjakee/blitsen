@@ -484,11 +484,18 @@ Fullscreen top layer.
 
 Gamepads use one injected registry between the window session and the DOM bridge. On Linux, macOS
 and Windows a target-gated `gilrs` backend is sampled exactly once during an actual redraw, before
-the animation tick; it starts no worker or JavaScript-visible polling loop. Ordered backend
-connection changes allocate stable slots, while the same poll publishes one normalized snapshot
-for `navigator.getGamepads()`. Haptic commands cross back after the tick and settle on a later
-frame. The registry/backend boundary is injectable, so connection, reconnection, normalization,
-rumble routing and zero idle polls are deterministic host tests rather than hardware-shaped mocks.
+the animation tick. Blitsen starts no JavaScript-visible polling loop, but `gilrs` does own the
+platform hot-plug/input worker: it blocks on Linux and macOS and polls XInput on Windows. Its
+separate force-feedback server is the avoidable idle cost—it wakes every 50 ms even with no device
+or effect—so the discovery backend starts with force feedback disabled and is replaced by an
+FF-enabled instance only on the first nonzero haptic command. Ordered backend connection changes
+allocate stable slots, while the same poll publishes one normalized snapshot for
+`navigator.getGamepads()`. Effect delay and duration run on that FF server; its
+`ForceFeedbackEffectCompleted` event, not a JavaScript clock, settles `playEffect()`. Reset settles
+after the backend accepts the stop, and replacement settles the displaced command as `preempted`.
+The registry/backend boundary is injectable, so connection, reconnection, normalization, rumble
+routing, backend completion/preemption and zero application-side idle polls are deterministic host
+tests rather than hardware-shaped mocks.
 
 ### Where the DOM surface is narrower than its name
 

@@ -165,7 +165,9 @@ guessed ordering. `timestamp` changes only when that slot's state or connection 
 `vibrationActuator` is a `dual-rumble` actuator only when the backend reports force-feedback
 support; otherwise it is `null`. `playEffect()` supports only `"dual-rumble"`, with magnitudes in
 `[0, 1]` and a duration/start delay of at most 60 seconds. Motor availability and strength remain
-device and driver properties. Android has no backend in the maintained controller library, so the
+device and driver properties. Delay and duration are quantized by the backend's 50 ms force-
+feedback clock; the returned promise settles from its completion event, and a replacement settles
+the preceding effect as `"preempted"`. Android has no backend in the maintained controller library, so the
 Gamepad globals and `Navigator.getGamepads` are absent there—feature-detect the member rather than
 interpreting an empty array as platform support.
 

@@ -419,7 +419,7 @@
             || strong < 0 || strong > 1 || weak < 0 || weak > 1)
             return Promise.reject(new TypeError(
               "gamepad index must be non-negative, duration 0..60000ms, and magnitudes 0..1"));
-          return startGamepadVibration(slot, strong, weak, duration);
+          return startGamepadVibration(slot, strong, weak, duration).then(() => undefined);
         }
       : undefined,
     onDeviceChange: gamepadInstalled ? gamepadListener : undefined,

@@ -43,10 +43,12 @@ multi-monitor placement and grab behavior still require acceptance on Windows an
 fullscreen acceptance separately required on X11 and Wayland.
 Gamepad snapshots and connect/disconnect events are available on Linux, macOS and Windows through
 the target-gated `gilrs` backend. Controllers are sampled once per application redraw, so an idle
-window performs no controller polling and learns about a hot-plug on its next frame. Standard
-dual-rumble is exposed only where the device and driver advertise it. Synthetic tests cover slot,
-normalization, event and command semantics; physical hot-plug, mapping and motor behavior still
-require representative X11, Wayland, Windows and macOS hardware.
+window performs no application-side controller polling and learns about a hot-plug on its next
+frame. The backend still owns its platform event worker; the additional 50 ms force-feedback loop
+is initialized lazily, on the first nonzero effect rather than for controller-free applications.
+Standard dual-rumble is exposed only where the device and driver advertise it. Synthetic tests
+cover slot, normalization, event, backend-completion and command semantics; physical hot-plug,
+mapping and motor behavior still require representative X11, Wayland, Windows and macOS hardware.
 `os.batteries` reads the machine's own batteries on every desktop target and answers an empty list
 where there are none; `os.displays` and `os.idleTime` are absent by decision, the monitors being
 `window.monitors()` and idle time having no answer a Wayland client can trust.

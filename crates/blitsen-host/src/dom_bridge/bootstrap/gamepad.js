@@ -15,25 +15,12 @@
 
   const gamepadCommands = new Map();
   const gamepadDeviceListeners = new Set();
-  const gamepadActuators = new Map();
   const gamepadPending = gamepadInstalled ? __blitsenGamepadPending : () => false;
   const gamepadWorkPending = () => gamepadCommands.size > 0 || gamepadPending();
-  const startGamepadVibration = (index, strong, weak, duration) => {
+  const startGamepadVibration = (index, strong, weak, duration, startDelay = 0) => {
     const id = __blitsenGamepadVibrate(
-      String(index), String(strong), String(weak), String(duration));
+      String(index), String(strong), String(weak), String(duration), String(startDelay));
     return new Promise((resolve, reject) => gamepadCommands.set(String(id), { resolve, reject }));
-  };
-  const preemptActuator = (index, stopHardware = false) => {
-    const state = gamepadActuators.get(Number(index));
-    if (state) {
-      gamepadActuators.delete(Number(index));
-      state.resolve("preempted");
-    }
-    // A replacement with a start delay begins with quiet motors. Resolving the
-    // old promise is only JavaScript state; without this command its physical
-    // effect would keep running until the replacement's timer fired.
-    if (stopHardware)
-      void startGamepadVibration(Number(index), 0, 0, 0).catch(() => {});
   };
 
   class GamepadHapticActuator {
@@ -55,30 +42,10 @@
         || strong < 0 || strong > 1 || weak < 0 || weak > 1)
         return Promise.reject(new TypeError(
           "gamepad duration/startDelay must be 0..60000ms and magnitudes must be 0..1"));
-      preemptActuator(this._index, true);
-      return new Promise((resolve, reject) => {
-        const state = { resolve, reject };
-        gamepadActuators.set(this._index, state);
-        setTimeout(async () => {
-          if (gamepadActuators.get(this._index) !== state) return;
-          try { await startGamepadVibration(this._index, strong, weak, duration); }
-          catch (error) {
-            if (gamepadActuators.get(this._index) === state) gamepadActuators.delete(this._index);
-            reject(error);
-            return;
-          }
-          setTimeout(() => {
-            if (gamepadActuators.get(this._index) !== state) return;
-            gamepadActuators.delete(this._index);
-            resolve("complete");
-          }, duration);
-        }, startDelay);
-      });
+      return startGamepadVibration(this._index, strong, weak, duration, startDelay);
     }
     async reset() {
-      preemptActuator(this._index);
-      await startGamepadVibration(this._index, 0, 0, 0);
-      return "complete";
+      return startGamepadVibration(this._index, 0, 0, 0);
     }
   }
 
@@ -123,12 +90,11 @@
         const command = gamepadCommands.get(String(message.commandId));
         if (!command) continue;
         gamepadCommands.delete(String(message.commandId));
-        if (message.error === null) command.resolve();
+        if (message.error === null) command.resolve(message.result);
         else command.reject(new DOMException(message.error, message.errorName ?? "OperationError"));
         continue;
       }
       const gamepad = gamepadFromRaw(message.gamepad);
-      if (message.kind === "disconnected") preemptActuator(gamepad.index);
       globalThis.dispatchEvent(new GamepadEvent(`gamepad${message.kind}`, { gamepad }));
       const nativeEvent = Object.freeze({
         type: message.kind, index: gamepad.index, id: gamepad.id,
