@@ -608,7 +608,8 @@ jobs:
             || { echo "$ANDROID_NDK_HOME has no C toolchain"; exit 1; }
           grep Pkg.Revision "$ANDROID_NDK_HOME/source.properties"
           test -n "$ANDROID_HOME" || { echo "ANDROID_HOME is unset"; exit 1; }
-          tools=$(ls -1 "$ANDROID_HOME/build-tools" | sort -V | tail -1)
+          tools=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d \
+            -printf '%f\n' | sort -V | tail -1)
           for tool in aapt2 zipalign apksigner; do
             test -x "$ANDROID_HOME/build-tools/$tools/$tool" \
               || { echo "build-tools $tools has no $tool"; exit 1; }
@@ -708,7 +709,7 @@ jobs:
         run: |
           set -euo pipefail
           bun -e 'import { BARE_APP } from "./packages/blitsen/test/bare-app.mjs";
-                  await Bun.write(`${process.env.APP}/index.html`, BARE_APP);'
+                  await Bun.write(process.env.APP + "/index.html", BARE_APP);'
           bun packages/blitsen/bin/blitsen.mjs build "$APP" \
             --android --outfile ${{ runner.temp }}/Bare.apk
       # Read back rather than trusted, for the reason the `.so` above is: the
@@ -735,7 +736,9 @@ jobs:
                   raise SystemExit(f"{want} is deflated, which #144 forbids")
           print(f"{len(entries)} entries, {sum(i.file_size for i in entries.values())} bytes")
           PY
-          "$ANDROID_HOME/build-tools/$(ls -1 "$ANDROID_HOME/build-tools" | sort -V | tail -1)/apksigner" \
+          tools=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d \
+            -printf '%f\n' | sort -V | tail -1)
+          "$ANDROID_HOME/build-tools/$tools/apksigner" \
             verify --print-certs ${{ runner.temp }}/Bare.apk
       # Issue #254's fixture, packaged by the same command for the same reason: the
       # emulator job below has to install the artifact a user would get, manifest and
@@ -756,7 +759,7 @@ jobs:
         run: |
           set -euo pipefail
           bun -e 'import { NOTIFY_APP } from "./packages/blitsen/test/android-notify-app.mjs";
-                  await Bun.write(`${process.env.APP}/index.html`, NOTIFY_APP);'
+                  await Bun.write(process.env.APP + "/index.html", NOTIFY_APP);'
           bun packages/blitsen/bin/blitsen.mjs build "$APP" \
             --android --android-package com.blitsen.notifyfixture \
             --outfile ${{ runner.temp }}/Notify.apk
