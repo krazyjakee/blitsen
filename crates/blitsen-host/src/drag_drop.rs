@@ -315,19 +315,50 @@ mod tests {
         assert!(classify_drag_event(&WindowEvent::CloseRequested).is_none());
     }
 
+    /// `name` in the temporary directory, spelled the way this host spells a path.
+    ///
+    /// `Url::from_file_path` converts an absolute path and refuses every other
+    /// one, and which paths are absolute is the platform's rule rather than
+    /// POSIX's: `/tmp/a b.txt` names nothing absolute on Windows, where a path
+    /// begins at a drive letter or a UNC share. The temporary directory is the
+    /// one location a test can name that whichever host runs it already agrees
+    /// is absolute, so the conversion under test is exercised everywhere instead
+    /// of only where the literal happened to be well formed.
+    fn absolute(name: &str) -> PathBuf {
+        std::env::temp_dir().join(name)
+    }
+
     #[test]
     fn a_drop_carries_absolute_paths_and_the_same_files_as_uris() {
-        let (paths, uris) = transferable(&[
-            PathBuf::from("/tmp/a b.txt"),
-            PathBuf::from("/tmp/plain.txt"),
-        ]);
-        assert_eq!(paths, ["/tmp/a b.txt", "/tmp/plain.txt"]);
+        let spaced = absolute("a b.txt");
+        let plain = absolute("plain.txt");
+        let (paths, uris) = transferable(&[spaced.clone(), plain.clone()]);
+        assert_eq!(
+            paths,
+            [
+                spaced.to_str().expect("a temporary path spells in UTF-8"),
+                plain.to_str().expect("a temporary path spells in UTF-8"),
+            ]
+        );
+        // Every path has to come back out of its URL as the file the platform
+        // announced: a `text/uri-list` entry that reads back as another name is
+        // a file the application would open at the wrong one.
+        let read_back = uris
+            .iter()
+            .map(|uri| {
+                Url::parse(uri)
+                    .expect("the uri list must be parseable")
+                    .to_file_path()
+                    .expect("a file: url must name its path again")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(read_back, [spaced, plain], "the uri list must be parseable");
         // Percent-encoded by the URL parser rather than by hand: a space in a
         // file name is the first thing a `text/uri-list` reader trips over.
-        assert_eq!(
-            uris,
-            ["file:///tmp/a%20b.txt", "file:///tmp/plain.txt"],
-            "the uri list must be parseable"
+        assert!(
+            uris[0].ends_with("/a%20b.txt") && !uris[0].contains(' '),
+            "a space must reach the uri list encoded, but it is {:?}",
+            uris[0]
         );
     }
 
