@@ -39,7 +39,10 @@
 //! identity is discarded rather than replayed when the identity changes.
 
 use std::collections::VecDeque;
+use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
@@ -72,6 +75,102 @@ const STORE_FILE: &str = "notification-activation.json";
 /// one. Sixty-four is far more than that needs and still bounds a file that is
 /// otherwise written on every launch.
 const CONSUMED_LIMIT: usize = 64;
+static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(1);
+static SESSION_SEQUENCE: AtomicU64 = AtomicU64::new(1);
+
+pub(crate) fn session_token() -> String {
+    let minted = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |since| since.as_nanos());
+    let sequence = SESSION_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    format!("{minted:x}-{:x}-{sequence:x}", std::process::id())
+}
+
+pub(crate) fn addresses_session(
+    activation: &Activation,
+    session: &str,
+    active_record: bool,
+) -> bool {
+    active_record && activation.session.as_deref() == Some(session)
+}
+
+fn replace_file(source: &Path, destination: &Path) -> std::io::Result<()> {
+    #[cfg(not(target_os = "windows"))]
+    {
+        std::fs::rename(source, destination)
+    }
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        use windows_sys::Win32::Storage::FileSystem::{
+            MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW,
+        };
+
+        let source = source
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect::<Vec<_>>();
+        let destination = destination
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect::<Vec<_>>();
+        // SAFETY: both paths are terminated UTF-16 buffers that remain alive
+        // for the call. Rust's current `rename` does promise replacement on
+        // Windows; this direct call names that semantic and also requests
+        // WRITE_THROUGH so a successful replay-guard update has reached disk.
+        let moved = unsafe {
+            MoveFileExW(
+                source.as_ptr(),
+                destination.as_ptr(),
+                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+            )
+        };
+        if moved == 0 {
+            Err(std::io::Error::last_os_error())
+        } else {
+            Ok(())
+        }
+    }
+}
+
+fn atomic_write(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    let parent = path.parent().ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, "queue path has no parent")
+    })?;
+    std::fs::create_dir_all(parent)?;
+    let sequence = TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let temporary = parent.join(format!(
+        ".notification-activation-{}-{sequence}.tmp",
+        std::process::id()
+    ));
+    let result = (|| {
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)?;
+        file.write_all(bytes)?;
+        file.sync_all()?;
+        drop(file);
+        replace_file(&temporary, path)?;
+        #[cfg(unix)]
+        std::fs::File::open(parent)?.sync_all()?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temporary);
+    }
+    result
+}
+
+fn safe_nonce(nonce: &str) -> bool {
+    !nonce.is_empty()
+        && nonce.len() <= 96
+        && nonce
+            .bytes()
+            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f' | b'-'))
+}
 
 /// The queue as it is written to disk.
 #[derive(Default, Deserialize, Serialize)]
@@ -110,16 +209,8 @@ impl ActivationStore {
     }
 
     fn write(&self, queue: &Queue) -> Result<(), String> {
-        if let Some(parent) = self.path.parent() {
-            std::fs::create_dir_all(parent).map_err(|error| {
-                format!(
-                    "could not create {} for notification activations: {error}",
-                    parent.display()
-                )
-            })?;
-        }
         let bytes = serde_json::to_vec(queue).expect("an activation queue serializes");
-        std::fs::write(&self.path, bytes).map_err(|error| {
+        atomic_write(&self.path, &bytes).map_err(|error| {
             format!(
                 "could not record a notification activation in {}: {error}",
                 self.path.display()
@@ -201,6 +292,19 @@ impl ActivationStore {
                 }
             };
             let id = activation.id.clone();
+            let filename_nonce = path.file_stem().and_then(std::ffi::OsStr::to_str);
+            if filename_nonce.is_none_or(|nonce| !safe_nonce(nonce) || nonce != activation.nonce) {
+                failures.push((
+                    id,
+                    format!(
+                        "notification activation {} does not match its safe nonce {:?}",
+                        path.display(),
+                        activation.nonce
+                    ),
+                ));
+                let _ = std::fs::remove_file(path);
+                continue;
+            }
             match self.record(activation) {
                 Ok(()) => {
                     if let Err(error) = std::fs::remove_file(&path) {
@@ -226,7 +330,10 @@ impl ActivationStore {
     /// the activation rather than replaying it. At-most-once is the safer side
     /// of "exactly once" for a launch context: a click delivered twice acts
     /// twice, and this is the click that opened a document or sent a reply.
-    pub(crate) fn take(&self) -> Vec<Activation> {
+    fn take_with_writer(
+        &self,
+        write: impl FnOnce(&Queue) -> Result<(), String>,
+    ) -> Result<Vec<Activation>, String> {
         let mut queue = self.read();
         let pending = std::mem::take(&mut queue.pending);
         let emptied = !pending.is_empty();
@@ -248,9 +355,13 @@ impl ActivationStore {
         // The ordinary launch queued nothing and empties nothing, and must not
         // pay a write for having looked.
         if emptied {
-            let _ = self.write(&queue);
+            write(&queue)?;
         }
-        taken
+        Ok(taken)
+    }
+
+    pub(crate) fn take(&self) -> Result<Vec<Activation>, String> {
+        self.take_with_writer(|queue| self.write(queue))
     }
 }
 
@@ -334,14 +445,20 @@ mod tests {
             .record(activation("a1", Some("open")))
             .expect("the queue is writable");
 
-        let taken = store.take();
+        let taken = store.take().expect("the replay guard is durable");
         assert_eq!(taken.len(), 1);
         assert_eq!(taken[0].action.as_deref(), Some("open"));
         // The reload a development run performs, and the next launch after it.
-        assert!(store.take().is_empty());
+        assert!(
+            store
+                .take()
+                .expect("the replay guard is durable")
+                .is_empty()
+        );
         assert!(
             ActivationStore::new(&scratch.0, "com.example.app")
                 .take()
+                .expect("the replay guard is durable")
                 .is_empty()
         );
     }
@@ -351,20 +468,23 @@ mod tests {
         let scratch = Scratch::new("replay");
         let store = store(&scratch.0);
         store.record(activation("a1", None)).expect("recorded");
-        assert_eq!(store.take().len(), 1);
+        assert_eq!(store.take().expect("the replay guard is durable").len(), 1);
 
         // A command line re-run, or the Intent Android hands a recreated
         // Activity: the same nonce, offered by a platform that has no way to
         // know it was already delivered.
         store.record(activation("a1", None)).expect("recorded");
         assert!(
-            store.take().is_empty(),
+            store
+                .take()
+                .expect("the replay guard is durable")
+                .is_empty(),
             "a nonce already delivered must not be delivered again"
         );
 
         // A genuine second click still is one.
         store.record(activation("a2", None)).expect("recorded");
-        assert_eq!(store.take().len(), 1);
+        assert_eq!(store.take().expect("the replay guard is durable").len(), 1);
     }
 
     #[test]
@@ -379,12 +499,20 @@ mod tests {
             .expect("recorded");
 
         assert!(
-            store(&scratch.0).take().is_empty(),
+            store(&scratch.0)
+                .take()
+                .expect("the replay guard is durable")
+                .is_empty(),
             "an activation addressed to an earlier install must not be delivered"
         );
         // And it is gone rather than left for the install it names to find: the
         // notification it describes belongs to a session nothing can reach.
-        assert!(previous.take().is_empty());
+        assert!(
+            previous
+                .take()
+                .expect("the replay guard is durable")
+                .is_empty()
+        );
     }
 
     #[test]
@@ -399,6 +527,7 @@ mod tests {
         assert_eq!(
             store
                 .take()
+                .expect("the replay guard is durable")
                 .iter()
                 .map(|activation| activation.nonce.clone())
                 .collect::<Vec<_>>(),
@@ -440,7 +569,7 @@ mod tests {
                 .1
                 .contains("could not parse notification activation")
         );
-        let taken = store.take();
+        let taken = store.take().expect("the replay guard is durable");
         assert_eq!(
             taken
                 .iter()
@@ -455,9 +584,102 @@ mod tests {
         assert!(inbox.join("still-writing.tmp").exists());
         assert!(store.record_inbox(&inbox).is_empty());
         assert!(
-            store.take().is_empty(),
+            store
+                .take()
+                .expect("the replay guard is durable")
+                .is_empty(),
             "a drained callback is never replayed"
         );
+    }
+
+    #[test]
+    fn an_inbox_filename_must_be_the_safe_nonce_inside_its_envelope() {
+        let scratch = Scratch::new("inbox-nonce");
+        let inbox = scratch.0.join("inbox");
+        std::fs::create_dir_all(&inbox).expect("an inbox");
+        let bytes = serde_json::to_vec(&activation("a1", None)).expect("an envelope");
+        std::fs::write(inbox.join("a2.json"), &bytes).expect("a mismatched callback");
+        std::fs::write(inbox.join("unsafe!.json"), &bytes).expect("an unsafe callback");
+
+        let store = store(&scratch.0);
+        let failures = store.record_inbox(&inbox);
+        assert_eq!(failures.len(), 2);
+        assert!(
+            failures
+                .iter()
+                .all(|(_, error)| error.contains("safe nonce"))
+        );
+        assert!(store.take().expect("the empty guard is durable").is_empty());
+        assert!(
+            std::fs::read_dir(&inbox)
+                .expect("the inbox remains")
+                .next()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn a_failed_replay_guard_write_delivers_nothing_and_can_be_retried() {
+        let scratch = Scratch::new("take-failure");
+        let store = store(&scratch.0);
+        store.record(activation("a1", None)).expect("recorded");
+
+        let result = store.take_with_writer(|_| Err("disk full".to_owned()));
+        assert_eq!(
+            result.expect_err("delivery must wait for durability"),
+            "disk full"
+        );
+        assert_eq!(
+            store.take().expect("the retry is durable").len(),
+            1,
+            "the activation remained pending after the refused delivery"
+        );
+    }
+
+    #[test]
+    fn queue_updates_leave_one_synced_target_and_no_temporary_files() {
+        let scratch = Scratch::new("atomic");
+        let store = store(&scratch.0);
+        for index in 0..32 {
+            let nonce = format!("a{index:x}");
+            store
+                .record(activation(&nonce, None))
+                .expect("atomic record");
+            assert_eq!(store.take().expect("atomic consume").len(), 1);
+            let _: Queue = serde_json::from_slice(
+                &std::fs::read(&store.path).expect("the queue target exists"),
+            )
+            .expect("the target is always complete JSON");
+        }
+        assert!(
+            std::fs::read_dir(&scratch.0)
+                .expect("the store directory")
+                .all(|entry| !entry
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .ends_with(".tmp"))
+        );
+    }
+
+    #[test]
+    fn a_new_controller_generation_does_not_adopt_the_old_generations_same_id() {
+        let first = session_token();
+        let second = session_token();
+        assert_ne!(first, second);
+        let old = Activation {
+            session: Some(first),
+            ..activation("a1", None)
+        };
+        let current = Activation {
+            nonce: "a2".into(),
+            session: Some(second.clone()),
+            ..old.clone()
+        };
+        assert!(!addresses_session(&old, &second, true));
+        assert!(addresses_session(&current, &second, true));
+        assert!(!addresses_session(&current, &second, false));
+        assert_eq!(old.id, current.id, "both generations deliberately reuse n1");
     }
 
     #[test]

@@ -250,10 +250,10 @@ would claim a decision nobody made.
 Android implements permission, an idempotent `blitsen.default` channel, submission, update, close,
 body taps and action buttons through `android-activity` and `jni`. Android urgency is a builder hint
 inside the user-controlled default channel, and `appName` cannot rename a channel Android has
-already created. The APK's only dex subclasses `NativeActivity` to retain warm activation Intents
-and provides a private notification-dismiss receiver. That receiver persists a swipe dismissal
-without opening the Activity; it is delivered on the next eligible frame, or once after a later
-launch if no session was alive.
+already created. The APK's only dex provides a private activation receiver. It persists body,
+action and delete Intents before body/actions launch the platform `NativeActivity` with no trusted
+extras; a swipe dismissal does not open the Activity. An activation is delivered on the next
+eligible frame, or once after a later launch if no session was alive.
 
 ### Cold-start activation
 

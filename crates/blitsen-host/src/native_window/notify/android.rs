@@ -9,13 +9,12 @@
 //!
 //! A tapped Android notification is an `Intent` the system sends on the
 //! application's behalf, and something has to be waiting to receive it. The
-//! body and action trampoline remains `PendingIntent.getActivity`, aimed at a
-//! tiny subclass of `NativeActivity`. `android-activity` still owns every native
-//! lifecycle callback; the subclass only retains `onNewIntent`, which platform
-//! NativeActivity deliberately does not do. A private `BroadcastReceiver` is the
-//! other class in the same dex and receives `setDeleteIntent` without opening a
-//! window. Both write one atomic inbox file, and Rust drains those files through
-//! the same nonce/replay store used by a cold Activity launch.
+//! body, action and delete trampolines are immutable `getBroadcast` intents
+//! aimed at one private receiver. It persists the envelope before body/actions
+//! launch the platform `NativeActivity` with a clean Intent; dismissal does not
+//! open a window. The exported launcher never reads activation extras, so an
+//! explicit Intent from another package or adb cannot forge a trusted event.
+//! Rust drains the atomic inbox through the nonce/replay store.
 
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
@@ -42,6 +41,7 @@ const REQUEST_CODE: i32 = 0x424e;
 /// The extra the activation envelope travels in.
 const ACTIVATION_EXTRA: &str = "blitsen.notification.activation";
 const NONCE_EXTRA: &str = "blitsen.notification.nonce";
+const LAUNCH_EXTRA: &str = "blitsen.notification.launch";
 const ACTIVATION_INBOX: &str = "notification-activation-inbox";
 
 /// The scheme that makes one trampoline `Intent` different from another.
@@ -64,22 +64,9 @@ const ACTIVATION_SCHEME: &str = "blitsen-notification";
 /// trampoline at its new envelope instead of leaving the old one live.
 const PENDING_INTENT_FLAGS: i32 = 0x0400_0000 | 0x0800_0000;
 
-/// `Intent.FLAG_ACTIVITY_SINGLE_TOP`, matching the manifest's `launchMode`.
-const FLAG_ACTIVITY_SINGLE_TOP: i32 = 0x2000_0000;
-
 static NEXT_ACTIVATION_NONCE: AtomicU64 = AtomicU64::new(1);
-static NOTIFICATION_SESSION: OnceLock<String> = OnceLock::new();
 
 static ANDROID_APP: OnceLock<RwLock<Option<AndroidApp>>> = OnceLock::new();
-
-fn notification_session() -> &'static str {
-    NOTIFICATION_SESSION.get_or_init(|| {
-        let minted = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_or(0, |since| since.as_nanos());
-        format!("{minted:x}-{:x}", std::process::id())
-    })
-}
 
 pub(crate) fn set_android_app(app: AndroidApp) {
     *ANDROID_APP
@@ -306,64 +293,6 @@ pub(crate) fn record_inbox_activations(directory: &std::path::Path, store: &Acti
     }
 }
 
-/// Adds whatever activation the Intent that created this Activity carries.
-///
-/// Recorded rather than delivered: the store is what decides whether this is a
-/// tap nobody has been told about, and a recreated Activity is handed the same
-/// Intent — and so the same nonce — as the one that was destroyed.
-pub(crate) fn record_intent_activation(store: &ActivationStore) {
-    let Ok(app) = android_app() else {
-        return;
-    };
-    let envelope = with_activity(&app, |env, activity| {
-        let intent = env
-            .call_method(
-                activity,
-                jni_str!("getIntent"),
-                jni_sig!("()Landroid/content/Intent;"),
-                &[],
-            )?
-            .l()?;
-        if intent.is_null() {
-            return Ok(None);
-        }
-        let key = env.new_string(ACTIVATION_EXTRA)?;
-        let extra = env
-            .call_method(
-                &intent,
-                jni_str!("getStringExtra"),
-                jni_sig!("(Ljava/lang/String;)Ljava/lang/String;"),
-                &[JValue::Object(&key)],
-            )?
-            .l()?;
-        if extra.is_null() {
-            return Ok(None);
-        }
-        let extra = env.cast_local::<JString>(extra)?;
-        Ok(Some(extra.try_to_string(env)?))
-    });
-    // A launcher tap carries no extra and an Activity that cannot be asked is
-    // one nothing else in this session could have worked either, so neither is
-    // reported here. An extra that will not parse is: only this build writes
-    // that key, so a value it cannot read came from somewhere it should not
-    // have, and silence would make it look like a tap that never happened. It
-    // is reported against no notification because the field that would have
-    // named one is inside the value that did not parse.
-    let envelope = match envelope {
-        Ok(Some(envelope)) => envelope,
-        Ok(None) | Err(_) => return,
-    };
-    match Activation::parse(&envelope) {
-        Ok(activation) => {
-            let id = activation.id.clone();
-            if let Err(error) = store.record(activation) {
-                crate::dom_bridge::notify::failed(id, error);
-            }
-        }
-        Err(error) => crate::dom_bridge::notify::failed(String::new(), error),
-    }
-}
-
 /// The envelope a tap on `public_id`, or on one of its buttons, will deliver.
 ///
 /// `None` when nothing registered an identity for this process: there is then no
@@ -374,6 +303,7 @@ fn envelope(
     action: Option<&str>,
     dismissed: Option<&str>,
     native_id: i32,
+    notification_session: &str,
 ) -> Option<Activation> {
     let entry_point = super::entry_point()?;
     // Unique across launches as well as within one: the notification survives
@@ -387,7 +317,7 @@ fn envelope(
         nonce: format!("{minted:x}-{native_id:x}-{sequence:x}"),
         identity: entry_point.identity.clone(),
         id: public_id.to_owned(),
-        session: Some(notification_session().to_owned()),
+        session: Some(notification_session.to_owned()),
         action: action.map(str::to_owned),
         dismissed: dismissed.map(str::to_owned),
         platform: "android".to_owned(),
@@ -395,22 +325,23 @@ fn envelope(
     })
 }
 
-/// A `PendingIntent` that starts this Activity carrying `activation`.
+/// A private receiver PendingIntent that persists `activation` before launch.
 fn trampoline<'env>(
     env: &mut Env<'env>,
     activity: &JObject<'_>,
     activation: &Activation,
+    launch: bool,
 ) -> jni::errors::Result<JObject<'env>> {
-    // Explicit rather than filtered: the component is this Activity's own class,
-    // so nothing in the manifest has to declare an intent filter for it and no
-    // other application can be resolved for the tap.
-    let class = JObject::from(env.get_object_class(activity)?);
+    let receiver = JObject::from(env.find_class(jni_str!(
+        "com/blitsen/runtime/NotificationBridge$ActivationReceiver"
+    ))?);
     let intent = env.new_object(
         jni_str!("android/content/Intent"),
         jni_sig!("(Landroid/content/Context;Ljava/lang/Class;)V"),
-        &[JValue::Object(activity), JValue::Object(&class)],
+        &[JValue::Object(activity), JValue::Object(&receiver)],
     )?;
-    let uri = env.new_string(format!("{ACTIVATION_SCHEME}:{}", activation.nonce))?;
+    let kind = if launch { "activate" } else { "dismiss" };
+    let uri = env.new_string(format!("{ACTIVATION_SCHEME}:{kind}-{}", activation.nonce))?;
     let data = env
         .call_static_method(
             jni_str!("android/net/Uri"),
@@ -424,12 +355,6 @@ fn trampoline<'env>(
         jni_str!("setData"),
         jni_sig!("(Landroid/net/Uri;)Landroid/content/Intent;"),
         &[JValue::Object(&data)],
-    )?;
-    env.call_method(
-        &intent,
-        jni_str!("addFlags"),
-        jni_sig!("(I)Landroid/content/Intent;"),
-        &[JValue::Int(FLAG_ACTIVITY_SINGLE_TOP)],
     )?;
     let key = env.new_string(ACTIVATION_EXTRA)?;
     let value = env.new_string(
@@ -449,67 +374,13 @@ fn trampoline<'env>(
         jni_sig!("(Ljava/lang/String;Ljava/lang/String;)Landroid/content/Intent;"),
         &[JValue::Object(&nonce_key), JValue::Object(&nonce)],
     )?;
-    env.call_static_method(
-        jni_str!("android/app/PendingIntent"),
-        jni_str!("getActivity"),
-        jni_sig!(
-            "(Landroid/content/Context;ILandroid/content/Intent;I)Landroid/app/PendingIntent;"
-        ),
-        &[
-            JValue::Object(activity),
-            JValue::Int(0),
-            JValue::Object(&intent),
-            JValue::Int(PENDING_INTENT_FLAGS),
-        ],
-    )?
-    .l()
-}
-
-/// A delete Intent that records a dismissal without opening the Activity.
-fn dismissal_trampoline<'env>(
-    env: &mut Env<'env>,
-    activity: &JObject<'_>,
-    activation: &Activation,
-) -> jni::errors::Result<JObject<'env>> {
-    let receiver = JObject::from(env.find_class(jni_str!(
-        "com/blitsen/runtime/NotificationBridge$DismissReceiver"
-    ))?);
-    let intent = env.new_object(
-        jni_str!("android/content/Intent"),
-        jni_sig!("(Landroid/content/Context;Ljava/lang/Class;)V"),
-        &[JValue::Object(activity), JValue::Object(&receiver)],
-    )?;
-    let uri = env.new_string(format!("{ACTIVATION_SCHEME}:dismiss-{}", activation.nonce))?;
-    let data = env
-        .call_static_method(
-            jni_str!("android/net/Uri"),
-            jni_str!("parse"),
-            jni_sig!("(Ljava/lang/String;)Landroid/net/Uri;"),
-            &[JValue::Object(&uri)],
-        )?
-        .l()?;
+    let launch_key = env.new_string(LAUNCH_EXTRA)?;
     env.call_method(
         &intent,
-        jni_str!("setData"),
-        jni_sig!("(Landroid/net/Uri;)Landroid/content/Intent;"),
-        &[JValue::Object(&data)],
+        jni_str!("putExtra"),
+        jni_sig!("(Ljava/lang/String;Z)Landroid/content/Intent;"),
+        &[JValue::Object(&launch_key), JValue::Bool(launch)],
     )?;
-    for (key, value) in [
-        (
-            ACTIVATION_EXTRA,
-            serde_json::to_string(activation).expect("an activation envelope serializes"),
-        ),
-        (NONCE_EXTRA, activation.nonce.clone()),
-    ] {
-        let key = env.new_string(key)?;
-        let value = env.new_string(value)?;
-        env.call_method(
-            &intent,
-            jni_str!("putExtra"),
-            jni_sig!("(Ljava/lang/String;Ljava/lang/String;)Landroid/content/Intent;"),
-            &[JValue::Object(&key), JValue::Object(&value)],
-        )?;
-    }
     env.call_static_method(
         jni_str!("android/app/PendingIntent"),
         jni_str!("getBroadcast"),
@@ -609,6 +480,7 @@ fn post(
     public_id: &str,
     native_id: i32,
     options: &NotificationOptions,
+    notification_session: &str,
 ) -> Result<(), String> {
     // A button whose tap cannot be addressed back to this application would be
     // a control that does nothing, so it is refused rather than drawn.
@@ -686,8 +558,8 @@ fn post(
         // What a tap does (#252). Without a registered identity there is no
         // envelope to carry, and a body tap then only dismisses the
         // notification — which is what it did before this existed.
-        if let Some(activation) = envelope(public_id, None, None, native_id) {
-            let intent = trampoline(env, activity, &activation)?;
+        if let Some(activation) = envelope(public_id, None, None, native_id, notification_session) {
+            let intent = trampoline(env, activity, &activation, true)?;
             env.call_method(
                 &builder,
                 jni_str!("setContentIntent"),
@@ -695,8 +567,14 @@ fn post(
                 &[JValue::Object(&intent)],
             )?;
         }
-        if let Some(activation) = envelope(public_id, None, Some("dismissed"), native_id) {
-            let intent = dismissal_trampoline(env, activity, &activation)?;
+        if let Some(activation) = envelope(
+            public_id,
+            None,
+            Some("dismissed"),
+            native_id,
+            notification_session,
+        ) {
+            let intent = trampoline(env, activity, &activation, false)?;
             env.call_method(
                 &builder,
                 jni_str!("setDeleteIntent"),
@@ -705,10 +583,16 @@ fn post(
             )?;
         }
         for action in &options.actions {
-            let Some(activation) = envelope(public_id, Some(&action.id), None, native_id) else {
+            let Some(activation) = envelope(
+                public_id,
+                Some(&action.id),
+                None,
+                native_id,
+                notification_session,
+            ) else {
                 continue;
             };
-            let intent = trampoline(env, activity, &activation)?;
+            let intent = trampoline(env, activity, &activation, true)?;
             let title = env.new_string(&action.title)?;
             // Icon 0, because `blitsen/notify` actions carry a title and an ID
             // and no icon — the same surface every other platform's actions have
@@ -794,7 +678,7 @@ impl NotifyController {
             proxy,
             activation_store: ActivationStore::new(&activation_directory, &entry_point.identity),
             activation_directory,
-            notification_session: notification_session().to_owned(),
+            notification_session: super::session_token(),
             records: HashMap::new(),
             next_native_id: 1,
             permission_prompt: None,
@@ -852,7 +736,13 @@ impl NotifyController {
         }
         let native_id = self.next_native_id;
         self.next_native_id = self.next_native_id.saturating_add(1);
-        post(&self.app, &public_id, native_id, &options)?;
+        post(
+            &self.app,
+            &public_id,
+            native_id,
+            &options,
+            &self.notification_session,
+        )?;
         self.records
             .insert(public_id.clone(), Record { options, native_id });
         Ok(json!(public_id))
@@ -867,7 +757,13 @@ impl NotifyController {
             return Ok(json!(false));
         };
         record.options.apply(patch);
-        post(&self.app, public_id, record.native_id, &record.options)?;
+        post(
+            &self.app,
+            public_id,
+            record.native_id,
+            &record.options,
+            &self.notification_session,
+        )?;
         Ok(json!(true))
     }
 
@@ -882,10 +778,21 @@ impl NotifyController {
 
     pub(crate) fn poll(&mut self) {
         record_inbox_activations(&self.activation_directory, &self.activation_store);
-        for activation in self.activation_store.take() {
-            if activation.session.as_deref() == Some(self.notification_session.as_str())
-                && self.records.remove(&activation.id).is_some()
-            {
+        let activations = match self.activation_store.take() {
+            Ok(activations) => activations,
+            Err(error) => {
+                crate::dom_bridge::notify::failed(String::new(), error);
+                Vec::new()
+            }
+        };
+        for activation in activations {
+            let current = super::addresses_session(
+                &activation,
+                &self.notification_session,
+                self.records.contains_key(&activation.id),
+            );
+            if current {
+                self.records.remove(&activation.id);
                 if activation.dismissed.is_some() {
                     crate::dom_bridge::notify::closed(activation.id, "dismissed");
                 } else if let Some(action) = activation.action {

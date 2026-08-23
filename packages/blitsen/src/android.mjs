@@ -402,7 +402,7 @@ export function androidProject({
  * thing no tool in the SDK will do (see `android-apk.mjs`).
  *
  * The Java step is deliberately not Gradle: one checked-in source file is
- * compiled against `android.jar` and D8 turns its three class files into the
+ * compiled against `android.jar` and D8 turns its two class files into the
  * one `classes.dex` the archive carries.
  *
  * Passwords are in the environment and never in the argv, for the reason
@@ -512,8 +512,7 @@ export function apkPlan({
     },
     dex: {
       command: [toolchain.tools.d8, "--min-api", String(MIN_SDK), "--output", paths.dex,
-        ...["NotificationBridge.class", "NotificationBridge$Activity.class",
-          "NotificationBridge$DismissReceiver.class"]
+        ...["NotificationBridge.class", "NotificationBridge$ActivationReceiver.class"]
           .map(name => join(paths.classes, "com", "blitsen", "runtime", name))],
       environment,
     },

@@ -134,7 +134,9 @@ export const missing = (what, fix) => new Error(`${what}\n  ${fix}`);
  * assumed, because a machine with `ANDROID_HOME` set to a directory that no
  * longer exists is the ordinary failure, not an exotic one.
  */
-export async function detectAndroidToolchain({ env = process.env, which = onPath } = {}) {
+export async function detectAndroidToolchain({
+  env = process.env, which = onPath, hostPlatform = process.platform,
+} = {}) {
   const named = SDK_VARIABLES.map(name => [name, env[name]]).find(([, value]) => value);
   const guess = join(homedir(), "Android", "Sdk");
   const sdk = named?.[1] ?? (await readable(guess) ? guess : null);
@@ -186,8 +188,12 @@ export async function detectAndroidToolchain({ env = process.env, which = onPath
   // `aapt`: v1 is what Google has been removing, and nothing here needs it now
   // that the archive is written rather than handed to a packager.
   const tools = {};
+  const buildToolFile = tool => hostPlatform === "win32"
+    ? ({ aapt2: "aapt2.exe", d8: "d8.bat", zipalign: "zipalign.exe",
+      apksigner: "apksigner.bat" })[tool]
+    : tool;
   for (const tool of ["aapt2", "d8", "zipalign", "apksigner"]) {
-    tools[tool] = join(buildTools, tool);
+    tools[tool] = join(buildTools, buildToolFile(tool));
     if (!await readable(tools[tool])) {
       throw missing(`build-tools ${version} has no ${tool}, which packaging an APK runs.`,
         `Reinstall build-tools ${version} — \`sdkmanager "build-tools;${version}"\`.`);

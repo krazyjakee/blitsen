@@ -187,7 +187,7 @@ tray-icon = { version = "0.24.2", default-features = false }
 # (`native_window/session.rs`). Already in the tree behind winit and `muda`, at
 # the major both resolve to, so naming it here compiles no new crate.
 [target.'cfg(target_os = "windows")'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_UI_WindowsAndMessaging"] }
+windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem", "Win32_UI_WindowsAndMessaging"] }
 # `windows-native` reaches the HID class driver through `windows-sys` instead of
 # compiling hidapi's C, so the toolchain requirement stays the one `windows-sys`
 # already imposes.

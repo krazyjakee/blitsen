@@ -89,11 +89,11 @@ describe("the entry point this build links, as the crate actually declares it", 
     expect(MIN_SDK).toBeLessThanOrEqual(TARGET_SDK);
   });
 
-  test("is what the generated NativeActivity subclass tells Android to load", () => {
+  test("keeps the platform NativeActivity as the exported launcher", () => {
     const { manifest } = androidProject({ name: "P", applicationId: "com.a.b" });
     expect(manifest).toContain(
       `<meta-data android:name="android.app.lib_name" android:value="${ENTRY_LIBRARY}" />`);
-    expect(manifest).toContain("com.blitsen.runtime.NotificationBridge$Activity");
+    expect(manifest).toContain("android.app.NativeActivity");
   });
 
   test("is taken from the environment when it is named", async () => {
@@ -157,13 +157,13 @@ describe("the AndroidManifest.xml this build writes", () => {
   test("declares only the activation bridge dex and no native extraction", async () => {
     const { manifest } = project();
     expect(manifest).toContain('android:hasCode="true"');
-    expect(manifest).toContain("com.blitsen.runtime.NotificationBridge$Activity");
-    expect(manifest).toContain("com.blitsen.runtime.NotificationBridge$DismissReceiver");
+    expect(manifest).toContain("android.app.NativeActivity");
+    expect(manifest).toContain("com.blitsen.runtime.NotificationBridge$ActivationReceiver");
     expect(manifest).toContain('android:exported="false"');
     const bridge = await readFile(NOTIFICATION_BRIDGE_SOURCE, "utf8");
-    expect(bridge).toContain("extends NativeActivity");
     expect(bridge).toContain("extends BroadcastReceiver");
-    expect(bridge).toContain("protected void onNewIntent(Intent intent)");
+    expect(bridge).toContain("context.startActivity(launch)");
+    expect(bridge).not.toContain("onNewIntent");
     const rust = await readFile(join(entrySource, "../blitsen-host/src/native_window/notify/android.rs"),
       "utf8");
     for (const value of ["blitsen.notification.activation", "blitsen.notification.nonce",
@@ -173,9 +173,38 @@ describe("the AndroidManifest.xml this build writes", () => {
     }
     expect(rust).toContain('jni_str!("setDeleteIntent")');
     expect(rust).toContain('jni_str!("getBroadcast")');
-    expect(rust).toContain("activation.session.as_deref() == Some(self.notification_session.as_str())");
+    expect(rust).not.toContain('jni_str!("getIntent")');
+    expect(rust).not.toContain("record_intent_activation");
+    expect(rust).not.toContain("NOTIFICATION_SESSION");
+    expect(rust).toContain("super::addresses_session(");
     // Only legal for a stored, page-aligned .so — see the archive suite.
     expect(manifest).toContain('android:extractNativeLibs="false"');
+  });
+
+  test("an explicit Intent to the exported launcher cannot forge activation extras", async () => {
+    const { manifest } = project();
+    const activity = /<activity[\s\S]*?<\/activity>/.exec(manifest)?.[0] ?? "";
+    const receiver = /<receiver[\s\S]*?\/>/.exec(manifest)?.[0] ?? "";
+    expect(activity).toContain('android:name="android.app.NativeActivity"');
+    expect(activity).toContain('android:exported="true"');
+    expect(receiver).toContain("NotificationBridge$ActivationReceiver");
+    expect(receiver).toContain('android:exported="false"');
+
+    const bridge = await readFile(NOTIFICATION_BRIDGE_SOURCE, "utf8");
+    expect(bridge).toContain("getStringExtra(ACTIVATION_EXTRA)");
+    expect(bridge).toContain("new Intent(context, NativeActivity.class)");
+    const rust = await readFile(join(entrySource, "../blitsen-host/src/native_window/notify/android.rs"),
+      "utf8");
+    expect(rust).not.toContain('jni_str!("getIntent")');
+    expect(rust).not.toContain('jni_str!("getStringExtra")');
+  });
+
+  test("the replay queue uses replacement semantics Windows actually guarantees", async () => {
+    const source = await readFile(join(entrySource,
+      "../blitsen-host/src/native_window/notify/activation.rs"), "utf8");
+    expect(source).toContain("#[cfg(target_os = \"windows\")]");
+    expect(source).toContain("MoveFileExW(");
+    expect(source).toContain("MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH");
   });
 
   test("declares every configuration change, because the failure is silent", () => {
@@ -409,6 +438,26 @@ describe("the toolchain is detected, never installed", () => {
     });
   });
 
+  test("uses the executable and batch names Google's Windows SDK actually ships", async () => {
+    await withWork(async directory => {
+      const sdk = await fakeSdk(directory, {
+        tools: ["aapt2.exe", "d8.bat", "zipalign.exe", "apksigner.bat"],
+      });
+      const toolchain = await detectAndroidToolchain({
+        env: { ANDROID_HOME: sdk, LIBCLANG_PATH: "/llvm/lib" },
+        hostPlatform: "win32",
+        which: name => ({ "cargo-ndk": "cargo-ndk.exe", javac: "javac.exe" })[name] ?? null,
+      });
+      expect(toolchain.tools).toEqual({
+        aapt2: join(sdk, "build-tools", "34.0.0", "aapt2.exe"),
+        d8: join(sdk, "build-tools", "34.0.0", "d8.bat"),
+        zipalign: join(sdk, "build-tools", "34.0.0", "zipalign.exe"),
+        apksigner: join(sdk, "build-tools", "34.0.0", "apksigner.bat"),
+        javac: "javac.exe",
+      });
+    });
+  });
+
   test("names what is missing and the command that installs it", async () => {
     await withWork(async directory => {
       await expect(detected(join(directory, "nowhere"))).rejects.toThrow("nothing is there");
@@ -590,7 +639,7 @@ describe("the build plan", () => {
       .toBe(join("/checkout/target/aarch64-linux-android/debug", ENTRY_SO));
   });
 
-  test("compiles exactly the activation bridge and dexes its three classes", () => {
+  test("compiles exactly the private activation bridge and dexes its two classes", () => {
     const { javaCompile, dex, paths } = plan();
     expect(javaCompile.command).toEqual(["/jdk/bin/javac", "-source", "8", "-target", "8",
       "-bootclasspath", "/sdk/platforms/android-33/android.jar", "-d", paths.classes,
@@ -599,8 +648,7 @@ describe("the build plan", () => {
       "/sdk/bt/d8", "--min-api", String(MIN_SDK), "--output", paths.dex,
     ]);
     expect(dex.command.slice(5).map(path => path.split("/").at(-1))).toEqual([
-      "NotificationBridge.class", "NotificationBridge$Activity.class",
-      "NotificationBridge$DismissReceiver.class",
+      "NotificationBridge.class", "NotificationBridge$ActivationReceiver.class",
     ]);
   });
 
@@ -747,8 +795,8 @@ describe("an Android build, with every subprocess stubbed", () => {
       const at = command[command.indexOf("-d") + 1];
       const packageDirectory = join(at, "com", "blitsen", "runtime");
       await mkdir(packageDirectory, { recursive: true });
-      for (const name of ["NotificationBridge.class", "NotificationBridge$Activity.class",
-        "NotificationBridge$DismissReceiver.class"]) {
+      for (const name of ["NotificationBridge.class",
+        "NotificationBridge$ActivationReceiver.class"]) {
         await writeFile(join(packageDirectory, name), `class ${name}`);
       }
       return { code: 0, stdout: "", stderr: "" };

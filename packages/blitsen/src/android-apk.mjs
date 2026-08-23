@@ -159,11 +159,10 @@ const escapeXml = text => String(text)
  * The whole of the Java side of a Blitsen application.
  *
  * NativeActivity still owns the application lifecycle, but #252 needs two
- * callbacks the platform class does not provide: retaining `onNewIntent` while
- * the Activity is alive, and receiving a notification delete Intent without
- * opening a window. `NotificationBridge` is the complete Java surface: a
- * NativeActivity subclass for the former and a private BroadcastReceiver for
- * the latter. Both only persist an envelope for Rust to drain on a frame turn.
+ * a callback the platform class does not provide: a private receiver that can
+ * persist notification activation before optionally launching NativeActivity.
+ * The exported launcher never sees the trusted envelope, so another package
+ * cannot forge one by explicitly starting that public component.
  *
  * `android:extractNativeLibs="false"` is the reason the archive is written the
  * way it is. It tells the installer to leave the `.so` inside the APK and map
@@ -209,7 +208,7 @@ export function androidManifest({
         android:hasCode="true"${debuggable ? "\n        android:debuggable=\"true\"" : ""}
         android:extractNativeLibs="false">
         <activity
-            android:name="com.blitsen.runtime.NotificationBridge$Activity"
+            android:name="android.app.NativeActivity"
             android:exported="true"
             android:launchMode="singleTop"
             android:theme="@android:style/Theme.DeviceDefault.NoActionBar.Fullscreen"
@@ -221,7 +220,7 @@ export function androidManifest({
             </intent-filter>
         </activity>
         <receiver
-            android:name="com.blitsen.runtime.NotificationBridge$DismissReceiver"
+            android:name="com.blitsen.runtime.NotificationBridge$ActivationReceiver"
             android:exported="false" />
     </application>
 </manifest>

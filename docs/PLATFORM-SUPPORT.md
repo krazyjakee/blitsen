@@ -111,13 +111,12 @@ produce it differs, and only the parts named here exist:
   delivered to the `UNUserNotificationCenter` delegate. The delegate Blitsen's notification library
   installs discards a response for a notification the running process did not itself submit, so a
   cold-start response is not surfaced.
-- **Android** — a body tap and each action button are a `PendingIntent` that starts the Activity
-  with the activation envelope in an extra. A minimal `classes.dex` subclasses `NativeActivity`
-  only to retain `onNewIntent`, so foreground/background taps reach the current session without
-  replacing `android-activity` as lifecycle owner. The same dex carries a private
-  `BroadcastReceiver` for the notification delete Intent: a swipe dismissal does not open the
-  Activity, is persisted in the application's files directory, and reaches the current session on
-  its next frame or a later launch. Nonces deduplicate Activity recreation and repeated delivery.
+- **Android** — body, action and delete `PendingIntent`s target a private receiver in the minimal
+  `classes.dex`. It persists the activation before body/actions launch the platform
+  `NativeActivity` with a clean Intent; swipe dismissal does not open it. The exported launcher
+  never reads activation extras, so another application cannot forge an event by explicitly
+  starting it. The inbox reaches the current session on its next frame or a later launch, and
+  nonces deduplicate repeated delivery.
 
 Where a platform, distribution or installer can hand an envelope over itself, the entry point is
 `--notification-activation <envelope>` on the application's own command line; both hosts read it,

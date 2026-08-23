@@ -8,7 +8,9 @@ mod desktop;
 
 use std::sync::OnceLock;
 
-pub(crate) use activation::{ActivationStore, NO_ACTIVATION_IDENTITY};
+pub(crate) use activation::{
+    ActivationStore, NO_ACTIVATION_IDENTITY, addresses_session, session_token,
+};
 #[cfg(target_os = "android")]
 pub(crate) use android::*;
 #[cfg(not(target_os = "android"))]
@@ -127,11 +129,15 @@ pub(crate) fn install(options: &ActivationOptions, display_name: &str) -> Result
     }
     #[cfg(target_os = "android")]
     {
-        record_intent_activation(&store);
         record_inbox_activations(&directory, &store);
     }
-    for activation in store.take() {
-        crate::dom_bridge::notify::activated(activation);
+    match store.take() {
+        Ok(activations) => {
+            for activation in activations {
+                crate::dom_bridge::notify::activated(activation);
+            }
+        }
+        Err(error) => crate::dom_bridge::notify::failed(String::new(), error),
     }
     Ok(())
 }
