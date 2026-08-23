@@ -315,10 +315,52 @@ export async function cargoTargetDirectory(entryCrate, run = defaultRun) {
   return directory;
 }
 
+/**
+ * The executable and argv Node should spawn for one planned command.
+ *
+ * Android's Windows build-tools deliberately ship `d8.bat` and
+ * `apksigner.bat`. Windows does not make batch files executable through
+ * CreateProcess, so spawning those paths directly fails before the tool runs.
+ * Do not use `shell: true`: it expands metacharacters in every command on
+ * every platform. Only the two batch suffixes go through cmd.exe, with
+ * AutoRun and delayed expansion disabled and every token quoted.
+ *
+ * Percent and quote cannot be represented without invoking cmd.exe expansion
+ * rules. Windows filenames cannot contain quote, and rejecting percent in the
+ * uncommon path/argument that has one is safer than turning it into an
+ * environment-variable expansion. Ampersand, pipe and the other ordinary cmd
+ * metacharacters remain inert inside the quotes.
+ */
+export function subprocessInvocation(command, {
+  platform = process.platform,
+  environment = process.env,
+} = {}) {
+  if (!Array.isArray(command) || command.length === 0) {
+    throw new Error("a subprocess command needs an executable");
+  }
+  const [executable, ...arguments_] = command.map(String);
+  if (platform !== "win32" || !/\.(?:bat|cmd)$/i.test(executable)) {
+    return { executable, arguments: arguments_ };
+  }
+  const unsafe = command.find(value => /[\0\r\n"%]/.test(String(value)));
+  if (unsafe !== undefined) {
+    throw new Error("a Windows .bat/.cmd tool argument contains NUL, a newline, quote or %, "
+      + "which cannot be passed through cmd.exe without expansion");
+  }
+  const line = `"${command.map(value => `"${String(value)}"`).join(" ")}"`;
+  return {
+    executable: environment.ComSpec ?? environment.COMSPEC ?? "cmd.exe",
+    arguments: ["/d", "/v:off", "/s", "/c", line],
+  };
+}
+
 /** Runs one command, streaming its output, and resolves with its exit code. */
 export function defaultRun(command, { cwd, environment, capture = false, output = null } = {}) {
   return new Promise((settle, fail) => {
-    const child = spawn(command[0], command.slice(1), {
+    const invocation = subprocessInvocation(command, {
+      environment: { ...process.env, ...environment },
+    });
+    const child = spawn(invocation.executable, invocation.arguments, {
       cwd,
       env: { ...process.env, ...environment },
       stdio: capture ? ["ignore", "pipe", "pipe"] : ["ignore", "pipe", "pipe"],

@@ -220,9 +220,11 @@ and otherwise reads the platform result. Linux returns `"granted"` because neith
 service nor notification portal exposes a permission prompt—an unavailable service still makes
 `show` reject. macOS
 requires a signed `.app` bundle identity for authorization and uses its application icon;
-passing `icon` is rejected. Linux accepts an icon theme name or absolute path. Windows accepts an
-image path. Android accepts an application drawable resource name and otherwise uses a system
-fallback icon.
+passing `icon` is rejected. A Linux development run accepts an icon theme name or absolute path;
+an identified export uses the notification portal, which accepts a theme name but requires a
+sealed file descriptor for an image, so this API rejects its absolute paths rather than sending the
+unsupported `file` variant. Windows accepts an image path. Android accepts an application drawable
+resource name and otherwise uses a system fallback icon.
 
 An exported macOS application has that identity. A development run does not: `blitsen run` is an
 interpreter executing a script, so `permission`, `requestPermission` and `show` reject with a
@@ -253,7 +255,9 @@ dismissal and expiry events. An export with `--bundle-id` instead uses the notif
 body click or named action can D-Bus-activate a stopped application. The portal supports replacement
 by ID and removal, but exposes neither a dismissal/expiry callback nor a timeout field; for packaged
 applications the desktop owns presentation lifetime, `appName` is the installed desktop identity,
-and only explicit `close` produces a close event.
+and only explicit `close` produces a close event. Its `icon` is an installed icon-theme name; unlike
+the live-process backend, an absolute image path is rejected because the portal accepts image files
+only through a sealed file descriptor.
 Android implements permission, an idempotent `blitsen.default` channel, submission, update, close,
 body taps and action buttons through `android-activity` and `jni`. Android urgency is a builder hint
 inside the user-controlled default channel, and `appName` cannot rename a channel Android has

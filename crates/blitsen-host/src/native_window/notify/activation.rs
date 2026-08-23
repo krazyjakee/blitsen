@@ -199,13 +199,30 @@ impl ActivationStore {
         }
     }
 
-    /// A queue that has never been read is not an error: nothing has activated
+    /// A queue that has never existed is not an error: nothing has activated
     /// this application yet, which is the ordinary case on every launch.
-    fn read(&self) -> Queue {
-        std::fs::read(&self.path)
-            .ok()
-            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-            .unwrap_or_default()
+    /// Every other read failure is fail-closed. Treating damaged bytes as an
+    /// empty queue would let `record` overwrite the replay guard and let `take`
+    /// claim that there was nothing to deliver.
+    fn read(&self) -> Result<Queue, String> {
+        let bytes = match std::fs::read(&self.path) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(Queue::default());
+            }
+            Err(error) => {
+                return Err(format!(
+                    "could not read notification activation queue {}: {error}",
+                    self.path.display()
+                ));
+            }
+        };
+        serde_json::from_slice(&bytes).map_err(|error| {
+            format!(
+                "could not parse notification activation queue {}: {error}",
+                self.path.display()
+            )
+        })
     }
 
     fn write(&self, queue: &Queue) -> Result<(), String> {
@@ -224,7 +241,7 @@ impl ActivationStore {
     /// platform is holding — a command-line envelope, the `Intent` a recreated
     /// Activity was handed again — without first working out whether it is new.
     pub(crate) fn record(&self, activation: Activation) -> Result<(), String> {
-        let mut queue = self.read();
+        let mut queue = self.read()?;
         if queue.consumed.contains(&activation.nonce)
             || queue
                 .pending
@@ -334,7 +351,7 @@ impl ActivationStore {
         &self,
         write: impl FnOnce(&Queue) -> Result<(), String>,
     ) -> Result<Vec<Activation>, String> {
-        let mut queue = self.read();
+        let mut queue = self.read()?;
         let pending = std::mem::take(&mut queue.pending);
         let emptied = !pending.is_empty();
         let mut taken = Vec::new();
@@ -659,6 +676,60 @@ mod tests {
                     .file_name()
                     .to_string_lossy()
                     .ends_with(".tmp"))
+        );
+    }
+
+    fn assert_unreadable_store_is_closed(store: &ActivationStore, expected: &str) {
+        let record = store
+            .record(activation("a2", None))
+            .expect_err("record must not replace unreadable replay state");
+        assert!(record.contains(expected), "{record}");
+        let take = store
+            .take()
+            .expect_err("take must not report unreadable replay state as empty");
+        assert!(take.contains(expected), "{take}");
+    }
+
+    #[test]
+    fn a_truncated_queue_blocks_record_and_delivery_without_being_overwritten() {
+        let scratch = Scratch::new("truncated");
+        let store = store(&scratch.0);
+        let truncated = br#"{"pending":["#;
+        std::fs::write(&store.path, truncated).expect("a truncated durable queue");
+
+        assert_unreadable_store_is_closed(&store, "could not parse");
+        assert_eq!(
+            std::fs::read(&store.path).expect("the damaged queue remains for diagnosis"),
+            truncated,
+        );
+    }
+
+    #[test]
+    fn a_structurally_corrupt_queue_is_not_treated_as_a_fresh_install() {
+        let scratch = Scratch::new("corrupt");
+        let store = store(&scratch.0);
+        let corrupt = br#"{"consumed":{},"pending":[]}"#;
+        std::fs::write(&store.path, corrupt).expect("a corrupt durable queue");
+
+        assert_unreadable_store_is_closed(&store, "could not parse");
+        assert_eq!(
+            std::fs::read(&store.path).expect("the corrupt queue remains for diagnosis"),
+            corrupt,
+        );
+    }
+
+    #[test]
+    fn an_unreadable_queue_path_is_not_treated_as_an_absent_queue() {
+        let scratch = Scratch::new("unreadable");
+        let store = store(&scratch.0);
+        // A directory is a portable read failure even when the tests run as a
+        // privileged user, unlike permission bits which root may bypass.
+        std::fs::create_dir(&store.path).expect("an unreadable queue path");
+
+        assert_unreadable_store_is_closed(&store, "could not read");
+        assert!(
+            store.path.is_dir(),
+            "record must not replace the unreadable path"
         );
     }
 

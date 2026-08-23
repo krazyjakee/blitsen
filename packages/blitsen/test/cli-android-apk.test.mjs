@@ -31,6 +31,7 @@ import {
   MIN_SDK, NOTIFICATION_BRIDGE_SOURCE, resolveEntryCrate, storedZip, TARGET_SDK, versionCode,
 } from "../src/android.mjs";
 import { ASSET_INDEX, ASSET_ROOT } from "../src/android-assets.mjs";
+import { subprocessInvocation } from "../src/android-toolchain.mjs";
 
 const entrySource = join(import.meta.dir, "../../../crates", ENTRY_CRATE);
 const platformSupport = join(import.meta.dir, "../../../docs/PLATFORM-SUPPORT.md");
@@ -43,6 +44,33 @@ const withWork = async run => {
     await rm(directory, { recursive: true, force: true });
   }
 };
+
+describe("Windows Android build-tool invocation", () => {
+  test("runs .bat and .cmd tools through cmd.exe with one fully quoted command", () => {
+    const environment = { ComSpec: "C:\\Windows\\System32\\cmd.exe" };
+    expect(subprocessInvocation([
+      "C:\\Android SDK & Tools\\d8.bat", "--min-api", "26",
+      "C:\\build output\\NotificationBridge.class",
+    ], { platform: "win32", environment })).toEqual({
+      executable: environment.ComSpec,
+      arguments: ["/d", "/v:off", "/s", "/c",
+        "\"\"C:\\Android SDK & Tools\\d8.bat\" \"--min-api\" \"26\" "
+          + "\"C:\\build output\\NotificationBridge.class\"\""],
+    });
+    expect(subprocessInvocation(["C:\\sdk\\apksigner.CMD", "sign"], {
+      platform: "win32", environment: { COMSPEC: "C:\\Windows\\cmd.exe" },
+    }).executable).toBe("C:\\Windows\\cmd.exe");
+  });
+
+  test("does not put native executables through a shell and rejects cmd expansion", () => {
+    expect(subprocessInvocation(["C:\\sdk\\aapt2.exe", "link", "a & b"], {
+      platform: "win32",
+    })).toEqual({ executable: "C:\\sdk\\aapt2.exe", arguments: ["link", "a & b"] });
+    expect(() => subprocessInvocation(["C:\\sdk\\d8.bat", "%TEMP%\\classes"], {
+      platform: "win32",
+    })).toThrow("cannot be passed through cmd.exe without expansion");
+  });
+});
 
 /** A small application on disk, with one reference for the rewriter to follow. */
 async function application(directory) {

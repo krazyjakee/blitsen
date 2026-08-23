@@ -97,13 +97,16 @@ produce it differs, and only the parts named here exist:
 - **Linux** — an export with `--bundle-id` uses the launch-capable notification portal. The build
   writes `<id>.desktop` with `DBusActivatable=true` and `<id>.service`; once an installer puts those
   in the standard applications and session-service directories, the runtime owns the same bus name,
-  registers its host connection as that portal application ID and exports
+  registers its host connection as that portal application ID (again whenever the portal service
+  restarts) and exports
   `org.freedesktop.Application.ActivateAction`. Body and named-action targets carry the persisted
   envelope, and the portal starts a stopped service before invoking it. Calls from any D-Bus peer
   other than the current `org.freedesktop.portal.Desktop` owner are refused. A development run has no
   identity and retains the freedesktop live-process backend. The portal has no dismissal/expiry
-  callback or timeout field, so a packaged app receives body/action activation and explicit `close`,
-  while presentation lifetime and user-dismissal reporting are the desktop's policy.
+  callback or timeout field, and image-file icons require a sealed descriptor this API does not
+  transport, so a packaged app accepts an installed icon-theme name and receives body/action
+  activation and explicit `close`, while presentation lifetime and user-dismissal reporting are the
+  desktop's policy.
 - **Windows** — an export built with `--bundle-id` registers that AppUserModelID with the
   notification platform at startup, which is what gives it a notifier of its own and a permission
   state to read. Windows starts a stopped desktop application for a toast only through a registered

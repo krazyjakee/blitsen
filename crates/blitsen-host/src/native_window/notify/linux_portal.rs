@@ -68,14 +68,40 @@ fn owned(value: impl Into<Value<'static>>) -> OwnedValue {
 }
 
 fn serialized_icon(icon: &str) -> Result<OwnedValue, String> {
-    let (kind, payload) = if Path::new(icon).is_absolute() {
-        let uri = url::Url::from_file_path(icon)
-            .map_err(|_| format!("notification icon {icon:?} is not an absolute file URL"))?;
-        ("file", owned(uri.to_string()))
-    } else {
-        ("themed", owned(vec![icon.to_owned()]))
-    };
-    Ok(owned((kind.to_owned(), payload)))
+    if Path::new(icon).is_absolute() {
+        return Err(format!(
+            "notification icon {icon:?} is an absolute path, but the launch-capable Linux \
+             notification portal accepts image files only as sealed file descriptors; use an \
+             installed icon-theme name for this packaged application"
+        ));
+    }
+    Ok(owned(("themed".to_owned(), owned(vec![icon.to_owned()]))))
+}
+
+#[derive(Default)]
+struct PortalRegistration {
+    owner: Option<String>,
+}
+
+impl PortalRegistration {
+    /// Registers once with each incarnation of xdg-desktop-portal.
+    ///
+    /// The registry permits one call per connection, but its memory disappears
+    /// when the portal process restarts. The unique-name owner distinguishes
+    /// those two cases. The new owner is remembered only after `Register`
+    /// succeeds, so a transient failure is retried before the next portal call.
+    fn ensure(
+        &mut self,
+        owner: &str,
+        register: impl FnOnce() -> Result<(), String>,
+    ) -> Result<(), String> {
+        if self.owner.as_deref() == Some(owner) {
+            return Ok(());
+        }
+        register()?;
+        self.owner = Some(owner.to_owned());
+        Ok(())
+    }
 }
 
 fn payload(
@@ -238,6 +264,8 @@ impl Application {
 
 pub(crate) struct LinuxPortal {
     connection: Connection,
+    identity: String,
+    registration: Mutex<PortalRegistration>,
     store: Store,
     errors: Errors,
     present: Arc<AtomicBool>,
@@ -277,36 +305,61 @@ impl LinuxPortal {
                     entry.entry
                 )
             })?;
+        let portal = Self {
+            connection,
+            identity: entry.entry.clone(),
+            registration: Mutex::new(PortalRegistration::default()),
+            store,
+            errors,
+            present,
+            session: super::session_token(),
+        };
         // A host process has no Flatpak metadata for the portal to infer an
         // application ID from. The host registry binds this connection to the
         // packaged desktop-file ID before its first portal call; without it the
         // notification would be filed under an empty ID and could not activate
         // the service bearing `entry.entry` after this connection exits.
-        Proxy::new(
-            &connection,
-            PORTAL_DESTINATION,
-            PORTAL_PATH,
-            HOST_REGISTRY_INTERFACE,
-        )
-        .and_then(|registry| {
-            registry.call::<_, _, ()>(
-                "Register",
-                &(entry.entry.as_str(), HashMap::<String, OwnedValue>::new()),
-            )
-        })
-        .map_err(|error| {
-            format!(
-                "could not register Linux portal application identity {}: {error}",
-                entry.entry
-            )
+        portal.ensure_registered()?;
+        Ok(Some(portal))
+    }
+
+    fn portal_owner(&self) -> Result<String, String> {
+        let bus = zbus::blocking::fdo::DBusProxy::new(&self.connection).map_err(|error| {
+            format!("could not find the Linux notification portal D-Bus owner: {error}")
         })?;
-        Ok(Some(Self {
-            connection,
-            store,
-            errors,
-            present,
-            session: super::session_token(),
-        }))
+        bus.get_name_owner(
+            PORTAL_DESTINATION
+                .try_into()
+                .expect("the portal destination is a D-Bus name"),
+        )
+        .map(|owner| owner.to_string())
+        .map_err(|error| {
+            format!("could not find the Linux notification portal D-Bus owner: {error}")
+        })
+    }
+
+    fn ensure_registered(&self) -> Result<(), String> {
+        let owner = self.portal_owner()?;
+        crate::dom_bridge::net_lock(&self.registration).ensure(&owner, || {
+            Proxy::new(
+                &self.connection,
+                PORTAL_DESTINATION,
+                PORTAL_PATH,
+                HOST_REGISTRY_INTERFACE,
+            )
+            .and_then(|registry| {
+                registry.call::<_, _, ()>(
+                    "Register",
+                    &(self.identity.as_str(), HashMap::<String, OwnedValue>::new()),
+                )
+            })
+            .map_err(|error| {
+                format!(
+                    "could not register Linux portal application identity {}: {error}",
+                    self.identity
+                )
+            })
+        })
     }
 
     fn proxy(&self) -> Result<Proxy<'_>, String> {
@@ -324,6 +377,7 @@ impl LinuxPortal {
         public_id: &str,
         options: &NotificationOptions,
     ) -> Result<(), String> {
+        self.ensure_registered()?;
         let notification = payload(public_id, options, &self.session)?;
         self.proxy()?
             .call::<_, _, ()>("AddNotification", &(public_id, notification))
@@ -331,6 +385,7 @@ impl LinuxPortal {
     }
 
     pub(crate) fn close(&self, public_id: &str) -> Result<(), String> {
+        self.ensure_registered()?;
         self.proxy()?
             .call::<_, _, ()>("RemoveNotification", &(public_id,))
             .map_err(|error| format!("could not close notification through the portal: {error}"))
@@ -405,5 +460,71 @@ mod tests {
             Activation::parse(&target).unwrap().action.as_deref(),
             Some("open")
         );
+    }
+
+    #[test]
+    fn the_portal_icon_is_a_supported_serialized_themed_icon() {
+        let icon = serialized_icon("com.example.Pong").expect("a themed icon");
+        let (kind, names) = <(String, OwnedValue)>::try_from(icon)
+            .expect("the icon is the portal's (sv) serialization");
+        assert_eq!(kind, "themed");
+        assert_eq!(
+            Value::from(names)
+                .downcast::<Vec<String>>()
+                .expect("the themed payload is an array of names"),
+            ["com.example.Pong"]
+        );
+    }
+
+    #[test]
+    fn an_absolute_icon_is_rejected_instead_of_sending_an_invalid_file_variant() {
+        let error = serialized_icon("/opt/Pong/icon.png")
+            .expect_err("the portal supports image files only through a sealed descriptor");
+        assert!(error.contains("sealed file descriptors"), "{error}");
+        assert!(error.contains("icon-theme name"), "{error}");
+    }
+
+    #[test]
+    fn portal_identity_is_registered_again_only_after_the_owner_changes() {
+        let mut state = PortalRegistration::default();
+        let mut registrations = Vec::new();
+        state
+            .ensure(":1.20", || {
+                registrations.push(":1.20");
+                Ok(())
+            })
+            .unwrap();
+        state
+            .ensure(":1.20", || {
+                registrations.push("duplicate");
+                Ok(())
+            })
+            .unwrap();
+        state
+            .ensure(":1.31", || {
+                registrations.push(":1.31");
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(registrations, [":1.20", ":1.31"]);
+    }
+
+    #[test]
+    fn a_failed_portal_registration_is_retried_for_the_same_owner() {
+        let mut state = PortalRegistration::default();
+        assert_eq!(
+            state
+                .ensure(":1.20", || Err("portal restarting".to_owned()))
+                .expect_err("a failed registration remains a failure"),
+            "portal restarting"
+        );
+        let mut retried = false;
+        state
+            .ensure(":1.20", || {
+                retried = true;
+                Ok(())
+            })
+            .unwrap();
+        assert!(retried);
     }
 }
