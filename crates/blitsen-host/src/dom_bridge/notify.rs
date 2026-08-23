@@ -30,7 +30,6 @@ pub(crate) struct NotificationOptions {
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[cfg_attr(target_os = "windows", allow(dead_code))]
 pub(crate) struct NotificationPatch {
     pub(crate) title: Option<String>,
     pub(crate) body: Option<String>,
@@ -42,7 +41,6 @@ pub(crate) struct NotificationPatch {
 }
 
 impl NotificationOptions {
-    #[cfg(not(target_os = "windows"))]
     pub(crate) fn apply(&mut self, patch: NotificationPatch) {
         if let Some(value) = patch.title {
             self.title = value;

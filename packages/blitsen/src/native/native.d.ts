@@ -309,6 +309,130 @@ export interface NativeTray {
   onAction?(listener: (event: TrayActionEvent) => void): () => void;
 }
 
+/**
+ * A command the platform performs itself, never entering application code.
+ *
+ * `services`, `showAll`, `hideOthers`, `fullscreen` and `bringAllToFront` are
+ * macOS commands; Windows has no equivalent and omits the item rather than
+ * showing a dead one.
+ */
+export type MenuRole =
+  | "about"
+  | "services"
+  | "hide"
+  | "hideOthers"
+  | "showAll"
+  | "quit"
+  | "closeWindow"
+  | "minimize"
+  | "maximize"
+  | "fullscreen"
+  | "bringAllToFront"
+  | "undo"
+  | "redo"
+  | "cut"
+  | "copy"
+  | "paste"
+  | "selectAll";
+
+/**
+ * The place a top-level submenu takes in the macOS main menu.
+ *
+ * Declaring one takes ownership of that submenu's contents. Blitsen supplies a
+ * standard `application`, `edit` and `window` submenu for each role no
+ * top-level submenu declared, and places a declared `help` submenu last.
+ */
+export type MenuSubmenuRole = "application" | "edit" | "window" | "help";
+
+/** An entry whose behaviour is the platform's rather than the application's. */
+export interface MenuRoleItem {
+  type: "role";
+  role: MenuRole;
+  id?: never;
+  label?: never;
+}
+
+/** An entry whose activation is delivered to `onAction`. */
+export interface MenuActionItem {
+  type?: "action";
+  /** Stable application-defined identifier delivered with the action event. */
+  id: string;
+  label: string;
+  enabled?: boolean;
+  /** Native keyboard accelerator such as `CmdOrCtrl+Shift+KeyP`. */
+  accelerator?: string;
+  role?: never;
+}
+
+/** A visual separator. */
+export interface MenuSeparatorItem {
+  type: "separator";
+}
+
+/** A checkable action with state reported in the action event. */
+export interface MenuCheckboxItem {
+  type: "checkbox";
+  id: string;
+  label: string;
+  enabled?: boolean;
+  checked?: boolean;
+  accelerator?: string;
+  group?: never;
+}
+
+/** One choice in a consecutive radio group; exactly one item per group is checked. */
+export interface MenuRadioItem {
+  type: "radio";
+  id: string;
+  label: string;
+  group: string;
+  enabled?: boolean;
+  checked?: boolean;
+  accelerator?: string;
+}
+
+/** A nested menu. Every top-level entry of an application menu is one of these. */
+export interface MenuSubmenuItem {
+  type: "submenu";
+  label: string;
+  /** Platform role, valid only on a top-level submenu. */
+  role?: MenuSubmenuRole;
+  enabled?: boolean;
+  menu: readonly MenuItem[];
+  id?: never;
+}
+
+export type MenuItem =
+  | MenuRoleItem
+  | MenuActionItem
+  | MenuSeparatorItem
+  | MenuCheckboxItem
+  | MenuRadioItem
+  | MenuSubmenuItem;
+
+/** Runtime state for the application menu. */
+export interface ApplicationMenuOptions {
+  /** Top-level submenus, in the order they appear in the bar. */
+  menu: readonly MenuSubmenuItem[];
+}
+
+export interface MenuActionEvent {
+  readonly type: "action";
+  readonly id: string;
+  /** New state for checkbox/radio actions; absent for ordinary actions. */
+  readonly checked?: boolean;
+}
+
+/** `blitsen/menu`: the macOS main menu and the Windows window menu bar. */
+export interface NativeMenu {
+  /** Creates or atomically replaces the application menu. Needs no tray icon. */
+  configure?(options: ApplicationMenuOptions): Promise<void>;
+  /** Removes the current application menu. */
+  remove?(): Promise<void>;
+  /** Listens for activation of an application-defined item; returns an unsubscribe function. */
+  onAction?(listener: (event: MenuActionEvent) => void): () => void;
+}
+
 /** One currently held physical key. */
 export interface PressedKey {
   /** Layout-independent DOM physical code, such as `KeyA` or `ArrowLeft`. */
@@ -319,15 +443,32 @@ export interface PressedKey {
 
 /** Pointer state at the instant an input snapshot was taken. */
 export interface NativePointerState {
-  /** Position in CSS pixels, or null before the pointer has entered the window. */
+  /**
+   * Position in CSS pixels, or null when no pointer is in the window — before
+   * one has entered, after the cursor has left, and between taps on a
+   * touchscreen, where a lifted finger is nowhere rather than still where it
+   * was.
+   */
   readonly x: number | null;
   readonly y: number | null;
-  /** Held buttons: primary, secondary, auxiliary, back, forward or other-N. */
+  /**
+   * Held buttons: primary, secondary, auxiliary, back, forward or other-N. A
+   * finger and a pen tip are the primary button, which is what the DOM calls
+   * them too.
+   */
   readonly buttons: readonly string[];
-  /** Raw device movement accumulated since the previous snapshot. */
+  /**
+   * Raw device movement accumulated since the previous snapshot — the mouse
+   * itself rather than the cursor, so it keeps counting past a screen edge.
+   * Only while this window is focused, and only on desktop: Android has no raw
+   * motion to report, and a touch gesture is read from the position instead.
+   */
   readonly movementX: number;
   readonly movementY: number;
-  /** Wheel deltas accumulated since the previous snapshot, preserving their units. */
+  /**
+   * Wheel deltas accumulated since the previous snapshot, preserving their
+   * units. Desktop signals: Android sends none without a mouse attached.
+   */
   readonly wheelLineX: number;
   readonly wheelLineY: number;
   readonly wheelPixelX: number;
@@ -347,6 +488,98 @@ export interface NativeInputSnapshot {
 export interface NativeInput {
   /** Reads held state and consumes accumulated movement and wheel deltas. */
   snapshot?(): NativeInputSnapshot;
+}
+
+/** One top-level collection a HID device exposes. */
+export interface NativeHidUsage {
+  readonly usagePage: number;
+  readonly usage: number;
+}
+
+/**
+ * A HID device this application may open.
+ *
+ * Generic Desktop keyboard, keypad, mouse and pointer collections never appear
+ * here, and neither does a device that carries one behind the same platform
+ * node. There is no way to ask for one.
+ */
+export interface NativeHidDeviceInfo {
+  /**
+   * Opaque identifier, stable for this process and meaningless outside it.
+   *
+   * Deliberately not a device path or a serial number: it identifies the device
+   * to this run of this application and says nothing about the machine.
+   */
+  readonly id: string;
+  readonly vendorId: number;
+  readonly productId: number;
+  readonly releaseNumber: number;
+  /** The first top-level collection, for the common single-collection device. */
+  readonly usagePage: number;
+  readonly usage: number;
+  /** Every top-level collection reachable through this device. */
+  readonly usages: readonly NativeHidUsage[];
+  readonly productName: string | null;
+  readonly manufacturerName: string | null;
+  /** Reported where the device supplies one. Metadata, never identity. */
+  readonly serialNumber: string | null;
+}
+
+/** One input report, with its report ID separated from the data. */
+export interface NativeHidInputReport {
+  readonly deviceId: string;
+  /** Zero for a device whose descriptor declares no report IDs. */
+  readonly reportId: number;
+  /** The report without its leading report-ID byte. */
+  readonly data: Uint8Array;
+}
+
+/** A device appearing or disappearing while an application is listening. */
+export interface NativeHidDeviceChange {
+  readonly type: "connected" | "disconnected";
+  readonly device: NativeHidDeviceInfo;
+}
+
+/** An opened HID device. Every method settles on a frame turn. */
+export interface NativeHidDevice {
+  readonly id: string;
+  readonly info: NativeHidDeviceInfo;
+  /** False once the device is closed or has disconnected. */
+  readonly opened: boolean;
+  /** The longest report of each kind this device's descriptor declares. */
+  readonly maxInputReportSize: number;
+  readonly maxOutputReportSize: number;
+  readonly maxFeatureReportSize: number;
+  /** Sends an output report; the first byte is the report ID, or zero. */
+  write(data: Uint8Array): Promise<null>;
+  /** Sends a feature report; the first byte is the report ID, or zero. */
+  sendFeatureReport(data: Uint8Array): Promise<null>;
+  /** Reads a feature report, answering it without the report ID asked for. */
+  receiveFeatureReport(reportId: number): Promise<Uint8Array>;
+  /** Listens for input reports; returns an unsubscribe function. */
+  onInputReport(listener: (report: NativeHidInputReport) => void): () => void;
+  /** Listens for the single terminal event a disconnected device produces. */
+  onDisconnect(listener: (event: { readonly deviceId: string }) => void): () => void;
+  /** Closes the device. Produces no disconnect event. */
+  close(): Promise<null>;
+}
+
+/**
+ * `blitsen/hid`: raw HID reports for devices that are not ordinary input.
+ *
+ * Keyboards, pointers and controllers stay with DOM events and the Gamepad API.
+ * `open` rejects with a `DOMException` whose `name` distinguishes permission
+ * denial (`NotAllowedError`), a device that has gone (`NotFoundError`), a
+ * collection Blitsen refuses (`NotSupportedError`) and backend failure
+ * (`OperationError`).
+ */
+export interface NativeHid {
+  /** A snapshot of the devices this application may open. */
+  devices?(): Promise<readonly NativeHidDeviceInfo[]>;
+  /** Opens a device by the identifier `devices()` reported. */
+  open?(deviceId: string): Promise<NativeHidDevice>;
+  /** Listens for devices arriving and leaving; returns an unsubscribe function. */
+  onDeviceChange?(listener: (event: NativeHidDeviceChange) => void): () => void;
 }
 
 export interface NativeNotificationOptions {
@@ -500,6 +733,46 @@ export interface Host {
 }
 
 /**
+ * One battery, as the machine's own power meter reads it.
+ *
+ * Every field is a fraction or a count rather than a unit that would have to be
+ * converted: the drivers report energy in µWh, µJ and mAh depending on the
+ * machine, and a number whose unit depends on the host is not a fact worth
+ * handing out.
+ */
+export interface Battery {
+  /**
+   * Charge as a share of what this battery holds today, 0–1 — the number the
+   * desktop shows near the clock. Taken from the controller rather than divided
+   * out of the energy readings, which many drivers report less precisely.
+   */
+  readonly level: number;
+  /**
+   * `"unknown"` is a state a controller mid-transition really reports, not a
+   * failure to read it.
+   */
+  readonly state: "charging" | "discharging" | "empty" | "full" | "unknown";
+  /**
+   * Seconds until full, or `null` where the platform estimates none — which is
+   * always the case for a battery that is not charging.
+   */
+  readonly timeToFull: number | null;
+  /** Seconds until empty, on the same terms as `timeToFull`. */
+  readonly timeToEmpty: number | null;
+  /**
+   * What it holds today as a share of what it held new. Above 1 where the
+   * design figure is conservative, which is a reading rather than an error.
+   */
+  readonly health: number;
+  /** Charge cycles the controller has counted, or `null` where it counts none. */
+  readonly cycleCount: number | null;
+  /** Manufacturer, or `null` where the platform does not name one. */
+  readonly vendor: string | null;
+  /** Model name, or `null` where the platform does not name one. */
+  readonly model: string | null;
+}
+
+/**
  * `blitsen/os`: what machine this is.
  *
  * None of it has a web spelling. `navigator.hardwareConcurrency` is the closest
@@ -527,6 +800,18 @@ export interface NativeOs {
   host?(): Host;
   /** Reads the locale and time zone this session is configured for. */
   locale?(): Locale;
+  /**
+   * Lists the batteries this machine runs on, which is empty on a machine that
+   * has none — a desktop's real answer rather than a refusal to give one. A
+   * machine that cannot be asked throws instead, so the two never look alike.
+   *
+   * Peripherals are not in it: a wireless mouse publishes its cell alongside the
+   * machine's own on Linux, and only the ones the platform scopes to the system
+   * are batteries this machine runs on.
+   *
+   * Absent on Android, whose reading is `BatteryManager` over JNI.
+   */
+  batteries?(): Battery[];
 }
 
 /**

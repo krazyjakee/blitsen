@@ -540,6 +540,9 @@
     const target = activeElement ?? document.body ?? document;
     const allowed = target.dispatchEvent(event);
     if (type === "keydown" && init.key === "Tab" && allowed) moveFocus(Boolean(init.shiftKey));
+    // Before the field's own default action, because Ctrl+X is not a character
+    // to type and the cut it performs is an edit the field must not also make.
+    if (type === "keydown" && allowed && clipboardShortcut(event, target)) return allowed;
     // A key the focused field took is not also a scroll: a space typed into it
     // must not page the document down behind it, and Home must not leave the
     // caret behind at the top of it.

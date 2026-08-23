@@ -19,14 +19,27 @@ serde_json = "1"
 # neither shipped in the binary nor implied by this module.
 sysinfo = { version = "0.39", default-features = false, features = ["system", "disk"] }
 
+# Two unrelated capabilities that share one predicate: both crates refuse to
+# compile on Android rather than answer there, and each module says why.
+[target.'cfg(not(target_os = "android"))'.dependencies]
 # The clipboard crate TECH.md §9 names. `wayland-data-control` is on because a
 # Wayland session without XWayland has no other way to reach the clipboard.
 #
 # Off Android, where `arboard` has no backend at all — its `platform` module
 # resolves to nothing there and the crate does not compile. See `src/clipboard.rs`
 # for why that absence is inherited rather than worked around.
-[target.'cfg(not(target_os = "android"))'.dependencies]
 arboard = { version = "3.6", features = ["wayland-data-control"] }
+# The battery, which `sysinfo` above does not read at any feature level — it has
+# no battery feature to turn on, so this is a second library rather than a
+# heavier configuration of the one already here. Power is a fourth source on
+# each platform (sysfs, IOKit, `GetSystemPowerStatus`) and this crate implements
+# all of them behind one reading, which is the same argument `sysinfo` is here
+# on. Not hand-rolled over `/sys/class/power_supply`: a wireless mouse's cell is
+# published there too, and telling the machine's own battery from a peripheral's
+# is the `scope` check this crate already makes. Its own `platform` module is a
+# `compile_error!` on Android, which is why it is under this predicate; the
+# reading there is `BatteryManager` over JNI and is not this.
+starship-battery = "0.11"
 
 # Dialogs exist only where the XDG desktop portal does; see `src/dialog.rs` for
 # why macOS and Windows are absent rather than approximated. `rfd` speaks the

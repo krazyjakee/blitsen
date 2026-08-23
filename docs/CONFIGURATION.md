@@ -30,6 +30,18 @@ separate configuration file.
         { "type": "separator" },
         { "label": "Quit", "action": "quit" }
       ]
+    },
+    "menu": {
+      "menu": [
+        { "type": "submenu", "role": "application", "label": "My App", "menu": [
+          { "type": "role", "role": "about" },
+          { "type": "separator" },
+          { "type": "role", "role": "quit" }
+        ] },
+        { "type": "submenu", "label": "File", "menu": [
+          { "id": "new", "label": "New", "accelerator": "CmdOrCtrl+KeyN" }
+        ] }
+      ]
     }
   }
 }
@@ -47,6 +59,7 @@ Only `output` is required.
 | `addons` | string array | `.node` addons to carry, with paths relative to `package.json` |
 | `window` | object | Native window type and creation options |
 | `tray` | object | System tray icon and context menu |
+| `menu` | object | Application menu installed at startup; needs no tray icon |
 
 Unknown keys and empty values are rejected instead of ignored.
 
@@ -73,6 +86,27 @@ Every tray and menu icon path is relative to the `package.json` that declared th
 Absolute paths and paths escaping that package are rejected. Blitsen validates the PNGs and carries
 them under deterministic reserved names in embedded and side-loaded exports, including icons whose
 source files are outside the static output directory.
+
+## Application menu
+
+`menu.menu` is the application menu installed before application JavaScript runs. It is separate
+from `tray` because it needs no tray icon, and `blitsen/menu.configure()` replaces this same menu
+rather than adding a second one — startup configuration and runtime replacement address one object.
+
+Every top-level entry is a submenu, because that is what a menu bar holds. Below that the tree
+follows the tray's rules — nested submenus, application-defined action IDs, checkboxes, consecutive
+radio groups, separators and accelerators, with IDs unique across the whole tree and at most 16
+levels and 512 entries. Two things differ: `{ "type": "role", "role": "copy" }` items carry
+platform commands the tray has no use for, and there are no icons, because a macOS main menu shows
+none.
+
+A top-level submenu may also declare `"role"`: `application`, `edit`, `window` or `help`, at most
+one of each. On macOS that claims a position AppKit reads positionally rather than by title, and
+Blitsen supplies a standard submenu for each of `application`, `edit` and `window` that the
+application did not claim. See [Application menu](NATIVE-APIS.md#application-menu) for the ordering
+rules and [PLATFORM-SUPPORT.md](PLATFORM-SUPPORT.md#application-menu) for where a menu exists at
+all. A configured menu on a platform without one is validated and then installs nothing; it is not
+an error, because the same configuration has to build for every target.
 
 ## How configuration is found
 

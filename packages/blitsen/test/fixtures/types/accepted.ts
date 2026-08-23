@@ -4,7 +4,9 @@ import { defineConfig } from "blitsen";
 import app from "blitsen/app";
 import clipboard from "blitsen/clipboard";
 import dialog from "blitsen/dialog";
+import hid from "blitsen/hid";
 import input from "blitsen/input";
+import menu from "blitsen/menu";
 import notify from "blitsen/notify";
 import tray from "blitsen/tray";
 import nativeWindow from "blitsen/window";
@@ -75,11 +77,66 @@ if (tray.onAction) {
   });
   unsubscribe();
 }
+// The application menu needs no tray: nothing above is configured to use one.
+if (menu.configure) {
+  void menu.configure({
+    menu: [
+      { type: "submenu", role: "application", label: "Demo", menu: [
+        { type: "role", role: "about" },
+        { type: "separator" },
+        { type: "role", role: "quit" },
+      ] },
+      { type: "submenu", label: "File", menu: [
+        { id: "new", label: "New", accelerator: "CmdOrCtrl+KeyN" },
+        { type: "checkbox", id: "autosave", label: "Autosave", checked: true },
+        { type: "submenu", label: "Theme", menu: [
+          { type: "radio", id: "menu-light", label: "Light", group: "theme", checked: true },
+          { type: "radio", id: "menu-dark", label: "Dark", group: "theme" },
+        ] },
+      ] },
+    ],
+  });
+}
+if (menu.onAction) {
+  const unsubscribe: () => void = menu.onAction(event => {
+    void event.id;
+    void event.checked;
+  });
+  unsubscribe();
+}
+if (menu.remove) void menu.remove();
 if (input.snapshot) {
   const state = input.snapshot();
   void state.sequence;
   void state.keys[0]?.code;
   void state.pointer.movementX;
+}
+if (hid.devices) {
+  void hid.devices().then(async devices => {
+    const found = devices[0];
+    if (!found || !hid.open) return;
+    void found.usages[0]?.usagePage;
+    void found.serialNumber;
+    const device = await hid.open(found.id);
+    const stop: () => void = device.onInputReport(report => {
+      void report.reportId;
+      void report.data.byteLength;
+    });
+    await device.write(new Uint8Array([0x00, 0x01]));
+    await device.sendFeatureReport(new Uint8Array([0x03, 0x01]));
+    const feature: Uint8Array = await device.receiveFeatureReport(3);
+    void feature;
+    void device.maxOutputReportSize;
+    device.onDisconnect(event => { void event.deviceId; });
+    stop();
+    await device.close();
+  });
+}
+if (hid.onDeviceChange) {
+  const unsubscribe: () => void = hid.onDeviceChange(event => {
+    if (event.type === "connected") void event.device.productName;
+  });
+  unsubscribe();
 }
 if (notify.show) void notify.show({ title: "Complete", urgency: "normal" });
 if (notify.permission) void notify.permission();
@@ -133,6 +190,21 @@ void defineConfig({
         { type: "radio", id: "dark", label: "Dark", group: "theme" },
       ] },
       { label: "Quit", action: "quit", enabled: true },
+    ],
+  },
+  menu: {
+    menu: [
+      { type: "submenu", role: "application", label: "Demo", menu: [
+        { type: "role", role: "about" },
+        { type: "separator" },
+        { type: "role", role: "quit" },
+      ] },
+      { type: "submenu", label: "File", menu: [
+        { id: "new", label: "New", accelerator: "CmdOrCtrl+KeyN" },
+      ] },
+      { type: "submenu", role: "help", label: "Help", menu: [
+        { id: "docs", label: "Documentation" },
+      ] },
     ],
   },
 });

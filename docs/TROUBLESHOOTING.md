@@ -132,6 +132,21 @@ npx blitsen doctor dist --target win32-x64
 Dialogs are Linux-only in this release; the Unix single-instance lock is absent on Windows; app,
 window, dialog and clipboard native modules are absent on Android. See [Native APIs](NATIVE-APIS.md).
 
+## macOS notifications need an application bundle identity
+
+macOS grants notification permission to an application identity, and a development run is an
+interpreter executing a script, so it has none. Give the development host one of its own:
+
+```sh
+npx blitsen --dev-bundle
+```
+
+That builds a signed development `.app` around the interpreter and re-runs the same command inside
+it. Nothing is impersonated: the identifier is `com.blitsen.dev.<name>` unless `--bundle-id` names
+another, so a permission granted here is not one granted to the application you export. If
+`codesign` rejects the ad-hoc signature — a host binary carrying entitlements is the usual reason —
+pass your own command with `--sign`. See [Packaging](PACKAGING.md#run-with-a-macos-development-identity).
+
 ## A window or dialog method says the window is unavailable
 
 Call window-dependent APIs from the `load` event or later. Document scripts can run before the

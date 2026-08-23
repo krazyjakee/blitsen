@@ -22,6 +22,7 @@ const declared = JSON.parse(native.runBridgeHarness(
          : entry.owner.split(".").reduce((value, key) => value?.[key], globalThis);
        return [entry.api, Boolean(owner) && (entry.member ?? entry.api) in owner];
      });
+     globalThis.__blitsenNotifyIdentity = typeof __blitsenNativeNotifyStandard === "function";
      document.getElementById("surface").setAttribute("data-surface", "ok"); }`,
   200,
   100,
@@ -29,12 +30,37 @@ const declared = JSON.parse(native.runBridgeHarness(
 assert.equal(declared.nodes.find(node => node.attributes.id === "surface").attributes["data-surface"], "ok");
 const runtimeSurface = new Map(globalThis.__blitsenSurface);
 delete globalThis.__blitsenSurface;
+// The host's answer for each API the manifest calls conditional (#253). On
+// macOS the standard `Notification` facade follows the bundle identity of
+// whatever process is running — this one, here — rather than the bootstrap
+// source, so the manifest's status is not the expectation there. What the
+// bootstrap read is: the hook is a global of the realm the bridge installed
+// into, so this compares the two halves of one decision instead of asserting
+// anything about how the harness itself happens to be packaged.
+//
+// Named per API rather than generalised. A second conditional API would be
+// decided by a hook of its own, and answering for it with this one would be a
+// pass that means nothing — so it fails below until someone adds it.
+const hostDecisions = new Map([["Notification", globalThis.__blitsenNotifyIdentity]]);
+delete globalThis.__blitsenNotifyIdentity;
 for (const entry of manifest.apis) {
   // What the *engine* does not supply is not answerable here: this harness runs
   // the bridge inside the host's own JavaScript realm, which is not the engine
   // an exported application runs on. `cli-doctor.test.mjs` runs the built
   // runtime and checks those against the engine that is actually there.
   if (entry.origin === "engine") continue;
+  // Only on the platforms the condition names: everywhere else the API is
+  // installed whatever the host answered, and asking the host there would let
+  // the manifest and a hook go missing together without a word.
+  if (entry.condition?.platforms.includes(process.platform)) {
+    assert(hostDecisions.has(entry.api),
+      `${entry.api} is conditional on ${process.platform} and this harness has no host answer `
+      + "to check it against");
+    assert.equal(runtimeSurface.get(entry.api), hostDecisions.get(entry.api),
+      `${entry.api} is installed on ${process.platform} only where the host says so, and the `
+      + "runtime disagrees with what the host said");
+    continue;
+  }
   assert.equal(runtimeSurface.get(entry.api), entry.status === "implemented",
     `${entry.api} is ${entry.status} in the API manifest but the opposite in the runtime`);
 }

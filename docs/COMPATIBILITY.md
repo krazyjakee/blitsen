@@ -897,8 +897,7 @@ forward or backward and have no third answer, so `"none"` — the direction a ra
 has until something says otherwise — is kept beside the control and dropped the moment anything
 moves the caret.
 
-What is **not** here: the clipboard (`cut`/`copy`/`paste` and their `inputType`s), undo and redo,
-IME composition (`compositionstart` and the rest — there is no IME path into this runtime, which is
+What is **not** here: undo and redo, IME composition (`compositionstart` and the rest — there is no IME path into this runtime, which is
 why `InputEvent.isComposing` is always false), `getTargetRanges()` on a `beforeinput`, the
 `selectionchange` event, implicit form submission on Enter, and the `change` event a text control
 fires when its value is committed on blur. A framework that listens for `input` — React's
@@ -966,6 +965,70 @@ measurement this runtime never made.
   tap, whether that decision belongs here or in the renderer, and whether momentum is worth a
   per-frame animator — and none of that is settled. An application that wants a finger to scroll
   can do it today from `pointermove` and `element.scrollTop`. Tracked in #145.
+
+## Clipboard events and drag and drop
+
+**`copy`, `cut` and `paste`** are dispatched at the focused element when Ctrl (or Cmd) is held with
+C, X or V, and each carries a `clipboardData` `DataTransfer`. Nothing else raises them: there is no
+menu bar and no context menu in this runtime, and an application that has its own can dispatch a
+`ClipboardEvent` of its own. Shift and Alt are excluded on purpose, so `Ctrl+Shift+C` stays the
+application's to bind.
+
+The default action is the platform clipboard, through the same `arboard` backend `blitsen/clipboard`
+uses. A `copy` nothing cancelled writes the selection — the selected text inside the focused control,
+or `getSelection()` when focus is not in one — and a `cut` writes it and then deletes it from an
+editable control, reporting a `beforeinput`/`input` pair with `inputType: "deleteByCut"`. A **cancelled**
+`copy` or `cut` writes whatever the listener put in `clipboardData` instead, which is the whole
+reason that store is writable on those two events. `paste` arrives with the clipboard's text and
+HTML already read into a read-only store, and inserts the plain text into the focused editable
+control unless the listener cancels it (`inputType: "insertFromPaste"`).
+
+The events are absent where the platform clipboard is — Android, which has no `arboard` backend
+(see the native module matrix). `ClipboardEvent`, `DragEvent` and `DataTransfer` are still
+constructible there.
+
+**A file dragged in from the desktop** is delivered as `dragenter`, `dragover`, `dragleave` and
+`drop` at the element under the pointer, with the same HTML rule browsers apply: the `drop` is
+dispatched only where the preceding `dragover` was cancelled, because cancelling it is how an
+element says it will take the drop. An element that never said so gets the browser default instead,
+which in a document with nowhere to navigate to is nothing at all.
+
+```js
+zone.addEventListener("dragover", event => event.preventDefault());
+zone.addEventListener("drop", event => {
+  event.preventDefault();
+  for (const path of event.dataTransfer.paths) open(path);
+});
+```
+
+**`dataTransfer.paths` is the divergence, and it is the point.** A browser answers a drop with
+`File` objects whose bytes must be read back asynchronously, because a page must never learn where
+a user keeps their files. An exported Blitsen application is the user's own program, so the honest
+answer is the one the platform gave: an absolute filesystem path, opened directly by whatever
+filesystem library the application already uses. `paths` is frozen and in the order the platform
+listed them; a path the platform spells in bytes that are not UTF-8 is left out rather than handed
+over mangled, because a lossy name opens nothing.
+
+`types` contains `"Files"` when the drag carries any, so the check that decides whether to accept a
+drop is unchanged, and `getData("text/uri-list")` returns the same files as `file:` URLs, built by
+the same URL parser `location` uses. The store is read-only for the duration of a drag, which HTML
+spells as `setData` and `clearData` doing nothing rather than throwing. `DataTransfer.files`,
+`.items` and `.setDragImage` are absent: there is no `File` in this runtime to put in the first
+two, and the third draws for a drag out of the window.
+
+### What is absent here, and why
+
+- **Starting a drag** — `draggable`, `dragstart`, `drag`, `dragend`, and dragging out to the
+  desktop. winit reports a drag that *arrives*; it has no drag source. Starting one means an
+  `IDropSource` with `DoDragDrop`, an `NSDraggingSession` or a `wl_data_device` offer, and the
+  first two run a modal loop on the thread Blitsen keeps free to paint. `blitsen/window` records
+  `startFileDrag` as absent for the same reason rather than answering it badly.
+- **In-document drag and drop between elements.** It needs the same drag source: what winit
+  delivers is a drag the desktop started. A list that reorders itself can do it today from
+  `pointerdown`/`pointermove`, which is what most component libraries already do.
+- **`dropEffect` and `effectAllowed` as behaviour.** Both are readable and writable and neither
+  changes what the platform does with the drag; there is no source to negotiate a copy-versus-move
+  with.
 
 ## Canvas
 
@@ -1133,8 +1196,8 @@ Everything else `navigator` normally carries is capability rather than identity 
 `userAgentData` — and all of it stays absent, so a feature test selects a fallback instead of
 calling something that cannot work. `screen` and `caches` are absent for the same reason. The
 standard `Notification` global is backed by `blitsen/notify` where the platform can also implement
-its lifecycle and `close()` contract: Linux and identified macOS application bundles. It stays
-absent on Windows, Android, and an unbundled macOS development host rather than exposing a
+its lifecycle and `close()` contract: Linux, Windows and identified macOS application bundles. It
+stays absent on Android and in an unbundled macOS development host rather than exposing a
 constructor with missing lifecycle behavior.
 
 The user-agent string names Blitsen (`Blitsen/<version> (Linux x86_64)`) instead of impersonating a
@@ -1237,6 +1300,13 @@ doctor` reports from the same manifest, and the native harness asserts every abs
 genuinely `undefined` in a real runtime — so the diagnostics, this document and the runtime
 cannot drift apart. Regenerate with `bun run --cwd packages/blitsen api:sync`.
 
+One row of the surface table cannot be read as a build fact, and the **conditional** table below
+names it: an API listed there is implemented and installed everywhere, except on the platforms it
+names, where the host decides once per run whether the process it is in can carry the API at all.
+Nothing changes for the application — the API is absent when the condition does not hold, so the
+same feature detection selects the same fallback — but two runs of one build can answer
+differently, which is why it is a table rather than a column.
+
 Blitsen makes no claim either way about the JavaScript host's own utilities — `URL`,
 `URLSearchParams`, `TextEncoder`, `crypto`, `structuredClone`, `performance`, `queueMicrotask`,
 `DOMException`, `console` — so they are not listed; the host below the DOM supplies them, which
@@ -1255,6 +1325,7 @@ determinism gate instead.
 | WEB_DOM | `document`, `Document`, `Node`, `Element`, `NodeList`, `DOMTokenList`, `Attr`, `NamedNodeMap`, `CSSStyleDeclaration`, `MutationObserver`, `HTMLElement`, `HTMLIFrameElement`, `SVGElement`, `Text`, `Comment`, `DocumentFragment`, `HTMLLinkElement`, `HTMLTemplateElement`, `HTMLImageElement`, `Image`, `HTMLImageElement.src`, `HTMLImageElement.naturalWidth`, `HTMLImageElement.naturalHeight`, `HTMLImageElement.complete`, `HTMLImageElement.onload`, `HTMLImageElement.onerror`, `Element.querySelector`, `Element.querySelectorAll`, `Element.closest`, `Element.matches`, `Element.cloneNode`, `Element.contains`, `Element.children`, `Element.previousSibling`, `Element.lastChild`, `Element.parentElement`, `Element.dataset`, `Element.nodeValue`, `Element.before`, `Element.after`, `Element.getElementsByTagName`, `Element.outerHTML`, `Element.insertAdjacentHTML`, `Element.scrollIntoView`, `Element.getElementsByClassName`, `Element.firstElementChild`, `Element.lastElementChild`, `Element.nextElementSibling`, `Element.previousElementSibling`, `Element.childElementCount`, `Element.append`, `Element.prepend`, `Element.replaceChildren`, `Element.getAttributeNS`, `Element.setAttributeNS`, `Element.removeAttributeNS`, `Element.hasAttributes`, `Element.getAttributeNames`, `Element.toggleAttribute`, `Element.getClientRects`, `Element.getRootNode`, `Element.normalize`, `Element.attributes`, `Element.insertAdjacentElement`, `Element.innerText`, `Element.compareDocumentPosition`, `Element.offsetParent`, `Element.clientTop`, `Element.clientLeft`, `Element.hidden`, `Element.tabIndex`, `Element.title`, `Document.title`, `Document.dir`, `Document.getElementsByName`, `Document.elementFromPoint`, `Document.elementsFromPoint`, `Document.scrollingElement`, `Document.characterSet`, `Document.documentURI`, `Document.hasFocus`, `Document.adoptNode`, `HTMLLinkElement.relList`, `HTMLLinkElement.onload`, `HTMLLinkElement.onerror`, `HTMLTemplateElement.content`, `DOMTokenList.supports`, `Document.createElementNS`, `Document.createComment`, `Document.createDocumentFragment`, `Document.getElementsByTagName`, `Document.getElementsByClassName`, `Document.importNode`, `NodeList.item`, `NodeList.forEach` | `Element.attachShadow`, `Document.currentScript` |
 | WEB_FORM_CONTROLS | `HTMLInputElement`, `HTMLTextAreaElement`, `HTMLSelectElement`, `HTMLOptionElement`, `HTMLButtonElement`, `HTMLFormElement`, `HTMLInputElement.value`, `HTMLInputElement.defaultValue`, `HTMLInputElement.checked`, `HTMLInputElement.defaultChecked`, `HTMLInputElement.type`, `HTMLInputElement.name`, `HTMLInputElement.disabled`, `HTMLInputElement.form`, `HTMLInputElement.select`, `HTMLInputElement.setSelectionRange`, `HTMLInputElement.selectionStart`, `HTMLInputElement.selectionEnd`, `HTMLInputElement.selectionDirection`, `HTMLTextAreaElement.value`, `HTMLTextAreaElement.defaultValue`, `HTMLTextAreaElement.select`, `HTMLTextAreaElement.setSelectionRange`, `HTMLTextAreaElement.selectionStart`, `HTMLTextAreaElement.selectionEnd`, `HTMLTextAreaElement.selectionDirection`, `HTMLSelectElement.options`, `HTMLSelectElement.selectedIndex`, `HTMLSelectElement.value`, `HTMLSelectElement.length`, `HTMLSelectElement.selectedOptions`, `HTMLSelectElement.multiple`, `HTMLOptionElement.value`, `HTMLOptionElement.text`, `HTMLOptionElement.selected`, `HTMLOptionElement.index`, `HTMLOptionElement.label`, `HTMLOptionElement.defaultSelected`, `HTMLButtonElement.value`, `HTMLButtonElement.type`, `HTMLFormElement.elements`, `HTMLFormElement.requestSubmit` | `HTMLInputElement.files`, `HTMLInputElement.labels`, `HTMLInputElement.validity`, `HTMLInputElement.checkValidity`, `HTMLSelectElement.add`, `HTMLFormElement.submit`, `HTMLFormElement.reset`, `HTMLFormElement.action`, `HTMLFormElement.method`, `HTMLFormElement.checkValidity` |
 | WEB_EVENTS | `EventTarget`, `Event`, `CustomEvent`, `SubmitEvent`, `MouseEvent`, `KeyboardEvent`, `FocusEvent`, `InputEvent`, `PointerEvent`, `WheelEvent`, `addEventListener`, `removeEventListener`, `dispatchEvent`, `ErrorEvent`, `Element.setPointerCapture`, `Element.releasePointerCapture`, `Element.hasPointerCapture` | — |
+| WEB_TRANSFER | `ClipboardEvent`, `DragEvent`, `DataTransfer`, `DataTransfer.dropEffect`, `DataTransfer.effectAllowed`, `DataTransfer.types`, `DataTransfer.getData`, `DataTransfer.setData`, `DataTransfer.clearData`, `DataTransfer.paths` | `DataTransfer.files`, `DataTransfer.items`, `DataTransfer.setDragImage` |
 | WEB_SCROLL | `scrollTo`, `scrollBy`, `scroll`, `scrollX`, `scrollY`, `pageXOffset`, `pageYOffset` | — |
 | WEB_SELECTION | `getSelection`, `Range`, `Selection`, `CaretPosition`, `Document.createRange`, `Document.getSelection`, `Document.caretRangeFromPoint`, `Document.caretPositionFromPoint`, `Range.setStart`, `Range.setEnd`, `Range.setStartBefore`, `Range.setStartAfter`, `Range.setEndBefore`, `Range.setEndAfter`, `Range.selectNode`, `Range.selectNodeContents`, `Range.collapse`, `Range.cloneRange`, `Range.startContainer`, `Range.startOffset`, `Range.endContainer`, `Range.endOffset`, `Range.collapsed`, `Range.commonAncestorContainer`, `Range.comparePoint`, `Range.compareBoundaryPoints`, `Range.intersectsNode`, `Range.isPointInRange`, `Range.toString`, `Range.getClientRects`, `Range.getBoundingClientRect`, `Selection.anchorNode`, `Selection.anchorOffset`, `Selection.focusNode`, `Selection.focusOffset`, `Selection.isCollapsed`, `Selection.rangeCount`, `Selection.type`, `Selection.direction`, `Selection.getRangeAt`, `Selection.addRange`, `Selection.removeAllRanges`, `Selection.setBaseAndExtent`, `Selection.collapse`, `Selection.extend`, `Selection.selectAllChildren`, `Selection.containsNode`, `Selection.toString`, `CaretPosition.offsetNode`, `CaretPosition.offset`, `CaretPosition.getClientRect` | `Range.deleteContents`, `Range.extractContents`, `Range.cloneContents`, `Range.insertNode`, `Range.surroundContents` |
 | WEB_SCHEDULING | `requestAnimationFrame`, `cancelAnimationFrame`, `setTimeout`, `clearTimeout`, `setInterval`, `clearInterval` | `requestIdleCallback`, `cancelIdleCallback` |
@@ -1282,12 +1353,17 @@ determinism gate instead.
 | WEB_COMPONENTS | `DOMParser` | `customElements`, `ShadowRoot` |
 | WEB_WASM | — | `WebAssembly` |
 
+| Conditional API | Platform | Installed when |
+| --- | --- | --- |
+| `Notification` | darwin | macOS notifications are `UNUserNotificationCenter`, which needs a bundle identity to address and to hold permission against — and answers a process that has none by aborting it rather than by failing the call, so the facade cannot be installed and left to throw. An exported `.app` carries that identity and a development run of the interpreter does not; `blitsen run --dev-bundle` gives the development host one of its own rather than borrowing an installed application's. A process cannot acquire or lose a bundle identifier while it runs, so the question is settled once, as the runtime installs (#253). `blitsen/notify` is present either way and says why a call was refused. |
+
 | Diagnostic | Severity | Reported as |
 | --- | --- | --- |
 | `WEB_FETCH` | error | fetch names a path this application does not ship, and there is no server behind it. |
 | `WEB_STORAGE_MEMORY` | warning | localStorage is in memory only: what it stores is gone when the application exits. |
 | `WEB_DOM` | warning | This DOM method is not implemented. |
 | `WEB_FORM_CONTROLS` | warning | This form-control API is not implemented. |
+| `WEB_TRANSFER` | warning | This part of DataTransfer is not implemented; a dropped file is a path, not a File. |
 | `WEB_SELECTION` | warning | This part of the range API is not implemented; the boundary, text and geometry reads are. |
 | `WEB_SCHEDULING` | warning | Idle-callback scheduling is not implemented. |
 | `WEB_URL` | warning | Object URLs are not implemented; URL and URLSearchParams are. |
@@ -1423,13 +1499,15 @@ lib. The capability tiers above are the list, and `blitsen doctor` is the check.
 | Module | Implemented | Absent |
 | --- | --- | --- |
 | `blitsen/app` | `dataDir`, `cacheDir`, `configDir`, `requestSingleInstanceLock`, `relaunch` | `onQuitRequest`, `onSuspend`, `onResume`, `registerProtocol`, `registerFileAssociation` |
-| `blitsen/window` | `setSize`, `setFullscreen`, `isFullscreen`, `setDecorations`, `isDecorated`, `setMinimized`, `setMaximized`, `isMaximized`, `startDrag`, `close`, `setAlwaysOnTop`, `setCursor`, `setCursorVisible`, `setCursorGrab`, `monitors` | `create`, `setTransparent`, `isAlwaysOnTop` |
+| `blitsen/window` | `setSize`, `setFullscreen`, `isFullscreen`, `setDecorations`, `isDecorated`, `setMinimized`, `setMaximized`, `isMaximized`, `startDrag`, `close`, `setAlwaysOnTop`, `setCursor`, `setCursorVisible`, `setCursorGrab`, `monitors` | `create`, `setTransparent`, `isAlwaysOnTop`, `startFileDrag` |
 | `blitsen/dialog` | `openFile`, `openFiles`, `saveFile`, `openFolder`, `openFolders`, `message` | — |
 | `blitsen/clipboard` | `readText`, `readHtml`, `readImage`, `writeText`, `writeHtml`, `writeImage`, `clear` | `readMime`, `writeMime` |
 | `blitsen/tray` | `configure`, `remove`, `onClick`, `onAction` | — |
+| `blitsen/menu` | `configure`, `remove`, `onAction` | — |
 | `blitsen/input` | `snapshot` | `gamepads`, `vibrateGamepad`, `onDeviceChange` |
+| `blitsen/hid` | `devices`, `open`, `onDeviceChange` | — |
 | `blitsen/notify` | `show`, `permission`, `requestPermission`, `update`, `close`, `onEvent` | — |
-| `blitsen/os` | `cpu`, `memory`, `storage`, `host`, `locale` | `displays`, `battery`, `idleTime` |
+| `blitsen/os` | `cpu`, `memory`, `storage`, `host`, `batteries`, `locale` | `displays`, `idleTime` |
 
 | Absent member | Why |
 | --- | --- |
@@ -1441,14 +1519,14 @@ lib. The capability tiers above are the list, and `blitsen doctor` is the check.
 | `window.create` | A second window needs the shared-versus-isolated JavaScript context question answered first: whether two windows see one `document` and one module graph or two decides what `create` even returns, and it cannot be settled by implementing it. The window this run already opened is what the rest of this module operates on. |
 | `window.setTransparent` | Transparency is chosen when a window is created — winit's own setter does nothing on X11 after that — so honouring it would mean replacing the window, which is `create`. Run `blitsen` against a directory whose window should be transparent and the attribute belongs on that window, not on a call. |
 | `window.isAlwaysOnTop` | winit sets the window level and cannot read it back, and the window manager may change it without telling the application. Remembering what was last set would be a second source of truth that quietly goes stale. |
+| `window.startFileDrag` | Dropping *into* the window is winit's to report and is implemented; dragging *out* of it is not something winit can start. A drag source is a platform object driven from the thread that owns the window — `IDropSource` with `DoDragDrop`, an `NSDraggingSession`, a `wl_data_device` offer — and the first two run a modal loop that does not return until the drop, on the one thread Blitsen keeps free to paint. That is a design question rather than a missing call, so the module says so instead of answering it. |
 | `clipboard.readMime` | `arboard` reads the flavours above and no others. Arbitrary MIME needs a different mechanism on each platform — X11 selection targets, `wl_data_offer`, `NSPasteboardType`, a registered Windows format — and no part of that is shared. |
 | `clipboard.writeMime` | The counterpart of `readMime`, absent for the same reason. |
 | `input.gamepads` | Gamepads need the standard navigator.getGamepads surface, stable device identity and hot-plug delivery; keyboard and pointer state alone cannot approximate them. |
 | `input.vibrateGamepad` | Vibration belongs to a discovered gamepad actuator and cannot be implemented before gamepad discovery identifies the device and its supported effects. |
 | `input.onDeviceChange` | Device change is the connection counterpart of gamepad and raw-device discovery, neither of which is installed yet. |
 | `os.displays` | The monitors are `window.monitors()`, which already reports each one's size, position and scale factor. A second list here could disagree with that one. |
-| `os.battery` | Nothing behind this module reports power. The processor, the memory and the volumes come from one library that implements all three per platform; the battery is a fourth source on each — UPower's D-Bus service, IOKit, `GetSystemPowerStatus` — and a desktop with no battery has to read as *absent* rather than as an empty reading, which is a distinction only the real source can make. |
-| `os.idleTime` | Seconds since the last input is a different mechanism on every platform, and Wayland has no answer at all for a client that is not focused — the idle-notify protocol reports crossing a threshold the compositor was asked about, not a duration. Reporting zero on the sessions that cannot answer would be indistinguishable from a machine in use. |
+| `os.idleTime` | Seconds since the last input is a different mechanism on every platform — the X11 screensaver extension, `CGEventSourceSecondsSinceLastEventType`, `GetLastInputInfo` — and Wayland has no answer at all for a client that is not focused: the idle-notify protocol reports crossing a threshold the compositor was asked about, not a duration. Reporting zero on the sessions that cannot answer would be indistinguishable from a machine in use. It is also the one reading in this module that describes the person rather than the machine — how long they have been away from the keyboard, available to any application that asks for it — so implementing it where it happens to work would buy that signal on three platforms in exchange for a wrong answer on the fourth. |
 
 <!-- /generated -->
 
@@ -1464,4 +1542,5 @@ Where a member exists, it means the same thing everywhere. What differs is under
 | `clipboard.*` | On X11 and Wayland the process that copied is the one that serves the selection, so **what an exported Blitsen application copies disappears when it exits**, unless the desktop runs a clipboard manager that takes a copy. macOS and Windows hand the data to the system and it survives. `writeHtml` also stores the plain text an application that cannot read HTML will paste instead. Images cross as 8-bit RGBA, `{ width, height, data }`, and are carried as PNG on Linux, `CF_DIB` on Windows and an `NSImage` on macOS — a decoded image is not guaranteed to be byte-identical to the one that was copied. A read finds `null` where the clipboard holds nothing in that flavour; a clipboard the session does not offer at all — a headless process — throws instead, because that is an environment refusing rather than an empty clipboard. |
 | `window.*` | Operates on the window the run already opened, and is available from the `load` event onwards — document scripts run before the window exists, and a call before then says so rather than doing nothing. `setAlwaysOnTop` reaches the X11 window manager and Windows and macOS; **Wayland has no protocol for stacking a window above others, so the call is accepted and has no effect there**. `setCursorGrab("locked")` is X11-unsupported and `"confined"` is macOS-unsupported; both throw naming the platform rather than silently degrading. `setSize` asks, it does not assert: the size that arrives is whatever the window manager granted, and it is reported by the `resize` event and `innerWidth`/`innerHeight` like any other resize. |
 | `dialog.*` | Linux and the BSDs only, through the XDG desktop portal, and absent on macOS and Windows rather than approximated: those platforms require a file dialog on the main thread, which is the thread this design deliberately leaves free to keep painting. Every dialog is modal to the application window and needs one, so these are available from the `load` event onwards like `window.*`. Each returns a **Promise**, and the frame loop keeps turning while the dialog is up — `requestAnimationFrame` still fires, the window still paints, and the answer is delivered on a frame turn alongside `fetch` completions rather than part-way through one. Blocking instead would stop the application repainting for as long as the dialog was open, which X11 and Wayland compositors treat as a hung client. A dismissed file dialog answers `null`: the portal cannot distinguish Cancel from choosing nothing. Paths are real filesystem paths, not `File` objects. Where no portal is running, the desktop's `zenity` is used instead. |
-| `notify.*` | IDs live for one application session and stop addressing a notification after its click, action, dismissal, expiry or close event. Linux has no per-application permission state and therefore reports `"granted"`; failure to reach its freedesktop service is a `show` error. Modern macOS reports and requests real authorization, and requires the signed `.app` identity Apple associates it with; it uses that app's icon and rejects a per-notification icon. The installed Windows library reports in-process activation and dismissal but exposes neither an addressable toast handle nor the notifier setting, so permission remains `"default"` and update/close reject there (#251). Android creates a stable default channel, handles API 33 permission, and supports show/update/close; action submissions reject and tap/dismiss events remain unavailable until Android intent routing joins #252. Every completion and lifecycle event enters JavaScript on a frame turn, never from the platform callback thread. Cold-start activation is separate packaging work (#252). |
+| `hid.*` | Desktop only, and refuses more than the platform does: the Generic Desktop keyboard, keypad, mouse and pointer collections cannot be opened on any of them, and neither can a device carrying one alongside the collection an application wants. On Linux that is the load-bearing case — one hidraw node exposes every collection of the physical device, so the refusal covers the node; Windows and macOS give each top-level collection its own handle, where the same rule refuses only the protected one. Windows additionally reserves some system collections itself, which reports as `NotAllowedError` rather than as a missing device. macOS opens with shared IOHID access, so Blitsen never seizes a device other software is using, and a sandboxed build needs `com.apple.security.device.usb` in its signature. Linux needs an installed udev rule; `blitsen build` writes the template and `blitsen doctor` says so, and neither ever installs one. Device ids are opaque and last only for the process. Reports are read on a per-device native worker and enter JavaScript only on a frame turn, in order. |
+| `notify.*` | IDs live for one application session and stop addressing a notification after its click, action, dismissal, expiry or close event. Linux has no per-application permission state and therefore reports `"granted"`; failure to reach its freedesktop service is a `show` error. Modern macOS reports and requests real authorization, and requires the signed `.app` identity Apple associates it with; it uses that app's icon and rejects a per-notification icon. Windows carries the session ID as the toast's own tag, so update replaces that toast in place and close removes it from the screen and from notification history; permission is the notifier's own setting, so it is `"granted"` or `"denied"` and `requestPermission()` reads rather than prompts. Android creates a stable default channel, handles API 33 permission, and supports show/update/close; action submissions reject and tap/dismiss events remain unavailable until Android intent routing joins #252. Every completion and lifecycle event enters JavaScript on a frame turn, never from the platform callback thread. Cold-start activation is separate packaging work (#252). |

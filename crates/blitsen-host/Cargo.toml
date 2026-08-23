@@ -104,8 +104,33 @@ harness = false
 
 # Desktop notifications use the native toast/notification-center APIs on
 # Windows and macOS and the freedesktop notification service on Linux.
+#
+# `preview-macos-un` selects the crate's `UNUserNotificationCenter` backend, and
+# it stays selected for development runs as well as exports (#253). The library
+# does carry the other macOS backend, `mac-notification-sys`, and switching to
+# it for unbundled hosts would be the smaller change — but that path submits
+# through `get_bundle_identifier_or_default`, which resolves to an installed
+# application's identifier, so a development notification would arrive as
+# Terminal's and the permission the user granted would be Terminal's. Real
+# permission, actions, replacement and close are only offered by the modern API
+# in the first place, so trading them for a borrowed identity would cost
+# behaviour twice over. What the development host gets instead is a bundle of
+# its own, and `check_bundle` — the crate's own `NSBundle` reader, re-exported
+# from `mac-usernotifications` — is what tells it whether it has one before a
+# call reaches a framework that aborts the process without it.
 [target.'cfg(not(target_os = "android"))'.dependencies]
 notify-rust = { version = "4.18.0", default-features = false, features = ["preview-macos-un", "z-with-tokio"] }
+# The report descriptor of an opened `blitsen/hid` device (#247). A descriptor
+# is a bit-level grammar with global/local item state, delimiters and pushes,
+# and the two things Blitsen needs from it — the longest report of each kind, so
+# a write is bounded by what the device declared, and every top-level collection
+# behind one handle, so a composite device cannot smuggle a keyboard past the
+# filter — both require parsing the whole of it. `default-features = false`
+# drops both of the crate's defaults. `hut` is the usage-table names, and this
+# reads numbers and compares them with the four protected Generic Desktop
+# usages, so it never prints one; `std` only adds the standard-library error
+# traits to a parse failure this module already maps onto its own diagnostics.
+hidreport = { version = "0.6", default-features = false }
 
 # An APK's `assets/`, read through `AAssetManager` (#144). Android only: the
 # other six targets have no asset manager, and the same provider reads a
@@ -120,12 +145,59 @@ ndk = { version = "0.9", default-features = false }
 # implementations; keeping these target-specific avoids irrelevant platform
 # dependencies in every runtime.
 [target.'cfg(target_os = "linux")'.dependencies]
+# `blitsen/hid` (#246, spikes/s10). One crate with three native backends, and
+# each of the three lines named below is a choice rather than a default: the
+# crate's own default (`linux-static-hidraw`) would compile its vendored C
+# library and require a `libudev` development package to build against. Here
+# `linux-native-basic-udev` is the pure-Rust hidraw backend, which locates a
+# node through `basic-udev` and links neither libudev nor libusb. Access to the
+# node it finds is still a udev rule's to grant; that is packaging, and
+# `blitsen doctor` and `blitsen build` say so rather than the runtime trying.
+hidapi = { version = "2.6.6", default-features = false, features = ["linux-native-basic-udev"] }
 ksni = "0.3.6"
 
 [target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
+# The status item, and — through `tray_icon::menu`, which is `muda` — the
+# application menu as well (#249). One crate builds a menu for both surfaces,
+# which is why the menu bar and the macOS main menu cost no new dependency:
+# `tray-icon` already links `muda`, and these are the same authors' pair.
 tray-icon = { version = "0.24.2", default-features = false }
 
+# `TranslateAcceleratorW`, and nothing else. A win32 menu bar delivers its own
+# clicks through the window subclass `muda` installs, but an accelerator only
+# becomes one if the message pump translates it, and the pump is winit's — so
+# the hook winit provides for this is where the call has to happen
+# (`native_window/session.rs`). Already in the tree behind winit and `muda`, at
+# the major both resolve to, so naming it here compiles no new crate.
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_UI_WindowsAndMessaging"] }
+# `windows-native` reaches the HID class driver through `windows-sys` instead of
+# compiling hidapi's C, so the toolchain requirement stays the one `windows-sys`
+# already imposes.
+hidapi = { version = "2.6.6", default-features = false, features = ["windows-native"] }
+# Addressable Windows toasts (#251). `notify-rust` above stays: it is the desktop
+# vocabulary every backend reports in, and it owns Linux and macOS. What it
+# cannot do is name a Windows toast — its backend sets no tag, keeps no handle
+# and never reads the notifier — so an ID it returns can never be replaced,
+# removed or asked about again. This crate is the same toast built addressably:
+# it maintains the toast XML and the WinRT event plumbing upstream, and it
+# exposes the tag and group that Windows itself uses to replace a delivered
+# toast and to remove one from notification history. Blitsen forks no second
+# toast implementation to get that.
+winrt-toast-reborn = "0.3.8"
+# `ToastNotifier::Setting()`, and nothing else. Whether the user, the
+# administrator or policy has switched this application's toasts off is the only
+# notification permission state Windows has, and no toast library in the tree
+# surfaces it. The crate is already resolved behind the one above, so naming it
+# here links nothing new.
+windows = { version = "0.61", features = ["UI_Notifications"] }
+
 [target.'cfg(target_os = "macos")'.dependencies]
+# `macos-shared-device` is the one feature that changes behaviour rather than
+# which backend is built: it opens IOHID with `kIOHIDOptionsTypeNone` instead of
+# seizing the device. Blitsen must not take a device away from the rest of the
+# system merely because an application read one report from it.
+hidapi = { version = "2.6.6", default-features = false, features = ["macos-shared-device"] }
 mac-usernotifications = "0.3.1"
 
 # Vello's Metal compute path can wedge the display GPU on Intel Macs before

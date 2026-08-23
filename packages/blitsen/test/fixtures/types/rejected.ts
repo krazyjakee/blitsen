@@ -5,6 +5,8 @@
 // Each `@ts-expect-error` is its own assertion: TypeScript reports an unused one
 // as an error of its own, so a line that quietly starts compiling still fails.
 import app from "blitsen/app";
+import hid from "blitsen/hid";
+import menu from "blitsen/menu";
 import nativeWindow from "blitsen/window";
 import notify from "blitsen/notify";
 import tray from "blitsen/tray";
@@ -37,6 +39,19 @@ if (tray.configure) tray.configure({ icon: new Uint8Array(), menu: [{ type: "rad
 // @ts-expect-error
 if (tray.configure) tray.configure({ icon: new Uint8Array(), menu: [{ type: "submenu", label: "More" }] });
 
+// An application menu is a bar of submenus: a bare command has no place at the
+// top level, and a role is a fixed vocabulary rather than any string.
+// @ts-expect-error
+if (menu.configure) menu.configure({ menu: [{ id: "open", label: "Open" }] });
+// @ts-expect-error
+if (menu.configure) menu.configure({ menu: [{ type: "submenu", label: "Edit", role: "tools", menu: [] }] });
+// @ts-expect-error
+if (menu.configure) menu.configure({ menu: [{ type: "submenu", label: "Edit", menu: [{ type: "role", role: "explode" }] }] });
+
+// The tray's built-in actions are the tray's: an application menu has roles.
+// @ts-expect-error
+if (menu.configure) menu.configure({ menu: [{ type: "submenu", label: "File", menu: [{ action: "quit" }] }] });
+
 // The signatures are real signatures.
 // @ts-expect-error
 if (nativeWindow.setSize) nativeWindow.setSize("640", "480");
@@ -48,6 +63,13 @@ if (notify.show) notify.show({ title: "Bad", urgency: "urgent" });
 if (notify.update) notify.update("n1", { timeout: "soon" });
 // @ts-expect-error
 if (notify.onEvent) notify.onEvent("click");
+
+// A device path is not part of the surface, and never becomes one.
+// @ts-expect-error
+if (hid.devices) hid.devices().then(devices => devices[0].path);
+// A report is bytes, not a number array the bridge would have to copy twice.
+// @ts-expect-error
+if (hid.open) hid.open("d1").then(device => device.write([0x00, 0x01]));
 
 // `<blitsen-view>` is typed as itself, so its method exists...
 const view = document.createElement("blitsen-view");

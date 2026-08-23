@@ -60,7 +60,7 @@ describe("directory CLI", () => {
     const misspelled = join(configFixtures, "misspelled");
     await expect(loadConfig(misspelled)).rejects.toThrow(
       `invalid blitsen config in ${join(misspelled, "package.json")}: `
-      + 'unknown key "outputs" (known keys: build, output, name, addons, window, tray)');
+      + 'unknown key "outputs" (known keys: build, output, name, addons, window, tray, menu)');
   });
 
   test("validates rich tray trees and records package-relative icons", async () => {
@@ -117,6 +117,61 @@ describe("directory CLI", () => {
     expect(() => defineConfig({ output: "dist", tray: { icon: "tray.png", contextMenu: [
       { id: "ambiguous", action: "show", label: "Wrong" },
     ] } })).toThrow("exactly one of id or action");
+  });
+
+  test("validates the application menu as a bar of submenus", () => {
+    const menu = {
+      output: "dist",
+      menu: {
+        menu: [
+          { type: "submenu", role: "application", label: "Notes", menu: [
+            { type: "role", role: "about" }, { type: "separator" }, { type: "role", role: "quit" },
+          ] },
+          { type: "submenu", label: "File", menu: [
+            { id: "new", label: "New", accelerator: "CmdOrCtrl+KeyN" },
+            { type: "checkbox", id: "autosave", label: "Autosave", checked: true },
+            { type: "radio", id: "light", label: "Light", group: "theme", checked: true },
+            { type: "radio", id: "dark", label: "Dark", group: "theme" },
+          ] },
+        ],
+      },
+    };
+    expect(defineConfig(menu)).toEqual(menu);
+    // The menu is its own key: an application menu must not need a tray icon.
+    expect(menu).not.toHaveProperty("tray");
+
+    const bar = items => ({ output: "dist", menu: { menu: items } });
+    expect(() => defineConfig(bar([{ id: "open", label: "Open" }])))
+      .toThrow("every top-level entry");
+    expect(() => defineConfig(bar([
+      { type: "submenu", label: "File", menu: [{ type: "role", role: "explode" }] },
+    ]))).toThrow("role must be one of about, services");
+    expect(() => defineConfig(bar([
+      { type: "submenu", role: "edit", label: "Edit", menu: [] },
+      { type: "submenu", role: "edit", label: "Also Edit", menu: [] },
+    ]))).toThrow("declares the edit role twice");
+    expect(() => defineConfig(bar([
+      { type: "submenu", label: "File", menu: [
+        { type: "submenu", role: "help", label: "Help", menu: [] },
+      ] },
+    ]))).toThrow("only a top-level submenu");
+    expect(() => defineConfig(bar([
+      { type: "submenu", label: "File", menu: [
+        { id: "same", label: "One" },
+        { type: "submenu", label: "More", menu: [{ id: "same", label: "Two" }] },
+      ] },
+    ]))).toThrow("ids must be unique");
+    expect(() => defineConfig(bar([
+      { type: "submenu", label: "View", menu: [
+        { type: "radio", id: "one", label: "One", group: "choice" },
+        { type: "radio", id: "two", label: "Two", group: "choice" },
+      ] },
+    ]))).toThrow("exactly one checked item");
+    expect(() => defineConfig(bar([
+      { type: "submenu", label: "File", menu: [
+        { id: "open", label: "Open", accelerator: "KeyO+Control" },
+      ] },
+    ]))).toThrow("modifiers before exactly one key");
   });
 
   test("discovers the config in the nearest package.json declaring it", async () => {

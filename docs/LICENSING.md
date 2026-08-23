@@ -14,6 +14,14 @@ Every dependency's terms still apply. In particular:
 - MIT and Apache-2.0 components require their notices to travel with the software.
 - Stylo contains MPL-2.0-covered files. Binary distribution requires the corresponding covered
   source to remain available under the MPL terms.
+- The `hidapi` crate behind `blitsen/hid` is MIT, and on Linux and Windows that is the whole of it:
+  Blitsen selects the crate's pure-Rust backends, so no C is compiled and its MIT text is what the
+  generated notices carry. macOS is the exception. There the crate compiles the vendored HIDAPI C
+  library, which its author offers under GPL-3.0, BSD-3-Clause, or the original HIDAPI license, at
+  the recipient's choice; Blitsen takes BSD-3-Clause, and nothing in a Blitsen export is
+  distributed under GPL-3.0. The notice generator collects licence files that sit beside a crate's
+  `Cargo.toml`, and that library's are one directory further down, so a macOS distributor should
+  add `etc/hidapi/LICENSE-bsd.txt` from the `hidapi` crate to the notices the artifact carries.
 
 The platform runtime package carries an audited notice set. `blitsen build` compresses those
 notices into the exported executable so they travel with the application.

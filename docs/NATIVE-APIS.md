@@ -34,9 +34,11 @@ polyfill.
 | `blitsen/dialog` | `openFile`, `openFiles`, `saveFile`, `openFolder`, `openFolders`, `message` |
 | `blitsen/clipboard` | `readText`, `readHtml`, `readImage`, `writeText`, `writeHtml`, `writeImage`, `clear` |
 | `blitsen/tray` | `configure`, `remove`, `onClick`, `onAction` |
+| `blitsen/menu` | `configure`, `remove`, `onAction` |
 | `blitsen/notify` | `show`, `permission`, `requestPermission`, `update`, `close`, `onEvent` |
 | `blitsen/input` | `snapshot` |
-| `blitsen/os` | `cpu`, `memory`, `storage`, `host`, `locale` |
+| `blitsen/hid` | `devices`, `open`, `onDeviceChange` |
+| `blitsen/os` | `cpu`, `memory`, `storage`, `host`, `batteries`, `locale` |
 
 The declaration files installed with `blitsen` document parameters and result types. The
 [generated native module matrix](COMPATIBILITY.md#native-modules) is available when you need the
@@ -105,8 +107,73 @@ accelerators use modifier-first spellings such as `Control+Shift+KeyP`; `CmdOrCt
 on macOS and Control elsewhere. Package configuration accepts the same menu tree and invariants,
 using PNG paths relative to its `package.json` where the runtime API uses unambiguous byte arrays.
 Configured custom and checkable actions queue until application listeners are installed.
-Tray support is desktop-only. A native application menu is separate work because it must exist
-without a tray icon (#249).
+Tray support is desktop-only.
+
+## Application menu
+
+`blitsen/menu` is the macOS main menu and the Windows window menu bar. It is a separate module from
+`blitsen/tray` because it is a separate object with a separate owner: an application that shows no
+status item at all still has one, and replacing one never disturbs the other.
+
+An application menu is a bar, so every top-level entry is a submenu. Below that the tree is the
+tray's — nested submenus, checkboxes, radio groups, separators and accelerators, with IDs unique
+across the whole tree — plus role items, and minus icons and the tray's `show`/`hide`/`quit`
+actions.
+
+```js
+import menu from "blitsen/menu";
+
+await menu.configure?.({
+  menu: [
+    { type: "submenu", role: "application", label: "My App", menu: [
+      { type: "role", role: "about" },
+      { type: "separator" },
+      { type: "role", role: "quit" },
+    ] },
+    { type: "submenu", label: "File", menu: [
+      { id: "new", label: "New", accelerator: "CmdOrCtrl+KeyN" },
+      { type: "checkbox", id: "autosave", label: "Autosave", checked: true },
+    ] },
+    { type: "submenu", role: "help", label: "Help", menu: [{ id: "docs", label: "Documentation" }] },
+  ],
+});
+
+menu.onAction?.(({ id, checked }) => {
+  if (id === "new") console.log("New document");
+  if (id === "autosave") console.log("Autosave:", checked);
+});
+```
+
+A `role` item is a command the platform performs itself — `copy`, `undo`, `minimize`, `quit` and the
+rest — and never reaches application JavaScript. That is the point of it: an application that
+implemented `paste` itself would implement it wrongly, because on macOS it is a menu command sent
+down the responder chain rather than a key event. `services`, `showAll`, `hideOthers`, `fullscreen`
+and `bringAllToFront` are macOS commands; on Windows the item is omitted rather than shown dead.
+Application-defined items carry an `id` instead and are delivered in FIFO order at a frame boundary,
+exactly as tray actions are.
+
+On macOS, `role` on a *top-level submenu* claims one of the four positions AppKit reads by position
+rather than by title. Blitsen supplies a standard `application`, `edit` and `window` submenu for
+each role the application did not claim, because without them there is no About or Quit anywhere and
+⌘C and ⌘V do nothing in a text field. The synthesized `application` submenu is always first, the
+`window` submenu is always second to last, and a synthesized `edit` submenu goes immediately before
+it; a submenu the application declares with a role is moved into that place instead, and a declared
+`edit` submenu keeps the position the application chose. A `help` submenu is placed last and never
+synthesized: its role is a position, there is no predefined command to put in one, and a submenu
+with nothing in it is a greyed-out title. Windows installs the tree as written, with no synthesis.
+
+`configure` replaces the whole menu in one step and `remove` takes it away. Both are atomic: the
+replacement is built before the outgoing menu is detached, so a tree the platform refuses leaves the
+running menu exactly as it was, and a click the platform had already queued against the outgoing
+menu is dropped rather than delivered to the replacement.
+
+Package configuration installs a menu before application JavaScript runs, under the `menu` key of
+the `blitsen` config; the runtime API replaces that same menu rather than adding a second one. See
+[CONFIGURATION.md](CONFIGURATION.md#application-menu).
+
+There is no application menu on Linux or Android, and the module is feature-detectably absent
+there — `menu.configure` is `undefined`. See
+[PLATFORM-SUPPORT.md](PLATFORM-SUPPORT.md#application-menu) for the argument.
 
 ## Notifications
 
@@ -136,20 +203,34 @@ await notify.close?.(id);
 `permission()` reads without prompting; `requestPermission()` prompts on macOS and Android 13+
 and otherwise reads the platform result. Linux returns `"granted"` because the freedesktop service
 has no per-app authorization state—an unavailable service still makes `show` reject. macOS
-requires an exported, signed `.app` bundle for authorization and uses its application icon;
+requires a signed `.app` bundle identity for authorization and uses its application icon;
 passing `icon` is rejected. Linux accepts an icon theme name or absolute path. Windows accepts an
 image path. Android accepts an application drawable resource name and otherwise uses a system
 fallback icon.
+
+An exported macOS application has that identity. A development run does not: `blitsen run` is an
+interpreter executing a script, so `permission`, `requestPermission` and `show` reject with a
+message naming `blitsen run --dev-bundle`, which builds a signed development `.app` around the
+interpreter and re-runs the same command inside it. That bundle's identifier is the development
+host's own—`com.blitsen.dev.<name>` unless `--bundle-id` names another—and never an installed
+application's, so a permission granted in development is not one granted to what you ship. See
+[Packaging](PACKAGING.md#run-with-a-macos-development-identity).
 
 IDs start again in each application session. Once a notification is clicked, acted on, dismissed,
 expired or closed, `update` and `close` return `false`. Events are FIFO and are never delivered from
 a platform callback thread. At most eight action buttons may be requested; the desktop is still
 free to show fewer.
 
-The `notify-rust` Windows backend delivers click, action, dismissal and error events, but does not
-retain a toast handle for general replacement or close. Calls for an active ID therefore reject on
-Windows instead of pretending they worked (#251). Windows also reports permission as `"default"`
-until that backend exposes the notifier setting. Linux and macOS implement update and close.
+Every desktop platform implements update and close. Windows carries the session ID as the toast's
+own tag, so an update replaces that toast in place and a close removes it from the screen and from
+notification history alike. Windows permission reads the native notifier setting and is therefore
+`"granted"` or `"denied"` and never `"default"`; there is no prompt to show, because the user,
+the administrator and group policy are what decide it. Windows toasts are delivered under the
+identity Windows already knows rather than under `appName`, which registering an application
+identity of your own would need—that is the packaging work #252 tracks. A machine with no
+registered AppUserModelID at all keeps no notifier and therefore no setting, so both calls reject
+there with a message naming that missing identity instead of reporting `"denied"`, which would
+claim a decision nobody made.
 Activation while the process is already running is delivered on desktop; launching a stopped
 application from a notification requires platform registration and packaging work tracked in #252.
 Android implements permission, an idempotent `blitsen.default` channel, submission, update and close
@@ -159,7 +240,8 @@ than displaying inert controls. Android urgency is a builder hint inside the use
 default channel, and `appName` cannot rename a channel Android has already created.
 
 Browser-oriented integrations can use the standard `Notification` global over this same backend on
-Linux and eligible packaged macOS apps. It deliberately remains absent where its lifecycle contract
+Linux, Windows and any macOS process that has a bundle identity—an exported application, or a
+development run inside `--dev-bundle`. It deliberately remains absent where its lifecycle contract
 cannot be implemented, including Android until notification intent routing lands; see [Web API
 support](WEB-APIS.md#notifications).
 
@@ -182,6 +264,75 @@ requestAnimationFrame(frame);
 Losing focus clears held keys and buttons. Movement and wheel fields are accumulated since the
 previous snapshot and consumed by reading it. Gamepads, vibration and device-change events remain
 absent; ordinary pointer and keyboard events are unaffected.
+
+The snapshot describes one pointer, in the same CSS pixels a `pointerdown` listener sees. Its
+position is `null` whenever no pointer is in the window — before one arrives, after the cursor
+leaves, and between taps on a touchscreen. Desktop and Android take the same snapshot, but not
+every field is populated on both: Android reports position and a primary button for the finger
+that is down, while raw `movementX`/`movementY` and the wheel fields are mouse signals it does not
+produce. A second finger does not disturb the pointer the first one set; multi-touch is the DOM
+pointer events, which carry every contact with its own `pointerId`. Keys are held by physical
+code, so an Android soft keyboard — which reports characters without the key behind them — appears
+in `keydown` rather than here.
+
+## Raw HID devices
+
+`blitsen/hid` exchanges raw input, output and feature reports with devices that are not ordinary
+input: instrument panels, DIY controllers, label printers, keyboard firmware configuration
+interfaces. Keyboards, pointers and game controllers are not this module's — they are DOM events
+and the standard Gamepad API.
+
+```js
+import hid from "blitsen/hid";
+
+const found = (await hid.devices?.() ?? []).find(device => device.vendorId === 0x16c0);
+if (found) {
+  const device = await hid.open(found.id);
+  device.onInputReport(report => {
+    console.log(report.reportId, report.data);
+  });
+  // The first byte is the report ID, or zero for a device with none.
+  await device.write(new Uint8Array([0x02, 0x01]));
+  const settings = await device.receiveFeatureReport(0x03);
+  console.log(settings.byteLength, device.maxFeatureReportSize);
+  await device.close();
+}
+```
+
+Enumeration is not permission to open anything. Blitsen refuses the Generic Desktop keyboard,
+keypad, mouse and pointer collections, and it refuses the whole physical device when any of its
+collections is one of those — on Linux a single hidraw node carries every collection, so opening a
+keyboard's vendor interface would hand over its keystrokes as well. There is no way to opt out.
+A device's report descriptor is re-checked once it is open, so a composite device whose enumeration
+did not mention a keyboard is still rejected before a report is read.
+
+A device's `id` is opaque and stable only for the process that issued it. It is not a device path
+and not a serial number; `serialNumber` is reported as metadata where the device supplies one, and
+is never the identity Blitsen opens by. `open()` rejects with a `DOMException` whose `name`
+separates the outcomes an application has to handle differently: `NotAllowedError` for permission,
+`NotFoundError` for a device that has gone, `NotSupportedError` for a collection Blitsen refuses,
+and `OperationError` for a backend failure.
+
+Reports are read on a native worker that owns the handle, and reach the application only at the top
+of a frame, in order. An input report carries its report ID separately and its data without that
+leading byte, so nothing depends on whether the platform retained it. `maxInputReportSize`,
+`maxOutputReportSize` and `maxFeatureReportSize` come from the device's own report descriptor;
+`write` and `sendFeatureReport` refuse a longer report before anything is sent. A device that
+disconnects closes its handle and emits exactly one `onDisconnect` event; `close()` emits none.
+`onDeviceChange` reports devices arriving and leaving, and is polled — no listener means no scan.
+
+Access is a packaging question on every platform, and `blitsen doctor` reports it for the target
+being built. Linux hidraw nodes belong to udev: `blitsen build` writes a `<name>.hid.rules`
+template beside the executable for the distribution to complete and install, and Blitsen will
+neither install one at run time nor suggest running as root. A sandboxed macOS application needs
+`com.apple.security.device.usb`; `blitsen build` writes `<name>.app.entitlements` beside the bundle
+for the signing command to pass to `codesign --entitlements`. macOS opens devices with shared
+access, so Blitsen never takes a device away from the rest of the system. Windows reserves some
+top-level collections for itself, which no packaging step unlocks.
+
+Android is absent: a USB device there is reached through `UsbManager` and an explicit per-device
+permission the user grants, which is a different lifecycle rather than this one over another
+backend.
 
 ## Dialogs
 
@@ -220,6 +371,17 @@ if (image) {
 On X11 and Wayland, clipboard contents written by an application may disappear when the process
 exits unless the desktop runs a clipboard manager. macOS and Windows hand the data to the system.
 
+## Dropped files, and dragging out
+
+Dropping a file into the window is a DOM event rather than a module call: the standard drag events
+carry `dataTransfer.paths`, an array of absolute filesystem paths instead of the browser's `File`
+objects. [Web API support](WEB-APIS.md#dropped-files-are-paths) documents it.
+
+Starting a drag *out* of the window has no counterpart. `blitsen/window.startFileDrag` is recorded
+as absent in the generated matrix rather than implemented: a drag source is a platform object driven
+from the thread that owns the window, and on Windows and macOS it runs a modal loop that does not
+return until the drop — on the one thread Blitsen keeps free to paint.
+
 ## Application directories
 
 Pass one safe path segment to the directory helpers:
@@ -235,7 +397,7 @@ to create the directory before writing. `requestSingleInstanceLock` is currently
 
 ## OS readings
 
-`blitsen/os` reads CPU, memory, mounted storage and host identity:
+`blitsen/os` reads CPU, memory, mounted storage, host identity, power and locale:
 
 ```js
 import os from "blitsen/os";
@@ -248,6 +410,30 @@ if (memory) {
 
 Every call samples current state. Discard the first `os.cpu()` usage reading and use later calls to
 measure the interval between samples.
+
+`os.batteries()` lists the batteries the machine runs on. An empty list is the answer a desktop
+gives rather than a refusal to answer, so test the length instead of the member:
+
+```js
+const [battery] = os.batteries?.() ?? [];
+if (battery && battery.state === "discharging" && battery.level < 0.2) reduceFrameRate();
+```
+
+A machine that cannot be asked about power throws, which is what keeps that case distinct from a
+machine that has none. Peripheral batteries — a wireless mouse, a keyboard — are not in the list.
+The member is absent on Android, whose power service is a different API with its own semantics.
+
+`os.locale()` reports the language tag and IANA time zone this session is configured for. Both are
+values to hand straight to a formatter, and they are the same ones `Intl.NumberFormat` and
+`Intl.DateTimeFormat` default to, so there is no second source of truth to keep in step.
+
+Two capabilities are deliberately not on this module. Displays are `window.monitors()`, which
+already reports every monitor's size, position, scale factor and refresh rate; a second list here
+could disagree with that one. Idle time — seconds since the user last touched anything — is absent
+on every platform rather than on the ones that cannot answer: Wayland has no answer at all for an
+unfocused client, and reporting zero there is indistinguishable from a machine in use. It is also
+the one reading that describes the person rather than the machine, so a partial implementation
+would buy that signal on three platforms in exchange for a wrong answer on the fourth.
 
 ## Using the `native:*` spelling
 

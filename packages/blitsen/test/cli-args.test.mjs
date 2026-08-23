@@ -39,6 +39,31 @@ describe("directory CLI", () => {
     expect(() => parseArgs(["app", "--icon", "app.png"])).toThrow("only valid with build");
   });
 
+  // Issue #253: the two packaging options a *run* also takes, and only for the
+  // artifact `--dev-bundle` produces. Order must not decide, because the flag
+  // that licenses them reads naturally after either.
+  test("takes an identity and a signature for a development bundle, and only for one", () => {
+    expect(parseArgs(["dist", "--dev-bundle"]))
+      .toEqual({ command: "run", directory: "dist", width: 800, height: 600,
+        title: "Blitsen", devBundle: true });
+    for (const args of [
+      ["dist", "--dev-bundle", "--bundle-id", "com.example.pong", "--sign", "codesign -s ID"],
+      ["dist", "--bundle-id", "com.example.pong", "--sign", "codesign -s ID", "--dev-bundle"],
+    ]) {
+      expect(parseArgs(args))
+        .toEqual({ command: "run", directory: "dist", width: 800, height: 600, title: "Blitsen",
+          bundleId: "com.example.pong", sign: "codesign -s ID", devBundle: true });
+    }
+    expect(() => parseArgs(["dist", "--bundle-id", "com.example.pong"]))
+      .toThrow("--bundle-id needs --dev-bundle when running");
+    expect(() => parseArgs(["dist", "--sign", "codesign -s ID"]))
+      .toThrow("--sign needs --dev-bundle when running");
+    expect(() => parseArgs(["build", "dist", "--dev-bundle"]))
+      .toThrow("--dev-bundle is only valid with run");
+    expect(() => parseArgs(["doctor", "dist", "--dev-bundle"]))
+      .toThrow("--dev-bundle is only valid with run");
+  });
+
   test("names the application once for the title, the output file and the metadata", () => {
     expect(parseArgs(["build", "dist", "--out", "Demo", "--name", "My App"]))
       .toEqual({ command: "build", directory: "dist", width: 800, height: 600,

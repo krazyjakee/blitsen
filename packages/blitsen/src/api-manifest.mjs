@@ -3,6 +3,7 @@ import { join } from "node:path";
 import {
   REMOTE_CSS_ASSET_PATTERN, REMOTE_HTML_ASSET_PATTERN, REMOTE_HTML_SCRIPT_PATTERN,
 } from "./asset-references.mjs";
+import { NATIVE_PLATFORMS } from "./native-modules.mjs";
 
 // Paths rather than URL objects, here and everywhere else this package reads a
 // file of its own: the DOM bridge installs Blitsen's `URL` over the host's in
@@ -89,6 +90,24 @@ const CATALOGUE = {
     "addEventListener", "removeEventListener", "dispatchEvent", "ErrorEvent",
     "Element.setPointerCapture", "Element.releasePointerCapture",
     "Element.hasPointerCapture"],
+  // Clipboard events and drag and drop (issue #93), which are one group because
+  // they are one object: a `DataTransfer` reaches an application either as
+  // `clipboardData` or as `dataTransfer` and behaves the same in both.
+  //
+  // What is absent is the file half, and deliberately: `files` and `items` hand
+  // back `File` objects, which this runtime does not have and does not want —
+  // a drop reports the absolute filesystem paths the platform gave, in `paths`,
+  // which is the divergence PRODUCT.md §7 argues for. The patterns are the
+  // dotted spelling a bundle really writes, so an application reading `files`
+  // off a drop is told what to read instead. `setDragImage` belongs to starting
+  // a drag, which winit gives no way to do.
+  WEB_TRANSFER: ["ClipboardEvent", "DragEvent", "DataTransfer",
+    "DataTransfer.dropEffect", "DataTransfer.effectAllowed", "DataTransfer.types",
+    "DataTransfer.getData", "DataTransfer.setData", "DataTransfer.clearData",
+    "DataTransfer.paths",
+    ["DataTransfer.files", "\\bdataTransfer\\s*\\.\\s*files\\b"],
+    ["DataTransfer.items", "\\bdataTransfer\\s*\\.\\s*items\\b"],
+    ["DataTransfer.setDragImage", "\\bsetDragImage\\s*\\("]],
   // Document scrolling. `scroll` and `scrollTo` are the same function under two
   // names, as they are on Window. The patterns are qualified because the bare
   // words are far too ordinary to find in a bundle: `scroll` alone matches every
@@ -297,14 +316,16 @@ const NATIVE = {
   window: ["setSize", "setFullscreen", "isFullscreen", "setDecorations", "isDecorated",
     "setMinimized", "setMaximized", "isMaximized", "startDrag", "close", "setAlwaysOnTop",
     "setCursor", "setCursorVisible", "setCursorGrab", "monitors",
-    "create", "setTransparent", "isAlwaysOnTop"],
+    "create", "setTransparent", "isAlwaysOnTop", "startFileDrag"],
   dialog: ["openFile", "openFiles", "saveFile", "openFolder", "openFolders", "message"],
   clipboard: ["readText", "readHtml", "readImage", "writeText", "writeHtml", "writeImage",
     "clear", "readMime", "writeMime"],
   tray: ["configure", "remove", "onClick", "onAction"],
+  menu: ["configure", "remove", "onAction"],
   input: ["snapshot", "gamepads", "vibrateGamepad", "onDeviceChange"],
+  hid: ["devices", "open", "onDeviceChange"],
   notify: ["show", "permission", "requestPermission", "update", "close", "onEvent"],
-  os: ["cpu", "memory", "storage", "host", "displays", "battery", "locale", "idleTime"],
+  os: ["cpu", "memory", "storage", "host", "displays", "batteries", "locale", "idleTime"],
 };
 
 // Why a declared member is not implemented. Absence is the answer, not an
@@ -336,6 +357,12 @@ const NATIVE_ABSENT = {
     + "does nothing on X11 after that — so honouring it would mean replacing the window, which is "
     + "`create`. Run `blitsen` against a directory whose window should be transparent and the "
     + "attribute belongs on that window, not on a call.",
+  "window.startFileDrag": "Dropping *into* the window is winit's to report and is implemented; "
+    + "dragging *out* of it is not something winit can start. A drag source is a platform object "
+    + "driven from the thread that owns the window — `IDropSource` with `DoDragDrop`, an "
+    + "`NSDraggingSession`, a `wl_data_device` offer — and the first two run a modal loop that "
+    + "does not return until the drop, on the one thread Blitsen keeps free to paint. That is a "
+    + "design question rather than a missing call, so the module says so instead of answering it.",
   "window.isAlwaysOnTop": "winit sets the window level and cannot read it back, and the window "
     + "manager may change it without telling the application. Remembering what was last set would "
     + "be a second source of truth that quietly goes stale.",
@@ -345,15 +372,15 @@ const NATIVE_ABSENT = {
   "clipboard.writeMime": "The counterpart of `readMime`, absent for the same reason.",
   "os.displays": "The monitors are `window.monitors()`, which already reports each one's size, "
     + "position and scale factor. A second list here could disagree with that one.",
-  "os.battery": "Nothing behind this module reports power. The processor, the memory and the "
-    + "volumes come from one library that implements all three per platform; the battery is a "
-    + "fourth source on each — UPower's D-Bus service, IOKit, `GetSystemPowerStatus` — and a "
-    + "desktop with no battery has to read as *absent* rather than as an empty reading, which is "
-    + "a distinction only the real source can make.",
-  "os.idleTime": "Seconds since the last input is a different mechanism on every platform, and "
-    + "Wayland has no answer at all for a client that is not focused — the idle-notify protocol "
-    + "reports crossing a threshold the compositor was asked about, not a duration. Reporting "
-    + "zero on the sessions that cannot answer would be indistinguishable from a machine in use.",
+  "os.idleTime": "Seconds since the last input is a different mechanism on every platform — the "
+    + "X11 screensaver extension, `CGEventSourceSecondsSinceLastEventType`, `GetLastInputInfo` — "
+    + "and Wayland has no answer at all for a client that is not focused: the idle-notify "
+    + "protocol reports crossing a threshold the compositor was asked about, not a duration. "
+    + "Reporting zero on the sessions that cannot answer would be indistinguishable from a "
+    + "machine in use. It is also the one reading in this module that describes the person "
+    + "rather than the machine — how long they have been away from the keyboard, available to "
+    + "any application that asks for it — so implementing it where it happens to work would buy "
+    + "that signal on three platforms in exchange for a wrong answer on the fourth.",
 };
 
 // Globals the *engine* supplies rather than the bridge, so their status cannot
@@ -367,6 +394,42 @@ const NATIVE_ABSENT = {
 // fiction the way an unverified declaration would.
 const ENGINE_ABSENT = {
   WEB_WASM: ["WebAssembly"],
+};
+
+// APIs the bootstrap installs and the host withdraws when the process it is
+// running in cannot carry them. Implemented, and unconditional everywhere the
+// entry does not name.
+//
+// This is a third axis beside the two `native-modules.mjs` keeps apart. *Not
+// implemented anywhere* is derived from the bootstrap; *implemented, but not on
+// this target* is that file's declared table; this one is *implemented, and on
+// these platforms decided by the process rather than by the build*. A platform
+// cannot answer it, because two runs of the same binary on the same machine
+// answer differently, which is why neither of the other two could hold it.
+//
+// Declared rather than derived, for the reason `native-modules.mjs` gives about
+// its own table: the gate is a `cfg` and a run-time call in `crates/blitsen-host`
+// and a `cfg` is resolved by the compiler rather than visible in the source this
+// reads. What *is* derived is the withdrawal — the bootstrap has to contain the
+// deletion or the manifest refuses to build — so a condition can never be
+// claimed for a global the runtime keeps regardless, and a global the runtime
+// can drop can never go unexplained.
+//
+// This changes nothing about how an application is written: the API is absent
+// when the condition does not hold, so `"Notification" in globalThis` selects a
+// fallback exactly as it does for an absence that is a build fact.
+const CONDITIONAL = {
+  Notification: {
+    platforms: ["darwin"],
+    reason: "macOS notifications are `UNUserNotificationCenter`, which needs a bundle identity to "
+      + "address and to hold permission against — and answers a process that has none by aborting "
+      + "it rather than by failing the call, so the facade cannot be installed and left to throw. "
+      + "An exported `.app` carries that identity and a development run of the interpreter does "
+      + "not; `blitsen run --dev-bundle` gives the development host one of its own rather than "
+      + "borrowing an installed application's. A process cannot acquire or lose a bundle "
+      + "identifier while it runs, so the question is settled once, as the runtime installs "
+      + "(#253). `blitsen/notify` is present either way and says why a call was refused.",
+  },
 };
 
 // The `Intl` surface, declared rather than read out of the bootstrap.
@@ -486,6 +549,11 @@ const DIAGNOSTICS = {
     + "back with getComputedStyle."],
   WEB_COMPONENTS: ["warning", "Custom elements and shadow DOM are not implemented; DOMParser is.",
     "Render with ordinary elements the bundler already emits."],
+  WEB_TRANSFER: ["warning",
+    "This part of DataTransfer is not implemented; a dropped file is a path, not a File.",
+    "Read `event.dataTransfer.paths` and open each absolute path with your filesystem library. "
+    + "`types` still contains \"Files\", so the check that decides whether to accept a drop is "
+    + "unchanged. `setDragImage` draws for a drag out of the window, which cannot be started."],
   WEB_SELECTION: ["warning",
     "This part of the range API is not implemented; the boundary, text and geometry reads are.",
     "Edit the tree with the node methods rather than through a range: a range here measures "
@@ -858,12 +926,19 @@ export function extractRuntimeSurface(source) {
   const deleted = new Set(stringList(script,
     /for \(const key of (\[[\s\S]*?\])\) \{\n\s*try \{ delete globalThis\[key\]; \} catch \{\}/,
     "the deliberately absent globals"));
+  // A global the bootstrap builds only if the host gave it what it needs, and
+  // withdraws by name when it did not. Read from the structure rather than
+  // declared beside CONDITIONAL, so a claim that an API is conditional stands on
+  // the runtime being able to drop it.
+  const conditional = [...structure.matchAll(
+    /\n\s*if \(!([A-Za-z_$][\w$]*)\) try \{ delete globalThis\.\1; \} catch \{\}/g)]
+    .map(([, name]) => name);
 
   const { classes, instances } = runtimeClassesAndInstances(structure);
   const native = new Map(Object.keys(NATIVE).map(module =>
     [module, new Set(objectKeys(structure, `const native${capitalized(module)} = {`))]));
   return { globals: [...globals].filter(name => !name.startsWith("__blitsen")), classes, instances,
-    deleted: [...deleted], native };
+    deleted: [...deleted], conditional, native };
 }
 
 const capitalized = name => `${name[0].toUpperCase()}${name.slice(1)}`;
@@ -961,6 +1036,25 @@ export function buildManifest(script) {
   for (const entry of apis)
     if (entry.status === "absent" && !DIAGNOSTICS[entry.code])
       throw new Error(`${entry.api} is absent and ${entry.code} has no diagnostic to report it`);
+  // The two halves of a condition, checked against each other the way an absence
+  // and its deletion are above: the manifest may only call an API conditional if
+  // the bootstrap can withdraw it, and may not leave a withdrawal unexplained.
+  for (const [api, { platforms, reason }] of Object.entries(CONDITIONAL)) {
+    const entry = apis.find(candidate => candidate.api === api);
+    if (entry?.status !== "implemented")
+      throw new Error(`${api} is declared conditional and is not an implemented API`);
+    if (!surface.conditional.includes(api))
+      throw new Error(`${api} is declared conditional and the bootstrap installs it whatever the `
+        + "host answered, so nothing decides it at run time");
+    const unknown = platforms.filter(platform => !NATIVE_PLATFORMS.includes(platform));
+    if (unknown.length > 0)
+      throw new Error(`${api} is conditional on ${unknown.join(", ")}, which is not a platform`);
+    entry.condition = { platforms, reason };
+  }
+  const unexplained = surface.conditional.filter(name => !CONDITIONAL[name]);
+  if (unexplained.length > 0)
+    throw new Error(`the bootstrap withdraws ${unexplained.join(", ")} when the host cannot carry `
+      + "it, and CONDITIONAL does not say on which platforms or why");
 
   return {
     generatedBy: `packages/blitsen/src/api-manifest.mjs from ${SOURCE_NAME}`,
@@ -1000,7 +1094,7 @@ export async function generateApiManifest() {
 const TYPE_DEFINITIONS = join(import.meta.dirname, "./native/native.d.ts");
 const MODULE_INTERFACES = { app: "NativeApp", window: "NativeWindow",
   dialog: "NativeDialog", clipboard: "NativeClipboard", tray: "NativeTray",
-  input: "NativeInput", notify: "NativeNotify", os: "NativeOs" };
+  menu: "NativeMenu", input: "NativeInput", hid: "NativeHid", notify: "NativeNotify", os: "NativeOs" };
 
 /** Reads the members each `Native*` interface declares, by module. */
 export function readDeclaredNativeMembers(definitions) {
@@ -1067,6 +1161,12 @@ export function renderCapabilityTiers(manifest) {
     return `| ${code} | ${names(entries.filter(entry => entry.status === "implemented"))} `
       + `| ${names(entries.filter(entry => entry.status === "absent"))} |`;
   });
+  // Implemented, and on the platforms named decided per process rather than per
+  // build — which is why these keep a table of their own: the row above says an
+  // API is installed, and for one platform that is true of one run of a build
+  // and not of another.
+  const conditional = manifest.apis.filter(entry => entry.condition).map(entry =>
+    `| \`${entry.api}\` | ${entry.condition.platforms.join(", ")} | ${entry.condition.reason} |`);
   const diagnosed = [
     ...manifest.usage,
     ...codes
@@ -1079,6 +1179,7 @@ export function renderCapabilityTiers(manifest) {
     .filter((rule, index, rules) => rules.findIndex(other => other.code === rule.code) === index)
     .map(rule => `| \`${rule.code}\` | ${rule.severity} | ${rule.message} |`);
   return ["| Group | Implemented | Absent |", "| --- | --- | --- |", ...surface, "",
+    "| Conditional API | Platform | Installed when |", "| --- | --- | --- |", ...conditional, "",
     "| Diagnostic | Severity | Reported as |", "| --- | --- | --- |", ...diagnosed].join("\n");
 }
 

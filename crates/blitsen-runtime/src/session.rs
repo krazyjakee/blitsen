@@ -19,7 +19,7 @@ use blitsen_host::apk::ApkAssets;
 use blitsen_host::app::AppFiles;
 use blitsen_host::modules::ModuleRegistry;
 use blitsen_host::runtime_services::RuntimeServices;
-use blitsen_host::{NativeWindowOptions, TrayMenu, TrayMenuDefinition, TrayOptions};
+use blitsen_host::{MenuDefinition, NativeWindowOptions, TrayMenu, TrayOptions};
 use blitsen_host::{OpenDirectoryOptions, WindowSession, native_window};
 use serde::Deserialize;
 
@@ -43,6 +43,7 @@ struct Settings {
     runtime: String,
     window: NativeWindowOptions,
     tray: Option<TrayOptions>,
+    menu: Option<Vec<MenuDefinition>>,
 }
 
 impl Default for Settings {
@@ -55,6 +56,7 @@ impl Default for Settings {
             runtime: concat!("blitsen-runtime ", env!("CARGO_PKG_VERSION")).to_owned(),
             window: NativeWindowOptions::default(),
             tray: None,
+            menu: None,
         }
     }
 }
@@ -109,7 +111,7 @@ impl Settings {
                     #[serde(default)]
                     close_to_tray: bool,
                     #[serde(default)]
-                    context_menu: Vec<TrayMenuDefinition>,
+                    context_menu: Vec<MenuDefinition>,
                     #[serde(default)]
                     menu_icons: Vec<String>,
                 }
@@ -146,6 +148,19 @@ impl Settings {
                         icons: menu_icons,
                     }),
                 });
+            }
+            // The application menu carries no assets, so unlike the tray there
+            // is nothing here to resolve out of the bundle: the recorded tree
+            // is the tree, and the window session validates it.
+            if let Some(menu) = config.get("menu").filter(|value| !value.is_null()) {
+                #[derive(Deserialize)]
+                struct RecordedMenu {
+                    #[serde(default)]
+                    menu: Vec<MenuDefinition>,
+                }
+                let menu: RecordedMenu = serde_json::from_value(menu.clone())
+                    .map_err(|error| format!("invalid application menu configuration: {error}"))?;
+                settings.menu = Some(menu.menu);
             }
             if let Some(layout) = config.get("layout").and_then(serde_json::Value::as_str) {
                 settings.layout = layout.to_owned();
@@ -279,6 +294,7 @@ fn run(files: AppFiles, arguments: &[String]) -> Result<ExitCode, String> {
         directory: files.entrypoint_name(),
         window: settings.window,
         tray: settings.tray,
+        menu: settings.menu,
     };
     let mut session =
         WindowSession::open(&mut engine, files, options).map_err(|error| error.to_string())?;

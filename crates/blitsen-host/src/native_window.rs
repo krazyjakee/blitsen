@@ -10,14 +10,12 @@ use blitsen_blitz::BlitzDom;
 use blitsen_core::WindowState;
 use blitsen_dom::DomBackend;
 use blitsen_js::{JsEngine, JsError};
-use blitz::dom::{DocGuard, DocGuardMut, Document as BlitzDocument};
+use blitz::dom::{DocGuard, DocGuardMut, Document as BlitzDocument, NodeId};
 use blitz::shell::BlitzApplication;
 use serde::Serialize;
 use winit::application::ApplicationHandler;
 use winit::cursor::CursorIcon;
-use winit::event::{
-    DeviceEvent, ElementState, MouseButton, MouseScrollDelta, StartCause, WindowEvent,
-};
+use winit::event::{DeviceEvent, ElementState, StartCause, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::{Key, ModifiersState, PhysicalKey};
 use winit::window::WindowId;
@@ -25,9 +23,15 @@ use winit::window::WindowId;
 #[cfg(target_os = "macos")]
 use winit::application::macos::ApplicationHandlerExtMacOS;
 
+use crate::drag_drop::PendingDrag;
 use crate::pointer_input::{PendingPointerInput, PointerIds};
 use crate::surface_lifecycle::{SurfaceState, SyntheticPhase};
 
+// Raw HID is desktop-only: S10 kept Android's `UsbManager` permission flow out
+// of this path entirely, so there is no backend here to compile there.
+#[cfg(not(target_os = "android"))]
+pub(crate) mod hid;
+pub(crate) mod menu;
 pub(crate) mod notify;
 mod session;
 pub(crate) mod tray;
@@ -89,6 +93,15 @@ pub struct WindowApplication<Rend: anyrender::WindowRenderer, E: JsEngine + Clon
     pub(crate) document: Rc<RefCell<BlitzDom>>,
     pub(crate) pending_pointer_input: Vec<(WindowId, PendingPointerInput)>,
     pub(crate) pending_keyboard_input: Vec<(WindowId, PendingKeyboardInput)>,
+    pub(crate) pending_drag_input: Vec<(WindowId, PendingDrag)>,
+    /// The files the drag currently over this application announced itself with.
+    ///
+    /// winit names them when the drag enters and again when it is released, and
+    /// not on the moves in between, so the session's list is held here for the
+    /// events that would otherwise carry none. Each queued event takes a share
+    /// of it rather than reading it back at dispatch, so a drag that ends and a
+    /// second that begins inside one turn cannot report each other's files.
+    pub(crate) drag_paths: std::rc::Rc<[std::path::PathBuf]>,
     /// The last surface size winit reported, and the last one acted on.
     ///
     /// A drag reports a new size far faster than a size can be applied: every
@@ -133,7 +146,12 @@ pub struct WindowApplication<Rend: anyrender::WindowRenderer, E: JsEngine + Clon
     /// A synthetic surface cycle a test asked for, run at the next pump.
     pub(crate) synthetic_phase: Option<SyntheticPhase>,
     pub(crate) tray: Option<tray::TrayController>,
+    /// The application menu, which exists independently of the tray.
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    pub(crate) app_menu: Option<menu::AppMenuController>,
     pub(crate) notify: notify::NotifyController,
+    #[cfg(not(target_os = "android"))]
+    pub(crate) hid: hid::HidController,
     pub(crate) quit_requested: bool,
 }
 
@@ -175,6 +193,7 @@ pub(crate) enum InputBootstrap {
     Keyboard,
     Pointer,
     Mouse,
+    Drag,
 }
 
 impl InputBootstrap {
@@ -183,6 +202,7 @@ impl InputBootstrap {
             Self::Keyboard => "__blitsenDispatchKeyboardEvent",
             Self::Pointer => "__blitsenDispatchPointerEvent",
             Self::Mouse => "__blitsenDispatchMouseEvent",
+            Self::Drag => "__blitsenDispatchDragEvent",
         }
     }
 
@@ -190,6 +210,7 @@ impl InputBootstrap {
         match self {
             Self::Keyboard => "blitsen:native-keyboard-event",
             Self::Pointer | Self::Mouse => "blitsen:native-pointer-input",
+            Self::Drag => "blitsen:native-drag-input",
         }
     }
 }
@@ -204,6 +225,28 @@ pub(crate) struct KeyboardEventInit {
     repeat: bool,
     #[serde(flatten)]
     modifiers: ModifierFlags,
+}
+
+/// Window-relative physical pixels as the DOM's `client` and `screen` pairs.
+///
+/// Shared by every input this window dispatches: a pointer, a wheel and a
+/// dragged file all arrive in physical pixels from the window's top-left corner
+/// and all report CSS pixels to JavaScript.
+pub(crate) fn css_pointer_coordinates(
+    physical_x: f64,
+    physical_y: f64,
+    scale: f64,
+    screen_origin_x: f64,
+    screen_origin_y: f64,
+) -> (f64, f64, f64, f64) {
+    let client_x = physical_x / scale;
+    let client_y = physical_y / scale;
+    (
+        client_x,
+        client_y,
+        screen_origin_x + client_x,
+        screen_origin_y + client_y,
+    )
 }
 
 /// Takes one key's queued values in order, unless an earlier callback failed.
@@ -277,40 +320,67 @@ pub(crate) fn dom_key_code(key: PhysicalKey) -> String {
 }
 
 impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Rend, E> {
-    fn apply_tray_action(&mut self, event_loop: &dyn ActiveEventLoop) {
-        let signals = match &self.tray {
+    /// Delivers everything the tray and the application menu raised this turn.
+    ///
+    /// muda's menu-event channel is one channel for every menu in the process,
+    /// so it is drained here rather than by either owner: whichever looked
+    /// first would take the other's clicks. Each owner then claims the ids its
+    /// own bindings recognise, and an id neither claims belonged to a menu that
+    /// has since been replaced.
+    fn apply_menu_signals(&mut self, event_loop: &dyn ActiveEventLoop) {
+        #[cfg(any(target_os = "windows", target_os = "macos"))]
+        let native = menu::take_native_menu_events();
+        let tray_signals = match &self.tray {
             Some(tray) => {
+                #[cfg(any(target_os = "windows", target_os = "macos"))]
+                tray.claim(&native);
                 tray.poll();
                 tray.take_signals()
             }
-            None => return,
+            None => Vec::new(),
         };
-        for signal in signals {
+        for signal in tray_signals {
             match signal {
-                tray::TraySignal::Command(crate::TrayAction::Show) => {
+                menu::MenuSignal::Command(crate::TrayAction::Show) => {
                     for view in self.inner.windows.values() {
                         view.window.set_visible(true);
                         view.window.focus_window();
                         view.window.request_redraw();
                     }
                 }
-                tray::TraySignal::Command(crate::TrayAction::Hide) => {
+                menu::MenuSignal::Command(crate::TrayAction::Hide) => {
                     for view in self.inner.windows.values() {
                         view.window.set_visible(false);
                     }
                 }
-                tray::TraySignal::Command(crate::TrayAction::Quit) => {
+                menu::MenuSignal::Command(crate::TrayAction::Quit) => {
                     self.quit_requested = true;
                     event_loop.exit();
                 }
-                tray::TraySignal::Command(crate::TrayAction::Separator) => {}
-                tray::TraySignal::Click => crate::dom_bridge::tray::clicked(),
-                tray::TraySignal::Action { id, checked } => {
+                menu::MenuSignal::Command(crate::TrayAction::Separator) => {}
+                menu::MenuSignal::Click => crate::dom_bridge::tray::clicked(),
+                menu::MenuSignal::Action { id, checked } => {
                     crate::dom_bridge::tray::action(id, checked);
                 }
             }
         }
-        if crate::dom_bridge::tray::pending() {
+        // The application menu raises nothing but application-defined actions:
+        // its roles are the platform's own commands and never enter JavaScript,
+        // which is what separates a role from a custom item.
+        #[cfg(any(target_os = "windows", target_os = "macos"))]
+        if let Some(app_menu) = &self.app_menu {
+            app_menu.claim(&native);
+            for signal in app_menu.take_signals() {
+                if let menu::MenuSignal::Action { id, checked } = signal {
+                    crate::dom_bridge::menu::action(id, checked);
+                }
+            }
+        }
+        #[cfg(any(target_os = "windows", target_os = "macos"))]
+        let menu_pending = crate::dom_bridge::menu::pending();
+        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+        let menu_pending = false;
+        if crate::dom_bridge::tray::pending() || menu_pending {
             for view in self.inner.windows.values() {
                 view.window.request_redraw();
             }
@@ -350,6 +420,38 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Ren
     /// Snapshots the modifiers that every queued input in this turn observes.
     pub(crate) fn modifier_flags(&self) -> ModifierFlags {
         self.modifiers.into()
+    }
+
+    /// The scale factor and screen origin one window's input resolves against.
+    ///
+    /// `None` once the window is gone, which is a turn whose queued input has
+    /// nowhere to land rather than an error.
+    pub(crate) fn window_geometry(&self, window_id: WindowId) -> Option<(f64, f64, f64)> {
+        self.inner.windows.get(&window_id).map(|view| {
+            let scale = f64::from(view.doc.inner().viewport().hidpi_scale);
+            let origin = view.window.outer_position().unwrap_or_default();
+            (
+                scale,
+                f64::from(origin.x) / scale,
+                f64::from(origin.y) / scale,
+            )
+        })
+    }
+
+    /// Resolves a viewport point to the node under it, against a settled layout.
+    ///
+    /// Every input this window dispatches picks its target this way, so the
+    /// flush belongs here rather than at each caller: a hit test read against a
+    /// dirty tree answers where an element was before the frame moved it.
+    pub(crate) fn hit_test(
+        &self,
+        client_x: f64,
+        client_y: f64,
+    ) -> Result<Option<blitsen_dom::HitTest<NodeId>>, blitsen_dom::DomError> {
+        let snapshot = self.document.borrow_mut().flush_layout()?;
+        self.document
+            .borrow()
+            .hit_test(client_x as f32, client_y as f32, snapshot)
     }
 
     fn queue_keyboard_input(&mut self, window_id: WindowId, event: &WindowEvent) -> bool {
@@ -789,7 +891,7 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> ApplicationHandler
         {
             self.park_error(JsError::new(error));
         }
-        self.apply_tray_action(event_loop);
+        self.apply_menu_signals(event_loop);
     }
 
     fn resumed(&mut self, event_loop: &dyn ActiveEventLoop) {
@@ -802,7 +904,7 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> ApplicationHandler
 
     fn proxy_wake_up(&mut self, event_loop: &dyn ActiveEventLoop) {
         self.inner.proxy_wake_up(event_loop);
-        self.apply_tray_action(event_loop);
+        self.apply_menu_signals(event_loop);
         self.maybe_dispatch_load();
         // Renderer readiness and resource completion both arrive through the
         // proxy. Whichever one was last now schedules the hidden startup paint.
@@ -815,38 +917,17 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> ApplicationHandler
         window_id: WindowId,
         event: WindowEvent,
     ) {
-        match &event {
-            WindowEvent::PointerMoved { position, .. } => {
-                let scale = self
-                    .inner
-                    .windows
-                    .get(&window_id)
-                    .map_or(1.0, |view| view.window.scale_factor());
-                let logical = position.to_logical::<f64>(scale);
-                crate::dom_bridge::input::pointer_position(logical.x, logical.y);
-            }
-            WindowEvent::PointerButton { state, button, .. } => {
-                let button = match button.clone().mouse_button() {
-                    Some(MouseButton::Left) => "primary".to_owned(),
-                    Some(MouseButton::Right) => "secondary".to_owned(),
-                    Some(MouseButton::Middle) => "auxiliary".to_owned(),
-                    Some(MouseButton::Back) => "back".to_owned(),
-                    Some(MouseButton::Forward) => "forward".to_owned(),
-                    Some(other) => format!("other-{}", other as u8 + 1),
-                    None => "unknown".to_owned(),
-                };
-                crate::dom_bridge::input::pointer_button(button, *state == ElementState::Pressed);
-            }
-            WindowEvent::MouseWheel { delta, .. } => match delta {
-                MouseScrollDelta::LineDelta(x, y) => {
-                    crate::dom_bridge::input::wheel_lines(f64::from(*x), f64::from(*y));
-                }
-                MouseScrollDelta::PixelDelta(position) => {
-                    crate::dom_bridge::input::wheel_pixels(position.x, position.y);
-                }
-            },
-            _ => {}
-        }
+        // Before anything else this turn does with the event, and whatever else
+        // it does: the native snapshot is what an application polls instead of
+        // listening, so it has to reflect the pointer even on the events this
+        // handler goes on to consume itself.
+        crate::dom_bridge::input::observe(
+            &event,
+            self.inner
+                .windows
+                .get(&window_id)
+                .map_or(1.0, |view| view.window.scale_factor()),
+        );
         if matches!(event, WindowEvent::CloseRequested)
             && self
                 .tray
@@ -870,6 +951,7 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> ApplicationHandler
         }
         let queued_pointer_input = self.queue_pointer_input(window_id, &event);
         let queued_keyboard_input = self.queue_keyboard_input(window_id, &event);
+        let queued_drag_input = self.queue_drag_input(window_id, &event);
         let viewport_changed = matches!(&event, WindowEvent::ScaleFactorChanged { .. });
         let redraw = matches!(&event, WindowEvent::RedrawRequested);
         let startup_paint = redraw && self.prepare_startup_reveal(window_id);
@@ -879,6 +961,7 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> ApplicationHandler
             self.apply_pending_resize(event_loop, window_id);
             self.drain_pointer_input(window_id);
             self.drain_keyboard_input(window_id);
+            self.drain_drag_input(window_id);
         }
         // `requestAnimationFrame` means "before the next paint", and a window
         // with no surface has no next paint. Android's winit backend stops
@@ -929,7 +1012,7 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> ApplicationHandler
         if animation_pending && let Some(view) = self.inner.windows.get(&window_id) {
             view.window.request_redraw();
         }
-        if (queued_pointer_input || queued_keyboard_input)
+        if (queued_pointer_input || queued_keyboard_input || queued_drag_input)
             && let Some(view) = self.inner.windows.get(&window_id)
         {
             view.window.request_redraw();
@@ -953,7 +1036,7 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> ApplicationHandler
         // the platform sent, so it runs before the turn's other work, exactly
         // where a real `destroy_surfaces` would have landed.
         self.run_synthetic_phase(event_loop);
-        self.apply_tray_action(event_loop);
+        self.apply_menu_signals(event_loop);
         self.inner.about_to_wait(event_loop);
         self.settle_native_resize(event_loop);
         // The turn's last reported size, applied once. A redraw in the same

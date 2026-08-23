@@ -34,18 +34,48 @@ on Wayland because that protocol does not expose the operation. Cursor grab mode
 runtime throws when a requested mode is unavailable. Declarative and runtime tray control—including
 nested actions, checkboxes, radio groups, accelerators and action/submenu PNGs—notification
 submission/lifecycle events and focused native input snapshots are available on desktop targets.
+`os.batteries` reads the machine's own batteries on every desktop target and answers an empty list
+where there are none; `os.displays` and `os.idleTime` are absent by decision, the monitors being
+`window.monitors()` and idle time having no answer a Wayland client can trust.
 Checkable tray icons and hidden menu items are not exposed because the native backends do not agree
-on them. Linux and
-macOS notifications can be updated and closed through their session ID. The installed Windows
-notification library delivers interaction events but rejects update and close because it does not
-retain an addressable toast handle (#251). Individual notification-server policies still decide
-how a submitted notification is presented.
+on them. Desktop notifications can be updated and closed through their session ID on every desktop
+target; a Windows toast carries that ID as its own tag, which is what an update replaces and a
+close removes from the screen and from notification history. Individual notification-server
+policies still decide how a submitted notification is presented.
 
-The standard Web `Notification` facade is installed on Linux and in eligible packaged macOS apps.
-It is absent on Windows until the notification library exposes addressable close (#251), absent in
-an unbundled macOS development host (#253), and absent on Android until intent activation is wired
-through #252. The native `blitsen/notify` module is available on every desktop target and Android,
-and exposes its platform limits directly.
+`blitsen/hid` is available on every desktop target. On Linux a hidraw node is owned by udev, so a
+packaged application reaches an intended device only once a distribution or installer has added a
+rule granting access; `blitsen build` writes a `<name>.hid.rules` template beside the executable and
+`blitsen doctor` reports the requirement. Blitsen never installs a rule itself and running the
+application as root is not a supported substitute.
+
+## Application menu
+
+`blitsen/menu` is present on macOS and Windows and feature-detectably absent on Linux and Android.
+
+- **macOS** installs the NSApp main menu. The required application, edit and window roles are always
+  present: Blitsen supplies a standard submenu for each role the application did not claim.
+- **Windows** installs a window menu bar on the application's window. Accelerators work because the
+  runtime translates them inside winit's message pump; a menu bar shrinks the window's client area,
+  as it does for any Win32 application that sets one after creation. `services`, `showAll`,
+  `hideOthers`, `fullscreen` and `bringAllToFront` are macOS commands and are omitted rather than
+  shown as items that do nothing.
+- **Linux** has none. A Linux menu bar is a widget inside the window, and the only backend the menu
+  crate has for one is a `gtk::MenuBar` packed into a `gtk::Window` — Blitsen windows are winit's,
+  the renderer owns the whole client area, and there is no GTK main loop to run it. The
+  desktop-level alternative is the D-Bus global menu, which only some desktops implement and which
+  needs an X11 window id, so it answers nothing on Wayland and would give the same application a
+  menu on KDE and none on GNOME. The tray menu is not this under another name: it belongs to a
+  status item the application may never show.
+- **Android** has no application menu bar. Its equivalents — the app bar's overflow menu and the
+  navigation drawer — are views inside the activity's own layout rather than a menu the platform
+  owns.
+
+The standard Web `Notification` facade is installed on Linux, on Windows, and on any macOS process
+carrying a bundle identity—an exported application, or a development run inside `blitsen run
+--dev-bundle`. It is absent in an unbundled macOS development host, and absent on Android until
+intent activation is wired through #252. The native `blitsen/notify` module is available on every
+desktop target and Android, and exposes its platform limits directly.
 
 ## macOS requirements
 
@@ -53,9 +83,16 @@ Blitsen publishes Intel and Apple silicon runtimes. The published artifacts are 
 an application you export is unsigned unless your build runs an appropriate signing command.
 
 Distribute a macOS application only after signing its `.app` bundle and completing notarization on
-macOS. Modern macOS notifications also require the exported `.app` bundle identity and signature;
-permission requests from an unbundled development executable reject. The current `blitsen/dialog`
-module is absent on macOS.
+macOS. Modern macOS notifications also require a signed `.app` bundle identity, which an export has
+and a development run does not: submission and permission from an unbundled executable reject with
+a message naming `blitsen run --dev-bundle`, which builds a signed development `.app` around the
+interpreter and runs inside it under `com.blitsen.dev.<name>`. No installed application's identifier
+is ever borrowed for either. The current `blitsen/dialog` module is absent on macOS.
+
+`blitsen/hid` opens devices with shared IOHID access, so an application never seizes a device from
+the rest of the system. A sandboxed application must be signed with `com.apple.security.device.usb`;
+`blitsen build` writes a `<name>.app.entitlements` file beside the bundle for the signing command to
+pass to `codesign --entitlements`.
 
 ## Windows requirements
 
@@ -66,6 +103,19 @@ Windows packaging writes the application manifest and optional `.ico` beside the
 than embedding them in the PE file. Keep those files with the executable. The current
 `blitsen/dialog` module and Unix single-instance lock are absent on Windows.
 
+`blitsen/hid` opens HID top-level collections through the Windows HID class driver and needs no
+driver installation. Windows reserves some system collections for itself; an open refused that way
+rejects with `NotAllowedError`, separately from a device that disappeared.
+
+Windows notification permission is what the notifier reports, so it is `"granted"` or `"denied"`
+and never `"default"`; `requestPermission()` reads it without prompting, because Windows gives an
+application no prompt to show. Toasts are delivered under an application identity Windows already
+knows rather than under `appName`; registering one of your own is the packaging work #252 tracks.
+Windows keeps that setting per registered AppUserModelID, so a machine that has registered none—an
+image stripped of Start Menu entries, such as a CI runner or a Server Core install—has no notifier
+to read: `permission()` and `requestPermission()` reject there, naming the missing identity, rather
+than reporting a state nobody chose.
+
 ## Android
 
 Android output is an APK built from a Blitsen source checkout. It supports `arm64-v8a` and `x86_64`
@@ -75,7 +125,17 @@ the focus-scoped `input.snapshot` member and `blitsen/notify`. Notifications use
 as granted. Submission, same-session replacement and close are supported. Tap, action and dismiss
 events are not exposed until #252 adds Android intent activation, so action-bearing submissions
 reject. The standard Web `Notification` global remains absent for the same reason. Android does not
-support Blitsen's app, clipboard, dialog, window or tray native modules in this release.
+support Blitsen's app, clipboard, dialog, window, tray, menu or hid native modules in this
+release. Raw
+HID on Android is `UsbManager` and its explicit per-device permission grant rather than desktop
+enumeration, which is a separate implementation this release does not have.
+
+`blitsen/os` is available, and `os.batteries` is the one member of it that is not: the library
+behind that reading has no Android backend, and the platform's own answer is `BatteryManager` over
+JNI with its own semantics. The input snapshot reports the touch position and a primary button for
+the finger that is down; raw pointer movement and wheel deltas stay zero because Android produces
+neither, and keys held by physical code exclude the soft keyboard, whose input arrives as DOM
+`keydown`.
 
 The output is an APK for direct installation, not an Android App Bundle. It cannot be used to
 create a new Google Play listing that requires AAB upload. See [Build an Android

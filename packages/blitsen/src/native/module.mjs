@@ -49,5 +49,5 @@ export function nativeModule(name) {
 /// Modules the specifier layer knows about. A name here does not imply the runtime
 /// implements it — that is exactly what the namespace reports at run time.
 export const NATIVE_MODULES = [
-  "app", "window", "dialog", "clipboard", "tray", "notify", "input", "os",
+  "app", "window", "dialog", "clipboard", "tray", "menu", "notify", "input", "hid", "os",
 ];

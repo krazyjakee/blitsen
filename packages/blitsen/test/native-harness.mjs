@@ -14,6 +14,7 @@ await import("./native-harness/events.mjs");
 await import("./native-harness/pointer-events.mjs");
 await import("./native-harness/forms.mjs");
 await import("./native-harness/text-editing.mjs");
+await import("./native-harness/transfer.mjs");
 await import("./native-harness/dom.mjs");
 await import("./native-harness/read-back-and-scrolling.mjs");
 await import("./native-harness/ranges.mjs");

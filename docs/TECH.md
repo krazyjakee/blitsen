@@ -444,7 +444,7 @@ What remains here is what a table cannot express: why a thing sits where it does
 | --- | --- |
 | `WebSocket` | tokio-tungstenite |
 | `Audio`, basic Web Audio | rodio / cpal |
-| Clipboard, drag & drop | arboard, winit |
+| Starting a drag out to the desktop | winit, which reports a drag that arrives and cannot start one. Clipboard events and dropping *into* the window are implemented, over arboard and winit. |
 | `navigator.getGamepads` | gilrs |
 | Pointer lock, fullscreen | winit |
 | WebGL / WebGPU | wgpu through the viewport |
@@ -618,11 +618,12 @@ import { app }       from "native:app";
 | `native:window` | create, resize, fullscreen, borderless, always-on-top, transparency, cursor control, monitor enumeration, DPI |
 | `native:dialog` | open/save file, folder picker, message box |
 | `native:clipboard` | text, images, arbitrary MIME |
-| `native:tray` | tray icon, context menu, application menu |
+| `native:tray` | tray icon and its context menu |
+| `native:menu` | the application menu: macOS main menu, Windows menu bar. Separate from `native:tray` because it must exist without a status item (#249) |
 | `native:notify` | desktop notifications |
 | `native:input` | raw keyboard/mouse state and gamepads |
-| `native:hid` | deliberately raw HID reports for non-keyboard/pointer devices; desktop implementation and separate Android permission path are specified by [S10](../spikes/s10/README.md) |
-| `native:os` | processor, memory, storage volumes and OS identity; displays, battery, locale, idle time |
+| `native:hid` | deliberately raw HID reports for non-keyboard/pointer devices: desktop enumeration, opaque device ids, input/output/feature reports and hot-plug, with the protected Generic Desktop collections refused; the separate Android `UsbManager` permission path specified by [S10](../spikes/s10/README.md) is not implemented |
+| `native:os` | processor, memory, storage volumes, OS identity, batteries and locale. Displays stay `native:window`'s `monitors`, and idle time is absent by decision (#98) |
 
 **The rule: `native:` is additive, never a superset.** Anything the Node surface already names
 keeps its Node name — `process.argv`, `process.execPath`, `process.exit`, `node:os` for CPU /
@@ -734,7 +735,12 @@ that, and duplicating it would make Blitsen a competitor to Vite instead of a ta
   index and then reads files from their recorded offsets, never unpacking to disk. **Append first,
   then sign** — the signing hook in step ⑤ already runs last, which is what keeps a macOS or
   Authenticode signature valid, and the trailer is *found* rather than assumed to be the final
-  bytes because a signature legitimately follows it. This is what an export links into now that the
+  bytes because a signature legitimately follows it. On Mach-O that ordering is not enough and this
+  paragraph overstated it: `__LINKEDIT` has to be the last thing in the file, so a payload appended
+  past it is a layout `codesign` rejects however late the signing runs, and no macOS export has ever
+  been signable. #256 carries the fix and the evidence; the claim holds for Authenticode, which has
+  a defined place for trailing data — though no CI job has run `signtool` over an export either.
+  This is what an export links into now that the
   platform packages carry the Phase 2 runtime, and it is why an ordinary export is 37 MB rather
   than 145 MB (PRODUCT.md §9).
 

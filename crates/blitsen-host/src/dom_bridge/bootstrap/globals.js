@@ -58,6 +58,7 @@
     getComputedStyle, matchMedia, MediaQueryList, MediaQueryListEvent,
     Event, MouseEvent, KeyboardEvent, CustomEvent, SubmitEvent, PopStateEvent, HashChangeEvent,
     MessageEvent, CloseEvent, ErrorEvent, FocusEvent, InputEvent, PointerEvent, WheelEvent,
+    ClipboardEvent, DragEvent, DataTransfer,
     Worker, MessagePort, MessageChannel, structuredClone,
     postMessage: windowPostMessage,
     CSS, DOMParser,
@@ -78,7 +79,8 @@
       || pendingResizeObservations() > 0 || audioPending()
       || waitingImages() > 0 || waitingLinks() > 0
       || nativePending() || nativeDialogPending() || nativeTrayWorkPending()
-      || nativeNotifyWorkPending() || call("isAnimating")
+      || nativeMenuWorkPending()
+      || nativeNotifyWorkPending() || nativeHidWorkPending() || call("isAnimating")
       // A canvas drawn outside a frame callback is owed a paint, and nothing
       // else here would ask for one.
       || canvasPaintPending
@@ -90,6 +92,7 @@
     __blitsenDispatchMouseEvent: dispatchMouseEvent,
     __blitsenDispatchPointerEvent: dispatchPointerEvent,
     __blitsenDispatchKeyboardEvent: dispatchKeyboardEvent,
+    __blitsenDispatchDragEvent: dispatchDragEvent,
     __blitsenDispatchLifecycleEvent: dispatchLifecycleEvent,
     __blitsenDisposeContext: () => {
       for (const id of contextTimeouts) hostClearTimeout(id);
@@ -116,6 +119,9 @@
       // of the old document would retarget the new document's events at it.
       caretDragControl = null;
       disposePointerState();
+      // A drag held across a reload would deliver its drop to an element of the
+      // document that is gone.
+      disposeDragState();
       secondInstanceHandler = null;
       notifyCommands.clear();
       notifyListeners.clear();
@@ -148,6 +154,16 @@
   if (testHarness) globals.__blitsenInjectMouseEvent = (type, target, init = {}) => {
     if (!(target instanceof Node)) throw new TypeError("mouse event target must be a Node");
     return dispatchMouseEvent(String(type), target[handle], init);
+  };
+  // The drag the native window drives, at an element a test picked rather than
+  // at one a hit test found: a file drag carries no pointer, so there is no
+  // `__blitsenInjectPointerAt` equivalent to resolve one. `null` is the drag
+  // leaving, which lands on whichever element the last stage entered.
+  if (testHarness) globals.__blitsenInjectDragEvent = (stage, target = null, init = {}) => {
+    if (target !== null && !(target instanceof Node))
+      throw new TypeError("drag target must be a Node");
+    return dispatchDragEvent(String(stage), target === null ? "" : target[handle],
+      { paths: [], uris: [], ...init });
   };
   if (testHarness) globals.__blitsenDomCallCount = operation =>
     bridgeCallCounts.get(String(operation)) ?? 0;

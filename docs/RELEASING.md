@@ -192,12 +192,19 @@ Android is a thinner tier again, because it is not one of the six and `release.y
 it: the `android` job cross-compiles `blitsen-android` for `arm64-v8a` and `x86_64`, checks each
 `.so` is the architecture it claims and exports `android_main`, resolves the notices an APK owes,
 and then packages one with `blitsen build --android` and reads the archive back (issue \#149).
-It stops before the emulator, which is the last thing left — when this job was written it stopped
-before packaging too, and that was because an APK carrying the engine could not be built at all
-until \#148. The emulator smoke test is written
-(`bun run --cwd packages/blitsen test:android --apk <path> --package <id>`) and joins the job when
-the two open questions about hosted runners — lavapipe under the emulator's Vulkan, and KVM on a
-standard runner — have answers. The APK it wants is the one this job now builds.
+That job stops before the emulator — when it was written it stopped before packaging too, and that
+was because an APK carrying the engine could not be built at all until \#148.
+
+A device now runs one thing. The `android-notifications` job takes the APKs that job packages and
+boots an AVD on API 32 and API 33 with `reactivecircus/android-emulator-runner`, then runs
+`bun run --cwd packages/blitsen test:android-notify -- --apk <path> --package <id>`: it answers the
+runtime permission dialog, and reads delivery, same-ID replacement, timeout and close back out of
+`dumpsys notification` (issue \#254). It is a separate job because an emulator boot is the flakiest
+thing in the file and a cross-compile gate should not fail for one. The framebuffer smoke test
+(`bun run --cwd packages/blitsen test:android --apk <path> --package <id>`) is still not wired to a
+device: it and the notification job meet the same two open questions about hosted runners —
+lavapipe under the emulator's Vulkan, and KVM on a standard runner — and running one of them first
+is how those get an answer that is not two failures at once.
 
 What no CI job covers on any target is the release path itself: staging, signing,
 packing and publish ordering. That is what a `publish: false` dispatch is for, and it is the only

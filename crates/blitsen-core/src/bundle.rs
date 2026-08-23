@@ -61,6 +61,17 @@
 //! trailer move and this reader has to learn that; the first macOS or Windows
 //! signing run is where that is found out.
 //!
+//! It was, and macOS answered no. `codesign` rejects a Mach-O whose `__LINKEDIT`
+//! is not last, so appending past it produces a file that cannot be signed at
+//! all — signing later does not help, because the objection is to the layout
+//! rather than to the order. Ordering the hook last remains right, and it is
+//! still what keeps an Authenticode signature valid; it was never sufficient on
+//! macOS, and every macOS export this project has produced is unsignable. #256
+//! carries that. This reader is untouched by it so far, and whether it stays
+//! that way depends on which fix lands there: growing `__LINKEDIT` over the
+//! payload leaves these offsets alone, and moving the payload into a section of
+//! its own does not.
+//!
 //! # Reading
 //!
 //! Nothing is unpacked. The index is read once at startup; file contents are

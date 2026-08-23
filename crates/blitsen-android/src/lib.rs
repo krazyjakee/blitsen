@@ -24,8 +24,13 @@
 //!
 //! `android_main` may be re-entered in one process when the Activity is
 //! recreated. The upstream activity slot is a `OnceLock`, so a second entry can
-//! still panic. CI cross-compiles the default ABIs, verifies this symbol, builds
-//! and inspects an APK, but does not boot that APK in an emulator or on a device.
+//! still panic, and nothing in CI recreates an Activity — that is #252's.
+//!
+//! CI cross-compiles the default ABIs, verifies this symbol, builds and inspects
+//! an APK, and boots one of them on an emulator for the notification coverage in
+//! #254, which is the only thing that has ever run this entry point on a device
+//! in CI. What it does not do is read a frame back: the framebuffer smoke test
+//! exists and is not wired to a device.
 
 pub mod logcat;
 

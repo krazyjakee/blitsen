@@ -38,6 +38,8 @@ pub(super) fn install<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsErr
     install_clipboard(engine)?;
     install_window(engine)?;
     install_tray(engine)?;
+    install_menu(engine)?;
+    install_hid(engine)?;
     install_notify(engine)?;
     install_input(engine)?;
     install_os(engine)?;
@@ -123,7 +125,11 @@ fn install_notify<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsError> 
         }),
     )?;
 
-    #[cfg(target_os = "linux")]
+    // The standard facade needs a backend that can withdraw what it showed,
+    // because `Notification.close()` is not optional in that contract. Windows
+    // joins Linux here now that a toast is addressable by the tag `show` gave it
+    // (#251).
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     engine.define_global_function(
         "__blitsenNativeNotifyStandard",
         Box::new(move |call| {
@@ -195,6 +201,160 @@ fn install_notify<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsError> 
     )
 }
 
+/// Reads a report argument, refusing anything past the conservative ceiling.
+///
+/// The device's own declared bound is the real limit and is checked by the
+/// controller before it allocates or transfers anything. This is the earlier,
+/// cruder guard: it stops a caller from parking an arbitrarily large buffer in
+/// the request queue for a frame before the controller ever sees it.
+#[cfg(not(target_os = "android"))]
+fn report_argument<E: JsEngine>(
+    engine: &mut E,
+    call: &blitsen_js::NativeCall<E::Value>,
+    index: usize,
+) -> Result<Vec<u8>, JsError> {
+    let report = engine.to_typed_array(call.argument(index, "HID report")?)?;
+    if !matches!(
+        report.kind,
+        TypedArrayKind::Uint8 | TypedArrayKind::Uint8Clamped
+    ) {
+        return Err(JsError::new(
+            "a HID report must be a Uint8Array or Uint8ClampedArray",
+        ));
+    }
+    let ceiling = crate::native_window::hid::MAX_REPORT_BYTES;
+    if report.bytes.len() > ceiling {
+        return Err(JsError::new(format!(
+            "a HID report of {} bytes exceeds the {ceiling}-byte ceiling",
+            report.bytes.len()
+        )));
+    }
+    Ok(report.bytes)
+}
+
+#[cfg(not(target_os = "android"))]
+fn install_hid<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsError> {
+    fn command<E: JsEngine>(engine: &mut E, id: u64) -> Result<E::Value, JsError> {
+        engine.string(&id.to_string())
+    }
+
+    engine.define_global_function(
+        "__blitsenNativeHidDevices",
+        Box::new(move |call| {
+            let mut engine = E::from_value(&call.this);
+            command(&mut engine, super::hid::devices())
+        }),
+    )?;
+
+    engine.define_global_function(
+        "__blitsenNativeHidOpen",
+        Box::new(move |call| {
+            let mut engine = E::from_value(&call.this);
+            let device_id = argument(&mut engine, &call, 0, "HID device id")?;
+            command(&mut engine, super::hid::open(device_id))
+        }),
+    )?;
+
+    engine.define_global_function(
+        "__blitsenNativeHidClose",
+        Box::new(move |call| {
+            let mut engine = E::from_value(&call.this);
+            let device_id = argument(&mut engine, &call, 0, "HID device id")?;
+            command(&mut engine, super::hid::close(device_id))
+        }),
+    )?;
+
+    engine.define_global_function(
+        "__blitsenNativeHidWrite",
+        Box::new(move |call| {
+            let mut engine = E::from_value(&call.this);
+            let device_id = argument(&mut engine, &call, 0, "HID device id")?;
+            let data = report_argument(&mut engine, &call, 1)?;
+            command(&mut engine, super::hid::write(device_id, data))
+        }),
+    )?;
+
+    engine.define_global_function(
+        "__blitsenNativeHidSendFeatureReport",
+        Box::new(move |call| {
+            let mut engine = E::from_value(&call.this);
+            let device_id = argument(&mut engine, &call, 0, "HID device id")?;
+            let data = report_argument(&mut engine, &call, 1)?;
+            command(&mut engine, super::hid::send_feature_report(device_id, data))
+        }),
+    )?;
+
+    engine.define_global_function(
+        "__blitsenNativeHidReceiveFeatureReport",
+        Box::new(move |call| {
+            let mut engine = E::from_value(&call.this);
+            let device_id = argument(&mut engine, &call, 0, "HID device id")?;
+            let report_id = argument(&mut engine, &call, 1, "HID report id")?
+                .parse::<u8>()
+                .map_err(|_| JsError::new("a HID report id is a byte"))?;
+            command(
+                &mut engine,
+                super::hid::receive_feature_report(device_id, report_id),
+            )
+        }),
+    )?;
+
+    // Hot-plug is polled, so the host has to be told when anything cares. An
+    // application that never listens never makes the runtime walk the device
+    // tree, which is the whole of "does not keep the runtime busy".
+    engine.define_global_function(
+        "__blitsenNativeHidWatch",
+        Box::new(move |call| {
+            let mut engine = E::from_value(&call.this);
+            let watching = engine.to_boolean(call.argument(0, "HID watch flag")?)?;
+            super::hid::watch(watching);
+            Ok(engine.undefined())
+        }),
+    )?;
+
+    engine.define_global_function(
+        "__blitsenNativeHidPending",
+        Box::new(move |call| {
+            let mut engine = E::from_value(&call.this);
+            Ok(engine.boolean(super::hid::pending()))
+        }),
+    )?;
+
+    // Structured fields as JSON beside the raw report, rather than a report
+    // re-encoded into JSON: an input report is bytes, and every frame of a
+    // 1 kHz device would otherwise be encoded and parsed for no one's benefit.
+    engine.define_global_function(
+        "__blitsenNativeHidTake",
+        Box::new(move |call| {
+            let mut engine = E::from_value(&call.this);
+            let mut messages = Vec::new();
+            for message in super::hid::take_messages() {
+                let object = engine.object()?;
+                let json = json_value(&mut engine, &message.value)?;
+                engine.set_property(&object, "json", &json)?;
+                let data = match message.data {
+                    Some(bytes) => {
+                        engine.typed_array(&TypedArray::new(TypedArrayKind::Uint8, bytes)?)?
+                    }
+                    None => engine.null(),
+                };
+                engine.set_property(&object, "data", &data)?;
+                messages.push(object);
+            }
+            engine.array(&messages)
+        }),
+    )
+}
+
+// Android reaches USB devices through `UsbManager` and an explicit per-device
+// permission result the Activity owns (S10). That is a different module with a
+// different lifecycle, not this one with its backend swapped out, so nothing is
+// installed here rather than something that would always fail.
+#[cfg(target_os = "android")]
+fn install_hid<E: JsEngine + 'static>(_engine: &mut E) -> Result<(), JsError> {
+    Ok(())
+}
+
 fn install_input<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsError> {
     engine.define_global_function(
         "__blitsenNativeInputSnapshot",
@@ -216,14 +376,15 @@ struct TrayBridgeOptions {
 }
 
 #[cfg(not(target_os = "android"))]
-type TrayBridgeItem = crate::TrayMenuDefinition;
+type TrayBridgeItem = crate::MenuDefinition;
 
 #[cfg(not(target_os = "android"))]
 fn parse_tray_menu(
     raw: Vec<TrayBridgeItem>,
     icons: &[Vec<u8>],
-) -> Result<(Vec<crate::native_window::tray::TrayEntry>, bool), JsError> {
-    crate::native_window::tray::parse_menu(raw, icons).map_err(JsError::new)
+) -> Result<(Vec<crate::native_window::menu::MenuEntry>, bool), JsError> {
+    crate::native_window::menu::parse_menu(raw, icons, crate::native_window::menu::MenuSurface::Tray)
+        .map_err(JsError::new)
 }
 
 #[cfg(not(target_os = "android"))]
@@ -315,6 +476,65 @@ fn install_tray<E: JsEngine + 'static>(_engine: &mut E) -> Result<(), JsError> {
     Ok(())
 }
 
+// The application menu, installed only where a platform has one to install.
+// macOS has NSApp's main menu, and Windows has a per-window menu bar; on Linux
+// muda's only backend is a `gtk::MenuBar` added to a `gtk::Window`, and Blitsen
+// windows are winit's. That is the whole argument, and `native-modules.mjs`
+// carries it: a menu that appeared here would be a tray menu wearing the name.
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+fn install_menu<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsError> {
+    engine.define_global_function(
+        "__blitsenNativeMenuConfigure",
+        Box::new(move |call| {
+            let mut engine = E::from_value(&call.this);
+            let entries: Vec<crate::MenuDefinition> =
+                serde_json::from_str(&argument(&mut engine, &call, 0, "menu entries")?)
+                    .map_err(|error| {
+                        JsError::new(format!("malformed application menu: {error}"))
+                    })?;
+            // Parsed here rather than when the request is applied, so a tree
+            // the platform cannot install is a rejected promise naming what is
+            // wrong with it rather than a menu that half appeared.
+            crate::native_window::menu::parse_menu(
+                entries.clone(),
+                &[],
+                crate::native_window::menu::MenuSurface::Application,
+            )
+            .map_err(JsError::new)?;
+            engine.string(&super::menu::configure(entries).to_string())
+        }),
+    )?;
+
+    engine.define_global_function(
+        "__blitsenNativeMenuRemove",
+        Box::new(move |call| {
+            let mut engine = E::from_value(&call.this);
+            engine.string(&super::menu::remove().to_string())
+        }),
+    )?;
+
+    engine.define_global_function(
+        "__blitsenNativeMenuPending",
+        Box::new(move |call| {
+            let mut engine = E::from_value(&call.this);
+            Ok(engine.boolean(super::menu::pending()))
+        }),
+    )?;
+
+    engine.define_global_function(
+        "__blitsenNativeMenuTake",
+        Box::new(move |call| {
+            let mut engine = E::from_value(&call.this);
+            json_value(&mut engine, &json!(super::menu::take_messages()))
+        }),
+    )
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+fn install_menu<E: JsEngine + 'static>(_engine: &mut E) -> Result<(), JsError> {
+    Ok(())
+}
+
 // Every one of these answers a whole record at once rather than a field at a
 // time. A monitor reads the processor once per tick and shows a dozen numbers
 // off it; a getter per field would sample the machine a dozen times for one
@@ -368,7 +588,35 @@ fn install_os<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsError> {
             });
             json_value(&mut engine, &locale)
         }),
+    )?;
+
+    install_battery(engine)
+}
+
+/// The batteries, which are the one reading in this module Android does not get.
+///
+/// A machine that cannot be asked about power throws rather than answering an
+/// empty list, because the empty list already means something else: it is a
+/// desktop with no battery, and that is a fact rather than a failure (#98).
+#[cfg(not(target_os = "android"))]
+fn install_battery<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsError> {
+    engine.define_global_function(
+        "__blitsenNativeOsBatteries",
+        Box::new(move |call| {
+            let mut engine = E::from_value(&call.this);
+            let batteries = os::batteries().map_err(failed)?;
+            json_value(&mut engine, &json!(batteries))
+        }),
     )
+}
+
+// Android has no `starship-battery` backend, so there is no reading to install
+// and `os.batteries` is `undefined` there. Its own power service is a
+// `BatteryManager` over JNI, which is a module-shaped decision rather than this
+// one with the source swapped out.
+#[cfg(target_os = "android")]
+fn install_battery<E: JsEngine + 'static>(_engine: &mut E) -> Result<(), JsError> {
+    Ok(())
 }
 
 #[cfg(not(target_os = "android"))]
@@ -812,7 +1060,7 @@ fn install_dialog<E: JsEngine + 'static>(_engine: &mut E) -> Result<(), JsError>
 #[cfg(all(test, not(target_os = "android")))]
 mod tray_tests {
     use super::*;
-    use crate::native_window::tray::{TrayEntry, TrayItemKind, TraySignal};
+    use crate::native_window::menu::{MenuEntry, MenuItemKind, MenuSignal};
 
     fn action(id: &str) -> TrayBridgeItem {
         TrayBridgeItem {
@@ -856,22 +1104,22 @@ mod tray_tests {
         ];
         let (menu, has_quit) = parse_tray_menu(raw, &[]).expect("the tree is valid");
         assert!(!has_quit);
-        let TrayEntry::Submenu { menu: theme, .. } = &menu[1] else {
+        let MenuEntry::Submenu { menu: theme, .. } = &menu[1] else {
             panic!("the second entry is the theme submenu")
         };
-        let TrayEntry::Item(dark) = &theme[1] else {
+        let MenuEntry::Item(dark) = &theme[1] else {
             panic!("the second theme entry is an item")
         };
         assert_eq!(
             dark.signal,
-            TraySignal::Action {
+            MenuSignal::Action {
                 id: "dark".into(),
                 checked: Some(false),
             }
         );
         assert_eq!(
             dark.kind,
-            TrayItemKind::Radio {
+            MenuItemKind::Radio {
                 group: "theme".into(),
                 checked: false,
             }

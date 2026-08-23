@@ -202,6 +202,20 @@ describe("directory CLI", () => {
       .toThrow("fetch are absent from the runtime but not deleted");
     expect(() => buildManifest(source.replace("const globals = {", "const stubbed = {")))
       .toThrow("no longer declares const globals = {");
+
+    // A conditional API is the one claim here that a platform cannot check, so
+    // both halves of it are checked against the bootstrap instead: the API has
+    // to be installed, and the runtime has to be able to withdraw it again.
+    expect(buildManifest(source).apis.find(entry => entry.api === "Notification").condition)
+      .toMatchObject({ platforms: ["darwin"] });
+    expect(() => buildManifest(source
+      .replace("if (!Notification) try { delete globalThis.Notification; } catch {}", "")))
+      .toThrow("Notification is declared conditional and the bootstrap installs it");
+    expect(() => buildManifest(source.replace(
+      "if (!Notification) try { delete globalThis.Notification; } catch {}",
+      "if (!Notification) try { delete globalThis.Notification; } catch {}\n"
+      + "  if (!EventSource) try { delete globalThis.EventSource; } catch {}")))
+      .toThrow("withdraws EventSource");
   });
 
   test("reads class members and instances by structure rather than indentation", async () => {
@@ -299,6 +313,41 @@ describe("directory CLI", () => {
       expect(await main(["doctor", directory, "--target", "android-arm64"], output)).toBe(0);
       expect(lines.some(([, line]) => line.includes("NATIVE_MODULE_ABSENT")
         && line.includes("blitsen/clipboard does not exist on android"))).toBeTrue();
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  // Issue #247. Raw HID is the one capability whose remaining requirement is
+  // outside the source file: a udev rule on Linux, an entitlement in the macOS
+  // signature. Neither can be inferred from the code, so `doctor` is where the
+  // developer is told — and only where the module actually exists, since an
+  // Android build has a better thing to say about it.
+  test("reports the packaging raw HID needs, per platform", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "blitsen-hid-doctor-"));
+    try {
+      await writeFile(join(directory, "app.js"), [
+        `import hid from "blitsen/hid";`,
+        `export { hid };`,
+      ].join("\n"));
+      await writeFile(join(directory, "index.html"),
+        `<!doctype html><script type="module" src="./app.js"></script>`);
+      const reported = async target => (await doctorApplication(directory, { target }))
+        .diagnostics.filter(entry => entry.code === "NATIVE_HID_ACCESS");
+
+      const linux = await reported("linux-x64");
+      expect(linux).toHaveLength(1);
+      expect(linux[0].severity).toBe("warning");
+      expect(linux[0].guidance).toContain("udev rule");
+      expect(linux[0].guidance).toContain("not a substitute");
+      expect((await reported("darwin-arm64"))[0].guidance)
+        .toContain("com.apple.security.device.usb");
+      expect((await reported("win32-x64"))[0].guidance).toContain("HID class driver");
+      // Android has no module to package for, and says so through the absence
+      // finding instead — two findings about one import would be one too many.
+      expect(await reported("android-arm64")).toEqual([]);
+      expect((await doctorApplication(directory, { target: "android-arm64" }))
+        .diagnostics.map(entry => entry.code)).toContain("NATIVE_MODULE_ABSENT");
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
