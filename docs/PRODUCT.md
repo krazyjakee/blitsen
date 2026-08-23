@@ -488,21 +488,21 @@ Bare app on the shipping host (Linux x64, 2026-08-13, `bun run --cwd packages/bl
   shipped total                 38,090,586 B  the executable, and that is all
 
 Current full-surface checkpoint (Linux x64, rustc 1.97.1, #102/storage/IME integrated)
-  Blitsen runtime export        57,767,973 B  measured from the explicitly pinned checkout runtime
-  gzip -9                       21,631,059 B
-  runtime executable            57,767,240 B  the application payload is 733 B
-  S0 floor delta                +5,287,069 B  +10.1%; the old estimate stays withdrawn
+  Blitsen runtime export        57,767,261 B  measured from the explicitly pinned checkout runtime
+  gzip -9                       21,613,383 B
+  runtime executable            57,766,528 B  the application payload is 733 B
+  S0 floor delta                +5,286,357 B  +10.1%; the old estimate stays withdrawn
   previous c6e43ca baseline     57,638,189 B  before #102 and the later integration changes
   #102 isolated adapter delta       -8,640 B  -390 B gzip on its own baseline; not inferred from
                                               the two different full-tree checkpoints
 
 Same-host bare comparison (2026-08-23; exact same 968d9e… HTML, 800×600 release window)
-  Electron 43.4.1              327,377,844 B  complete Packager output, 74 regular files
-    filewise gzip -9           124,665,308 B  compression proxy, not an installer
-  Tauri 2.11.5                  11,864,824 B  one executable; system WebView excluded
-    gzip -9                      2,696,602 B
-  Blitsen checkpoint            57,767,973 B  renderer + QuickJS-ng included
-    gzip -9                     21,631,059 B
+  Electron 43.4.1              327,377,884 B  complete Packager output, 74 regular files
+    filewise gzip -9           124,665,326 B  compression proxy, not an installer
+  Tauri 2.11.5                  11,856,712 B  one executable; system WebView excluded
+    gzip -9                      2,690,593 B
+  Blitsen checkpoint            57,767,261 B  renderer + QuickJS-ng included
+    gzip -9                     21,613,383 B
 
 Adopted since the measurement above
   strip = "symbols" on release  13,078,232 B  off both artifacts; it is in [profile.release], so a
@@ -701,14 +701,32 @@ is a feature that could go rather than a saving to be found in the build.
 Worth reading beside the JavaScriptCore comparison above: a self-contained JSC was measured folding
 in **36 MB** of ICU for the same class of capability, and this is 12 MB for it.
 
-**Per-target evidence.** The primary Linux x64, macOS arm64 and Windows x64 metrics jobs and the
-secondary Linux arm64, macOS x64 and Windows arm64 smoke jobs now each write `phase2-size-<target>`
-JSON artifacts and a job summary from the runtime they built. The primary three additionally build
-the pinned Electron and Tauri fixtures on that same runner and upload
-`desktop-size-comparison-<runner>` JSON. The five non-Linux-x64 values are intentionally not copied
-into this document before those remote jobs run; their artifacts are the current evidence rather
-than guessed numbers. The Linux value above includes #102; the other five remain dependent on their
-first remote CI run.
+**Per-target evidence.** CI run 32671156437 built the checkout runtime on every release target and
+measured the same bare application. Installed bytes include the executable and its linked payload;
+gzip is the same level-9 compression proxy used by the size gate, not an installer estimate.
+
+| Release target | Phase 2 installed | gzip -9 |
+| --- | ---: | ---: |
+| Linux x64 | 57,767,261 B | 21,613,383 B |
+| Linux arm64 | 52,218,492 B | 20,321,073 B |
+| macOS arm64 | 43,069,876 B | 16,883,770 B |
+| macOS x64 | 40,836,060 B | 16,395,515 B |
+| Windows x64 | 50,466,013 B | 18,338,780 B |
+| Windows arm64 | 44,173,065 B | 17,132,283 B |
+
+The three primary runners also built pinned Electron and Tauri fixtures from the exact same
+968d9e… HTML. Electron is its complete Packager directory; Tauri is its runnable executable and
+therefore excludes the operating system WebView; Blitsen includes both its renderer and QuickJS-ng.
+
+| Primary runner | Blitsen installed / gzip | Electron installed / gzip | Tauri installed / gzip |
+| --- | ---: | ---: | ---: |
+| Linux x64 | 57,767,261 / 21,613,383 B | 327,377,884 / 124,665,326 B | 11,856,712 / 2,690,593 B |
+| macOS arm64 | 43,069,876 / 16,883,770 B | 307,530,493 / 119,882,734 B | 10,667,696 / 2,576,385 B |
+| Windows x64 | 50,466,013 / 18,338,780 B | 374,142,186 / 149,068,154 B | 8,289,280 / 2,404,649 B |
+
+Every row remains available as the run's `phase2-size-<target>` or
+`desktop-size-comparison-<runner>` JSON artifact, so the published figures can be audited without
+reconstructing them from a job log.
 
 From a checkout, both size commands require an explicit runtime so a published package in a Bun/npm
 cache cannot silently become the thing measured:
@@ -729,8 +747,9 @@ withdrawn. Installed and compressed sizes are always reported separately.
 What the numbers above do settle is that the phase reversal was worth making: the same bare
 application exports 2.62× smaller, dropping 93.5 MB when the shipping host replaces Bun. The
 size-first Phase 3 profile remains a measured option rather than the default because its frame-time
-cost has not been accepted against P4. The Linux numeric claim is current; the other five targets
-remain report-only values to collect from the first remote CI run.
+cost has not been accepted against P4. All six target jobs remain report-only rather than turning
+cross-platform linker output into one shared gate; the Linux x64 budget continues to be the tracked
+regression gate.
 
 The key architectural consequence, which belongs in the product spec because it defines what
 the user installs: **Bun is the toolchain; Blitsen's own runtime is what ships.** The exported app
