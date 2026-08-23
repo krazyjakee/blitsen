@@ -407,6 +407,22 @@
     snapshot: hosted("__blitsenNativeInputSnapshot")
       ? () => Object.freeze(JSON.parse(__blitsenNativeInputSnapshot()))
       : undefined,
+    vibrateGamepad: gamepadInstalled
+      ? (index, options = {}) => {
+          const slot = Number(index);
+          const duration = Number(options.duration ?? 0);
+          const strong = Number(options.strongMagnitude ?? 0);
+          const weak = Number(options.weakMagnitude ?? 0);
+          if (!Number.isSafeInteger(slot) || slot < 0
+            || ![duration, strong, weak].every(Number.isFinite)
+            || duration < 0 || duration > 60_000
+            || strong < 0 || strong > 1 || weak < 0 || weak > 1)
+            return Promise.reject(new TypeError(
+              "gamepad index must be non-negative, duration 0..60000ms, and magnitudes 0..1"));
+          return startGamepadVibration(slot, strong, weak, duration);
+        }
+      : undefined,
+    onDeviceChange: gamepadInstalled ? gamepadListener : undefined,
   };
 
   // Raw HID (#247). Deliberately not part of `input` above: keyboards, pointers

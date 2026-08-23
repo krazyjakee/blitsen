@@ -321,7 +321,8 @@ pen, with pressure, multi-touch and pointer capture) · the first `blitsen/*` mo
 durable `localStorage` and realm-scoped `sessionStorage` · Workers (dedicated, with
 `MessageChannel`, `MessagePort` and `structuredClone`) · clipboard events · drag & drop, where a
 drop reports real filesystem paths in `dataTransfer.paths` rather than browser `File` abstractions,
-have landed. Still open: gamepads · remaining Windows/macOS notification activation · starting a drag *out*
+have landed. Gamepads—with stable standard snapshots, connection events and conditional
+dual-rumble—have landed on desktop. Still open: remaining Windows/macOS notification activation · starting a drag *out*
 of the window, which winit gives no way to do and which the native matrix records as absent rather
 than approximating. Declarative and runtime tray/menu control, desktop notification submission and
 focused native input snapshots have landed; the generated native matrix records the remaining
@@ -415,7 +416,7 @@ every module an application imports that the target does not have, with the reas
 | `clipboard` | **Absent** | `arboard` has no Android backend and does not compile. `ClipboardManager` would not settle it either: Android refuses a read to an unfocused application, and these readers report an empty clipboard as `null`, so the refusal and the empty clipboard would arrive as the same value. A module shaped for that, over JNI. |
 | `app` | **Absent** | The directories are the Activity's `filesDir`/`cacheDir`; the XDG variables Android does not set would resolve to a path nothing can write to. `relaunch` has no executable to spawn inside an APK. Single-instance ownership is the platform's own — a second launch is an `Intent` to the process already running, not a command line to hand over. |
 | `dialog` | **Absent** | No XDG portal. Already absent off the portal platforms, for its own reasons (#141). |
-| `input` | **Present, partial** | Focus-scoped keyboard and pointer snapshots are fed by the same winit events as desktop. Gamepads and device discovery remain absent everywhere. |
+| `input` | **Present, partial** | Focus-scoped keyboard and pointer snapshots are fed by the same winit events as desktop. Gamepad discovery and vibration are desktop-only; the standard and native members are absent on Android because the maintained backend has no Android implementation. |
 | `hid` | **Present, unexercised** | `UsbManager` over `jni` (#248): USB HID interfaces enumerate without a grant, the first `open()` of a device raises the system permission dialog and the promise is held until it is answered, and reports, bounds, the protected-collection refusal and the single terminal disconnect are the desktop module's own code over a USB backend. Two things are Android's and are documented as such: `usagePage`/`usage` are `0` until a device is opened, because a report descriptor cannot be read without permission, and a denial is inferred from window focus because no HID permission receiver is implemented. **No part of it has run on physical hardware** — a USB HID device cannot be attached to the CI emulator, so verification needs a device. |
 | `tray` | **Absent** | Android has no desktop status item or context-menu surface. A persistent Android notification is not a tray icon under another name. |
 | `menu` | **Absent** | Android has no application menu bar. The app bar's overflow menu and the navigation drawer are views inside the activity's own layout, not a menu the platform owns. Absent on Linux too, and for its own reason (#249). |

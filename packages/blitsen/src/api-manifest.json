@@ -3989,6 +3989,91 @@
       "pattern": null
     },
     {
+      "api": "Gamepad",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_GAMEPAD",
+      "pattern": "(?<![.\\w$])Gamepad\\b",
+      "condition": {
+        "platforms": [
+          "android"
+        ],
+        "reason": "The maintained controller backend supports Linux, macOS and Windows, but has no Android backend. The API is absent there rather than returning an always-empty snapshot."
+      }
+    },
+    {
+      "api": "GamepadButton",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_GAMEPAD",
+      "pattern": "(?<![.\\w$])GamepadButton\\b",
+      "condition": {
+        "platforms": [
+          "android"
+        ],
+        "reason": "This snapshot type is installed with the desktop Gamepad API and absent with it."
+      }
+    },
+    {
+      "api": "GamepadEvent",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_GAMEPAD",
+      "pattern": "(?<![.\\w$])GamepadEvent\\b",
+      "condition": {
+        "platforms": [
+          "android"
+        ],
+        "reason": "Controller connection events require the desktop controller backend."
+      }
+    },
+    {
+      "api": "GamepadHapticActuator",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_GAMEPAD",
+      "pattern": "(?<![.\\w$])GamepadHapticActuator\\b",
+      "condition": {
+        "platforms": [
+          "android"
+        ],
+        "reason": "Dual-rumble is exposed only where the desktop controller backend can address it."
+      }
+    },
+    {
+      "api": "Navigator.getGamepads",
+      "kind": "member",
+      "owner": "Navigator.prototype",
+      "member": "getGamepads",
+      "status": "implemented",
+      "code": "WEB_GAMEPAD",
+      "pattern": null,
+      "condition": {
+        "platforms": [
+          "android"
+        ],
+        "reason": "The maintained controller backend supports Linux, macOS and Windows, but has no Android backend. The member is absent there rather than returning an always-empty array."
+      }
+    },
+    {
+      "api": "GamepadHapticActuator.playEffect",
+      "kind": "member",
+      "owner": "GamepadHapticActuator.prototype",
+      "member": "playEffect",
+      "status": "implemented",
+      "code": "WEB_GAMEPAD",
+      "pattern": null
+    },
+    {
+      "api": "GamepadHapticActuator.reset",
+      "kind": "member",
+      "owner": "GamepadHapticActuator.prototype",
+      "member": "reset",
+      "status": "implemented",
+      "code": "WEB_GAMEPAD",
+      "pattern": null
+    },
+    {
       "api": "ResizeObserver",
       "kind": "global",
       "status": "implemented",
@@ -4826,21 +4911,31 @@
       "module": "input",
       "member": "gamepads",
       "status": "absent",
-      "reason": "Gamepads need the standard navigator.getGamepads surface, stable device identity and hot-plug delivery; keyboard and pointer state alone cannot approximate them."
+      "reason": "The standard navigator.getGamepads surface already carries every observable controller field. A second native snapshot would only create a competing source of truth."
     },
     {
       "api": "input.vibrateGamepad",
       "module": "input",
       "member": "vibrateGamepad",
-      "status": "absent",
-      "reason": "Vibration belongs to a discovered gamepad actuator and cannot be implemented before gamepad discovery identifies the device and its supported effects."
+      "status": "implemented",
+      "condition": {
+        "platforms": [
+          "android"
+        ],
+        "reason": "The controller backend has no Android implementation, so there is no discovered slot or actuator to address."
+      }
     },
     {
       "api": "input.onDeviceChange",
       "module": "input",
       "member": "onDeviceChange",
-      "status": "absent",
-      "reason": "Device change is the connection counterpart of gamepad and raw-device discovery, neither of which is installed yet."
+      "status": "implemented",
+      "condition": {
+        "platforms": [
+          "android"
+        ],
+        "reason": "The controller backend has no Android implementation, so there are no controller connection changes to report."
+      }
     },
     {
       "api": "hid.devices",

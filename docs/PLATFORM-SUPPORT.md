@@ -23,7 +23,7 @@ requested runtime separately and stores it in the platform cache.
 ## Linux requirements
 
 Published Linux runtimes are built on Ubuntu 22.04 and require glibc 2.35 or newer. The machine
-must also provide ALSA, OpenSSL 3, fontconfig and the display libraries needed by its active X11 or
+must also provide ALSA, OpenSSL 3, fontconfig, libudev and the display libraries needed by its active X11 or
 Wayland session.
 
 Minimal containers and headless Linux systems commonly omit these libraries. Blitsen is a windowed
@@ -41,6 +41,12 @@ borderless on the monitor containing the window (primary fallback), never an exc
 switch. Both modes release on Escape, focus loss, surface loss, or target disconnection. Physical
 multi-monitor placement and grab behavior still require acceptance on Windows and macOS, with
 fullscreen acceptance separately required on X11 and Wayland.
+Gamepad snapshots and connect/disconnect events are available on Linux, macOS and Windows through
+the target-gated `gilrs` backend. Controllers are sampled once per application redraw, so an idle
+window performs no controller polling and learns about a hot-plug on its next frame. Standard
+dual-rumble is exposed only where the device and driver advertise it. Synthetic tests cover slot,
+normalization, event and command semantics; physical hot-plug, mapping and motor behavior still
+require representative X11, Wayland, Windows and macOS hardware.
 `os.batteries` reads the machine's own batteries on every desktop target and answers an empty list
 where there are none; `os.displays` and `os.idleTime` are absent by decision, the monitors being
 `window.monitors()` and idle time having no answer a Wayland client can trust.
@@ -172,7 +178,9 @@ than reporting a state nobody chose.
 
 Android output is an APK built from a Blitsen source checkout. It supports `arm64-v8a` and `x86_64`
 by default; `armeabi-v7a` can be requested but has not been run by this project. Android supports
-the focus-scoped `input.snapshot` member and `blitsen/notify`. Notifications use Android's stable
+the focus-scoped `input.snapshot` member and `blitsen/notify`. Gamepad globals,
+`navigator.getGamepads`, `input.onDeviceChange` and `input.vibrateGamepad` are absent: `gilrs` has no
+Android backend, and an always-empty registry would make feature detection lie. Notifications use Android's stable
 `blitsen.default` channel; API 33+ requests `POST_NOTIFICATIONS`, while API 26–32 reports permission
 as granted. Submission, same-session replacement, close, body taps, action buttons and swipe
 dismissal are implemented through the packaged activation bridge. Its manifest, dex build and

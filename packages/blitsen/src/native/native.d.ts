@@ -486,10 +486,31 @@ export interface NativeInputSnapshot {
   readonly pointer: NativePointerState;
 }
 
+/** A standard gamepad arriving or leaving the per-frame registry. */
+export interface NativeGamepadDeviceChange {
+  readonly type: "connected" | "disconnected";
+  readonly index: number;
+  readonly id: string;
+}
+
+/** A dual-rumble request for one connected standard gamepad slot. */
+export interface NativeGamepadVibrationOptions {
+  /** Effect length in milliseconds, from 0 through 60,000. */
+  duration?: number;
+  /** Low-frequency motor magnitude, from 0 through 1. */
+  strongMagnitude?: number;
+  /** High-frequency motor magnitude, from 0 through 1. */
+  weakMagnitude?: number;
+}
+
 /** `blitsen/input`: polling state that complements ordinary DOM input events. */
 export interface NativeInput {
   /** Reads held state and consumes accumulated movement and wheel deltas. */
   snapshot?(): NativeInputSnapshot;
+  /** Starts or stops dual-rumble on a connected `navigator.getGamepads()` slot. */
+  vibrateGamepad?(index: number, options?: NativeGamepadVibrationOptions): Promise<void>;
+  /** Listens for standard gamepads arriving and leaving; returns an unsubscribe function. */
+  onDeviceChange?(listener: (event: NativeGamepadDeviceChange) => void): () => void;
 }
 
 /** One top-level collection a HID device exposes. */

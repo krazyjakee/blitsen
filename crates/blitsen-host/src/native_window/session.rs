@@ -118,6 +118,7 @@ impl<E: JsEngine + Clone + 'static> WindowSession<E> {
         // already recorded it as delivered.
         super::notify::install(&options.activation, &options.title).map_err(JsError::new)?;
         crate::dom_bridge::hid::reset();
+        crate::dom_bridge::gamepad::reset();
         crate::dom_bridge::input::reset();
         let storage = crate::storage::LocalStorage::for_application(&options.storage_identity)
             .map_err(JsError::new)?;
@@ -246,6 +247,7 @@ impl<E: JsEngine + Clone + 'static> WindowSession<E> {
             app_menu,
             notify,
             hid: super::hid::controller(event_loop.create_proxy()),
+            gamepads: super::gamepad::Controller::platform(),
             quit_requested: false,
         };
         drop(guard);
@@ -274,6 +276,7 @@ impl<E: JsEngine + Clone + 'static> WindowSession<E> {
         // reloaded application cannot open.
         self.application.hid = super::hid::controller(self.event_loop.create_proxy());
         crate::dom_bridge::hid::reset();
+        crate::dom_bridge::gamepad::reset();
         crate::dom_bridge::input::reset();
         let window_id = self
             .application
@@ -438,6 +441,9 @@ impl<E: JsEngine + Clone + 'static> WindowSession<E> {
         self.apply_menu_requests();
         self.apply_notify_requests();
         self.apply_hid_requests();
+        if self.application.gamepads.apply_requests() {
+            self.request_redraw();
+        }
         self.application.hid.poll();
         if crate::dom_bridge::hid::pending() {
             self.request_redraw();

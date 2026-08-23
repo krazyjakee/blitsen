@@ -452,7 +452,7 @@ What remains here is what a table cannot express: why a thing sits where it does
 | `WebSocket` | tokio-tungstenite |
 | `Audio`, basic Web Audio | rodio / cpal |
 | Starting a drag out to the desktop | winit, which reports a drag that arrives and cannot start one. Clipboard events and dropping *into* the window are implemented, over arboard and winit. |
-| `navigator.getGamepads` | gilrs |
+| Android Gamepad API | gilrs has no Android backend; the globals and navigator member are absent there |
 | WebGL / WebGPU | wgpu through the viewport |
 | WebRTC | webrtc-rs |
 
@@ -481,6 +481,14 @@ Standard fullscreen selects borderless mode on the window's current monitor
 (primary fallback); exclusive video modes are deliberately not guessed because the Web API has no
 mode selector. Arbitrary-element fullscreen remains unsupported until the renderer has a
 Fullscreen top layer.
+
+Gamepads use one injected registry between the window session and the DOM bridge. On Linux, macOS
+and Windows a target-gated `gilrs` backend is sampled exactly once during an actual redraw, before
+the animation tick; it starts no worker or JavaScript-visible polling loop. Ordered backend
+connection changes allocate stable slots, while the same poll publishes one normalized snapshot
+for `navigator.getGamepads()`. Haptic commands cross back after the tick and settle on a later
+frame. The registry/backend boundary is injectable, so connection, reconnection, normalization,
+rumble routing and zero idle polls are deterministic host tests rather than hardware-shaped mocks.
 
 ### Where the DOM surface is narrower than its name
 
@@ -659,7 +667,7 @@ import { app }       from "native:app";
 | `native:tray` | tray icon and its context menu |
 | `native:menu` | the application menu: macOS main menu, Windows menu bar. Separate from `native:tray` because it must exist without a status item (#249) |
 | `native:notify` | desktop notifications |
-| `native:input` | raw keyboard/mouse state and gamepads |
+| `native:input` | raw keyboard/mouse state, gamepad device-change notification and dual-rumble; snapshots remain the standard `navigator.getGamepads()` surface |
 | `native:hid` | deliberately raw HID reports for non-keyboard/pointer devices: desktop enumeration, opaque device ids, input/output/feature reports and hot-plug, with the protected Generic Desktop collections refused. The Android half [S10](../spikes/s10/README.md) specified is the same module over `UsbManager`: enumeration without a grant, an `open()` that stays unsettled while the system permission dialog is up, and reports through USB control and interrupt transfers (#248) |
 | `native:os` | processor, memory, storage volumes, OS identity, batteries and locale. Displays stay `native:window`'s `monitors`, and idle time is absent by decision (#98) |
 
