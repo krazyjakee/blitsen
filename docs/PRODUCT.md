@@ -339,7 +339,8 @@ accessibility (#102) are **not v1**. Keyboard and clipboard editing, caret place
 selection, bounded control-local undo/redo, and a native IME preedit/commit path for `<input>` and
 `<textarea>` have landed; `contenteditable`, surrounding-text IME operations, full form reset and
 human-verified CJK/RTL native input have not. Accessibility's absence is deliberate at the dependency
-boundary too: the runtime does not enable Blitz's AccessKit platform adapter. ARIA and semantic
+boundary too: the runtime does not
+enable Blitz's AccessKit platform adapter. ARIA and semantic
 elements therefore do not reach a screen reader, while keyboard focus and editing continue through
 the ordinary DOM input path. `<canvas>` was the third entry here, and the sharpest one: the element
 shipped in the document
