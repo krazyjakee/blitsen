@@ -447,6 +447,7 @@ version = "0.0.0"
 dependencies = [
  "anyrender",
  "anyrender_vello_cpu",
+ "base64 0.22.1",
  "blitsen-core",
  "blitsen-dom",
  "blitz",

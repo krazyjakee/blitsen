@@ -139,30 +139,11 @@ pub(crate) fn encode(
     Ok(encoded)
 }
 
-/// The alphabet and padding of standard base64, which a data URL uses.
-const BASE64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-
 /// Writes bytes as a `data:` URL's base64 payload.
-///
-/// Twenty lines rather than a dependency: this is the only base64 encoder in
-/// the runtime, standard alphabet and padded, and a crate for it would be a
-/// supply-chain entry and a compile unit for something with no variations left
-/// to get wrong.
 pub(crate) fn base64(bytes: &[u8]) -> String {
-    let mut encoded = String::with_capacity(bytes.len().div_ceil(3) * 4);
-    for chunk in bytes.chunks(3) {
-        let mut group = [0_u8; 3];
-        group[..chunk.len()].copy_from_slice(chunk);
-        let bits = u32::from_be_bytes([0, group[0], group[1], group[2]]);
-        for index in 0..4 {
-            if index <= chunk.len() {
-                encoded.push(BASE64[(bits >> (18 - index * 6) & 0x3f) as usize] as char);
-            } else {
-                encoded.push('=');
-            }
-        }
-    }
-    encoded
+    use base64::{Engine as _, engine::general_purpose::STANDARD};
+
+    STANDARD.encode(bytes)
 }
 
 #[cfg(test)]
