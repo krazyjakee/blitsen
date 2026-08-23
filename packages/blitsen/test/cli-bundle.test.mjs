@@ -169,8 +169,19 @@ describe("Phase 2 link step", () => {
         ],
         menuIcons: [join(root, "open.png"), join(root, "theme.png")],
       };
+      // The application menu carries no assets, so it travels as the tree the
+      // configuration declared rather than as recorded bundle names.
+      const menu = {
+        menu: [
+          { type: "submenu", role: "application", label: "Classic", menu: [
+            { type: "role", role: "about" }, { type: "role", role: "quit" },
+          ] },
+          { type: "submenu", label: "File", menu: [{ id: "new", label: "New" }] },
+        ],
+      };
       const built = await buildStandalone(
-        { root, width: 800, height: 600, title: "Classic", outfile, window, tray }, nativePath);
+        { root, width: 800, height: 600, title: "Classic", outfile, window, tray, menu },
+        nativePath);
       expect(built.host).toBe("blitsen");
       // Linked by appending to the runtime, so the artifact carries the bundle.
       const bundle = readBundle(await readFile(built.outfile));
@@ -185,6 +196,7 @@ describe("Phase 2 link step", () => {
         icon: "blitsen.tray.png",
         menuIcons: ["blitsen.tray-menu.0.png", "blitsen.tray-menu.1.png"],
       });
+      expect(runtime.menu).toEqual(menu);
       const side = await buildStandalone({
         root, width: 800, height: 600, title: "Classic", outfile: join(directory, "Side"),
         window, tray, assets: "side-loaded",

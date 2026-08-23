@@ -1492,6 +1492,7 @@ lib. The capability tiers above are the list, and `blitsen doctor` is the check.
 | `blitsen/dialog` | `openFile`, `openFiles`, `saveFile`, `openFolder`, `openFolders`, `message` | — |
 | `blitsen/clipboard` | `readText`, `readHtml`, `readImage`, `writeText`, `writeHtml`, `writeImage`, `clear` | `readMime`, `writeMime` |
 | `blitsen/tray` | `configure`, `remove`, `onClick`, `onAction` | — |
+| `blitsen/menu` | `configure`, `remove`, `onAction` | — |
 | `blitsen/input` | `snapshot` | `gamepads`, `vibrateGamepad`, `onDeviceChange` |
 | `blitsen/hid` | `devices`, `open`, `onDeviceChange` | — |
 | `blitsen/notify` | `show`, `permission`, `requestPermission`, `update`, `close`, `onEvent` | — |

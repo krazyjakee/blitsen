@@ -31,6 +31,7 @@ use crate::surface_lifecycle::{SurfaceState, SyntheticPhase};
 // of this path entirely, so there is no backend here to compile there.
 #[cfg(not(target_os = "android"))]
 pub(crate) mod hid;
+pub(crate) mod menu;
 pub(crate) mod notify;
 mod session;
 pub(crate) mod tray;
@@ -145,6 +146,9 @@ pub struct WindowApplication<Rend: anyrender::WindowRenderer, E: JsEngine + Clon
     /// A synthetic surface cycle a test asked for, run at the next pump.
     pub(crate) synthetic_phase: Option<SyntheticPhase>,
     pub(crate) tray: Option<tray::TrayController>,
+    /// The application menu, which exists independently of the tray.
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    pub(crate) app_menu: Option<menu::AppMenuController>,
     pub(crate) notify: notify::NotifyController,
     #[cfg(not(target_os = "android"))]
     pub(crate) hid: hid::HidController,
@@ -316,40 +320,67 @@ pub(crate) fn dom_key_code(key: PhysicalKey) -> String {
 }
 
 impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Rend, E> {
-    fn apply_tray_action(&mut self, event_loop: &dyn ActiveEventLoop) {
-        let signals = match &self.tray {
+    /// Delivers everything the tray and the application menu raised this turn.
+    ///
+    /// muda's menu-event channel is one channel for every menu in the process,
+    /// so it is drained here rather than by either owner: whichever looked
+    /// first would take the other's clicks. Each owner then claims the ids its
+    /// own bindings recognise, and an id neither claims belonged to a menu that
+    /// has since been replaced.
+    fn apply_menu_signals(&mut self, event_loop: &dyn ActiveEventLoop) {
+        #[cfg(any(target_os = "windows", target_os = "macos"))]
+        let native = menu::take_native_menu_events();
+        let tray_signals = match &self.tray {
             Some(tray) => {
+                #[cfg(any(target_os = "windows", target_os = "macos"))]
+                tray.claim(&native);
                 tray.poll();
                 tray.take_signals()
             }
-            None => return,
+            None => Vec::new(),
         };
-        for signal in signals {
+        for signal in tray_signals {
             match signal {
-                tray::TraySignal::Command(crate::TrayAction::Show) => {
+                menu::MenuSignal::Command(crate::TrayAction::Show) => {
                     for view in self.inner.windows.values() {
                         view.window.set_visible(true);
                         view.window.focus_window();
                         view.window.request_redraw();
                     }
                 }
-                tray::TraySignal::Command(crate::TrayAction::Hide) => {
+                menu::MenuSignal::Command(crate::TrayAction::Hide) => {
                     for view in self.inner.windows.values() {
                         view.window.set_visible(false);
                     }
                 }
-                tray::TraySignal::Command(crate::TrayAction::Quit) => {
+                menu::MenuSignal::Command(crate::TrayAction::Quit) => {
                     self.quit_requested = true;
                     event_loop.exit();
                 }
-                tray::TraySignal::Command(crate::TrayAction::Separator) => {}
-                tray::TraySignal::Click => crate::dom_bridge::tray::clicked(),
-                tray::TraySignal::Action { id, checked } => {
+                menu::MenuSignal::Command(crate::TrayAction::Separator) => {}
+                menu::MenuSignal::Click => crate::dom_bridge::tray::clicked(),
+                menu::MenuSignal::Action { id, checked } => {
                     crate::dom_bridge::tray::action(id, checked);
                 }
             }
         }
-        if crate::dom_bridge::tray::pending() {
+        // The application menu raises nothing but application-defined actions:
+        // its roles are the platform's own commands and never enter JavaScript,
+        // which is what separates a role from a custom item.
+        #[cfg(any(target_os = "windows", target_os = "macos"))]
+        if let Some(app_menu) = &self.app_menu {
+            app_menu.claim(&native);
+            for signal in app_menu.take_signals() {
+                if let menu::MenuSignal::Action { id, checked } = signal {
+                    crate::dom_bridge::menu::action(id, checked);
+                }
+            }
+        }
+        #[cfg(any(target_os = "windows", target_os = "macos"))]
+        let menu_pending = crate::dom_bridge::menu::pending();
+        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+        let menu_pending = false;
+        if crate::dom_bridge::tray::pending() || menu_pending {
             for view in self.inner.windows.values() {
                 view.window.request_redraw();
             }
@@ -860,7 +891,7 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> ApplicationHandler
         {
             self.park_error(JsError::new(error));
         }
-        self.apply_tray_action(event_loop);
+        self.apply_menu_signals(event_loop);
     }
 
     fn resumed(&mut self, event_loop: &dyn ActiveEventLoop) {
@@ -873,7 +904,7 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> ApplicationHandler
 
     fn proxy_wake_up(&mut self, event_loop: &dyn ActiveEventLoop) {
         self.inner.proxy_wake_up(event_loop);
-        self.apply_tray_action(event_loop);
+        self.apply_menu_signals(event_loop);
         self.maybe_dispatch_load();
         // Renderer readiness and resource completion both arrive through the
         // proxy. Whichever one was last now schedules the hidden startup paint.
@@ -1005,7 +1036,7 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> ApplicationHandler
         // the platform sent, so it runs before the turn's other work, exactly
         // where a real `destroy_surfaces` would have landed.
         self.run_synthetic_phase(event_loop);
-        self.apply_tray_action(event_loop);
+        self.apply_menu_signals(event_loop);
         self.inner.about_to_wait(event_loop);
         self.settle_native_resize(event_loop);
         // The turn's last reported size, applied once. A redraw in the same

@@ -4721,6 +4721,24 @@
       "status": "implemented"
     },
     {
+      "api": "menu.configure",
+      "module": "menu",
+      "member": "configure",
+      "status": "implemented"
+    },
+    {
+      "api": "menu.remove",
+      "module": "menu",
+      "member": "remove",
+      "status": "implemented"
+    },
+    {
+      "api": "menu.onAction",
+      "module": "menu",
+      "member": "onAction",
+      "status": "implemented"
+    },
+    {
       "api": "input.snapshot",
       "module": "input",
       "member": "snapshot",

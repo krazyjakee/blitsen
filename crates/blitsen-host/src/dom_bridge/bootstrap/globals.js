@@ -79,6 +79,7 @@
       || pendingResizeObservations() > 0 || audioPending()
       || waitingImages() > 0 || waitingLinks() > 0
       || nativePending() || nativeDialogPending() || nativeTrayWorkPending()
+      || nativeMenuWorkPending()
       || nativeNotifyWorkPending() || nativeHidWorkPending() || call("isAnimating")
       // A canvas drawn outside a frame callback is owed a paint, and nothing
       // else here would ask for one.

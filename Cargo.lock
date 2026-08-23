@@ -588,6 +588,7 @@ dependencies = [
  "tray-icon",
  "url",
  "web-audio-api",
+ "windows-sys 0.61.2",
  "winit",
  "writeable",
 ]

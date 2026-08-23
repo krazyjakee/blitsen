@@ -125,7 +125,11 @@ pub struct TrayMenuItem {
     pub enabled: bool,
 }
 
-/// One rich tray-menu entry before platform-native objects are created.
+/// One declarative menu entry before platform-native objects are created.
+///
+/// The same shape describes a tray menu and an application menu: the two are
+/// one tree installed on two surfaces, and which entries each surface accepts
+/// is a decision the parser makes rather than a second type.
 ///
 /// Runtime JavaScript supplies menu icons by index because their bytes travel
 /// separately from the JSON tree. Packaged applications use the same shape:
@@ -133,14 +137,16 @@ pub struct TrayMenuItem {
 /// assets into the indexed byte list before validating the menu.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(default, rename_all = "camelCase")]
-pub struct TrayMenuDefinition {
-    /// Explicit kind (`action`, `separator`, `checkbox`, `radio`, or `submenu`).
+pub struct MenuDefinition {
+    /// Explicit kind (`action`, `separator`, `checkbox`, `radio`, `role`, or `submenu`).
     #[serde(rename = "type")]
     pub kind: Option<String>,
     /// Application-defined identity for action and checkable entries.
     pub id: Option<String>,
-    /// Built-in `show`, `hide`, `quit`, or legacy `separator` action.
+    /// Built-in `show`, `hide`, `quit`, or legacy `separator` tray action.
     pub action: Option<String>,
+    /// Platform role carried by a `role` item or by an application submenu.
+    pub role: Option<String>,
     /// User-facing item or submenu text.
     pub label: Option<String>,
     /// Whether the item accepts input.
@@ -161,7 +167,7 @@ pub struct TrayMenuDefinition {
 #[derive(Clone, Debug, Default)]
 pub struct TrayMenu {
     /// Recursive menu definitions.
-    pub entries: Vec<TrayMenuDefinition>,
+    pub entries: Vec<MenuDefinition>,
     /// PNG byte payloads addressed by each definition's `icon_index`.
     pub icons: Vec<Vec<u8>>,
 }
@@ -212,6 +218,13 @@ pub struct OpenDirectoryOptions {
     pub window: NativeWindowOptions,
     /// Optional system tray icon and menu.
     pub tray: Option<TrayOptions>,
+    /// Optional application menu installed before the first frame.
+    ///
+    /// Separate from `tray` because the two have different owners. A status
+    /// item is one optional piece of desktop furniture; an application menu
+    /// belongs to the process itself, and an application that shows no status
+    /// item at all must still be able to install one.
+    pub menu: Option<Vec<MenuDefinition>>,
 }
 
 /// Wraps a DOM backend failure as a JavaScript-visible error.

@@ -309,6 +309,130 @@ export interface NativeTray {
   onAction?(listener: (event: TrayActionEvent) => void): () => void;
 }
 
+/**
+ * A command the platform performs itself, never entering application code.
+ *
+ * `services`, `showAll`, `hideOthers`, `fullscreen` and `bringAllToFront` are
+ * macOS commands; Windows has no equivalent and omits the item rather than
+ * showing a dead one.
+ */
+export type MenuRole =
+  | "about"
+  | "services"
+  | "hide"
+  | "hideOthers"
+  | "showAll"
+  | "quit"
+  | "closeWindow"
+  | "minimize"
+  | "maximize"
+  | "fullscreen"
+  | "bringAllToFront"
+  | "undo"
+  | "redo"
+  | "cut"
+  | "copy"
+  | "paste"
+  | "selectAll";
+
+/**
+ * The place a top-level submenu takes in the macOS main menu.
+ *
+ * Declaring one takes ownership of that submenu's contents. Blitsen supplies a
+ * standard `application`, `edit` and `window` submenu for each role no
+ * top-level submenu declared, and places a declared `help` submenu last.
+ */
+export type MenuSubmenuRole = "application" | "edit" | "window" | "help";
+
+/** An entry whose behaviour is the platform's rather than the application's. */
+export interface MenuRoleItem {
+  type: "role";
+  role: MenuRole;
+  id?: never;
+  label?: never;
+}
+
+/** An entry whose activation is delivered to `onAction`. */
+export interface MenuActionItem {
+  type?: "action";
+  /** Stable application-defined identifier delivered with the action event. */
+  id: string;
+  label: string;
+  enabled?: boolean;
+  /** Native keyboard accelerator such as `CmdOrCtrl+Shift+KeyP`. */
+  accelerator?: string;
+  role?: never;
+}
+
+/** A visual separator. */
+export interface MenuSeparatorItem {
+  type: "separator";
+}
+
+/** A checkable action with state reported in the action event. */
+export interface MenuCheckboxItem {
+  type: "checkbox";
+  id: string;
+  label: string;
+  enabled?: boolean;
+  checked?: boolean;
+  accelerator?: string;
+  group?: never;
+}
+
+/** One choice in a consecutive radio group; exactly one item per group is checked. */
+export interface MenuRadioItem {
+  type: "radio";
+  id: string;
+  label: string;
+  group: string;
+  enabled?: boolean;
+  checked?: boolean;
+  accelerator?: string;
+}
+
+/** A nested menu. Every top-level entry of an application menu is one of these. */
+export interface MenuSubmenuItem {
+  type: "submenu";
+  label: string;
+  /** Platform role, valid only on a top-level submenu. */
+  role?: MenuSubmenuRole;
+  enabled?: boolean;
+  menu: readonly MenuItem[];
+  id?: never;
+}
+
+export type MenuItem =
+  | MenuRoleItem
+  | MenuActionItem
+  | MenuSeparatorItem
+  | MenuCheckboxItem
+  | MenuRadioItem
+  | MenuSubmenuItem;
+
+/** Runtime state for the application menu. */
+export interface ApplicationMenuOptions {
+  /** Top-level submenus, in the order they appear in the bar. */
+  menu: readonly MenuSubmenuItem[];
+}
+
+export interface MenuActionEvent {
+  readonly type: "action";
+  readonly id: string;
+  /** New state for checkbox/radio actions; absent for ordinary actions. */
+  readonly checked?: boolean;
+}
+
+/** `blitsen/menu`: the macOS main menu and the Windows window menu bar. */
+export interface NativeMenu {
+  /** Creates or atomically replaces the application menu. Needs no tray icon. */
+  configure?(options: ApplicationMenuOptions): Promise<void>;
+  /** Removes the current application menu. */
+  remove?(): Promise<void>;
+  /** Listens for activation of an application-defined item; returns an unsubscribe function. */
+  onAction?(listener: (event: MenuActionEvent) => void): () => void;
+}
+
 /** One currently held physical key. */
 export interface PressedKey {
   /** Layout-independent DOM physical code, such as `KeyA` or `ArrowLeft`. */

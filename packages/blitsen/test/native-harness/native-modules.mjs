@@ -10,6 +10,7 @@ import clipboard from "../../src/native/clipboard.mjs";
 import dialog from "../../src/native/dialog.mjs";
 import hid from "../../src/native/hid.mjs";
 import input from "../../src/native/input.mjs";
+import menu from "../../src/native/menu.mjs";
 import notify from "../../src/native/notify.mjs";
 import os from "../../src/native/os.mjs";
 import tray from "../../src/native/tray.mjs";
@@ -21,12 +22,16 @@ import { addonPath, native } from "./addon.mjs";
 // does — through the `blitsen/app` and `blitsen/clipboard` proxies — so what is
 // asserted is the installed namespace, not a description of it.
 const nativeManifest = await loadApiManifest();
-const namespaces = { app, clipboard, dialog, hid, input, notify, os, tray, window: windowModule };
+const namespaces = { app, clipboard, dialog, hid, input, menu, notify, os, tray, window: windowModule };
 // The members whose presence is a platform fact rather than a version fact: the
-// single-instance lock is a Unix socket, and a dialog is the XDG portal.
+// single-instance lock is a Unix socket, a dialog is the XDG portal, and an
+// application menu is the macOS main menu or the Windows menu bar.
 const absentOn = new Map([["app.requestSingleInstanceLock", ["win32"]]]);
 for (const entry of nativeManifest.native.filter(entry => entry.module === "dialog")) {
   absentOn.set(entry.api, ["win32", "darwin"]);
+}
+for (const entry of nativeManifest.native.filter(entry => entry.module === "menu")) {
+  absentOn.set(entry.api, ["linux"]);
 }
 for (const entry of nativeManifest.native) {
   const namespace = namespaces[entry.module];
@@ -81,6 +86,26 @@ assert.throws(() => tray.configure({
   icon: new Uint8Array(),
   menu: [{ id: "open", label: "Open", icon: new Uint8Array([1, 2, 3]) }],
 }), /not a valid PNG/);
+
+// The application menu validates the same way, and on the platforms that have
+// one it does so without a tray icon ever being configured — which is the whole
+// point of its being a separate module.
+if (menu.configure) {
+  assert.throws(() => menu.configure({ menu: [{ id: "open", label: "Open" }] }),
+    /every top-level application menu entry must be a submenu/);
+  assert.throws(() => menu.configure({
+    menu: [{ type: "submenu", label: "Edit", menu: [{ type: "role", role: "explode" }] }],
+  }), /unknown application menu role/);
+  assert.throws(() => menu.configure({
+    menu: [{ type: "submenu", label: "File", menu: [{ action: "quit" }] }],
+  }), /application menu action id/);
+  assert.throws(() => menu.configure({
+    menu: [
+      { type: "submenu", role: "edit", label: "Edit", menu: [] },
+      { type: "submenu", role: "edit", label: "Also Edit", menu: [] },
+    ],
+  }), /declares the edit role twice/);
+}
 
 // Notification validation also crosses the public JavaScript normalizer and
 // Rust parser before a window session is needed to submit the command.

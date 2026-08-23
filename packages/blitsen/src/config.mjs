@@ -58,6 +58,59 @@ const trayMenuItem = {
   ],
 };
 
+// The application menu's own item vocabulary. It shares the tray's nesting,
+// checkable and radio shapes because the host parses one model for both, and
+// differs where the two surfaces genuinely differ: roles instead of built-in
+// tray actions, no icons, and a bar whose top level is submenus only.
+const menuRoles = [
+  "about", "services", "hide", "hideOthers", "showAll", "quit", "closeWindow",
+  "minimize", "maximize", "fullscreen", "bringAllToFront",
+  "undo", "redo", "cut", "copy", "paste", "selectAll",
+];
+const menuSubmenuRoles = ["application", "edit", "window", "help"];
+const menuItem = {
+  oneOf: [
+    {
+      type: "object", additionalProperties: false, required: ["type", "role"],
+      properties: { type: { const: "role" }, role: { type: "string", enum: menuRoles } },
+    },
+    {
+      type: "object", additionalProperties: false, required: ["type"],
+      properties: { type: { const: "separator" } },
+    },
+    {
+      type: "object", additionalProperties: false, required: ["id", "label"],
+      properties: {
+        type: { const: "action" }, id: trayString, label: trayString,
+        enabled: trayEnabled, accelerator: trayString,
+      },
+    },
+    {
+      type: "object", additionalProperties: false, required: ["type", "id", "label"],
+      properties: {
+        type: { const: "checkbox" }, id: trayString, label: trayString,
+        enabled: trayEnabled, checked: { type: "boolean" }, accelerator: trayString,
+      },
+    },
+    {
+      type: "object", additionalProperties: false,
+      required: ["type", "id", "label", "group"],
+      properties: {
+        type: { const: "radio" }, id: trayString, label: trayString, group: trayString,
+        enabled: trayEnabled, checked: { type: "boolean" }, accelerator: trayString,
+      },
+    },
+    {
+      type: "object", additionalProperties: false, required: ["type", "label", "menu"],
+      properties: {
+        type: { const: "submenu" }, label: trayString, enabled: trayEnabled,
+        role: { type: "string", enum: menuSubmenuRoles },
+        menu: { type: "array", items: { $ref: "#/definitions/menuItem" } },
+      },
+    },
+  ],
+};
+
 // One canonical location: the "blitsen" key of package.json. This object is the
 // contract, validated against below and published verbatim as
 // config.schema.json for editor completion, so the two cannot drift.
@@ -70,7 +123,7 @@ export const CONFIG_SCHEMA = {
   type: "object",
   additionalProperties: false,
   required: ["output"],
-  definitions: { trayMenuItem },
+  definitions: { trayMenuItem, menuItem },
   allOf: [
     {
       if: {
@@ -175,6 +228,21 @@ export const CONFIG_SCHEMA = {
         },
       },
     },
+    menu: {
+      type: "object",
+      additionalProperties: false,
+      required: ["menu"],
+      description: "Application menu installed at startup: the macOS main menu and the Windows "
+        + "window menu bar. Independent of the tray, and replaceable at run time through "
+        + "blitsen/menu.",
+      properties: {
+        menu: {
+          type: "array",
+          items: { $ref: "#/definitions/menuItem" },
+          description: "Top-level submenus, in the order they appear in the bar.",
+        },
+      },
+    },
   },
 };
 
@@ -249,7 +317,96 @@ export function validateConfig(config, source) {
   if (config.tray?.closeToTray && !hasQuit) {
     fail('"tray.closeToTray" requires a quit action in "tray.contextMenu"');
   }
+  if (config.menu) validateApplicationMenu(config.menu.menu, fail);
   return config;
+}
+
+/// Applies the semantics the recursive schema cannot state, as the host does.
+function validateApplicationMenu(menu, fail) {
+  const ids = new Set();
+  const roles = new Set();
+  let count = 0;
+  const modifiers = new Set([
+    "ctrl", "control", "alt", "option", "shift", "cmd", "command", "super", "meta",
+    "cmdorctrl", "commandorcontrol",
+  ]);
+  const nonEmpty = (value, description) => {
+    if (typeof value !== "string" || value.trim().length === 0) fail(`${description} must not be empty`);
+  };
+  const level = (items, depth) => {
+    if (!Array.isArray(items)) fail("application menus and their submenus must be arrays");
+    if (depth > 16) fail("application menus may be nested at most 16 levels");
+    let activeRadio = null;
+    const closedRadios = new Set();
+    const checkedRadios = new Map();
+    for (const [index, item] of items.entries()) {
+      const description = `menu.menu item ${index + 1} at depth ${depth}`;
+      if (++count > 512) fail("application menus may contain at most 512 entries");
+      if (typeof item !== "object" || item === null || Array.isArray(item)) {
+        fail(`${description} must be an object`);
+      }
+      const type = item.type ?? "action";
+      // A menu bar holds submenus and nothing else: macOS refuses anything
+      // else, and a bare command in a Windows menu bar fires on one click with
+      // no menu ever opening.
+      if (depth === 1 && type !== "submenu") {
+        fail("every top-level entry of \"menu.menu\" must be a submenu");
+      }
+      const radio = type === "radio" ? item.group : null;
+      if (radio !== activeRadio) {
+        if (activeRadio !== null) closedRadios.add(activeRadio);
+        if (radio !== null && closedRadios.has(radio)) {
+          fail("items in a menu radio group must be consecutive at one menu level");
+        }
+        activeRadio = radio;
+      }
+      if ("accelerator" in item) {
+        nonEmpty(item.accelerator, `${description}.accelerator`);
+        const parts = item.accelerator.split("+").map(part => part.trim().toLowerCase());
+        if (parts.some(part => !part)
+          || modifiers.has(parts.at(-1))
+          || parts.slice(0, -1).some(part => !modifiers.has(part))
+          || new Set(parts.slice(0, -1)).size !== parts.length - 1) {
+          fail(`${description}.accelerator must put unique modifiers before exactly one key`);
+        }
+      }
+      if (type === "submenu") {
+        nonEmpty(item.label, `${description}.label`);
+        if ("role" in item) {
+          if (depth !== 1) fail("only a top-level submenu of \"menu.menu\" carries a role");
+          if (!menuSubmenuRoles.includes(item.role)) {
+            fail(`${description}.role must be one of ${menuSubmenuRoles.join(", ")}`);
+          }
+          if (roles.has(item.role)) fail(`"menu.menu" declares the ${item.role} role twice`);
+          roles.add(item.role);
+        }
+        level(item.menu ?? [], depth + 1);
+        continue;
+      }
+      if (type === "role") {
+        if (!menuRoles.includes(item.role)) {
+          fail(`${description}.role must be one of ${menuRoles.join(", ")}`);
+        }
+        continue;
+      }
+      if (type === "separator") continue;
+      if (type !== "action" && type !== "checkbox" && type !== "radio") {
+        fail(`${description}.type is unknown: ${JSON.stringify(type)}`);
+      }
+      nonEmpty(item.id, `${description}.id`);
+      nonEmpty(item.label, `${description}.label`);
+      if (ids.has(item.id)) fail("menu item ids must be unique across the whole menu tree");
+      ids.add(item.id);
+      if (type === "radio") {
+        nonEmpty(item.group, `${description}.group`);
+        checkedRadios.set(item.group, (checkedRadios.get(item.group) ?? 0) + Number(item.checked === true));
+      }
+    }
+    for (const [group, checked] of checkedRadios) {
+      if (checked !== 1) fail(`menu radio group ${JSON.stringify(group)} must have exactly one checked item`);
+    }
+  };
+  level(menu, 1);
 }
 
 function validateTrayMenu(menu, fail) {

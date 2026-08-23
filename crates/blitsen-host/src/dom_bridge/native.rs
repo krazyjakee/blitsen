@@ -38,6 +38,7 @@ pub(super) fn install<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsErr
     install_clipboard(engine)?;
     install_window(engine)?;
     install_tray(engine)?;
+    install_menu(engine)?;
     install_hid(engine)?;
     install_notify(engine)?;
     install_input(engine)?;
@@ -371,14 +372,15 @@ struct TrayBridgeOptions {
 }
 
 #[cfg(not(target_os = "android"))]
-type TrayBridgeItem = crate::TrayMenuDefinition;
+type TrayBridgeItem = crate::MenuDefinition;
 
 #[cfg(not(target_os = "android"))]
 fn parse_tray_menu(
     raw: Vec<TrayBridgeItem>,
     icons: &[Vec<u8>],
-) -> Result<(Vec<crate::native_window::tray::TrayEntry>, bool), JsError> {
-    crate::native_window::tray::parse_menu(raw, icons).map_err(JsError::new)
+) -> Result<(Vec<crate::native_window::menu::MenuEntry>, bool), JsError> {
+    crate::native_window::menu::parse_menu(raw, icons, crate::native_window::menu::MenuSurface::Tray)
+        .map_err(JsError::new)
 }
 
 #[cfg(not(target_os = "android"))]
@@ -467,6 +469,65 @@ fn install_tray<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsError> {
 
 #[cfg(target_os = "android")]
 fn install_tray<E: JsEngine + 'static>(_engine: &mut E) -> Result<(), JsError> {
+    Ok(())
+}
+
+// The application menu, installed only where a platform has one to install.
+// macOS has NSApp's main menu, and Windows has a per-window menu bar; on Linux
+// muda's only backend is a `gtk::MenuBar` added to a `gtk::Window`, and Blitsen
+// windows are winit's. That is the whole argument, and `native-modules.mjs`
+// carries it: a menu that appeared here would be a tray menu wearing the name.
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+fn install_menu<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsError> {
+    engine.define_global_function(
+        "__blitsenNativeMenuConfigure",
+        Box::new(move |call| {
+            let mut engine = E::from_value(&call.this);
+            let entries: Vec<crate::MenuDefinition> =
+                serde_json::from_str(&argument(&mut engine, &call, 0, "menu entries")?)
+                    .map_err(|error| {
+                        JsError::new(format!("malformed application menu: {error}"))
+                    })?;
+            // Parsed here rather than when the request is applied, so a tree
+            // the platform cannot install is a rejected promise naming what is
+            // wrong with it rather than a menu that half appeared.
+            crate::native_window::menu::parse_menu(
+                entries.clone(),
+                &[],
+                crate::native_window::menu::MenuSurface::Application,
+            )
+            .map_err(JsError::new)?;
+            engine.string(&super::menu::configure(entries).to_string())
+        }),
+    )?;
+
+    engine.define_global_function(
+        "__blitsenNativeMenuRemove",
+        Box::new(move |call| {
+            let mut engine = E::from_value(&call.this);
+            engine.string(&super::menu::remove().to_string())
+        }),
+    )?;
+
+    engine.define_global_function(
+        "__blitsenNativeMenuPending",
+        Box::new(move |call| {
+            let mut engine = E::from_value(&call.this);
+            Ok(engine.boolean(super::menu::pending()))
+        }),
+    )?;
+
+    engine.define_global_function(
+        "__blitsenNativeMenuTake",
+        Box::new(move |call| {
+            let mut engine = E::from_value(&call.this);
+            json_value(&mut engine, &json!(super::menu::take_messages()))
+        }),
+    )
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+fn install_menu<E: JsEngine + 'static>(_engine: &mut E) -> Result<(), JsError> {
     Ok(())
 }
 
@@ -995,7 +1056,7 @@ fn install_dialog<E: JsEngine + 'static>(_engine: &mut E) -> Result<(), JsError>
 #[cfg(all(test, not(target_os = "android")))]
 mod tray_tests {
     use super::*;
-    use crate::native_window::tray::{TrayEntry, TrayItemKind, TraySignal};
+    use crate::native_window::menu::{MenuEntry, MenuItemKind, MenuSignal};
 
     fn action(id: &str) -> TrayBridgeItem {
         TrayBridgeItem {
@@ -1039,22 +1100,22 @@ mod tray_tests {
         ];
         let (menu, has_quit) = parse_tray_menu(raw, &[]).expect("the tree is valid");
         assert!(!has_quit);
-        let TrayEntry::Submenu { menu: theme, .. } = &menu[1] else {
+        let MenuEntry::Submenu { menu: theme, .. } = &menu[1] else {
             panic!("the second entry is the theme submenu")
         };
-        let TrayEntry::Item(dark) = &theme[1] else {
+        let MenuEntry::Item(dark) = &theme[1] else {
             panic!("the second theme entry is an item")
         };
         assert_eq!(
             dark.signal,
-            TraySignal::Action {
+            MenuSignal::Action {
                 id: "dark".into(),
                 checked: Some(false),
             }
         );
         assert_eq!(
             dark.kind,
-            TrayItemKind::Radio {
+            MenuItemKind::Radio {
                 group: "theme".into(),
                 checked: false,
             }

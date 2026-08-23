@@ -140,6 +140,7 @@ for (const asset of assets) {
   const { path: _path, ...stamp } = options.runtime;
   const windowOptions = JSON.stringify(options.window ?? null);
   const trayOptions = JSON.stringify(options.tray ?? null);
+  const menuOptions = JSON.stringify(options.menu ?? null);
   return `import addonPath from "./blitsen.node" with { type: "file" };
 import { createRequire } from "node:module";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -159,6 +160,7 @@ const assets = [
   ${manifest}
 ];
 const startupTray = ${trayOptions};
+const startupMenu = ${menuOptions};
 const native = createRequire(import.meta.url)(addonPath);
 ${prelude}
 try {
@@ -208,6 +210,9 @@ try {
           menuJson: JSON.stringify(startupTray.contextMenu ?? []),
           menuIcons: (startupTray.menuIcons ?? []).map(path => join(root, path)),
         },
+      }),
+      ...(startupMenu === null ? {} : {
+        menu: { menuJson: JSON.stringify(startupMenu.menu ?? []) },
       }),
     });
     const frameLimit = Number(process.env.BLITSEN_STANDALONE_FRAMES || 0);
@@ -432,7 +437,7 @@ function reportCollection(progress, { manifest, assets, unreferenced, carriedAdd
 
 async function linkPhase2({
   buildTarget, targetPlatform, targetArchitecture, onNotice, manifest, staging,
-  linkedRuntime, width, height, title, window, tray, assets, destination,
+  linkedRuntime, width, height, title, window, tray, menu, assets, destination,
 }) {
   // After the checks above, deliberately: `fetch` is on the same terms as the
   // addon's own resolution (#72) — a build for this host never reaches the
@@ -475,7 +480,7 @@ async function linkPhase2({
   // linking path, which is machine-local.
   const { path: _linkedPath, ...stamp } = linkedRuntime;
   files.set("blitsen.runtime.json", Buffer.from(
-    `${JSON.stringify({ width, height, title, window, tray, layout: assets, runtime: stamp })}\n`));
+    `${JSON.stringify({ width, height, title, window, tray, menu, layout: assets, runtime: stamp })}\n`));
   // Issue #121: the notices the artifact owes travel inside it. They are copied
   // from the runtime package because a user's machine has no toolchain to
   // derive them.
@@ -486,13 +491,13 @@ async function linkPhase2({
 }
 
 async function linkPhase1({
-  nativePath, staging, manifest, width, height, title, window, tray, assets, assetDirectory,
+  nativePath, staging, manifest, width, height, title, window, tray, menu, assets, assetDirectory,
   linkedRuntime, destination, buildTarget,
 }) {
   await copyFile(nativePath, join(staging, "blitsen.node"));
   const launcher = join(staging, "launcher.mjs");
   await writeFile(launcher, launcherSource(manifest, {
-    width, height, title, window, tray, layout: assets, assetDirectory, runtime: linkedRuntime,
+    width, height, title, window, tray, menu, layout: assets, assetDirectory, runtime: linkedRuntime,
   }));
   // The Bun host is the one thing here that only Bun can build: `Bun.build`
   // links the launcher into that target's Bun. The CLI otherwise runs anywhere
@@ -572,7 +577,7 @@ export async function buildStandalone(
   {
     root, width, height, title, outfile, force = false, include = [], addons = [],
     assets = "embedded", icon = null, bundleId = null, appVersion = null, sign = null,
-    target = null, platform, window = null, tray = null, hid = false,
+    target = null, platform, window = null, tray = null, menu = null, hid = false,
     progress = () => {}, onNotice,
   },
   runtime,
@@ -620,11 +625,12 @@ export async function buildStandalone(
     if (host === "blitsen") {
       notices = await linkPhase2({
         buildTarget, targetPlatform, targetArchitecture, onNotice, manifest, staging,
-        linkedRuntime, width, height, title, window, tray: runtimeTray, assets, destination,
+        linkedRuntime, width, height, title, window, tray: runtimeTray, menu,
+        assets, destination,
       });
     } else {
       await linkPhase1({
-        nativePath, staging, manifest, width, height, title, window, tray: runtimeTray,
+        nativePath, staging, manifest, width, height, title, window, tray: runtimeTray, menu,
         assets, assetDirectory,
         linkedRuntime, destination, buildTarget,
       });

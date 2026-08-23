@@ -50,6 +50,28 @@ rule granting access; `blitsen build` writes a `<name>.hid.rules` template besid
 `blitsen doctor` reports the requirement. Blitsen never installs a rule itself and running the
 application as root is not a supported substitute.
 
+## Application menu
+
+`blitsen/menu` is present on macOS and Windows and feature-detectably absent on Linux and Android.
+
+- **macOS** installs the NSApp main menu. The required application, edit and window roles are always
+  present: Blitsen supplies a standard submenu for each role the application did not claim.
+- **Windows** installs a window menu bar on the application's window. Accelerators work because the
+  runtime translates them inside winit's message pump; a menu bar shrinks the window's client area,
+  as it does for any Win32 application that sets one after creation. `services`, `showAll`,
+  `hideOthers`, `fullscreen` and `bringAllToFront` are macOS commands and are omitted rather than
+  shown as items that do nothing.
+- **Linux** has none. A Linux menu bar is a widget inside the window, and the only backend the menu
+  crate has for one is a `gtk::MenuBar` packed into a `gtk::Window` — Blitsen windows are winit's,
+  the renderer owns the whole client area, and there is no GTK main loop to run it. The
+  desktop-level alternative is the D-Bus global menu, which only some desktops implement and which
+  needs an X11 window id, so it answers nothing on Wayland and would give the same application a
+  menu on KDE and none on GNOME. The tray menu is not this under another name: it belongs to a
+  status item the application may never show.
+- **Android** has no application menu bar. Its equivalents — the app bar's overflow menu and the
+  navigation drawer — are views inside the activity's own layout rather than a menu the platform
+  owns.
+
 The standard Web `Notification` facade is installed on Linux and in eligible packaged macOS apps.
 It is absent on Windows until the notification library exposes addressable close (#251), absent in
 an unbundled macOS development host (#253), and absent on Android until intent activation is wired
@@ -93,7 +115,8 @@ the focus-scoped `input.snapshot` member and `blitsen/notify`. Notifications use
 as granted. Submission, same-session replacement and close are supported. Tap, action and dismiss
 events are not exposed until #252 adds Android intent activation, so action-bearing submissions
 reject. The standard Web `Notification` global remains absent for the same reason. Android does not
-support Blitsen's app, clipboard, dialog, window, tray or hid native modules in this release. Raw
+support Blitsen's app, clipboard, dialog, window, tray, menu or hid native modules in this
+release. Raw
 HID on Android is `UsbManager` and its explicit per-device permission grant rather than desktop
 enumeration, which is a separate implementation this release does not have.
 

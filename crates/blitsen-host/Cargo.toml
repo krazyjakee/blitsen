@@ -143,9 +143,20 @@ hidapi = { version = "2.6.6", default-features = false, features = ["linux-nativ
 ksni = "0.3.6"
 
 [target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
+# The status item, and — through `tray_icon::menu`, which is `muda` — the
+# application menu as well (#249). One crate builds a menu for both surfaces,
+# which is why the menu bar and the macOS main menu cost no new dependency:
+# `tray-icon` already links `muda`, and these are the same authors' pair.
 tray-icon = { version = "0.24.2", default-features = false }
 
+# `TranslateAcceleratorW`, and nothing else. A win32 menu bar delivers its own
+# clicks through the window subclass `muda` installs, but an accelerator only
+# becomes one if the message pump translates it, and the pump is winit's — so
+# the hook winit provides for this is where the call has to happen
+# (`native_window/session.rs`). Already in the tree behind winit and `muda`, at
+# the major both resolve to, so naming it here compiles no new crate.
 [target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_UI_WindowsAndMessaging"] }
 # `windows-native` reaches the HID class driver through `windows-sys` instead of
 # compiling hidapi's C, so the toolchain requirement stays the one `windows-sys`
 # already imposes.

@@ -6,6 +6,7 @@ import clipboard from "blitsen/clipboard";
 import dialog from "blitsen/dialog";
 import hid from "blitsen/hid";
 import input from "blitsen/input";
+import menu from "blitsen/menu";
 import notify from "blitsen/notify";
 import tray from "blitsen/tray";
 import nativeWindow from "blitsen/window";
@@ -76,6 +77,34 @@ if (tray.onAction) {
   });
   unsubscribe();
 }
+// The application menu needs no tray: nothing above is configured to use one.
+if (menu.configure) {
+  void menu.configure({
+    menu: [
+      { type: "submenu", role: "application", label: "Demo", menu: [
+        { type: "role", role: "about" },
+        { type: "separator" },
+        { type: "role", role: "quit" },
+      ] },
+      { type: "submenu", label: "File", menu: [
+        { id: "new", label: "New", accelerator: "CmdOrCtrl+KeyN" },
+        { type: "checkbox", id: "autosave", label: "Autosave", checked: true },
+        { type: "submenu", label: "Theme", menu: [
+          { type: "radio", id: "menu-light", label: "Light", group: "theme", checked: true },
+          { type: "radio", id: "menu-dark", label: "Dark", group: "theme" },
+        ] },
+      ] },
+    ],
+  });
+}
+if (menu.onAction) {
+  const unsubscribe: () => void = menu.onAction(event => {
+    void event.id;
+    void event.checked;
+  });
+  unsubscribe();
+}
+if (menu.remove) void menu.remove();
 if (input.snapshot) {
   const state = input.snapshot();
   void state.sequence;
@@ -161,6 +190,21 @@ void defineConfig({
         { type: "radio", id: "dark", label: "Dark", group: "theme" },
       ] },
       { label: "Quit", action: "quit", enabled: true },
+    ],
+  },
+  menu: {
+    menu: [
+      { type: "submenu", role: "application", label: "Demo", menu: [
+        { type: "role", role: "about" },
+        { type: "separator" },
+        { type: "role", role: "quit" },
+      ] },
+      { type: "submenu", label: "File", menu: [
+        { id: "new", label: "New", accelerator: "CmdOrCtrl+KeyN" },
+      ] },
+      { type: "submenu", role: "help", label: "Help", menu: [
+        { id: "docs", label: "Documentation" },
+      ] },
     ],
   },
 });

@@ -142,6 +142,7 @@ fn run_cycle(entrypoint: &Path) {
         directory: entrypoint.to_string_lossy().into_owned(),
         window: Default::default(),
         tray: None,
+        menu: None,
     };
     let mut session = WindowSession::open(&mut engine, files, options).expect("a window opens");
 

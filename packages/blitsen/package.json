@@ -55,6 +55,10 @@
       "types": "./src/native/tray.d.ts",
       "import": "./src/native/tray.mjs"
     },
+    "./menu": {
+      "types": "./src/native/menu.d.ts",
+      "import": "./src/native/menu.mjs"
+    },
     "./notify": {
       "types": "./src/native/notify.d.ts",
       "import": "./src/native/notify.mjs"

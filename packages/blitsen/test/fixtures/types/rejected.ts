@@ -6,6 +6,7 @@
 // as an error of its own, so a line that quietly starts compiling still fails.
 import app from "blitsen/app";
 import hid from "blitsen/hid";
+import menu from "blitsen/menu";
 import nativeWindow from "blitsen/window";
 import notify from "blitsen/notify";
 import tray from "blitsen/tray";
@@ -37,6 +38,19 @@ if (tray.configure) tray.configure({ icon: new Uint8Array(), menu: [{ id: "open"
 if (tray.configure) tray.configure({ icon: new Uint8Array(), menu: [{ type: "radio", id: "x", label: "X" }] });
 // @ts-expect-error
 if (tray.configure) tray.configure({ icon: new Uint8Array(), menu: [{ type: "submenu", label: "More" }] });
+
+// An application menu is a bar of submenus: a bare command has no place at the
+// top level, and a role is a fixed vocabulary rather than any string.
+// @ts-expect-error
+if (menu.configure) menu.configure({ menu: [{ id: "open", label: "Open" }] });
+// @ts-expect-error
+if (menu.configure) menu.configure({ menu: [{ type: "submenu", label: "Edit", role: "tools", menu: [] }] });
+// @ts-expect-error
+if (menu.configure) menu.configure({ menu: [{ type: "submenu", label: "Edit", menu: [{ type: "role", role: "explode" }] }] });
+
+// The tray's built-in actions are the tray's: an application menu has roles.
+// @ts-expect-error
+if (menu.configure) menu.configure({ menu: [{ type: "submenu", label: "File", menu: [{ action: "quit" }] }] });
 
 // The signatures are real signatures.
 // @ts-expect-error

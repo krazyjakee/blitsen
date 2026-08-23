@@ -61,11 +61,16 @@ export const platformOf = target => String(target).split("-")[0];
 // design rather than this one with the socket swapped out. That is a member
 // rather than a module, so it is not in this table; `NATIVE_ABSENT` in
 // `api-manifest.mjs` carries the member-level absences.
+//
+// `menu` is the other one that is not Android's. An application menu is the
+// macOS main menu and the Windows window menu bar; Linux desktops have neither
+// as something a winit window can own, and the tray menu next to it is a
+// different object with a different owner rather than the same one relocated.
 const ABSENT = {
-  linux: [],
+  linux: ["menu"],
   darwin: ["dialog"],
   win32: ["dialog"],
-  android: ["app", "clipboard", "dialog", "window", "tray", "hid"],
+  android: ["app", "clipboard", "dialog", "window", "tray", "menu", "hid"],
 };
 
 // Why, per platform, in the words of the module that made the call. Keyed
@@ -94,6 +99,18 @@ const REASONS = {
     + "and it is the one worth naming because it looks like the survivor — winit enumerates no "
     + "monitors there, so `monitors()` would report a device with no display. Immersive mode and "
     + "orientation are the real capabilities here and are not these under another name.",
+  "linux.menu": "A Linux menu bar is a widget inside the window, and the only backend the menu "
+    + "crate has for one is a gtk::MenuBar packed into a gtk::Window — Blitsen windows are winit's, "
+    + "and the renderer owns the whole client area, so there is nowhere to pack it and no GTK main "
+    + "loop to run it. The desktop-level alternative is the D-Bus global menu, which only some "
+    + "desktops implement, needs an X11 window id and so answers nothing on Wayland, and would "
+    + "leave the same application with a menu on KDE and none on GNOME. The tray menu is not this "
+    + "under another name: it belongs to a status item the application may never show. What would "
+    + "change this is a menu bar Blitsen renders itself, which is a different feature — an "
+    + "in-document menu is DOM, not a native one.",
+  "android.menu": "Android has no application menu bar. Its equivalents are the app bar's overflow "
+    + "menu and the navigation drawer, which are views inside the activity's own layout rather "
+    + "than a menu the platform owns, and neither has this shape.",
   "android.hid": "Desktop discovery does not exist on Android: a USB device is reached through "
     + "`UsbManager`, and access is an explicit per-device permission the user grants to a "
     + "dialog the Activity raises, lasting only until the device is unplugged. So `devices()` "

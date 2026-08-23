@@ -448,18 +448,21 @@ export function openRuntime(resolved, {
   return {
     resolved,
     openDirectory(options) {
-      if (!options.tray) return engine.openDirectory(options);
-      const tray = options.tray;
+      const { tray, menu } = options;
+      if (!tray && !menu) return engine.openDirectory(options);
       return engine.openDirectory({
         ...options,
-        tray: {
-          icon: tray.icon,
-          tooltip: tray.tooltip,
-          openOnClick: tray.openOnClick,
-          closeToTray: tray.closeToTray,
-          menuJson: JSON.stringify(tray.contextMenu ?? []),
-          menuIcons: tray.menuIcons ?? [],
-        },
+        ...(tray ? {
+          tray: {
+            icon: tray.icon,
+            tooltip: tray.tooltip,
+            openOnClick: tray.openOnClick,
+            closeToTray: tray.closeToTray,
+            menuJson: JSON.stringify(tray.contextMenu ?? []),
+            menuIcons: tray.menuIcons ?? [],
+          },
+        } : {}),
+        ...(menu ? { menu: { menuJson: JSON.stringify(menu.menu ?? []) } } : {}),
       });
     },
     reloadCSS: engine.reloadCSS ? file => engine.reloadCSS(file) : null,

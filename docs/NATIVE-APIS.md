@@ -34,6 +34,7 @@ polyfill.
 | `blitsen/dialog` | `openFile`, `openFiles`, `saveFile`, `openFolder`, `openFolders`, `message` |
 | `blitsen/clipboard` | `readText`, `readHtml`, `readImage`, `writeText`, `writeHtml`, `writeImage`, `clear` |
 | `blitsen/tray` | `configure`, `remove`, `onClick`, `onAction` |
+| `blitsen/menu` | `configure`, `remove`, `onAction` |
 | `blitsen/notify` | `show`, `permission`, `requestPermission`, `update`, `close`, `onEvent` |
 | `blitsen/input` | `snapshot` |
 | `blitsen/hid` | `devices`, `open`, `onDeviceChange` |
@@ -106,8 +107,73 @@ accelerators use modifier-first spellings such as `Control+Shift+KeyP`; `CmdOrCt
 on macOS and Control elsewhere. Package configuration accepts the same menu tree and invariants,
 using PNG paths relative to its `package.json` where the runtime API uses unambiguous byte arrays.
 Configured custom and checkable actions queue until application listeners are installed.
-Tray support is desktop-only. A native application menu is separate work because it must exist
-without a tray icon (#249).
+Tray support is desktop-only.
+
+## Application menu
+
+`blitsen/menu` is the macOS main menu and the Windows window menu bar. It is a separate module from
+`blitsen/tray` because it is a separate object with a separate owner: an application that shows no
+status item at all still has one, and replacing one never disturbs the other.
+
+An application menu is a bar, so every top-level entry is a submenu. Below that the tree is the
+tray's — nested submenus, checkboxes, radio groups, separators and accelerators, with IDs unique
+across the whole tree — plus role items, and minus icons and the tray's `show`/`hide`/`quit`
+actions.
+
+```js
+import menu from "blitsen/menu";
+
+await menu.configure?.({
+  menu: [
+    { type: "submenu", role: "application", label: "My App", menu: [
+      { type: "role", role: "about" },
+      { type: "separator" },
+      { type: "role", role: "quit" },
+    ] },
+    { type: "submenu", label: "File", menu: [
+      { id: "new", label: "New", accelerator: "CmdOrCtrl+KeyN" },
+      { type: "checkbox", id: "autosave", label: "Autosave", checked: true },
+    ] },
+    { type: "submenu", role: "help", label: "Help", menu: [{ id: "docs", label: "Documentation" }] },
+  ],
+});
+
+menu.onAction?.(({ id, checked }) => {
+  if (id === "new") console.log("New document");
+  if (id === "autosave") console.log("Autosave:", checked);
+});
+```
+
+A `role` item is a command the platform performs itself — `copy`, `undo`, `minimize`, `quit` and the
+rest — and never reaches application JavaScript. That is the point of it: an application that
+implemented `paste` itself would implement it wrongly, because on macOS it is a menu command sent
+down the responder chain rather than a key event. `services`, `showAll`, `hideOthers`, `fullscreen`
+and `bringAllToFront` are macOS commands; on Windows the item is omitted rather than shown dead.
+Application-defined items carry an `id` instead and are delivered in FIFO order at a frame boundary,
+exactly as tray actions are.
+
+On macOS, `role` on a *top-level submenu* claims one of the four positions AppKit reads by position
+rather than by title. Blitsen supplies a standard `application`, `edit` and `window` submenu for
+each role the application did not claim, because without them there is no About or Quit anywhere and
+⌘C and ⌘V do nothing in a text field. The synthesized `application` submenu is always first, the
+`window` submenu is always second to last, and a synthesized `edit` submenu goes immediately before
+it; a submenu the application declares with a role is moved into that place instead, and a declared
+`edit` submenu keeps the position the application chose. A `help` submenu is placed last and never
+synthesized: its role is a position, there is no predefined command to put in one, and a submenu
+with nothing in it is a greyed-out title. Windows installs the tree as written, with no synthesis.
+
+`configure` replaces the whole menu in one step and `remove` takes it away. Both are atomic: the
+replacement is built before the outgoing menu is detached, so a tree the platform refuses leaves the
+running menu exactly as it was, and a click the platform had already queued against the outgoing
+menu is dropped rather than delivered to the replacement.
+
+Package configuration installs a menu before application JavaScript runs, under the `menu` key of
+the `blitsen` config; the runtime API replaces that same menu rather than adding a second one. See
+[CONFIGURATION.md](CONFIGURATION.md#application-menu).
+
+There is no application menu on Linux or Android, and the module is feature-detectably absent
+there — `menu.configure` is `undefined`. See
+[PLATFORM-SUPPORT.md](PLATFORM-SUPPORT.md#application-menu) for the argument.
 
 ## Notifications
 

@@ -618,7 +618,8 @@ import { app }       from "native:app";
 | `native:window` | create, resize, fullscreen, borderless, always-on-top, transparency, cursor control, monitor enumeration, DPI |
 | `native:dialog` | open/save file, folder picker, message box |
 | `native:clipboard` | text, images, arbitrary MIME |
-| `native:tray` | tray icon, context menu, application menu |
+| `native:tray` | tray icon and its context menu |
+| `native:menu` | the application menu: macOS main menu, Windows menu bar. Separate from `native:tray` because it must exist without a status item (#249) |
 | `native:notify` | desktop notifications |
 | `native:input` | raw keyboard/mouse state and gamepads |
 | `native:hid` | deliberately raw HID reports for non-keyboard/pointer devices: desktop enumeration, opaque device ids, input/output/feature reports and hot-plug, with the protected Generic Desktop collections refused; the separate Android `UsbManager` permission path specified by [S10](../spikes/s10/README.md) is not implemented |

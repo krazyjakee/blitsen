@@ -13,9 +13,10 @@ use std::cell::RefCell;
 
 use blitsen_host::app::AppFiles;
 use blitsen_host::{
-    NativeWindowOptions as HostWindowOptions, OpenDirectoryOptions as HostOptions, TrayAction,
-    TrayMenu, TrayMenuDefinition, TrayMenuItem as HostTrayMenuItem, TrayOptions as HostTrayOptions,
-    WindowSession, WindowType, native_window,
+    MenuDefinition, NativeWindowOptions as HostWindowOptions,
+    OpenDirectoryOptions as HostOptions, TrayAction, TrayMenu,
+    TrayMenuItem as HostTrayMenuItem, TrayOptions as HostTrayOptions, WindowSession, WindowType,
+    native_window,
 };
 use blitsen_js::JsError;
 use napi::{Env, Status};
@@ -52,6 +53,8 @@ pub struct OpenDirectoryOptions {
     pub window: Option<NativeWindowOptions>,
     /// Optional system tray icon and context menu.
     pub tray: Option<NativeTrayOptions>,
+    /// Optional application menu, independent of the tray.
+    pub menu: Option<NativeAppMenuOptions>,
 }
 
 #[napi(object)]
@@ -99,6 +102,17 @@ pub struct NativeTrayOptions {
     pub menu_json: Option<String>,
     /// PNG paths addressed by `iconIndex` values in `menu_json`.
     pub menu_icons: Option<Vec<String>>,
+}
+
+#[napi(object)]
+#[derive(Clone)]
+/// JavaScript-facing application-menu options.
+///
+/// Only the tree: an application menu carries no icon, no tooltip and no
+/// window behaviour, which is most of what separates it from the tray.
+pub struct NativeAppMenuOptions {
+    /// Top-level submenus serialized as JSON by the CLI adapter.
+    pub menu_json: String,
 }
 
 impl TryFrom<OpenDirectoryOptions> for HostOptions {
@@ -155,7 +169,7 @@ impl TryFrom<OpenDirectoryOptions> for HostOptions {
                 let menu = tray
                     .menu_json
                     .map(|json| {
-                        let entries: Vec<TrayMenuDefinition> = serde_json::from_str(&json)
+                        let entries: Vec<MenuDefinition> = serde_json::from_str(&json)
                             .map_err(|error| {
                                 JsError::new(format!("invalid tray menu configuration: {error}"))
                             })?;
@@ -184,6 +198,14 @@ impl TryFrom<OpenDirectoryOptions> for HostOptions {
                 })
             })
             .transpose()?;
+        let menu = options
+            .menu
+            .map(|menu| {
+                serde_json::from_str::<Vec<MenuDefinition>>(&menu.menu_json).map_err(|error| {
+                    JsError::new(format!("invalid application menu configuration: {error}"))
+                })
+            })
+            .transpose()?;
         Ok(Self {
             root: options.root,
             entrypoint: options.entrypoint,
@@ -193,6 +215,7 @@ impl TryFrom<OpenDirectoryOptions> for HostOptions {
             directory: options.directory,
             window,
             tray,
+            menu,
         })
     }
 }

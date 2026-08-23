@@ -213,6 +213,190 @@
           }
         }
       ]
+    },
+    "menuItem": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "role"
+          ],
+          "properties": {
+            "type": {
+              "const": "role"
+            },
+            "role": {
+              "type": "string",
+              "enum": [
+                "about",
+                "services",
+                "hide",
+                "hideOthers",
+                "showAll",
+                "quit",
+                "closeWindow",
+                "minimize",
+                "maximize",
+                "fullscreen",
+                "bringAllToFront",
+                "undo",
+                "redo",
+                "cut",
+                "copy",
+                "paste",
+                "selectAll"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "const": "separator"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "label"
+          ],
+          "properties": {
+            "type": {
+              "const": "action"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "label": {
+              "type": "string",
+              "minLength": 1
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "accelerator": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "id",
+            "label"
+          ],
+          "properties": {
+            "type": {
+              "const": "checkbox"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "label": {
+              "type": "string",
+              "minLength": 1
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "checked": {
+              "type": "boolean"
+            },
+            "accelerator": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "id",
+            "label",
+            "group"
+          ],
+          "properties": {
+            "type": {
+              "const": "radio"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "label": {
+              "type": "string",
+              "minLength": 1
+            },
+            "group": {
+              "type": "string",
+              "minLength": 1
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "checked": {
+              "type": "boolean"
+            },
+            "accelerator": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "label",
+            "menu"
+          ],
+          "properties": {
+            "type": {
+              "const": "submenu"
+            },
+            "label": {
+              "type": "string",
+              "minLength": 1
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "role": {
+              "type": "string",
+              "enum": [
+                "application",
+                "edit",
+                "window",
+                "help"
+              ]
+            },
+            "menu": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/menuItem"
+              }
+            }
+          }
+        }
+      ]
     }
   },
   "allOf": [
@@ -359,6 +543,23 @@
             "$ref": "#/definitions/trayMenuItem"
           },
           "description": "Built-in or custom actions, separators, checkboxes, radio groups and nested submenus."
+        }
+      }
+    },
+    "menu": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "menu"
+      ],
+      "description": "Application menu installed at startup: the macOS main menu and the Windows window menu bar. Independent of the tray, and replaceable at run time through blitsen/menu.",
+      "properties": {
+        "menu": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/menuItem"
+          },
+          "description": "Top-level submenus, in the order they appear in the bar."
         }
       }
     }

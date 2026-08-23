@@ -24,6 +24,12 @@ mod fetch;
 pub(crate) mod hid;
 pub(crate) mod input;
 mod intl;
+// Compiled where there is an application menu to queue requests for — see
+// `native_window/menu.rs` — and in the test build everywhere, because the
+// public FIFO shape this settles is not a platform decision and a queue only
+// two targets could compile would be a queue nothing here checks.
+#[cfg(any(target_os = "windows", target_os = "macos", test))]
+pub(crate) mod menu;
 mod native;
 pub(crate) mod notify;
 pub(crate) mod tray;

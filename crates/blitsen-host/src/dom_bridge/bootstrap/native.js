@@ -283,6 +283,123 @@
       : listener => trayListener(trayActionListeners, listener, "tray action"),
   };
 
+  // The application menu: the macOS main menu, and the Windows window menu bar.
+  // Nothing here is the tray's — an application that shows no status item still
+  // has one of these, and replacing one must not disturb the other. Both are
+  // absent where the platform has none to install (`native-modules.mjs`).
+  const menuInstalled = hosted("__blitsenNativeMenuConfigure");
+  const menuCommands = new Map();
+  const menuActionListeners = new Set();
+  const nativeMenuPending = hosted("__blitsenNativeMenuPending")
+    ? __blitsenNativeMenuPending : () => false;
+  const nativeMenuWorkPending = () => menuCommands.size > 0 || nativeMenuPending();
+  const runMenuCommand = id => new Promise((resolve, reject) => {
+    menuCommands.set(id, { resolve, reject });
+  });
+  const settleMenus = () => {
+    if (!nativeMenuPending()) return;
+    for (const message of JSON.parse(__blitsenNativeMenuTake())) {
+      if (message.type === "completion") {
+        const command = menuCommands.get(String(message.commandId));
+        if (!command) continue;
+        menuCommands.delete(String(message.commandId));
+        if (message.error === null) command.resolve();
+        else command.reject(new Error(message.error));
+        continue;
+      }
+      const event = Object.freeze(message.checked === undefined
+        ? { type: "action", id: message.id }
+        : { type: "action", id: message.id, checked: message.checked });
+      for (const listener of menuActionListeners) {
+        try { listener(event); }
+        catch (error) { console.error("Uncaught exception in menu listener", error); }
+      }
+    }
+  };
+  // The same tree the tray accepts, minus the entries a menu bar cannot carry
+  // and plus the roles only it can: the host parses one model for both, and
+  // this is the half of that contract the caller hears about immediately.
+  const normaliseMenuEntries = options => {
+    if (options === null || typeof options !== "object")
+      throw new TypeError("application menu options must be an object");
+    const { menu } = options;
+    if (!Array.isArray(menu)) throw new TypeError("the application menu must be an array");
+    let itemCount = 0;
+    const nonEmpty = (value, description) => {
+      if (value === undefined || String(value).length === 0)
+        throw new TypeError(`${description} must be a non-empty string`);
+      return String(value);
+    };
+    const accelerator = value => {
+      if (value === undefined) return null;
+      const result = nonEmpty(value, "menu accelerator");
+      const parts = result.split("+").map(part => part.trim());
+      const modifiers = new Set([
+        "ctrl", "control", "alt", "option", "shift", "cmd", "command", "super", "meta",
+        "cmdorctrl", "commandorcontrol",
+      ]);
+      if (parts.some(part => part.length === 0)
+        || modifiers.has(parts[parts.length - 1].toLowerCase())
+        || parts.slice(0, -1).some(part => !modifiers.has(part.toLowerCase()))
+        || new Set(parts.slice(0, -1).map(part => part.toLowerCase())).size !== parts.length - 1)
+        throw new TypeError(
+          `invalid menu accelerator ${JSON.stringify(result)}: modifiers must precede one key`,
+        );
+      return result;
+    };
+    const normaliseLevel = (items, depth = 1) => {
+      if (!Array.isArray(items)) throw new TypeError("an application menu must be an array");
+      if (depth > 16) throw new TypeError("application menus may be nested at most 16 levels");
+      return items.map(item => {
+        if (++itemCount > 512)
+          throw new TypeError("application menus may contain at most 512 entries");
+        if (item === null || typeof item !== "object")
+          throw new TypeError("an application menu item must be an object");
+        const type = item.type === undefined ? "action" : String(item.type);
+        if (depth === 1 && type !== "submenu")
+          throw new TypeError("every top-level application menu entry must be a submenu");
+        if (type === "separator") return { type };
+        if (type === "role") return { type, role: nonEmpty(item.role, "an application menu role") };
+        if (type === "submenu") return {
+          type,
+          label: nonEmpty(item.label, "application submenu label"),
+          role: item.role === undefined ? null : nonEmpty(item.role, "an application submenu role"),
+          enabled: item.enabled === undefined ? true : Boolean(item.enabled),
+          menu: normaliseLevel(item.menu, depth + 1),
+        };
+        if (type === "checkbox" || type === "radio") return {
+          type,
+          id: nonEmpty(item.id, "checkable menu item id"),
+          label: nonEmpty(item.label, "checkable menu item label"),
+          enabled: item.enabled === undefined ? true : Boolean(item.enabled),
+          checked: item.checked === undefined ? false : Boolean(item.checked),
+          group: type === "radio" ? nonEmpty(item.group, "menu radio group") : null,
+          accelerator: accelerator(item.accelerator),
+        };
+        if (type !== "action") throw new TypeError(`unknown application menu item type: ${type}`);
+        return {
+          type,
+          id: nonEmpty(item.id, "application menu action id"),
+          label: nonEmpty(item.label, "application menu action label"),
+          enabled: item.enabled === undefined ? true : Boolean(item.enabled),
+          accelerator: accelerator(item.accelerator),
+        };
+      });
+    };
+    return JSON.stringify(normaliseLevel(menu));
+  };
+  const nativeMenu = {
+    configure: !menuInstalled ? undefined : options =>
+      runMenuCommand(__blitsenNativeMenuConfigure(normaliseMenuEntries(options))),
+    remove: !menuInstalled ? undefined : () => runMenuCommand(__blitsenNativeMenuRemove()),
+    onAction: !menuInstalled ? undefined : listener => {
+      if (typeof listener !== "function")
+        throw new TypeError("menu action listener must be a function");
+      menuActionListeners.add(listener);
+      return () => { menuActionListeners.delete(listener); };
+    },
+  };
+
   // Polling state for games and other frame-oriented applications. Ordinary
   // interaction remains DOM keyboard, pointer and wheel events; a snapshot is
   // the held-state and raw-relative complement to those events.
@@ -828,6 +945,7 @@
     clipboard: nativeMembers(nativeClipboard),
     window: nativeMembers(nativeWindow),
     tray: nativeMembers(nativeTray),
+    menu: nativeMembers(nativeMenu),
     input: nativeMembers(nativeInput),
     hid: nativeMembers(nativeHid),
     notify: nativeMembers(nativeNotify),

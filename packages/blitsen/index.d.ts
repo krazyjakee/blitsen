@@ -96,6 +96,64 @@ export interface BlitsenTrayConfig {
   contextMenu?: BlitsenTrayMenuItem[];
 }
 
+export interface BlitsenMenuRoleItem {
+  type: "role";
+  role: import("./src/native/native.js").MenuRole;
+}
+
+export interface BlitsenMenuSeparatorItem {
+  type: "separator";
+}
+
+export interface BlitsenMenuActionItem {
+  type?: "action";
+  id: string;
+  label: string;
+  enabled?: boolean;
+  accelerator?: string;
+}
+
+export interface BlitsenMenuCheckboxItem {
+  type: "checkbox";
+  id: string;
+  label: string;
+  enabled?: boolean;
+  checked?: boolean;
+  accelerator?: string;
+}
+
+export interface BlitsenMenuRadioItem {
+  type: "radio";
+  id: string;
+  label: string;
+  group: string;
+  enabled?: boolean;
+  checked?: boolean;
+  accelerator?: string;
+}
+
+export interface BlitsenMenuSubmenuItem {
+  type: "submenu";
+  label: string;
+  /** Platform role, valid only on a top-level submenu. */
+  role?: import("./src/native/native.js").MenuSubmenuRole;
+  enabled?: boolean;
+  menu: BlitsenMenuItem[];
+}
+
+export type BlitsenMenuItem =
+  | BlitsenMenuRoleItem
+  | BlitsenMenuSeparatorItem
+  | BlitsenMenuActionItem
+  | BlitsenMenuCheckboxItem
+  | BlitsenMenuRadioItem
+  | BlitsenMenuSubmenuItem;
+
+export interface BlitsenMenuConfig {
+  /** Top-level submenus, in the order they appear in the bar. */
+  menu: BlitsenMenuSubmenuItem[];
+}
+
 /** The `blitsen` key of `package.json`, the one place Blitsen reads configuration from. */
 export interface BlitsenConfig {
   /**
@@ -113,6 +171,8 @@ export interface BlitsenConfig {
   window?: BlitsenWindowConfig;
   /** System tray icon and context menu. */
   tray?: BlitsenTrayConfig;
+  /** Application menu installed at startup; needs no tray icon. */
+  menu?: BlitsenMenuConfig;
 }
 
 /** The discovered configuration, or `config: null` when no `blitsen` key exists. */

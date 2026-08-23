@@ -280,8 +280,8 @@ async function applyConfiguration(options, output) {
     throw new Error("missing application directory: pass one, or add an index.html here, "
       + `or add a "blitsen" config to ${location}`);
   }
-  if (options.android && (config.window || config.tray)) {
-    throw new Error("window and tray configuration is only available to desktop builds");
+  if (options.android && (config.window || config.tray || config.menu)) {
+    throw new Error("window, tray and menu configuration is only available to desktop builds");
   }
   if (config.build) {
     reportStep(output, { step: "build", detail: `${config.build} (configured in ${path})` });
@@ -294,6 +294,9 @@ async function applyConfiguration(options, output) {
   options.tray = config.tray
     ? await recordTrayConfiguration(config.tray, root)
     : undefined;
+  // Nothing to resolve: an application menu carries no assets, which is most of
+  // why it travels as the tree the user wrote rather than a recorded one.
+  options.menu = config.menu;
   applyName(options);
 }
 
@@ -477,8 +480,8 @@ export async function main(args, output = console, runtime = null) {
     // A run that found its application differently from the build beside it is a
     // run that proves nothing about what ships.
     if (options.directory === null) await applyConfiguration(options, output);
-    if (options.android && (options.window || options.tray)) {
-      throw new Error("window and tray configuration is only available to desktop builds");
+    if (options.android && (options.window || options.tray || options.menu)) {
+      throw new Error("window, tray and menu configuration is only available to desktop builds");
     }
     const application = await resolveApplication(options.directory);
     // Proxy mode is a way to *run* an application, and neither of the other two
