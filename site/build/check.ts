@@ -9,9 +9,10 @@
 import { readdir, readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { BASE } from "./content.ts";
+import { ALL_PAGES, BASE, EXCLUDED_DOCS } from "./content.ts";
 
 const DIST = resolve(import.meta.dir, "../dist");
+const DOCS = resolve(import.meta.dir, "../../docs");
 
 interface Problem { file: string; kind: string; detail: string }
 
@@ -42,6 +43,36 @@ async function main(): Promise<void> {
   const problems: Problem[] = [];
   const anchorsByPath = new Map<string, Set<string>>();
   const contents = new Map<string, string>();
+
+  const sources = (await readdir(DOCS)).filter((file) => file.endsWith(".md")).sort();
+  const registered = ALL_PAGES.map((page) => page.file);
+  const registeredSet = new Set(registered);
+  const sourceSet = new Set(sources);
+  const seen = new Set<string>();
+  for (const file of registered) {
+    if (seen.has(file)) {
+      problems.push({ file: "docs/", kind: "duplicate page registry entry", detail: file });
+    }
+    seen.add(file);
+  }
+  for (const [file, reason] of EXCLUDED_DOCS) {
+    if (!sourceSet.has(file)) {
+      problems.push({ file: "docs/", kind: "excluded source does not exist", detail: file });
+    }
+    if (reason.trim().length === 0) {
+      problems.push({ file: "docs/", kind: "source exclusion has no reason", detail: file });
+    }
+  }
+  for (const file of sources) {
+    if (!registeredSet.has(file) && !EXCLUDED_DOCS.has(file)) {
+      problems.push({ file: "docs/", kind: "unregistered Markdown source", detail: file });
+    }
+  }
+  for (const file of registeredSet) {
+    if (!sourceSet.has(file)) {
+      problems.push({ file: "docs/", kind: "registered source does not exist", detail: file });
+    }
+  }
 
   const cnamePath = join(DIST, "CNAME");
   const cname = existsSync(cnamePath) ? await readFile(cnamePath, "utf8") : "";
