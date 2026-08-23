@@ -5,8 +5,7 @@ import { join } from "node:path";
 
 import { compareReleaseBuilds, hashReleaseArtifacts }
   from "../../../scripts/compare-release-builds.mjs";
-
-const repository = new URL("../../../", import.meta.url).pathname;
+import { repository } from "./build-addon.mjs";
 
 describe("release reproducibility", () => {
   test("compares both unsigned artifacts and names the first differing byte", async () => {
