@@ -14,17 +14,22 @@ but not IME or the advanced editing surface — see [What v1 is not](#what-v1-is
 
 ## Window renderer by platform
 
-Blitsen uses the GPU Vello renderer on Windows, Linux, Android and Apple Silicon macOS. Intel
-macOS uses Vello's CPU rasterizer and presents its finished pixel buffer through a software
-window backend. This is an automatic safety fallback: Vello/Metal compute work can wedge the
-display GPU on Intel/Radeon Macs, reset WindowServer and terminate the whole desktop session
-([#229](https://github.com/krazyjakee/blitsen/issues/229)). Adapter or device-loss recovery cannot
-make that path safe because the system can stop responding before wgpu reports an error.
+Blitsen uses the GPU Vello renderer on Windows, Linux and Apple Silicon macOS. Intel macOS and
+Android use Vello's CPU rasterizer and present its finished pixel buffer through a software
+window backend. Both are automatic safety defaults. Vello/Metal compute work can wedge the
+display GPU on Intel/Radeon Macs and reset WindowServer
+([#229](https://github.com/krazyjakee/blitsen/issues/229)); on the API 32/33 Android CI AVD,
+lavapipe reports no usable storage buffer and Vello's 256 MiB device request panics before the
+application starts ([#151](https://github.com/krazyjakee/blitsen/issues/151)). Adapter or
+device-loss recovery is too late in both cases, because renderer construction is what fails.
 
-The selected renderer is written to stderr when a window opens. The CPU fallback needs no app
-configuration and has no GPU override on Intel macOS; rendering there may use more CPU than on
-the GPU-backed targets. It can be substantially slower at HiDPI resolutions, during resize, and
-on pages that repaint frequently.
+The selected renderer and reason are written to stderr when a window opens. The CPU fallback
+needs no app configuration and has no GPU override on Intel macOS. Android keeps an explicit
+qualification-only build path: building `blitsen-android` with `--features android-vello-gpu`
+selects Vello/wgpu. That path is for measuring named physical
+Mali and Adreno devices, not an end-user switch or a supported fallback. CPU rendering may use
+more CPU than the GPU path and can be substantially slower at high pixel densities, during
+resize, and on pages that repaint frequently.
 
 Run the check against build output, not source:
 

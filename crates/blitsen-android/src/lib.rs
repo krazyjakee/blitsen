@@ -53,6 +53,18 @@ pub fn android_main(app: android_activity::AndroidApp) {
     // handle, not the activity itself.
     blitsen_host::native_window::set_android_app(app.clone());
 
+    // NativeActivity has no useful stderr, so the host's renderer diagnostic
+    // is repeated through Android's system log before a window is constructed.
+    // In particular, a qualification build that fails during wgpu device
+    // creation still leaves an unambiguous line saying which path was chosen.
+    #[cfg(not(feature = "android-vello-gpu"))]
+    logcat::info("renderer=vello-cpu window-backend=softbuffer reason=Android-safe-default");
+    #[cfg(feature = "android-vello-gpu")]
+    logcat::info(
+        "renderer=vello-gpu backend=wgpu qualification=Android-mobile-GPU \
+         feature=android-vello-gpu",
+    );
+
     let assets = blitsen_host::apk::ApkAssets::open(
         app.asset_manager(),
         blitsen_host::apk::DEFAULT_ASSET_ROOT,

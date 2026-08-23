@@ -44,3 +44,8 @@ ndk-sys = "0.6"
 
 [lints]
 workspace = true
+
+[features]
+# Forward the qualification switch through the crate cargo-ndk actually builds.
+# It stays opt-in: an ordinary APK selects the host's CPU/softbuffer default.
+android-vello-gpu = ["blitsen-host/android-vello-gpu"]

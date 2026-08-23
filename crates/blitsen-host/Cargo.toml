@@ -143,6 +143,10 @@ notify-rust = { version = "4.18.0", default-features = false, features = ["previ
 # directory standing in for one, which is what the tests run against.
 [target.'cfg(target_os = "android")'.dependencies]
 android-activity = { version = "0.6.0", features = ["native-activity"] }
+# Android's software default rasterises into an RGBA buffer and presents it
+# through ANativeWindow. This reuses the dependency and softbuffer presenter
+# already selected for Intel macOS rather than introducing another backend.
+anyrender_vello_cpu = { version = "0.16", features = ["softbuffer_window_renderer"] }
 jni = "0.22.4"
 ndk = { version = "0.9", default-features = false }
 
@@ -219,3 +223,9 @@ workspace = true
 [features]
 # Wraps the global allocator to count per-frame allocations; see src/alloc.rs.
 alloc-audit = []
+# Qualification only. Android defaults to CPU rasterisation because Vello's
+# wgpu device request cannot be satisfied by the API 32/33 AVD's lavapipe
+# adapter and classic Vello is not established across physical mobile GPUs
+# (#151). This feature keeps the GPU path buildable for explicit device tests;
+# it is not a product default or an automatic fallback.
+android-vello-gpu = []
