@@ -111,9 +111,10 @@ describe("the entry point this build links, as the crate actually declares it", 
 });
 
 describe("the documented stopped-application boundary", () => {
-  test("does not claim desktop activation entry points the backends do not implement", async () => {
+  test("claims only the desktop activation entry points the backends implement", async () => {
     const support = await readFile(platformSupport, "utf8");
-    expect(support).toContain("D-Bus-activatable service");
+    expect(support).toContain("launch-capable notification portal");
+    expect(support).toContain("portal starts a stopped service");
     expect(support).toContain("INotificationActivationCallback");
     expect(support).toContain("cold-start response is not surfaced");
   });

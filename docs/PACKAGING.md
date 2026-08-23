@@ -61,7 +61,7 @@ Packaging differs by target:
 
 | Platform | Output |
 | --- | --- |
-| Linux | Executable, `.desktop` entry and optional icon |
+| Linux | Executable, `.desktop` entry, optional D-Bus `.service` and icon |
 | macOS | `.app` bundle with executable, `Info.plist` and optional `.icns` |
 | Windows | `.exe`, external application manifest and optional `.ico` |
 
@@ -80,24 +80,32 @@ what each platform's notification service reads:
 
 | Platform | Registered by the build | Registered at startup |
 | --- | --- | --- |
-| Linux | A `.desktop` entry with `X-GNOME-UsesNotifications=true` and an `Exec` taking one argument | Every notification carries the entry's name as the freedesktop `desktop-entry` hint |
+| Linux | `<id>.desktop` with `DBusActivatable=true`, plus `<id>.service` | The runtime owns `<id>` on the session bus, registers that host identity with the portal and exports `org.freedesktop.Application` |
 | macOS | The `.app`'s `CFBundleIdentifier` | — |
 | Windows | — | The AppUserModelID, under the running user's own `SOFTWARE\Classes\AppUserModelId` |
 | Android | — | The application ID the package was installed as, read from the Activity |
+
+The Linux files are installer inputs: install the desktop entry under
+`$XDG_DATA_HOME/applications` (or `/usr/share/applications`) and the service under
+`$XDG_DATA_HOME/dbus-1/services` (or `/usr/share/dbus-1/services`). Leaving them beside the
+executable does not register them. The session must provide `xdg-desktop-portal` with the host
+application registry and notification interfaces; a packaged `show` rejects with that missing
+prerequisite instead of silently submitting a notification that cannot launch the application.
 
 Windows and Android register at startup rather than at build time on purpose: `blitsen build`
 cross-compiles, so the machine that writes a Windows artifact is routinely not the machine that will
 run it, and the key that has to exist belongs to the user who eventually does.
 
-Where a platform, distribution or installer can hand a launch context over itself, it does so as
-`--notification-activation <envelope>` on the application's own command line. What each platform
-will actually start, and what it will not, is [Platform
+Where a platform, distribution or installer uses a command-line launch context, it does so as
+`--notification-activation <envelope>` on the application's own command line. Linux portal actions
+instead call the exported D-Bus interface with the same envelope. What each platform will actually
+start, and what it will not, is [Platform
 support](PLATFORM-SUPPORT.md#notifications); what the application receives is [Native
 APIs](NATIVE-APIS.md#cold-start-activation).
 
-A development run registers nothing and has no identity, so a notification it shows can only be
-acted on while it is still running, and an activation handed to it is refused with a message saying
-so.
+A development run registers nothing and has no identity. On Linux it retains the freedesktop
+live-process backend, so a notification it shows can only be acted on while it is still running;
+an activation handed to an identity-less process is refused with a message saying so.
 
 ## Sign the artifact
 

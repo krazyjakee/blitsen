@@ -321,7 +321,7 @@ pen, with pressure, multi-touch and pointer capture) · the first `blitsen/*` mo
 durable `localStorage` and realm-scoped `sessionStorage` · Workers (dedicated, with
 `MessageChannel`, `MessagePort` and `structuredClone`) · clipboard events · drag & drop, where a
 drop reports real filesystem paths in `dataTransfer.paths` rather than browser `File` abstractions,
-have landed. Still open: gamepads · notification activation and management · starting a drag *out*
+have landed. Still open: gamepads · remaining Windows/macOS notification activation · starting a drag *out*
 of the window, which winit gives no way to do and which the native matrix records as absent rather
 than approximating. Declarative and runtime tray/menu control, desktop notification submission and
 focused native input snapshots have landed; the generated native matrix records the remaining

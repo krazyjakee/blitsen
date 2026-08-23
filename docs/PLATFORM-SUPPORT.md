@@ -94,14 +94,16 @@ first frame turn, as an `activation` event on `notify.onEvent`, and never replay
 delivered—see [Native APIs](NATIVE-APIS.md#cold-start-activation). What each platform does to
 produce it differs, and only the parts named here exist:
 
-- **Linux** — `blitsen build` writes a desktop entry declaring `X-GNOME-UsesNotifications=true` and
-  an `Exec` that takes one argument, and every notification carries that entry's name in the
-  freedesktop `desktop-entry` hint. That is what attributes a notification to an installed
-  application and lists it in the desktop's notification settings. It is not enough to start a
-  stopped one: the freedesktop notification service delivers an activation to the sender's own D-Bus
-  connection, and a sender that has exited has none. Starting the application instead would need a
-  D-Bus-activatable service and a notification submitted through `org.gtk.Notifications` or the
-  portal, which is a second submission backend rather than an entry point.
+- **Linux** — an export with `--bundle-id` uses the launch-capable notification portal. The build
+  writes `<id>.desktop` with `DBusActivatable=true` and `<id>.service`; once an installer puts those
+  in the standard applications and session-service directories, the runtime owns the same bus name,
+  registers its host connection as that portal application ID and exports
+  `org.freedesktop.Application.ActivateAction`. Body and named-action targets carry the persisted
+  envelope, and the portal starts a stopped service before invoking it. Calls from any D-Bus peer
+  other than the current `org.freedesktop.portal.Desktop` owner are refused. A development run has no
+  identity and retains the freedesktop live-process backend. The portal has no dismissal/expiry
+  callback or timeout field, so a packaged app receives body/action activation and explicit `close`,
+  while presentation lifetime and user-dismissal reporting are the desktop's policy.
 - **Windows** — an export built with `--bundle-id` registers that AppUserModelID with the
   notification platform at startup, which is what gives it a notifier of its own and a permission
   state to read. Windows starts a stopped desktop application for a toast only through a registered
@@ -118,9 +120,10 @@ produce it differs, and only the parts named here exist:
   starting it. The inbox reaches the current session on its next frame or a later launch, and
   nonces deduplicate repeated delivery.
 
-Where a platform, distribution or installer can hand an envelope over itself, the entry point is
+Where a platform, distribution or installer uses a command-line envelope, the entry point is
 `--notification-activation <envelope>` on the application's own command line; both hosts read it,
-and a launch without one is an ordinary launch.
+and a launch without one is an ordinary launch. Linux portal actions carry the same envelope as the
+target of `ActivateAction` instead.
 
 ## macOS requirements
 

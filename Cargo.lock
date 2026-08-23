@@ -560,6 +560,7 @@ dependencies = [
  "winit",
  "winrt-toast-reborn",
  "writeable",
+ "zbus",
 ]
 
 [[package]]

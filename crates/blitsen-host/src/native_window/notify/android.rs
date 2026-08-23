@@ -860,4 +860,12 @@ impl NotifyController {
         self.permission_prompt = None;
         self.permission_errors.lock().clear();
     }
+
+    /// Releases callbacks at process shutdown without cancelling the platform
+    /// notifications whose PendingIntents can start the next process (#252).
+    pub(crate) fn detach(&mut self) {
+        self.records.clear();
+        self.permission_prompt = None;
+        crate::dom_bridge::net_lock(&self.permission_errors).clear();
+    }
 }
