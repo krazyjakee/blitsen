@@ -780,11 +780,24 @@ jobs:
   # it polled, and the `uiautomator` hierarchy of any screen it could not find the
   # dialog on. All of it is uploaded on failure *and* on success, because a run
   # that passes for the wrong reason is diagnosed from the same files.
+  #
+  # Non-gating, and #151 is why. A Blitsen APK cannot currently start on this
+  # emulator at all: `-gpu lavapipe` reports `max_buffer_size: 0`, Vello asks
+  # wgpu for 256 MiB, device creation fails and the process panics before any
+  # application code runs. `anyrender_vello_cpu` is linked only for Intel macOS
+  # (#229), so Android has nothing to fall back to. Nothing in #254 can pass
+  # until that decision lands, and the emulator is not the problem — it boots,
+  # `/dev/kvm` works, and `lavapipe` survives where `swiftshader_indirect` did
+  # not. The job stays because its logcat and dumpsys are the evidence #151 is
+  # being decided on, and it starts gating the day an Android build can open a
+  # window without a conforming Vulkan device. It is not a permitted failure in
+  # the sense of a flaky test: it is a blocked one, recorded on #254.
   android-notifications:
     name: android (notifications, API ${{ matrix.api-level }})
     needs: android
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    continue-on-error: true
     strategy:
       fail-fast: false
       matrix:
