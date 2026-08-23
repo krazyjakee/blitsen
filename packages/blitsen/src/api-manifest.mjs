@@ -89,6 +89,24 @@ const CATALOGUE = {
     "addEventListener", "removeEventListener", "dispatchEvent", "ErrorEvent",
     "Element.setPointerCapture", "Element.releasePointerCapture",
     "Element.hasPointerCapture"],
+  // Clipboard events and drag and drop (issue #93), which are one group because
+  // they are one object: a `DataTransfer` reaches an application either as
+  // `clipboardData` or as `dataTransfer` and behaves the same in both.
+  //
+  // What is absent is the file half, and deliberately: `files` and `items` hand
+  // back `File` objects, which this runtime does not have and does not want —
+  // a drop reports the absolute filesystem paths the platform gave, in `paths`,
+  // which is the divergence PRODUCT.md §7 argues for. The patterns are the
+  // dotted spelling a bundle really writes, so an application reading `files`
+  // off a drop is told what to read instead. `setDragImage` belongs to starting
+  // a drag, which winit gives no way to do.
+  WEB_TRANSFER: ["ClipboardEvent", "DragEvent", "DataTransfer",
+    "DataTransfer.dropEffect", "DataTransfer.effectAllowed", "DataTransfer.types",
+    "DataTransfer.getData", "DataTransfer.setData", "DataTransfer.clearData",
+    "DataTransfer.paths",
+    ["DataTransfer.files", "\\bdataTransfer\\s*\\.\\s*files\\b"],
+    ["DataTransfer.items", "\\bdataTransfer\\s*\\.\\s*items\\b"],
+    ["DataTransfer.setDragImage", "\\bsetDragImage\\s*\\("]],
   // Document scrolling. `scroll` and `scrollTo` are the same function under two
   // names, as they are on Window. The patterns are qualified because the bare
   // words are far too ordinary to find in a bundle: `scroll` alone matches every
@@ -297,7 +315,7 @@ const NATIVE = {
   window: ["setSize", "setFullscreen", "isFullscreen", "setDecorations", "isDecorated",
     "setMinimized", "setMaximized", "isMaximized", "startDrag", "close", "setAlwaysOnTop",
     "setCursor", "setCursorVisible", "setCursorGrab", "monitors",
-    "create", "setTransparent", "isAlwaysOnTop"],
+    "create", "setTransparent", "isAlwaysOnTop", "startFileDrag"],
   dialog: ["openFile", "openFiles", "saveFile", "openFolder", "openFolders", "message"],
   clipboard: ["readText", "readHtml", "readImage", "writeText", "writeHtml", "writeImage",
     "clear", "readMime", "writeMime"],
@@ -336,6 +354,12 @@ const NATIVE_ABSENT = {
     + "does nothing on X11 after that — so honouring it would mean replacing the window, which is "
     + "`create`. Run `blitsen` against a directory whose window should be transparent and the "
     + "attribute belongs on that window, not on a call.",
+  "window.startFileDrag": "Dropping *into* the window is winit's to report and is implemented; "
+    + "dragging *out* of it is not something winit can start. A drag source is a platform object "
+    + "driven from the thread that owns the window — `IDropSource` with `DoDragDrop`, an "
+    + "`NSDraggingSession`, a `wl_data_device` offer — and the first two run a modal loop that "
+    + "does not return until the drop, on the one thread Blitsen keeps free to paint. That is a "
+    + "design question rather than a missing call, so the module says so instead of answering it.",
   "window.isAlwaysOnTop": "winit sets the window level and cannot read it back, and the window "
     + "manager may change it without telling the application. Remembering what was last set would "
     + "be a second source of truth that quietly goes stale.",
@@ -486,6 +510,11 @@ const DIAGNOSTICS = {
     + "back with getComputedStyle."],
   WEB_COMPONENTS: ["warning", "Custom elements and shadow DOM are not implemented; DOMParser is.",
     "Render with ordinary elements the bundler already emits."],
+  WEB_TRANSFER: ["warning",
+    "This part of DataTransfer is not implemented; a dropped file is a path, not a File.",
+    "Read `event.dataTransfer.paths` and open each absolute path with your filesystem library. "
+    + "`types` still contains \"Files\", so the check that decides whether to accept a drop is "
+    + "unchanged. `setDragImage` draws for a drag out of the window, which cannot be started."],
   WEB_SELECTION: ["warning",
     "This part of the range API is not implemented; the boundary, text and geometry reads are.",
     "Edit the tree with the node methods rather than through a range: a range here measures "

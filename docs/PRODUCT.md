@@ -319,19 +319,21 @@ pen, with pressure, multi-touch and pointer capture) · the first `blitsen/*` mo
 
 **v2 — makes real apps comfortable** — *partly landed early*
 `localStorage`/`sessionStorage` (in memory, not persisted) · Workers (dedicated, with
-`MessageChannel`, `MessagePort` and `structuredClone`) have landed. Still open: clipboard events ·
-drag & drop (with real filesystem paths, not browser `File` abstractions) · gamepads · notification
-activation and management. Declarative and runtime tray/menu control, desktop notification
-submission and focused native input snapshots have landed; the generated native matrix records the
-remaining members rather than treating those modules as all-or-nothing.
+`MessageChannel`, `MessagePort` and `structuredClone`) · clipboard events · drag & drop, where a
+drop reports real filesystem paths in `dataTransfer.paths` rather than browser `File` abstractions,
+have landed. Still open: gamepads · notification activation and management · starting a drag *out*
+of the window, which winit gives no way to do and which the native matrix records as absent rather
+than approximating. Declarative and runtime tray/menu control, desktop notification submission and
+focused native input snapshots have landed; the generated native matrix records the remaining
+members rather than treating those modules as all-or-nothing.
 
 **Later — as demand justifies**
 WebGL / WebGPU · WebRTC · anything else earning its size. `<canvas>` 2D was on this list and has
 landed early (#99).
 
 **Where the v1 line was drawn, stated plainly.** Advanced text input and IME (#103) and
-accessibility (#102) are **not v1**. Basic keyboard editing, caret placement and drag selection in
-text controls have landed; clipboard editing, undo/redo, composition and `contenteditable` have
+accessibility (#102) are **not v1**. Basic keyboard editing, caret placement, drag selection and
+clipboard editing in text controls have landed; undo/redo, composition and `contenteditable` have
 not. `<canvas>` was the third entry here, and the sharpest one: the element shipped in the document
 and nothing painted inside it, so it was a `doctor` **error** rather than a warning, and an
 application that drew was refused at export. It draws now — a full 2D context composited into the

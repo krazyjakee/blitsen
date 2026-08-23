@@ -10,7 +10,7 @@ use blitsen_blitz::BlitzDom;
 use blitsen_core::WindowState;
 use blitsen_dom::DomBackend;
 use blitsen_js::{JsEngine, JsError};
-use blitz::dom::{DocGuard, DocGuardMut, Document as BlitzDocument};
+use blitz::dom::{DocGuard, DocGuardMut, Document as BlitzDocument, NodeId};
 use blitz::shell::BlitzApplication;
 use serde::Serialize;
 use winit::application::ApplicationHandler;
@@ -25,6 +25,7 @@ use winit::window::WindowId;
 #[cfg(target_os = "macos")]
 use winit::application::macos::ApplicationHandlerExtMacOS;
 
+use crate::drag_drop::PendingDrag;
 use crate::pointer_input::{PendingPointerInput, PointerIds};
 use crate::surface_lifecycle::{SurfaceState, SyntheticPhase};
 
@@ -89,6 +90,15 @@ pub struct WindowApplication<Rend: anyrender::WindowRenderer, E: JsEngine + Clon
     pub(crate) document: Rc<RefCell<BlitzDom>>,
     pub(crate) pending_pointer_input: Vec<(WindowId, PendingPointerInput)>,
     pub(crate) pending_keyboard_input: Vec<(WindowId, PendingKeyboardInput)>,
+    pub(crate) pending_drag_input: Vec<(WindowId, PendingDrag)>,
+    /// The files the drag currently over this application announced itself with.
+    ///
+    /// winit names them when the drag enters and again when it is released, and
+    /// not on the moves in between, so the session's list is held here for the
+    /// events that would otherwise carry none. Each queued event takes a share
+    /// of it rather than reading it back at dispatch, so a drag that ends and a
+    /// second that begins inside one turn cannot report each other's files.
+    pub(crate) drag_paths: std::rc::Rc<[std::path::PathBuf]>,
     /// The last surface size winit reported, and the last one acted on.
     ///
     /// A drag reports a new size far faster than a size can be applied: every
@@ -175,6 +185,7 @@ pub(crate) enum InputBootstrap {
     Keyboard,
     Pointer,
     Mouse,
+    Drag,
 }
 
 impl InputBootstrap {
@@ -183,6 +194,7 @@ impl InputBootstrap {
             Self::Keyboard => "__blitsenDispatchKeyboardEvent",
             Self::Pointer => "__blitsenDispatchPointerEvent",
             Self::Mouse => "__blitsenDispatchMouseEvent",
+            Self::Drag => "__blitsenDispatchDragEvent",
         }
     }
 
@@ -190,6 +202,7 @@ impl InputBootstrap {
         match self {
             Self::Keyboard => "blitsen:native-keyboard-event",
             Self::Pointer | Self::Mouse => "blitsen:native-pointer-input",
+            Self::Drag => "blitsen:native-drag-input",
         }
     }
 }
@@ -204,6 +217,28 @@ pub(crate) struct KeyboardEventInit {
     repeat: bool,
     #[serde(flatten)]
     modifiers: ModifierFlags,
+}
+
+/// Window-relative physical pixels as the DOM's `client` and `screen` pairs.
+///
+/// Shared by every input this window dispatches: a pointer, a wheel and a
+/// dragged file all arrive in physical pixels from the window's top-left corner
+/// and all report CSS pixels to JavaScript.
+pub(crate) fn css_pointer_coordinates(
+    physical_x: f64,
+    physical_y: f64,
+    scale: f64,
+    screen_origin_x: f64,
+    screen_origin_y: f64,
+) -> (f64, f64, f64, f64) {
+    let client_x = physical_x / scale;
+    let client_y = physical_y / scale;
+    (
+        client_x,
+        client_y,
+        screen_origin_x + client_x,
+        screen_origin_y + client_y,
+    )
 }
 
 /// Takes one key's queued values in order, unless an earlier callback failed.
@@ -350,6 +385,38 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Ren
     /// Snapshots the modifiers that every queued input in this turn observes.
     pub(crate) fn modifier_flags(&self) -> ModifierFlags {
         self.modifiers.into()
+    }
+
+    /// The scale factor and screen origin one window's input resolves against.
+    ///
+    /// `None` once the window is gone, which is a turn whose queued input has
+    /// nowhere to land rather than an error.
+    pub(crate) fn window_geometry(&self, window_id: WindowId) -> Option<(f64, f64, f64)> {
+        self.inner.windows.get(&window_id).map(|view| {
+            let scale = f64::from(view.doc.inner().viewport().hidpi_scale);
+            let origin = view.window.outer_position().unwrap_or_default();
+            (
+                scale,
+                f64::from(origin.x) / scale,
+                f64::from(origin.y) / scale,
+            )
+        })
+    }
+
+    /// Resolves a viewport point to the node under it, against a settled layout.
+    ///
+    /// Every input this window dispatches picks its target this way, so the
+    /// flush belongs here rather than at each caller: a hit test read against a
+    /// dirty tree answers where an element was before the frame moved it.
+    pub(crate) fn hit_test(
+        &self,
+        client_x: f64,
+        client_y: f64,
+    ) -> Result<Option<blitsen_dom::HitTest<NodeId>>, blitsen_dom::DomError> {
+        let snapshot = self.document.borrow_mut().flush_layout()?;
+        self.document
+            .borrow()
+            .hit_test(client_x as f32, client_y as f32, snapshot)
     }
 
     fn queue_keyboard_input(&mut self, window_id: WindowId, event: &WindowEvent) -> bool {
@@ -870,6 +937,7 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> ApplicationHandler
         }
         let queued_pointer_input = self.queue_pointer_input(window_id, &event);
         let queued_keyboard_input = self.queue_keyboard_input(window_id, &event);
+        let queued_drag_input = self.queue_drag_input(window_id, &event);
         let viewport_changed = matches!(&event, WindowEvent::ScaleFactorChanged { .. });
         let redraw = matches!(&event, WindowEvent::RedrawRequested);
         let startup_paint = redraw && self.prepare_startup_reveal(window_id);
@@ -879,6 +947,7 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> ApplicationHandler
             self.apply_pending_resize(event_loop, window_id);
             self.drain_pointer_input(window_id);
             self.drain_keyboard_input(window_id);
+            self.drain_drag_input(window_id);
         }
         // `requestAnimationFrame` means "before the next paint", and a window
         // with no surface has no next paint. Android's winit backend stops
@@ -929,7 +998,7 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> ApplicationHandler
         if animation_pending && let Some(view) = self.inner.windows.get(&window_id) {
             view.window.request_redraw();
         }
-        if (queued_pointer_input || queued_keyboard_input)
+        if (queued_pointer_input || queued_keyboard_input || queued_drag_input)
             && let Some(view) = self.inner.windows.get(&window_id)
         {
             view.window.request_redraw();

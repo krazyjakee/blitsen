@@ -220,6 +220,17 @@ if (image) {
 On X11 and Wayland, clipboard contents written by an application may disappear when the process
 exits unless the desktop runs a clipboard manager. macOS and Windows hand the data to the system.
 
+## Dropped files, and dragging out
+
+Dropping a file into the window is a DOM event rather than a module call: the standard drag events
+carry `dataTransfer.paths`, an array of absolute filesystem paths instead of the browser's `File`
+objects. [Web API support](WEB-APIS.md#dropped-files-are-paths) documents it.
+
+Starting a drag *out* of the window has no counterpart. `blitsen/window.startFileDrag` is recorded
+as absent in the generated matrix rather than implemented: a drag source is a platform object driven
+from the thread that owns the window, and on Windows and macOS it runs a modal loop that does not
+return until the drop — on the one thread Blitsen keeps free to paint.
+
 ## Application directories
 
 Pass one safe path segment to the directory helpers:

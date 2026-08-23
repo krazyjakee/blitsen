@@ -1417,6 +1417,117 @@
       "pattern": null
     },
     {
+      "api": "ClipboardEvent",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_TRANSFER",
+      "pattern": "(?<![.\\w$])ClipboardEvent\\b"
+    },
+    {
+      "api": "DragEvent",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_TRANSFER",
+      "pattern": "(?<![.\\w$])DragEvent\\b"
+    },
+    {
+      "api": "DataTransfer",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_TRANSFER",
+      "pattern": "(?<![.\\w$])DataTransfer\\b"
+    },
+    {
+      "api": "DataTransfer.dropEffect",
+      "kind": "member",
+      "owner": "DataTransfer.prototype",
+      "member": "dropEffect",
+      "status": "implemented",
+      "code": "WEB_TRANSFER",
+      "pattern": null
+    },
+    {
+      "api": "DataTransfer.effectAllowed",
+      "kind": "member",
+      "owner": "DataTransfer.prototype",
+      "member": "effectAllowed",
+      "status": "implemented",
+      "code": "WEB_TRANSFER",
+      "pattern": null
+    },
+    {
+      "api": "DataTransfer.types",
+      "kind": "member",
+      "owner": "DataTransfer.prototype",
+      "member": "types",
+      "status": "implemented",
+      "code": "WEB_TRANSFER",
+      "pattern": null
+    },
+    {
+      "api": "DataTransfer.getData",
+      "kind": "member",
+      "owner": "DataTransfer.prototype",
+      "member": "getData",
+      "status": "implemented",
+      "code": "WEB_TRANSFER",
+      "pattern": null
+    },
+    {
+      "api": "DataTransfer.setData",
+      "kind": "member",
+      "owner": "DataTransfer.prototype",
+      "member": "setData",
+      "status": "implemented",
+      "code": "WEB_TRANSFER",
+      "pattern": null
+    },
+    {
+      "api": "DataTransfer.clearData",
+      "kind": "member",
+      "owner": "DataTransfer.prototype",
+      "member": "clearData",
+      "status": "implemented",
+      "code": "WEB_TRANSFER",
+      "pattern": null
+    },
+    {
+      "api": "DataTransfer.paths",
+      "kind": "member",
+      "owner": "DataTransfer.prototype",
+      "member": "paths",
+      "status": "implemented",
+      "code": "WEB_TRANSFER",
+      "pattern": null
+    },
+    {
+      "api": "DataTransfer.files",
+      "kind": "member",
+      "owner": "DataTransfer.prototype",
+      "member": "files",
+      "status": "absent",
+      "code": "WEB_TRANSFER",
+      "pattern": "\\bdataTransfer\\s*\\.\\s*files\\b"
+    },
+    {
+      "api": "DataTransfer.items",
+      "kind": "member",
+      "owner": "DataTransfer.prototype",
+      "member": "items",
+      "status": "absent",
+      "code": "WEB_TRANSFER",
+      "pattern": "\\bdataTransfer\\s*\\.\\s*items\\b"
+    },
+    {
+      "api": "DataTransfer.setDragImage",
+      "kind": "member",
+      "owner": "DataTransfer.prototype",
+      "member": "setDragImage",
+      "status": "absent",
+      "code": "WEB_TRANSFER",
+      "pattern": "\\bsetDragImage\\s*\\("
+    },
+    {
       "api": "scrollTo",
       "kind": "global",
       "status": "implemented",
@@ -4487,6 +4598,13 @@
       "reason": "winit sets the window level and cannot read it back, and the window manager may change it without telling the application. Remembering what was last set would be a second source of truth that quietly goes stale."
     },
     {
+      "api": "window.startFileDrag",
+      "module": "window",
+      "member": "startFileDrag",
+      "status": "absent",
+      "reason": "Dropping *into* the window is winit's to report and is implemented; dragging *out* of it is not something winit can start. A drag source is a platform object driven from the thread that owns the window — `IDropSource` with `DoDragDrop`, an `NSDraggingSession`, a `wl_data_device` offer — and the first two run a modal loop that does not return until the drop, on the one thread Blitsen keeps free to paint. That is a design question rather than a missing call, so the module says so instead of answering it."
+    },
+    {
       "api": "dialog.openFile",
       "module": "dialog",
       "member": "openFile",
@@ -4848,6 +4966,12 @@
       "severity": "warning",
       "message": "Custom elements and shadow DOM are not implemented; DOMParser is.",
       "guidance": "Render with ordinary elements the bundler already emits.",
+      "extra": null
+    },
+    "WEB_TRANSFER": {
+      "severity": "warning",
+      "message": "This part of DataTransfer is not implemented; a dropped file is a path, not a File.",
+      "guidance": "Read `event.dataTransfer.paths` and open each absolute path with your filesystem library. `types` still contains \"Files\", so the check that decides whether to accept a drop is unchanged. `setDragImage` draws for a drag out of the window, which cannot be started.",
       "extra": null
     },
     "WEB_SELECTION": {

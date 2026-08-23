@@ -444,7 +444,7 @@ What remains here is what a table cannot express: why a thing sits where it does
 | --- | --- |
 | `WebSocket` | tokio-tungstenite |
 | `Audio`, basic Web Audio | rodio / cpal |
-| Clipboard, drag & drop | arboard, winit |
+| Starting a drag out to the desktop | winit, which reports a drag that arrives and cannot start one. Clipboard events and dropping *into* the window are implemented, over arboard and winit. |
 | `navigator.getGamepads` | gilrs |
 | Pointer lock, fullscreen | winit |
 | WebGL / WebGPU | wgpu through the viewport |

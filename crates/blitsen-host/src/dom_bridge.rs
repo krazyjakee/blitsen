@@ -67,6 +67,7 @@ const BOOTSTRAP: &str = concat!(
     include_str!("dom_bridge/bootstrap/url.js"),
     include_str!("dom_bridge/bootstrap/storage.js"),
     include_str!("dom_bridge/bootstrap/native.js"),
+    include_str!("dom_bridge/bootstrap/transfer.js"),
     include_str!("dom_bridge/bootstrap/globals.js"),
     "})();\n",
 );

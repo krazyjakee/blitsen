@@ -30,7 +30,7 @@ lists individual globals, classes and members.
 | Area | Current support |
 | --- | --- |
 | DOM | Documents, elements, text, fragments, templates, attributes, selectors, mutation observers and common traversal/mutation APIs |
-| Events | Event targets, custom, mouse, keyboard, focus, input, pointer, wheel, error and submit events |
+| Events | Event targets, custom, mouse, keyboard, focus, input, pointer, wheel, error, submit, clipboard and drag events |
 | Forms | Basic input, textarea, select, option, button and form state; keyboard editing and selection |
 | Layout reads | Bounding rectangles, client/offset geometry, computed style, scrolling, ranges, carets and selection |
 | Scheduling | `requestAnimationFrame`, timeouts and intervals |
@@ -54,6 +54,8 @@ lists individual globals, classes and members.
 | XHR | Use `fetch` |
 | Streams | Responses are buffered; streaming body APIs are absent |
 | FormData, File and FileReader | Absent; use supported request bodies or native file paths |
+| `DataTransfer.files` and `.items` | Absent; a drop reports absolute filesystem paths in `dataTransfer.paths` |
+| Starting a drag | `draggable`, `dragstart`, `dragend` and dragging out to the desktop are absent; dropping *into* the window works |
 | IndexedDB | Absent; use application-owned durable storage |
 | SharedWorker and ServiceWorker | Absent; dedicated `Worker` is supported |
 | Browser modal dialogs | `alert`, `confirm`, `prompt` and `print` are absent; use `blitsen/dialog` where available |
@@ -62,6 +64,30 @@ lists individual globals, classes and members.
 | Video and text tracks | Absent; audio is supported |
 | Accessibility tree | Not exported to the platform in this release |
 | Full IME and complex text editing | Incomplete; verify every input language and workflow you support |
+
+## Dropped files are paths
+
+A file dragged in from the desktop arrives as the standard `dragenter`/`dragover`/`dragleave`/`drop`
+sequence, and — as in a browser — the drop is only dispatched where the preceding `dragover` was
+cancelled. What it carries is not:
+
+```js
+zone.addEventListener("dragover", event => event.preventDefault());
+zone.addEventListener("drop", event => {
+  event.preventDefault();
+  for (const path of event.dataTransfer.paths) console.log(path);
+});
+```
+
+`dataTransfer.paths` is a frozen array of absolute filesystem paths, which your filesystem library
+opens directly — there is no `File` to read back asynchronously, and `dataTransfer.files` and
+`.items` are absent rather than empty. `types` still contains `"Files"`, and
+`getData("text/uri-list")` returns the same files as `file:` URLs, so the code that decides whether
+to accept a drop does not change.
+
+`copy`, `cut` and `paste` are dispatched with a `clipboardData` `DataTransfer` when Ctrl/Cmd is
+held with C, X or V, over the same platform clipboard `blitsen/clipboard` uses. Cancel a `copy` or
+a `cut` to replace what is written; cancel a `paste` to insert it yourself.
 
 ## Feature detection
 

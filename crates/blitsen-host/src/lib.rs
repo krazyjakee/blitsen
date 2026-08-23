@@ -18,6 +18,8 @@ pub mod app;
 mod assets;
 pub mod dev_server;
 pub mod dom_bridge;
+// Files dragged from the desktop into the window, and the real paths they carry.
+mod drag_drop;
 pub mod frame_loop;
 pub mod harness;
 pub mod messaging;

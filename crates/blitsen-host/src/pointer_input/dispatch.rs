@@ -6,7 +6,6 @@
 //! `buttons` to pointer capture to the `click` a lift produces, is settled in
 //! `dom_bridge/bootstrap/events.js`.
 
-use blitsen_dom::DomBackend;
 use blitsen_js::{JsEngine, JsError};
 use blitz::dom::NodeId;
 use serde::Serialize;
@@ -15,7 +14,9 @@ use winit::window::WindowId;
 
 use super::{PendingPointerInput, PointerAction, classify_pointer_event};
 use crate::DomRuntime;
-use crate::native_window::{InputBootstrap, ModifierFlags, WindowApplication, take_queued_for};
+use crate::native_window::{
+    InputBootstrap, ModifierFlags, WindowApplication, css_pointer_coordinates, take_queued_for,
+};
 
 /// A pointer event as JavaScript receives it.
 ///
@@ -67,23 +68,6 @@ pub(crate) fn dom_mouse_button(button: MouseButton) -> u16 {
         MouseButton::Forward => 4,
         other => other as u16,
     }
-}
-
-pub(crate) fn css_pointer_coordinates(
-    physical_x: f64,
-    physical_y: f64,
-    scale: f64,
-    screen_origin_x: f64,
-    screen_origin_y: f64,
-) -> (f64, f64, f64, f64) {
-    let client_x = physical_x / scale;
-    let client_y = physical_y / scale;
-    (
-        client_x,
-        client_y,
-        screen_origin_x + client_x,
-        screen_origin_y + client_y,
-    )
 }
 
 /// The bootstrap entry point that owns one input.
@@ -168,17 +152,7 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Ren
         if inputs.is_empty() {
             return;
         }
-        let Some((scale, screen_origin_x, screen_origin_y)) =
-            self.inner.windows.get(&window_id).map(|view| {
-                let scale = f64::from(view.doc.inner().viewport().hidpi_scale);
-                let origin = view.window.outer_position().unwrap_or_default();
-                (
-                    scale,
-                    f64::from(origin.x) / scale,
-                    f64::from(origin.y) / scale,
-                )
-            })
-        else {
+        let Some((scale, screen_origin_x, screen_origin_y)) = self.window_geometry(window_id) else {
             return;
         };
 
@@ -237,13 +211,7 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Ren
                 screen_origin_x,
                 screen_origin_y,
             );
-            let hit = (|| {
-                let snapshot = self.document.borrow_mut().flush_layout()?;
-                self.document
-                    .borrow()
-                    .hit_test(client_x as f32, client_y as f32, snapshot)
-            })();
-            let hit = match hit {
+            let hit = match self.hit_test(client_x, client_y) {
                 Ok(Some(hit)) => hit,
                 Ok(None) => continue,
                 Err(error) => {
