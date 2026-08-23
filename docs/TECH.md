@@ -1190,8 +1190,19 @@ requirements are implemented and tested, feature detection truthfully finds no `
    focus lifetime. Blitz/Parley owns the value, marked range, caret and paint. This covers editable
    `<input>` and `<textarea>` only; `contenteditable`, undo/redo, surrounding-text deletion,
    advanced selection events and human native CJK/RTL verification remain separate acceptance.
-6. **Accessibility** — Blitz's AccessKit story, and whether v0 can defer it. Deferring has a
-   real cost for the dashboard/tooling audience.
+6. **Accessibility: decided — not v1.** Upstream Blitz defaults to an AccessKit platform adapter
+   that exports a tree but does not implement requested actions. Shipping that partial adapter
+   would contradict the public boundary, so Blitsen disables `blitz/accessibility`. Semantic HTML
+   and ARIA attributes remain ordinary DOM data, but no roles, names, focus state or live regions
+   reach a platform accessibility API. DOM focus, keyboard events and text-control editing are a
+   separate input path and remain enabled.
+
+   One internal dependency remains for now: upstream `blitz-dom/custom-widget` activates
+   `blitz-dom/accessibility`, so the AccessKit node model is compiled for the custom-widget seam
+   canvas and `<blitsen-view>` need. `blitz-shell/accessibility` and `accesskit_xplat` are absent,
+   therefore that model is never connected to the operating system. Remove it when upstream
+   decouples custom widgets; do not enable the adapter until Blitsen implements actions and passes
+   human screen-reader verification on every platform.
 7. **Font fallback and shaping: decided.** Enumerate system fonts and register author-provided
    `@font-face` files into the shared Parley collection; bundle no universal fallback. HarfRust,
    Unicode script analysis and bidi are already in that pipeline. Portable applications pin their

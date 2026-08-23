@@ -62,7 +62,7 @@ lists individual globals, classes and members.
 | Cookies | No cookie jar; `document.cookie` is absent |
 | Custom elements and shadow DOM | Absent; `DOMParser` is supported |
 | Video and text tracks | Absent; audio is supported |
-| Accessibility tree | Not exported to the platform in this release |
+| Accessibility tree | Deliberately not exported: screen readers receive no roles, names, focus state or live regions; DOM keyboard focus remains separate and supported |
 | Full IME and complex text editing | `<input>`/`<textarea>` preedit and commit are implemented; `contenteditable`, surrounding-text deletion and native CJK/RTL workflows remain unverified |
 
 ## Dropped files are paths

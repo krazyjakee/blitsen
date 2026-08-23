@@ -204,7 +204,9 @@ APK](PACKAGING.md#build-an-android-apk) for prerequisites and signing.
 
 - WebGL, WebGPU and WebRTC are not implemented. `<canvas>` 2D is, without shadows or
   `ctx.filter`.
-- There is no platform accessibility tree, so screen readers cannot access the application.
+- There is deliberately no platform accessibility tree: semantic elements and ARIA attributes do
+  not expose roles, names, focus state or live regions to screen readers. Keyboard focus and text
+  editing still work through the DOM input path; that does not make the application accessible.
 - Editable `<input>` and `<textarea>` controls route winit preedit/commit through composition
   events into a painted Parley composing range, with candidate-window placement on desktop.
   Undo/redo, `contenteditable`, surrounding-text IME deletion and advanced selection events remain

@@ -16,13 +16,15 @@ anyrender = "0.13"
 # for its own headless and CPU-fallback paths, so the binary carries it once.
 anyrender_vello_cpu = "0.16"
 blitsen-dom = { path = "../blitsen-dom" }
-blitz = { git = "https://github.com/DioxusLabs/blitz", rev = "111ed2f7224e49cd3177ef3cb5990efc279d3e73" }
+blitz.workspace = true
 # The meta-crate pulls blitz-dom with default features off, which drops
 # system-fonts — without it Parley has no font sources and every glyph renders
 # blank. Taken explicitly rather than via `default` so the list is the one
 # Blitsen has decided on: `svg` is what parses an `<svg>` subtree and an SVG
-# subresource (#238), and custom-widget is the seam `<blitsen-view>` uses.
-blitz-dom = { git = "https://github.com/DioxusLabs/blitz", rev = "111ed2f7224e49cd3177ef3cb5990efc279d3e73", default-features = false, features = ["system-fonts", "woff", "accessibility", "file-input", "custom-widget", "svg"] }
+# subresource (#238), and custom-widget is the seam canvas and `<blitsen-view>`
+# use. Upstream custom-widget currently activates its internal AccessKit node
+# model too; the platform adapter is disabled centrally through `blitz` (#102).
+blitz-dom = { git = "https://github.com/DioxusLabs/blitz", rev = "111ed2f7224e49cd3177ef3cb5990efc279d3e73", default-features = false, features = ["system-fonts", "woff", "file-input", "custom-widget", "svg"] }
 # The cursor a resolved `cursor` keyword names. Blitz keeps its own copy of
 # this mapping private, and the enum is what the shell takes, so it is named
 # here directly rather than through a re-export that does not exist.

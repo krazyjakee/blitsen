@@ -18,7 +18,7 @@ blitsen-core = { path = "../blitsen-core" }
 blitsen-dom = { path = "../blitsen-dom" }
 blitsen-js = { path = "../blitsen-js" }
 blitsen-platform = { path = "../blitsen-platform" }
-blitz = { git = "https://github.com/DioxusLabs/blitz", rev = "111ed2f7224e49cd3177ef3cb5990efc279d3e73" }
+blitz.workspace = true
 # `<blitsen-view>` composites through the paint-side custom-widget seam, and
 # `svg` is what paints an `<svg>` subtree once blitz-dom has parsed it (#238).
 # Both are named rather than taken through `default`, so the feature list is a
