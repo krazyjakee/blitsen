@@ -793,7 +793,10 @@ mod tests {
         let files = AppFiles::directory(root.join("index.html")).unwrap();
         assert_eq!(
             files.storage_identity(),
-            format!("directory:{}", root.canonicalize().unwrap().display())
+            format!(
+                "directory:{}",
+                simplified(root.canonicalize().unwrap()).display()
+            )
         );
         let provider = files
             .net_provider()

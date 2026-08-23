@@ -369,7 +369,7 @@ impl DirectoryLock {
         loop {
             match fs::create_dir(&path) {
                 Ok(()) => return Ok(Self { path }),
-                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                Err(error) if lock_is_contended(&error) => {
                     let stale = fs::metadata(&path)
                         .and_then(|metadata| metadata.modified())
                         .ok()
@@ -395,6 +395,23 @@ impl DirectoryLock {
             }
         }
     }
+}
+
+fn lock_is_contended(error: &std::io::Error) -> bool {
+    if error.kind() == std::io::ErrorKind::AlreadyExists {
+        return true;
+    }
+
+    // Windows can report ERROR_ACCESS_DENIED while another thread is deleting
+    // the just-released lock directory. That is transient contention, not a
+    // refusal to use the application's storage directory. Retrying also keeps
+    // the operation serialized across independently opened LocalStorage areas.
+    #[cfg(windows)]
+    if error.kind() == std::io::ErrorKind::PermissionDenied {
+        return true;
+    }
+
+    false
 }
 
 impl Drop for DirectoryLock {
