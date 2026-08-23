@@ -127,16 +127,23 @@ assert.equal(typeof unwatch, "function");
 unwatch();
 
 // The standard facade is installed only where the same backend can address
-// close. Windows remains feature-detectably absent until #251; an unbundled
-// macOS harness may also lack the application identity required by Apple.
-if (process.platform === "linux") {
+// close, which is Linux and — since #251 tagged the toast — Windows. An
+// unbundled macOS harness may still lack the application identity Apple
+// requires, so it is not asserted either way there.
+if (process.platform === "linux" || process.platform === "win32") {
   assert.equal("Notification" in globalThis, true);
-  assert.equal(Notification.permission, "granted");
   assert.equal(Notification.maxActions, 8);
   assert(Notification.prototype instanceof EventTarget);
   assert.throws(() => new Notification("Build", { tag: "replace-me" }), /NotSupportedError/);
-} else if (process.platform === "win32") {
-  assert.equal("Notification" in globalThis, false);
+  if (process.platform === "linux") {
+    // Linux has no per-application authorization state to report.
+    assert.equal(Notification.permission, "granted");
+  } else {
+    // Windows reads the notifier, which is enabled or switched off and never
+    // undetermined; which of the two is a property of the machine.
+    assert(["granted", "denied"].includes(Notification.permission),
+      `Windows notification permission was ${Notification.permission}`);
+  }
 }
 
 // Application directories. The application names itself, because the runtime

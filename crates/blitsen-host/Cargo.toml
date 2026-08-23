@@ -161,6 +161,22 @@ windows-sys = { version = "0.61", features = ["Win32_UI_WindowsAndMessaging"] }
 # compiling hidapi's C, so the toolchain requirement stays the one `windows-sys`
 # already imposes.
 hidapi = { version = "2.6.6", default-features = false, features = ["windows-native"] }
+# Addressable Windows toasts (#251). `notify-rust` above stays: it is the desktop
+# vocabulary every backend reports in, and it owns Linux and macOS. What it
+# cannot do is name a Windows toast — its backend sets no tag, keeps no handle
+# and never reads the notifier — so an ID it returns can never be replaced,
+# removed or asked about again. This crate is the same toast built addressably:
+# it maintains the toast XML and the WinRT event plumbing upstream, and it
+# exposes the tag and group that Windows itself uses to replace a delivered
+# toast and to remove one from notification history. Blitsen forks no second
+# toast implementation to get that.
+winrt-toast-reborn = "0.3.8"
+# `ToastNotifier::Setting()`, and nothing else. Whether the user, the
+# administrator or policy has switched this application's toasts off is the only
+# notification permission state Windows has, and no toast library in the tree
+# surfaces it. The crate is already resolved behind the one above, so naming it
+# here links nothing new.
+windows = { version = "0.61", features = ["UI_Notifications"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 # `macos-shared-device` is the one feature that changes behaviour rather than

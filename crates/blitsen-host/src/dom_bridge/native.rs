@@ -125,7 +125,11 @@ fn install_notify<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsError> 
         }),
     )?;
 
-    #[cfg(target_os = "linux")]
+    // The standard facade needs a backend that can withdraw what it showed,
+    // because `Notification.close()` is not optional in that contract. Windows
+    // joins Linux here now that a toast is addressable by the tag `show` gave it
+    // (#251).
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     engine.define_global_function(
         "__blitsenNativeNotifyStandard",
         Box::new(move |call| {

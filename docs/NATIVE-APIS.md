@@ -213,10 +213,13 @@ expired or closed, `update` and `close` return `false`. Events are FIFO and are 
 a platform callback thread. At most eight action buttons may be requested; the desktop is still
 free to show fewer.
 
-The `notify-rust` Windows backend delivers click, action, dismissal and error events, but does not
-retain a toast handle for general replacement or close. Calls for an active ID therefore reject on
-Windows instead of pretending they worked (#251). Windows also reports permission as `"default"`
-until that backend exposes the notifier setting. Linux and macOS implement update and close.
+Every desktop platform implements update and close. Windows carries the session ID as the toast's
+own tag, so an update replaces that toast in place and a close removes it from the screen and from
+notification history alike. Windows permission reads the native notifier setting and is therefore
+`"granted"` or `"denied"` and never `"default"`; there is no prompt to show, because the user,
+the administrator and group policy are what decide it. Windows toasts are delivered under the
+identity Windows already knows rather than under `appName`, which registering an application
+identity of your own would need—that is the packaging work #252 tracks.
 Activation while the process is already running is delivered on desktop; launching a stopped
 application from a notification requires platform registration and packaging work tracked in #252.
 Android implements permission, an idempotent `blitsen.default` channel, submission, update and close
@@ -226,9 +229,9 @@ than displaying inert controls. Android urgency is a builder hint inside the use
 default channel, and `appName` cannot rename a channel Android has already created.
 
 Browser-oriented integrations can use the standard `Notification` global over this same backend on
-Linux and eligible packaged macOS apps. It deliberately remains absent where its lifecycle contract
-cannot be implemented, including Android until notification intent routing lands; see [Web API
-support](WEB-APIS.md#notifications).
+Linux, Windows and eligible packaged macOS apps. It deliberately remains absent where its
+lifecycle contract cannot be implemented, including Android until notification intent routing
+lands; see [Web API support](WEB-APIS.md#notifications).
 
 ## Native input snapshots
 

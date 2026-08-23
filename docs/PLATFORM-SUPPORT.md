@@ -38,11 +38,10 @@ submission/lifecycle events and focused native input snapshots are available on 
 where there are none; `os.displays` and `os.idleTime` are absent by decision, the monitors being
 `window.monitors()` and idle time having no answer a Wayland client can trust.
 Checkable tray icons and hidden menu items are not exposed because the native backends do not agree
-on them. Linux and
-macOS notifications can be updated and closed through their session ID. The installed Windows
-notification library delivers interaction events but rejects update and close because it does not
-retain an addressable toast handle (#251). Individual notification-server policies still decide
-how a submitted notification is presented.
+on them. Desktop notifications can be updated and closed through their session ID on every desktop
+target; a Windows toast carries that ID as its own tag, which is what an update replaces and a
+close removes from the screen and from notification history. Individual notification-server
+policies still decide how a submitted notification is presented.
 
 `blitsen/hid` is available on every desktop target. On Linux a hidraw node is owned by udev, so a
 packaged application reaches an intended device only once a distribution or installer has added a
@@ -72,11 +71,10 @@ application as root is not a supported substitute.
   navigation drawer — are views inside the activity's own layout rather than a menu the platform
   owns.
 
-The standard Web `Notification` facade is installed on Linux and in eligible packaged macOS apps.
-It is absent on Windows until the notification library exposes addressable close (#251), absent in
-an unbundled macOS development host (#253), and absent on Android until intent activation is wired
-through #252. The native `blitsen/notify` module is available on every desktop target and Android,
-and exposes its platform limits directly.
+The standard Web `Notification` facade is installed on Linux, on Windows and in eligible packaged
+macOS apps. It is absent in an unbundled macOS development host (#253), and absent on Android until
+intent activation is wired through #252. The native `blitsen/notify` module is available on every
+desktop target and Android, and exposes its platform limits directly.
 
 ## macOS requirements
 
@@ -105,6 +103,11 @@ than embedding them in the PE file. Keep those files with the executable. The cu
 `blitsen/hid` opens HID top-level collections through the Windows HID class driver and needs no
 driver installation. Windows reserves some system collections for itself; an open refused that way
 rejects with `NotAllowedError`, separately from a device that disappeared.
+
+Windows notification permission is what the notifier reports, so it is `"granted"` or `"denied"`
+and never `"default"`; `requestPermission()` reads it without prompting, because Windows gives an
+application no prompt to show. Toasts are delivered under an application identity Windows already
+knows rather than under `appName`; registering one of your own is the packaging work #252 tracks.
 
 ## Android
 

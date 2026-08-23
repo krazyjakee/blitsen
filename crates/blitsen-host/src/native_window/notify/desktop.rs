@@ -7,7 +7,9 @@
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 
-use notify_rust::{CloseReason, Notification, NotificationResponse, Timeout, Urgency};
+use notify_rust::{CloseReason, NotificationResponse, Urgency};
+#[cfg(not(target_os = "windows"))]
+use notify_rust::{Notification, Timeout};
 use serde_json::{Value, json};
 use winit::event_loop::EventLoopProxy;
 
@@ -41,8 +43,28 @@ struct Record {
 
 #[cfg(target_os = "windows")]
 struct Record {
+    options: NotificationOptions,
     token: u64,
 }
+
+/// The application identity Windows files every Blitsen toast under.
+///
+/// Windows will not display a toast from an identity it does not know, and
+/// registering one is the packaging work #252 tracks. PowerShell's is present on
+/// every installation, which is why it is the identity the notification
+/// libraries offer as their unpackaged default and the one `notify-rust` already
+/// used here. Permission, replacement and removal are all scoped to it, so the
+/// three have to agree on which identity they mean.
+#[cfg(target_os = "windows")]
+const APP_ID: &str = winrt_toast_reborn::ToastManager::POWERSHELL_AUM_ID;
+
+/// The toast group Blitsen's own notifications share.
+///
+/// The group narrows the tag: removing `(group, tag)` cannot reach a toast some
+/// other application filed under the shared PowerShell identity with a colliding
+/// tag of its own.
+#[cfg(target_os = "windows")]
+const GROUP: &str = "blitsen";
 
 pub(crate) struct NotifyController {
     proxy: EventLoopProxy,
@@ -62,6 +84,7 @@ fn urgency(value: &str) -> Result<Urgency, String> {
     }
 }
 
+#[cfg(not(target_os = "windows"))]
 fn notification(options: &NotificationOptions) -> Result<Notification, String> {
     #[cfg(target_os = "macos")]
     if options.icon.is_some() {
@@ -90,6 +113,58 @@ fn notification(options: &NotificationOptions) -> Result<Notification, String> {
         notification.action(&action.id, &action.title);
     }
     Ok(notification)
+}
+
+/// The Windows toast for `options`, tagged with the session ID that addresses it.
+///
+/// The tag is what makes `update` and `close` possible at all: Windows replaces
+/// a delivered toast whose group and tag match a newly shown one, and removes
+/// the same pair from notification history. Both are derived from the public ID
+/// alone, so a toast built here for an ID `show` already used is the same toast
+/// as far as the platform is concerned.
+#[cfg(target_os = "windows")]
+fn toast(
+    public_id: &str,
+    options: &NotificationOptions,
+) -> Result<winrt_toast_reborn::Toast, String> {
+    use winrt_toast_reborn::content::image::ImagePlacement;
+    use winrt_toast_reborn::{Action, Image, Scenario, Toast, ToastDuration};
+
+    let mut toast = Toast::new();
+    toast
+        .text1(&options.title)
+        .text2(&options.body)
+        .tag(public_id)
+        .group(GROUP)
+        // Windows gives a body click no argument of its own, so the toast's
+        // launch string is what distinguishes it from a button in the activation
+        // handler. `"default"` is the identifier the declarations reserve for it.
+        .launch("default")
+        // Windows has two toast durations rather than a timeout, and picks the
+        // exact seconds itself. This is the mapping `notify-rust` applied.
+        .duration(match options.timeout {
+            Some(0) => ToastDuration::Long,
+            Some(timeout) if timeout >= 25_000 => ToastDuration::Long,
+            _ => ToastDuration::Short,
+        });
+    // A critical notification is one the user must not miss, and the reminder
+    // scenario is Windows' name for a toast that stays until it is dismissed.
+    // Low and normal are the ordinary toast, which has no scenario of its own.
+    if matches!(urgency(&options.urgency)?, Urgency::Critical) {
+        toast.scenario(Scenario::Reminder);
+    }
+    if let Some(icon) = &options.icon {
+        // Windows resolves a toast image through a URI, so a relative path has
+        // no meaning to the notification platform and is rejected rather than
+        // silently resolved against whatever directory this process is in.
+        let image = Image::new_local(icon)
+            .map_err(|error| format!("could not use notification icon {icon:?}: {error}"))?;
+        toast.image(1, image.with_placement(ImagePlacement::AppLogoOverride));
+    }
+    for action in &options.actions {
+        toast.action(Action::new(&action.title, &action.id, ""));
+    }
+    Ok(toast)
 }
 
 fn close_reason(reason: CloseReason) -> &'static str {
@@ -146,6 +221,78 @@ fn watch(
     });
 }
 
+/// A Windows toast notifier whose callbacks report as `public_id` at `token`.
+///
+/// The handlers belong to the notifier rather than to the toast, so a
+/// replacement gets a fresh notifier carrying the replacement's token. The
+/// toast Windows superseded may still report its own dismissal afterwards;
+/// [`NotifyController::poll`] drops it because the record no longer holds that
+/// token, which is how a replaced toast stops speaking for the ID it had.
+#[cfg(target_os = "windows")]
+fn notifier(
+    public_id: &str,
+    token: u64,
+    signals: &Arc<Mutex<VecDeque<Signal>>>,
+    proxy: &EventLoopProxy,
+) -> winrt_toast_reborn::ToastManager {
+    use winrt_toast_reborn::{DismissalReason, ToastManager};
+
+    let (activated_signals, activated_proxy, activated_id) =
+        (Arc::clone(signals), proxy.clone(), public_id.to_owned());
+    let (dismissed_signals, dismissed_proxy, dismissed_id) =
+        (Arc::clone(signals), proxy.clone(), public_id.to_owned());
+    let (failed_signals, failed_proxy, failed_id) =
+        (Arc::clone(signals), proxy.clone(), public_id.to_owned());
+
+    ToastManager::new(APP_ID)
+        .on_activated(None, move |activated| {
+            // Windows can report an activation it attributes to neither the body
+            // nor a button. Calling that a click would end the notification for
+            // the user on a guess, so it is dropped instead.
+            let Some(activated) = activated else { return };
+            queue(
+                &activated_signals,
+                &activated_proxy,
+                activated_id.clone(),
+                token,
+                SignalKind::Response(if activated.arg == "default" {
+                    NotificationResponse::Default
+                } else {
+                    NotificationResponse::Action(activated.arg)
+                }),
+            );
+        })
+        .on_dismissed(move |dismissed| {
+            queue(
+                &dismissed_signals,
+                &dismissed_proxy,
+                dismissed_id.clone(),
+                token,
+                match dismissed {
+                    Ok(dismissed) => {
+                        SignalKind::Response(NotificationResponse::Closed(match dismissed.reason {
+                            DismissalReason::UserCanceled => CloseReason::Dismissed,
+                            DismissalReason::TimedOut => CloseReason::Expired,
+                            DismissalReason::ApplicationHidden => CloseReason::CloseAction,
+                        }))
+                    }
+                    Err(error) => SignalKind::Error(format!(
+                        "could not observe notification response: {error}"
+                    )),
+                },
+            );
+        })
+        .on_failed(move |failed| {
+            queue(
+                &failed_signals,
+                &failed_proxy,
+                failed_id.clone(),
+                token,
+                SignalKind::Error(format!("could not show notification: {}", failed.error)),
+            );
+        })
+}
+
 impl NotifyController {
     pub(crate) fn new(proxy: EventLoopProxy) -> Self {
         Self {
@@ -195,11 +342,24 @@ impl NotifyController {
 
         #[cfg(target_os = "windows")]
         {
-            // Windows has no programmatic prompt for unpackaged desktop apps.
-            // `notify-rust` reports submission failures, so requesting is the
-            // same non-mutating reading until its backend exposes Setting().
+            use windows::UI::Notifications::{NotificationSetting, ToastNotificationManager};
+            use windows::core::HSTRING;
+
+            // Windows has no programmatic prompt: the user, the administrator or
+            // group policy decides, and an application can only read the answer.
+            // Requesting is therefore the same non-mutating reading, and there is
+            // no third state to report — the notifier is either enabled for this
+            // identity or it is switched off, whoever switched it off.
             let _ = request;
-            Ok(json!("default"))
+            let setting =
+                ToastNotificationManager::CreateToastNotifierWithId(&HSTRING::from(APP_ID))
+                    .and_then(|notifier| notifier.Setting())
+                    .map_err(|error| format!("could not read notification permission: {error}"))?;
+            Ok(json!(if setting == NotificationSetting::Enabled {
+                "granted"
+            } else {
+                "denied"
+            }))
         }
     }
 
@@ -212,13 +372,21 @@ impl NotifyController {
         public_id: String,
         options: NotificationOptions,
     ) -> Result<Value, String> {
-        #[allow(unused_mut)]
-        let mut spec = notification(&options)?;
-        #[cfg(target_os = "macos")]
-        spec.id(public_id.clone());
-        let handle = spec
-            .show()
-            .map_err(|error| format!("could not show notification: {error}"))?;
+        #[cfg(not(target_os = "windows"))]
+        let handle = {
+            #[allow(unused_mut)]
+            let mut spec = notification(&options)?;
+            #[cfg(target_os = "macos")]
+            spec.id(public_id.clone());
+            spec.show()
+                .map_err(|error| format!("could not show notification: {error}"))?
+        };
+        // Windows registers the response handlers on the notifier before the
+        // toast reaches the platform, so the token they report at has to exist
+        // first. Building the toast before taking one keeps a rejected option —
+        // an unusable icon, an unknown urgency — from consuming a token.
+        #[cfg(target_os = "windows")]
+        let toast = toast(&public_id, &options)?;
         let token = self.token();
 
         #[cfg(target_os = "linux")]
@@ -287,33 +455,11 @@ impl NotifyController {
 
         #[cfg(target_os = "windows")]
         {
-            let signals = Arc::clone(&self.signals);
-            let proxy = self.proxy.clone();
-            let watched_id = public_id.clone();
-            std::thread::spawn(move || {
-                let result = handle.wait_for_response(|response: &NotificationResponse| {
-                    queue(
-                        &signals,
-                        &proxy,
-                        watched_id.clone(),
-                        token,
-                        SignalKind::Response(response.clone()),
-                    );
-                });
-                if let Err(error) = result {
-                    queue(
-                        &signals,
-                        &proxy,
-                        watched_id,
-                        token,
-                        SignalKind::Error(format!(
-                            "could not observe notification response: {error}"
-                        )),
-                    );
-                }
-            });
-            let _ = options;
-            self.records.insert(public_id.clone(), Record { token });
+            notifier(&public_id, token, &self.signals, &self.proxy)
+                .show(&toast)
+                .map_err(|error| format!("could not show notification: {error}"))?;
+            self.records
+                .insert(public_id.clone(), Record { options, token });
         }
 
         Ok(json!(public_id))
@@ -324,24 +470,9 @@ impl NotifyController {
         public_id: &str,
         patch: NotificationPatch,
     ) -> Result<Value, String> {
-        #[cfg(target_os = "windows")]
-        {
-            let _ = patch;
-            return if self.records.contains_key(public_id) {
-                Err(
-                    "notification update is not supported by the notify-rust Windows backend"
-                        .into(),
-                )
-            } else {
-                Ok(json!(false))
-            };
-        }
-
-        #[cfg(not(target_os = "windows"))]
         let Some(record) = self.records.get_mut(public_id) else {
             return Ok(json!(false));
         };
-        #[cfg(not(target_os = "windows"))]
         record.options.apply(patch);
 
         #[cfg(target_os = "linux")]
@@ -378,20 +509,27 @@ impl NotifyController {
             );
             Ok(json!(true))
         }
+
+        // Replacement on Windows is submission: a toast carrying the group and
+        // tag of one already delivered supersedes it in place rather than
+        // stacking beside it. The new token is what makes the superseded toast's
+        // remaining callbacks stale.
+        #[cfg(target_os = "windows")]
+        {
+            let toast = toast(public_id, &record.options)?;
+            let token = self.token();
+            self.records
+                .get_mut(public_id)
+                .expect("record still exists")
+                .token = token;
+            notifier(public_id, token, &self.signals, &self.proxy)
+                .show(&toast)
+                .map_err(|error| format!("could not update notification {public_id}: {error}"))?;
+            Ok(json!(true))
+        }
     }
 
     pub(crate) fn close(&mut self, public_id: &str) -> Result<Value, String> {
-        #[cfg(target_os = "windows")]
-        {
-            if self.records.contains_key(public_id) {
-                return Err(
-                    "notification close is not supported by the notify-rust Windows backend".into(),
-                );
-            }
-            return Ok(json!(false));
-        }
-
-        #[cfg(not(target_os = "windows"))]
         let Some(record) = self.records.remove(public_id) else {
             return Ok(json!(false));
         };
@@ -400,12 +538,20 @@ impl NotifyController {
         record.handle.close();
         #[cfg(target_os = "macos")]
         mac_usernotifications::blocking::close_delivered(public_id);
-
-        #[cfg(not(target_os = "windows"))]
+        // The toast is addressed by the group and tag `show` gave it, so nothing
+        // the record holds is needed to withdraw it — only the fact that this
+        // session still owned the ID. Removal covers both a toast still on
+        // screen and one the user has left sitting in notification history.
+        #[cfg(target_os = "windows")]
         {
-            crate::dom_bridge::notify::closed(public_id.to_owned(), "closed");
-            Ok(json!(true))
+            let _ = record;
+            winrt_toast_reborn::ToastManager::new(APP_ID)
+                .remove_grouped_tag(GROUP, public_id)
+                .map_err(|error| format!("could not close notification {public_id}: {error}"))?;
         }
+
+        crate::dom_bridge::notify::closed(public_id.to_owned(), "closed");
+        Ok(json!(true))
     }
 
     pub(crate) fn poll(&mut self) {
@@ -484,5 +630,130 @@ mod tests {
         assert_eq!(options.app_name.as_deref(), Some("Demo"));
         assert_eq!(options.timeout, Some(1000));
         assert_eq!(options.urgency, "critical");
+    }
+}
+
+/// What only a Windows host can answer.
+///
+/// Replacement by tag and removal from notification history are behaviours of
+/// the Windows notification platform rather than of anything this file could
+/// stand in for, so these talk to the real platform under the same identity,
+/// group and tags [`NotifyController`] uses. They need no event loop, which is
+/// what lets them run under the ordinary `cargo test` the Windows job runs.
+#[cfg(all(test, target_os = "windows"))]
+mod windows_tests {
+    use super::*;
+    use windows::UI::Notifications::ToastNotificationManager;
+    use windows::core::HSTRING;
+    use winrt_toast_reborn::ToastManager;
+
+    /// The tags Blitsen's group currently holds in notification history.
+    fn tags() -> Vec<String> {
+        ToastNotificationManager::History()
+            .and_then(|history| history.GetHistoryWithId(&HSTRING::from(APP_ID)))
+            .expect("notification history is readable")
+            .into_iter()
+            .filter(|toast| toast.Group().is_ok_and(|group| group == GROUP))
+            .map(|toast| {
+                toast
+                    .Tag()
+                    .expect("a delivered toast keeps the tag it was shown with")
+                    .to_string()
+            })
+            .collect()
+    }
+
+    /// Asserts that notification history settles on `expected`.
+    ///
+    /// `Show` hands a toast to the notification platform rather than to the
+    /// Action Center, and a removal is acknowledged the same way, so reading
+    /// back at once races the platform instead of testing it. The wait is
+    /// bounded and the assertion it ends in is the whole one.
+    fn settles_on(expected: &[&str]) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let mut observed = tags();
+        while observed != expected && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            observed = tags();
+        }
+        assert_eq!(observed, expected);
+    }
+
+    fn options(body: &str) -> NotificationOptions {
+        NotificationOptions {
+            title: "Export complete".into(),
+            body: body.into(),
+            app_name: None,
+            timeout: Some(1000),
+            urgency: "normal".into(),
+            icon: None,
+            actions: vec![crate::dom_bridge::notify::NotificationAction {
+                id: "open".into(),
+                title: "Open archive".into(),
+            }],
+        }
+    }
+
+    #[test]
+    fn permission_reads_the_native_notifier_setting() {
+        let read = NotifyController::permission(false).expect("the notifier setting is readable");
+        assert!(
+            read == json!("granted") || read == json!("denied"),
+            "Windows has no undetermined notification state, but reported {read}"
+        );
+        assert_eq!(
+            NotifyController::permission(true).expect("requesting reads the same setting"),
+            read,
+            "requesting must not prompt or change what the notifier reports"
+        );
+    }
+
+    #[test]
+    fn a_shown_toast_is_replaced_and_removed_through_its_session_id() {
+        // A notifier the user or policy has switched off is Windows declining
+        // to deliver, so there is nothing for history to hold and delivery is
+        // not the platform's promise to keep. Removal is asserted either way: an
+        // ID Blitsen closed must leave nothing behind whether or not the toast
+        // was ever displayed.
+        let delivers = NotifyController::permission(false)
+            .expect("the notifier setting is readable")
+            == json!("granted");
+        let public_id = "n-windows-lifecycle";
+        let manager = ToastManager::new(APP_ID);
+        manager
+            .remove_grouped_tag(GROUP, public_id)
+            .expect("notification history is writable");
+
+        manager
+            .show(&toast(public_id, &options("The archive is ready.")).expect("the toast builds"))
+            .expect("the toast is accepted");
+        if delivers {
+            settles_on(&[public_id]);
+        }
+
+        manager
+            .show(&toast(public_id, &options("Copied to Downloads.")).expect("the toast builds"))
+            .expect("the replacement is accepted");
+        if delivers {
+            settles_on(&[public_id]);
+        }
+
+        manager
+            .remove_grouped_tag(GROUP, public_id)
+            .expect("the toast is removable");
+        settles_on(&[]);
+    }
+
+    #[test]
+    fn an_unusable_option_is_rejected_before_a_toast_reaches_windows() {
+        // Windows resolves a toast image through a URI, so a relative path is
+        // not a path it can be asked about later.
+        let mut relative_icon = options("The archive is ready.");
+        relative_icon.icon = Some("archive.png".into());
+        assert!(toast("n1", &relative_icon).is_err());
+
+        let mut unknown_urgency = options("The archive is ready.");
+        unknown_urgency.urgency = "urgent".into();
+        assert!(toast("n1", &unknown_urgency).is_err());
     }
 }
