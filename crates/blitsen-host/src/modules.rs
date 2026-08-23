@@ -54,10 +54,12 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 
+use base64::Engine as _;
 use blitsen_core::bundle::AppBundle;
 use blitsen_js::{JsEngine, JsError};
 
 use crate::dom_bridge::argument;
+use crate::source_maps::SourceMap;
 
 /// The origin an application's own files are addressed by.
 pub const APP_ORIGIN: &str = "blitsen://app/";
@@ -242,7 +244,12 @@ pub fn file_of(path: &str) -> &str {
 /// second evaluation.
 pub struct ModuleRegistry {
     source: Arc<dyn AppSource>,
-    loaded: RefCell<HashMap<String, Rc<String>>>,
+    loaded: RefCell<HashMap<String, LoadedModule>>,
+}
+
+struct LoadedModule {
+    source: Rc<String>,
+    source_map: Option<SourceMap>,
 }
 
 impl ModuleRegistry {
@@ -269,8 +276,8 @@ impl ModuleRegistry {
 
     /// Returns a module's source, reading it once and remembering it.
     pub fn source(&self, url: &str) -> Result<Rc<String>, JsError> {
-        if let Some(source) = self.loaded.borrow().get(url) {
-            return Ok(Rc::clone(source));
+        if let Some(module) = self.loaded.borrow().get(url) {
+            return Ok(Rc::clone(&module.source));
         }
         let path =
             path_of(url).ok_or_else(|| JsError::new(format!("{url} is not an application URL")))?;
@@ -281,10 +288,86 @@ impl ModuleRegistry {
         let source = String::from_utf8(bytes)
             .map_err(|_| JsError::new(format!("the module at {path} is not UTF-8")))?;
         let source = Rc::new(source);
-        self.loaded
-            .borrow_mut()
-            .insert(url.to_owned(), Rc::clone(&source));
+        let source_map = source_mapping_url(&source)
+            .and_then(|reference| self.load_source_map(url, reference).ok());
+        self.loaded.borrow_mut().insert(
+            url.to_owned(),
+            LoadedModule {
+                source: Rc::clone(&source),
+                source_map,
+            },
+        );
         Ok(source)
+    }
+
+    fn load_source_map(&self, module_url: &str, reference: &str) -> Result<SourceMap, String> {
+        if reference.starts_with("data:") {
+            let bytes = decode_data_url(reference)?;
+            return SourceMap::parse(&bytes, module_url);
+        }
+        // Unlike an ECMAScript import, a URL reference need not start `./`.
+        // `app.js.map` and `../maps/app.js.map` are equally ordinary here.
+        let relative;
+        let reference = if reference.starts_with('/')
+            || reference.starts_with("./")
+            || reference.starts_with("../")
+            || reference.starts_with(APP_ORIGIN)
+        {
+            reference
+        } else {
+            relative = format!("./{reference}");
+            &relative
+        };
+        let map_url = resolve(module_url, reference).map_err(|error| error.to_string())?;
+        let path = path_of(&map_url).expect("resolve returns an application URL");
+        let bytes = self
+            .source
+            .read(path)
+            .ok_or_else(|| format!("the application has no source map at {path}"))?;
+        SourceMap::parse(&bytes, &map_url)
+    }
+
+    /// Applies cached mappings to the application frames of an uncaught error.
+    /// Missing and malformed maps leave their frames untouched: diagnostics
+    /// must never be hidden by optional debugging metadata.
+    pub fn remap_error(&self, error: &JsError) -> JsError {
+        let Some(stack) = error.stack() else {
+            return error.clone();
+        };
+        JsError::with_stack(error.message(), self.remap_diagnostic(stack))
+    }
+
+    /// Remaps application frames in a diagnostic already rendered by
+    /// JavaScript, as worker `reportError` messages are.
+    pub fn remap_diagnostic(&self, diagnostic: &str) -> String {
+        diagnostic
+            .lines()
+            .map(|line| self.remap_stack_line(line))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn remap_stack_line(&self, line: &str) -> String {
+        let Some(location) = frame_location(line) else {
+            return line.to_owned();
+        };
+        let loaded = self.loaded.borrow();
+        let Some(source_map) = loaded
+            .get(&line[location.url_start..location.url_end])
+            .and_then(|module| module.source_map.as_ref())
+        else {
+            return line.to_owned();
+        };
+        let Some((source, original_line, original_column)) =
+            source_map.original_position(location.line, location.column)
+        else {
+            return line.to_owned();
+        };
+        format!(
+            "{}{source}:{original_line}:{original_column}{}",
+            &line[..location.url_start],
+            &line[location.end..]
+        )
     }
 
     /// Forgets every loaded module, so a reload re-reads them.
@@ -342,8 +425,133 @@ impl ModuleRegistry {
     }
 }
 
+struct FrameLocation {
+    url_start: usize,
+    url_end: usize,
+    end: usize,
+    line: u32,
+    column: u32,
+}
+
+fn frame_location(frame: &str) -> Option<FrameLocation> {
+    let url_start = frame.find(APP_ORIGIN)?;
+    let rest = &frame[url_start..];
+    for (first_colon, _) in rest.match_indices(':').rev() {
+        let after_line = &rest[first_colon + 1..];
+        let line_digits = after_line.bytes().take_while(u8::is_ascii_digit).count();
+        if line_digits == 0 || after_line.as_bytes().get(line_digits) != Some(&b':') {
+            continue;
+        }
+        let column_start = first_colon + 1 + line_digits + 1;
+        let column_digits = rest[column_start..]
+            .bytes()
+            .take_while(u8::is_ascii_digit)
+            .count();
+        if column_digits == 0 {
+            continue;
+        }
+        let line = rest[first_colon + 1..first_colon + 1 + line_digits]
+            .parse()
+            .ok()?;
+        let column = rest[column_start..column_start + column_digits]
+            .parse()
+            .ok()?;
+        return Some(FrameLocation {
+            url_start,
+            url_end: url_start + first_colon,
+            end: url_start + column_start + column_digits,
+            line,
+            column,
+        });
+    }
+    None
+}
+
+fn source_mapping_url(source: &str) -> Option<&str> {
+    let mut found = None;
+    for (offset, _) in source.match_indices("sourceMappingURL=") {
+        let before = &source[..offset];
+        let line_start = before.rfind(['\n', '\r']).map_or(0, |index| index + 1);
+        let line_prefix = &source[line_start..offset];
+        if let Some(comment) = line_prefix.rfind("//") {
+            let marker = line_prefix[comment + 2..].trim();
+            if marker == "#" || marker == "@" {
+                let value_start = offset + "sourceMappingURL=".len();
+                let value_end = source[value_start..]
+                    .find(['\n', '\r'])
+                    .map_or(source.len(), |index| value_start + index);
+                found = nonempty(&source[value_start..value_end]);
+                continue;
+            }
+        }
+        if let Some(comment) = before.rfind("/*") {
+            if before[comment + 2..].trim() == "#" || before[comment + 2..].trim() == "@" {
+                let value_start = offset + "sourceMappingURL=".len();
+                if let Some(end) = source[value_start..].find("*/") {
+                    found = nonempty(&source[value_start..value_start + end]);
+                }
+            }
+        }
+    }
+    found
+}
+
+fn nonempty(value: &str) -> Option<&str> {
+    let value = value.trim();
+    (!value.is_empty()).then_some(value)
+}
+
+fn decode_data_url(url: &str) -> Result<Vec<u8>, String> {
+    let (metadata, payload) = url
+        .strip_prefix("data:")
+        .and_then(|url| url.split_once(','))
+        .ok_or_else(|| "invalid source-map data URL".to_owned())?;
+    if metadata
+        .split(';')
+        .any(|part| part.eq_ignore_ascii_case("base64"))
+    {
+        base64::engine::general_purpose::STANDARD
+            .decode(payload.trim())
+            .map_err(|error| format!("invalid base64 source map: {error}"))
+    } else {
+        percent_decode(payload)
+    }
+}
+
+fn percent_decode(payload: &str) -> Result<Vec<u8>, String> {
+    let bytes = payload.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' {
+            let high = bytes.get(index + 1).and_then(|byte| hex(*byte));
+            let low = bytes.get(index + 2).and_then(|byte| hex(*byte));
+            let (Some(high), Some(low)) = (high, low) else {
+                return Err("invalid percent escape in source-map data URL".to_owned());
+            };
+            decoded.push(high << 4 | low);
+            index += 3;
+        } else {
+            decoded.push(bytes[index]);
+            index += 1;
+        }
+    }
+    Ok(decoded)
+}
+
+fn hex(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use blitsen_quickjs::QuickJs;
 
     use super::*;
@@ -355,6 +563,14 @@ mod tests {
             self.0
                 .contains(&path)
                 .then(|| format!("// {path}").into_bytes())
+        }
+    }
+
+    struct ContentFixture(HashMap<&'static str, &'static str>);
+
+    impl AppSource for ContentFixture {
+        fn read(&self, path: &str) -> Option<Vec<u8>> {
+            self.0.get(path).map(|source| source.as_bytes().to_vec())
         }
     }
 
@@ -499,6 +715,93 @@ mod tests {
         assert_eq!(*first, "// a.js");
         registry.reset();
         assert!(!Rc::ptr_eq(&first, &registry.source(&url).unwrap()));
+    }
+
+    #[test]
+    fn external_maps_follow_the_last_directive_and_keep_map_queries() {
+        let registry = ModuleRegistry::new(Arc::new(ContentFixture(HashMap::from([
+            (
+                "generated.js?v=7",
+                "throw Error('mapped');\n//# sourceMappingURL=old.map\n/*# sourceMappingURL=generated.js.map?v=7 */",
+            ),
+            (
+                "generated.js.map?v=7",
+                r#"{"version":3,"sourceRoot":"source","sources":["original.ts"],"mappings":"AAoBK"}"#,
+            ),
+        ]))));
+        let generated = url_of("generated.js?v=7");
+        registry.source(&generated).unwrap();
+        let error = JsError::with_stack("Error: mapped", format!("    at fail ({generated}:1:18)"));
+        assert_eq!(
+            registry.remap_error(&error).stack(),
+            Some("    at fail (blitsen://app/source/original.ts:21:6)")
+        );
+    }
+
+    #[test]
+    fn inline_base64_and_percent_encoded_maps_are_consumed() {
+        let json = r#"{"version":3,"sources":["original.ts"],"mappings":"AAAA"}"#;
+        let base64 = base64::engine::general_purpose::STANDARD.encode(json);
+        let encoded = format!(
+            "throw Error('inline');\n//# sourceMappingURL=data:application/json;base64,{base64}"
+        );
+        let percent = "throw Error('percent');\n//# sourceMappingURL=data:application/json,%7B%22version%22%3A3%2C%22sources%22%3A%5B%22percent.ts%22%5D%2C%22mappings%22%3A%22AAAA%22%7D";
+        let registry = ModuleRegistry::new(Arc::new(ContentFixture(HashMap::from([
+            (
+                "inline.js",
+                Box::leak(encoded.into_boxed_str()) as &'static str,
+            ),
+            ("percent.js", percent),
+        ]))));
+        for (module, original) in [("inline.js", "original.ts"), ("percent.js", "percent.ts")] {
+            let generated = url_of(module);
+            registry.source(&generated).unwrap();
+            let error = JsError::with_stack("Error", format!("at {generated}:1:1"));
+            assert_eq!(
+                registry.remap_error(&error).stack(),
+                Some(format!("at blitsen://app/{original}:1:1").as_str())
+            );
+        }
+    }
+
+    #[test]
+    fn missing_and_malformed_maps_leave_diagnostics_usable() {
+        let registry = ModuleRegistry::new(Arc::new(ContentFixture(HashMap::from([
+            (
+                "missing.js",
+                "throw 1;\n//# sourceMappingURL=missing.js.map",
+            ),
+            (
+                "malformed.js",
+                "throw 2;\n//# sourceMappingURL=malformed.js.map",
+            ),
+            ("malformed.js.map", "not JSON"),
+        ]))));
+        for module in ["missing.js", "malformed.js"] {
+            let generated = url_of(module);
+            registry.source(&generated).unwrap();
+            let stack = format!("at {generated}:1:1");
+            let error = JsError::with_stack("Error", &stack);
+            assert_eq!(registry.remap_error(&error).stack(), Some(stack.as_str()));
+        }
+    }
+
+    #[test]
+    fn directive_discovery_only_accepts_comments() {
+        assert_eq!(
+            source_mapping_url(
+                "const fake = 'sourceMappingURL=no.map';\n//@ sourceMappingURL=first.map\n//# sourceMappingURL=last.map"
+            ),
+            Some("last.map")
+        );
+        assert_eq!(
+            source_mapping_url("code(); /*# sourceMappingURL=block.map */"),
+            Some("block.map")
+        );
+        assert_eq!(
+            source_mapping_url("const x = 'sourceMappingURL=no.map'"),
+            None
+        );
     }
 
     #[test]

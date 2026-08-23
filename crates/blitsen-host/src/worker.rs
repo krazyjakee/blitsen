@@ -158,9 +158,11 @@ pub fn launcher() -> Option<&'static dyn WorkerLauncher> {
 /// it.
 pub fn run<E: JsEngine + 'static>(mut engine: E, boot: WorkerBoot) {
     let port = boot.port;
-    match start(&mut engine, &boot) {
-        Ok(services) => turn_until_stopped(&mut engine, &services, &boot),
+    let modules = Rc::new(ModuleRegistry::new(Arc::clone(&boot.files.source)));
+    match start(&mut engine, &boot, &modules) {
+        Ok(services) => turn_until_stopped(&mut engine, &services, &boot, &modules),
         Err(error) => {
+            let error = modules.remap_error(&error);
             registry().post(port, Delivery::Error(error.to_string()));
             eprintln!("Uncaught exception in worker {}: {error}", boot.entry);
         }
@@ -177,10 +179,10 @@ pub fn run<E: JsEngine + 'static>(mut engine: E, boot: WorkerBoot) {
 fn start<E: JsEngine + 'static>(
     engine: &mut E,
     boot: &WorkerBoot,
+    modules: &Rc<ModuleRegistry>,
 ) -> Result<RuntimeServices<E>, JsError> {
     engine.set_interrupt_flag(Arc::clone(&boot.stop))?;
     let services = RuntimeServices::install(engine)?;
-    let modules = Rc::new(ModuleRegistry::new(Arc::clone(&boot.files.source)));
     modules.install(engine)?;
 
     let host = Rc::new(MessagingHost::new(
@@ -191,7 +193,7 @@ fn start<E: JsEngine + 'static>(
     ));
     crate::messaging::install(engine, &host)?;
     crate::dom_bridge::install_worker_services(engine, boot.files.reader.clone())?;
-    install_identity(engine, boot)?;
+    install_identity(engine, boot, modules)?;
 
     engine.evaluate_script(BOOTSTRAP, "blitsen:worker-bootstrap")?;
     let source = modules.source(&boot.entry)?;
@@ -221,6 +223,7 @@ fn start<E: JsEngine + 'static>(
 fn install_identity<E: JsEngine + 'static>(
     engine: &mut E,
     boot: &WorkerBoot,
+    modules: &Rc<ModuleRegistry>,
 ) -> Result<(), JsError> {
     let port = boot.port;
     engine.define_global_function(
@@ -248,12 +251,13 @@ fn install_identity<E: JsEngine + 'static>(
     // Where an uncaught failure on this thread goes. The worker keeps running,
     // as a browser's does: one broken handler is not the end of the worker, and
     // the application decides what to do about it.
+    let mappings = Rc::clone(modules);
     engine.define_global_function(
         "__blitsenWorkerFailed",
         Box::new(move |call| {
             let mut engine = E::from_value(&call.this);
             let message = crate::dom_bridge::argument(&mut engine, &call, 0, "failure")?;
-            registry().post(port, Delivery::Error(message));
+            registry().post(port, Delivery::Error(mappings.remap_diagnostic(&message)));
             Ok(call.this)
         }),
     )
@@ -264,11 +268,13 @@ fn turn_until_stopped<E: JsEngine + 'static>(
     engine: &mut E,
     services: &RuntimeServices<E>,
     boot: &WorkerBoot,
+    modules: &ModuleRegistry,
 ) {
     while !boot.stop.load(Ordering::Relaxed) {
         let pending = match turn(engine, services) {
             Ok(pending) => pending,
             Err(error) => {
+                let error = modules.remap_error(&error);
                 registry().post(boot.port, Delivery::Error(error.to_string()));
                 eprintln!("Uncaught exception in worker {}: {error}", boot.entry);
                 0

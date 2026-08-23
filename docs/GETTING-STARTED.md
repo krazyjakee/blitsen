@@ -112,8 +112,9 @@ The server continues to transform source and provide hot reload. Blitsen supplie
 runtime. A local-directory run watches built files too: CSS changes are swapped when possible and
 other changes reload the document.
 
-Source maps are not currently applied to runtime stack traces. See [Develop with hot
-reload](RECIPES.md#develop-with-hot-reload) for the current workflow.
+Inline and external source maps are applied to uncaught runtime diagnostics. See
+[Develop with hot reload](RECIPES.md#develop-with-hot-reload) for the workflow and
+the diagnostic boundary.
 
 ## Check the built output
 

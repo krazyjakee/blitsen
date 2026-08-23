@@ -298,7 +298,7 @@ fn run(files: AppFiles, arguments: &[String]) -> Result<ExitCode, String> {
                 runtime: &settings.runtime,
             },
         )
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| modules.remap_error(&error).to_string())?;
         return Ok(ExitCode::SUCCESS);
     }
 
@@ -319,8 +319,8 @@ fn run(files: AppFiles, arguments: &[String]) -> Result<ExitCode, String> {
         menu: settings.menu,
         activation: settings.activation,
     };
-    let mut session =
-        WindowSession::open(&mut engine, files, options).map_err(|error| error.to_string())?;
+    let mut session = WindowSession::open(&mut engine, files, options)
+        .map_err(|error| modules.remap_error(&error).to_string())?;
 
     let mut pacer = Pacer::from_environment();
     let mut pump_timeout = Some(std::time::Duration::ZERO);
@@ -330,13 +330,13 @@ fn run(files: AppFiles, arguments: &[String]) -> Result<ExitCode, String> {
         // window's redraw already sequences them (TECH.md §6).
         let timers_ran = services
             .run_expired_timers(&mut engine)
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| modules.remap_error(&error).to_string())?;
         if timers_ran > 0 {
             session.request_redraw();
         }
         if !session
             .pump_for(pump_timeout)
-            .map_err(|error| error.to_string())?
+            .map_err(|error| modules.remap_error(&error).to_string())?
         {
             break;
         }

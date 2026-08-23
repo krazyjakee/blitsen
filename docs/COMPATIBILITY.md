@@ -99,10 +99,12 @@ Two things to know:
   not a host it can reach; it then falls back to the host and port the server
   injected, which works. Setting `server.hmr.host`/`clientPort` in your Vite
   config removes the message.
-- **Source maps are not consumed.** A stack frame names the served module URL —
-  `blitsen://app/src/main.jsx:12:5` — which is the file you wrote when the server
-  serves modules one-to-one, and the transformed line when it does not. Mapping
-  frames back through `//# sourceMappingURL` is not implemented.
+- **Uncaught stack frames use source maps.** Blitsen follows the last standard
+  `//# sourceMappingURL` (or block-comment equivalent), including inline data
+  URLs and external maps served with query strings. A missing or malformed map
+  is ignored, leaving the generated `blitsen://app/…` frame available. Mapping
+  is applied when an uncaught error becomes a runtime diagnostic; reading
+  `error.stack` inside application code still returns the engine's own stack.
 
 ## Built output, not source
 
