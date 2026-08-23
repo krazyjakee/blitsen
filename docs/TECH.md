@@ -735,7 +735,12 @@ that, and duplicating it would make Blitsen a competitor to Vite instead of a ta
   index and then reads files from their recorded offsets, never unpacking to disk. **Append first,
   then sign** — the signing hook in step ⑤ already runs last, which is what keeps a macOS or
   Authenticode signature valid, and the trailer is *found* rather than assumed to be the final
-  bytes because a signature legitimately follows it. This is what an export links into now that the
+  bytes because a signature legitimately follows it. On Mach-O that ordering is not enough and this
+  paragraph overstated it: `__LINKEDIT` has to be the last thing in the file, so a payload appended
+  past it is a layout `codesign` rejects however late the signing runs, and no macOS export has ever
+  been signable. #256 carries the fix and the evidence; the claim holds for Authenticode, which has
+  a defined place for trailing data — though no CI job has run `signtool` over an export either.
+  This is what an export links into now that the
   platform packages carry the Phase 2 runtime, and it is why an ordinary export is 37 MB rather
   than 145 MB (PRODUCT.md §9).
 
