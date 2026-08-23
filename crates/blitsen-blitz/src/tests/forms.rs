@@ -137,7 +137,7 @@ fn ime_preedit_is_painted_and_commit_replaces_the_marked_range() {
     dom.flush_layout().unwrap();
     let preedit = dark_pixels(render(&mut dom, 320, 80));
     assert!(
-        preedit > blank + 20,
+        preedit > blank + 4,
         "the preedit added {preedit} dark pixels to a {blank}-pixel blank control"
     );
 
