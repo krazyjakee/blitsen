@@ -89,13 +89,15 @@
       || portsPending(),
     __blitsenForcedLayoutsThisFrame: () => forcedLayoutsThisFrame,
     __blitsenEventInternals: eventInternals,
-    __blitsenDispatchMouseEvent: dispatchMouseEvent,
-    __blitsenDispatchPointerEvent: dispatchPointerEvent,
-    __blitsenDispatchKeyboardEvent: dispatchKeyboardEvent,
-    __blitsenDispatchImeEvent: dispatchImeEvent,
-    __blitsenDispatchLockedPointerMotion: dispatchLockedPointerMotion,
-    __blitsenReleaseWindowModes: releaseWindowModes,
-    __blitsenDispatchDragEvent: dispatchDragEvent,
+    ...(testHarness ? {
+      __blitsenDispatchMouseEvent: dispatchMouseEvent,
+      __blitsenDispatchPointerEvent: dispatchPointerEvent,
+      __blitsenDispatchKeyboardEvent: dispatchKeyboardEvent,
+      __blitsenDispatchImeEvent: dispatchImeEvent,
+      __blitsenDispatchLockedPointerMotion: dispatchLockedPointerMotion,
+      __blitsenReleaseWindowModes: releaseWindowModes,
+      __blitsenDispatchDragEvent: dispatchDragEvent,
+    } : {}),
     __blitsenDispatchLifecycleEvent: dispatchLifecycleEvent,
     __blitsenDisposeContext: () => {
       for (const id of contextTimeouts) hostClearTimeout(id);
@@ -247,3 +249,12 @@
     try { delete globalThis[key]; } catch {}
   }
   if (!Notification) try { delete globalThis.Notification; } catch {}
+  return testHarness ? null : Object.freeze({
+    mouse: dispatchMouseEvent,
+    pointer: dispatchPointerEvent,
+    keyboard: dispatchKeyboardEvent,
+    ime: dispatchImeEvent,
+    lockedPointerMotion: dispatchLockedPointerMotion,
+    releaseWindowModes,
+    drag: dispatchDragEvent,
+  });

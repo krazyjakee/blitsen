@@ -118,6 +118,9 @@ pub struct WindowApplication<Rend: anyrender::WindowRenderer, E: JsEngine + Clon
     pub(crate) error: Rc<RefCell<Option<JsError>>>,
     pub(crate) started_at: Instant,
     pub(crate) document: Rc<RefCell<BlitzDom>>,
+    /// Host dispatch callbacks are engine values retained by Rust, never names
+    /// application JavaScript can invoke or replace.
+    pub(crate) host_hooks: crate::dom_bridge::HostHooks<E::Value>,
     pub(crate) pending_pointer_input: Vec<(WindowId, PendingPointerInput)>,
     /// Raw device deltas waiting for the frame that delivers them to the
     /// pointer-lock element. Device events have no DOM target and must not be
@@ -243,6 +246,7 @@ pub(crate) enum InputBootstrap {
 }
 
 impl InputBootstrap {
+    #[cfg(test)]
     fn entry_point(self) -> &'static str {
         match self {
             Self::Keyboard => "__blitsenDispatchKeyboardEvent",
@@ -259,6 +263,16 @@ impl InputBootstrap {
             Self::Ime => "blitsen:native-ime-event",
             Self::Pointer | Self::Mouse => "blitsen:native-pointer-input",
             Self::Drag => "blitsen:native-drag-input",
+        }
+    }
+
+    fn hook<V>(self, hooks: &crate::dom_bridge::HostHooks<V>) -> &V {
+        match self {
+            Self::Keyboard => &hooks.keyboard,
+            Self::Ime => &hooks.ime,
+            Self::Pointer => &hooks.pointer,
+            Self::Mouse => &hooks.mouse,
+            Self::Drag => &hooks.drag,
         }
     }
 }
@@ -395,6 +409,7 @@ fn park_first_error<Error>(parked_error: &RefCell<Option<Error>>, error: Error) 
     }
 }
 
+#[cfg(test)]
 fn input_call_script(
     bootstrap: InputBootstrap,
     arguments: &impl Serialize,
@@ -523,9 +538,13 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Ren
         if let Some(error) = self.parked_error() {
             return Err(error);
         }
-        let script = input_call_script(bootstrap, arguments)?;
+        let arguments =
+            serde_json::to_string(arguments).map_err(|error| JsError::new(error.to_string()))?;
         let mut engine = self.engine.clone();
-        let result = engine.evaluate_script(&script, bootstrap.script_name())?;
+        let arguments = engine.evaluate_script(&arguments, bootstrap.script_name())?;
+        let arguments = engine.to_array(&arguments)?;
+        let hook = bootstrap.hook(&self.host_hooks).clone();
+        let result = engine.call(&hook, None, &arguments)?;
         engine.to_boolean(&result)
     }
 
@@ -667,14 +686,12 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Ren
                         .map_err(|error| JsError::new(error.to_string()));
                     reason.and_then(|reason| {
                         let mut engine = self.engine.clone();
-                        engine
-                            .evaluate_script(
-                                &format!(
-                                    "globalThis.__blitsenReleaseWindowModes({pointer}, {fullscreen}, {reason})"
-                                ),
-                                "blitsen:native-window-mode-release",
-                            )
-                            .and_then(|value| engine.to_boolean(&value))
+                        let reason = engine.string(&reason)?;
+                        let pointer = engine.boolean(*pointer);
+                        let fullscreen = engine.boolean(*fullscreen);
+                        let hook = self.host_hooks.release_window_modes.clone();
+                        let value = engine.call(&hook, None, &[pointer, fullscreen, reason])?;
+                        engine.to_boolean(&value)
                     })
                 }
             };
@@ -739,9 +756,10 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Ren
         for (x, y) in movements {
             let result = (|| {
                 let mut engine = self.engine.clone();
-                let script = format!("globalThis.__blitsenDispatchLockedPointerMotion({x}, {y})");
-                let value =
-                    engine.evaluate_script(&script, "blitsen:native-locked-pointer-motion")?;
+                let x = engine.number(x);
+                let y = engine.number(y);
+                let hook = self.host_hooks.locked_pointer_motion.clone();
+                let value = engine.call(&hook, None, &[x, y])?;
                 engine.to_boolean(&value)
             })();
             if let Err(error) = result {

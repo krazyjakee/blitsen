@@ -20,13 +20,27 @@ pub(super) fn install<E: JsEngine + 'static>(
                 .first()
                 .ok_or_else(|| JsError::new("window mode action is required"))?;
             let action = engine.to_string(action)?;
-            let supported = test_harness || cfg!(not(target_os = "android"));
-            if action == "supported" {
-                return Ok(engine.boolean(supported));
+            let pointer_lock_supported =
+                test_harness || cfg!(any(target_os = "windows", target_os = "macos"));
+            let fullscreen_supported = test_harness || cfg!(not(target_os = "android"));
+            if action == "pointerLockSupported" {
+                return Ok(engine.boolean(pointer_lock_supported));
             }
-            if !supported {
+            if action == "fullscreenSupported" {
+                return Ok(engine.boolean(fullscreen_supported));
+            }
+            if (action == "lockPointer" || action == "unlockPointer")
+                && !pointer_lock_supported
+            {
                 return Err(JsError::new(
-                    "pointer lock and the standard fullscreen API are not supported on Android",
+                    "pointer lock is supported on Windows and macOS; pinned winit cannot lock on X11",
+                ));
+            }
+            if (action == "enterFullscreen" || action == "exitFullscreen")
+                && !fullscreen_supported
+            {
+                return Err(JsError::new(
+                    "the standard fullscreen API is not supported on Android",
                 ));
             }
             if !test_harness {
@@ -39,70 +53,224 @@ pub(super) fn install<E: JsEngine + 'static>(
 
 #[cfg(test)]
 mod tests {
-    const SCRIPT: &str = r#"
-        const root = document.documentElement;
-        const target = document.getElementById("target");
-        const seen = [];
-        const record = value => { seen.push(value); root.setAttribute("data-seen", seen.join("|")); };
-        document.addEventListener("pointerlockchange", () =>
-            record(`lock:${document.pointerLockElement?.id ?? "none"}`));
-        document.addEventListener("pointerlockerror", () => record("lock:error"));
-        root.addEventListener("fullscreenchange", () =>
-            record(`full:${document.fullscreenElement === root ? "root" : "none"}`));
-        root.addEventListener("fullscreenerror", () => record("full:error"));
-        target.addEventListener("mousemove", event =>
-            record(`move:${event.movementX},${event.movementY}:${event.clientX},${event.clientY}`));
+    use blitsen_blitz::BlitzDom;
+    use blitsen_js::JsEngine;
+    use blitz::dom::DocumentConfig;
+    use blitz::traits::shell::{ColorScheme, Viewport};
 
-        target.addEventListener("pointerdown", () =>
-          target.requestPointerLock({ unadjustedMovement: true }).then(() => record("lock:promise")),
-          { once: true });
-        const rawTarget = Object.getOwnPropertySymbols(target)
-          .map(symbol => target[symbol]).find(value => typeof value === "string");
-        __blitsenDispatchPointerEvent("pointerdown", rawTarget, {
-          pointerId: 1, pointerType: "mouse", isPrimary: true,
-          clientX: 12, clientY: 14, screenX: 112, screenY: 114, button: 0,
-        });
-        if (document.pointerLockElement !== target) throw new Error("pointer lock target was not published");
-        __blitsenDispatchLockedPointerMotion(7, -3);
-        __blitsenReleaseWindowModes(true, false, "synthetic-focus-loss");
+    type Realm = (
+        blitsen_quickjs::QuickJs,
+        crate::runtime_services::RuntimeServices<blitsen_quickjs::QuickJs>,
+    );
 
-        document.body.addEventListener("keydown", () =>
-          root.requestFullscreen().then(() => record("full:promise")), { once: true });
-        __blitsenDispatchKeyboardEvent("keydown", { key: "Enter", code: "Enter" });
-        if (document.fullscreenElement !== root || !document.fullscreenEnabled)
-          throw new Error("root fullscreen state was not published");
-        __blitsenReleaseWindowModes(false, true, "synthetic-surface-loss");
+    fn realm(mode: crate::dom_bridge::DocumentMode) -> Realm {
+        let mut engine = blitsen_quickjs::QuickJs::new().expect("an engine");
+        let services = crate::runtime_services::RuntimeServices::install(&mut engine)
+            .expect("runtime services");
+        let dom = BlitzDom::from_html(
+            "<!doctype html><html><body><div id='target'></div><div id='other'></div></body></html>",
+            DocumentConfig {
+                viewport: Some(Viewport::new(200, 100, 1.0, ColorScheme::Light)),
+                ..Default::default()
+            },
+        );
+        let runtime = crate::DomRuntime::new(dom);
+        crate::dom_bridge::install(
+            &mut engine,
+            runtime,
+            crate::dom_bridge::InstallOptions::new(200, 100, 1.0, mode, None),
+        )
+        .expect("the bridge installs");
+        (engine, services)
+    }
 
-        target.requestPointerLock().catch(error => record(`lock:reject:${error.name}`));
-        requestAnimationFrame(() => record("frame"));
-    "#;
+    fn settle(
+        engine: &mut blitsen_quickjs::QuickJs,
+        services: &crate::runtime_services::RuntimeServices<blitsen_quickjs::QuickJs>,
+    ) {
+        for _ in 0..4 {
+            services.run_expired_timers(engine).expect("mode tasks run");
+            engine.drain_microtasks().expect("promise reactions run");
+        }
+    }
+
+    fn seen(engine: &mut blitsen_quickjs::QuickJs) -> String {
+        let value = engine
+            .evaluate_script("globalThis.__seen.join('|')", "blitsen:test-observations")
+            .expect("observations are readable");
+        engine.to_string(&value).expect("observations are text")
+    }
 
     #[test]
-    fn promises_events_raw_motion_and_lifecycle_release_are_ordered() {
-        let mut engine = blitsen_quickjs::QuickJs::new().expect("an engine");
-        let _services = crate::runtime_services::RuntimeServices::install(&mut engine)
-            .expect("runtime services");
-        let snapshots = crate::harness::execute_animation_harness(
-            engine,
-            "<!doctype html><html><body><div id='target'></div></body></html>".to_owned(),
-            SCRIPT.to_owned(),
-            1,
-            200,
-            100,
-        )
-        .expect("the window mode harness runs");
-        let value = serde_json::to_value(&snapshots[0]).expect("snapshot serializes");
-        let seen = value["nodes"]
-            .as_array()
-            .expect("nodes")
-            .iter()
-            .find(|node| node["tag"] == "html")
-            .and_then(|node| node["attributes"]["data-seen"].as_str())
-            .expect("the script records its observations");
+    fn pointer_lock_tasks_capture_escape_disconnect_and_reacquisition_are_ordered() {
+        let (mut engine, services) = realm(crate::dom_bridge::DocumentMode::TestHarness);
+        engine
+            .evaluate_script(
+                r#"
+          const target = document.getElementById("target");
+          const other = document.getElementById("other");
+          globalThis.__seen = [];
+          const record = value => __seen.push(value);
+          document.addEventListener("pointerlockchange", () =>
+            record(`change:${document.pointerLockElement?.id ?? "none"}`));
+          document.addEventListener("pointerlockerror", () => record("error"));
+          target.addEventListener("lostpointercapture", () => record("lost:active"));
+          other.addEventListener("lostpointercapture", () => record("lost:pending"));
+          target.addEventListener("mousemove", event =>
+            record(`move:${event.movementX},${event.movementY}:${event.clientX},${event.clientY}`));
+          target.addEventListener("pointerdown", () => {
+            target.setPointerCapture(1);
+          }, { once: true });
+          const raw = Object.getOwnPropertySymbols(target)
+            .map(symbol => target[symbol]).find(value => typeof value === "string");
+          globalThis.__rawTarget = raw;
+          __blitsenDispatchPointerEvent("pointerdown", raw, {
+            pointerId: 1, pointerType: "mouse", isPrimary: true,
+            clientX: 12, clientY: 14, screenX: 112, screenY: 114, button: 0,
+          });
+          __blitsenDispatchPointerEvent("pointermove", raw, {
+            pointerId: 1, pointerType: "mouse", isPrimary: true,
+            clientX: 12, clientY: 14, screenX: 112, screenY: 114,
+          });
+          target.addEventListener("pointerdown", () => {
+            other.setPointerCapture(1);
+            target.requestPointerLock().then(() => record("promise"));
+            document.addEventListener("pointerlockchange", () => record("late"), { once: true });
+          }, { once: true });
+          __blitsenDispatchPointerEvent("pointerdown", raw, {
+            pointerId: 1, pointerType: "mouse", isPrimary: true,
+            clientX: 12, clientY: 14, screenX: 112, screenY: 114, button: 2,
+          });
+          record(`immediate:${document.pointerLockElement?.id ?? "none"}`);
+        "#,
+                "blitsen:test-pointer-lock",
+            )
+            .expect("the request is made");
+        assert_eq!(seen(&mut engine), "move:0,0:12,14|immediate:none");
+        settle(&mut engine, &services);
         assert_eq!(
-            seen,
-            "lock:target|move:7,-3:12,14|lock:none|full:root|full:none|lock:error|\
-             frame|lock:promise|full:promise|lock:reject:NotAllowedError"
+            seen(&mut engine),
+            "move:0,0:12,14|immediate:none|lost:active|lost:pending|change:target|late|promise"
         );
+
+        engine.evaluate_script(r#"
+          target.requestPointerLock().then(() => record("duplicate"));
+          __blitsenDispatchLockedPointerMotion(7, -3);
+          document.body.addEventListener("keydown", event => {
+            if (event.key === "Escape") record(`escape:${document.pointerLockElement?.id ?? "none"}`);
+          }, { once: true });
+          __blitsenDispatchKeyboardEvent("keydown", { key: "Escape", code: "Escape" });
+        "#, "blitsen:test-escape")
+            .expect("Escape exits");
+        engine.drain_microtasks().expect("duplicate resolves");
+        settle(&mut engine, &services);
+        assert_eq!(
+            seen(&mut engine),
+            "move:0,0:12,14|immediate:none|lost:active|lost:pending|change:target|late|promise|move:7,-3:12,14|escape:none|duplicate|change:none"
+        );
+
+        // An explicit exit does not poison a later acquisition, and no second
+        // change is raised for a request naming the element already locked.
+        engine
+            .evaluate_script(
+                r#"
+          target.addEventListener("pointerdown", () =>
+            target.requestPointerLock().then(() => record("reacquired")), { once: true });
+          __blitsenDispatchPointerEvent("pointerdown", __rawTarget, {
+            pointerId: 1, pointerType: "mouse", isPrimary: true, button: 0,
+          });
+        "#,
+                "blitsen:test-reacquire",
+            )
+            .expect("a second gesture reacquires");
+        settle(&mut engine, &services);
+        engine
+            .evaluate_script("document.exitPointerLock();", "blitsen:test-explicit-exit")
+            .expect("explicit exit works");
+        settle(&mut engine, &services);
+        assert!(seen(&mut engine).ends_with("change:target|reacquired|change:none"));
+
+        engine
+            .evaluate_script(
+                r#"
+          target.addEventListener("pointerdown", () =>
+            target.requestPointerLock().then(() => record("disconnect-request")), { once: true });
+          __blitsenDispatchPointerEvent("pointerdown", __rawTarget, {
+            pointerId: 1, pointerType: "mouse", isPrimary: true, button: 0,
+          });
+        "#,
+                "blitsen:test-disconnect-lock",
+            )
+            .expect("third acquisition starts");
+        settle(&mut engine, &services);
+        engine
+            .evaluate_script(
+                r#"
+          target.remove();
+          record(`disconnected:${document.pointerLockElement?.id ?? "none"}`);
+        "#,
+                "blitsen:test-disconnect",
+            )
+            .expect("disconnect releases immediately");
+        assert!(seen(&mut engine).ends_with("disconnect-request|disconnected:none"));
+        settle(&mut engine, &services);
+        assert!(seen(&mut engine).ends_with("disconnect-request|disconnected:none|change:none"));
+    }
+
+    #[test]
+    fn mode_errors_and_fullscreen_events_precede_promise_settlement() {
+        let (mut engine, services) = realm(crate::dom_bridge::DocumentMode::TestHarness);
+        engine
+            .evaluate_script(
+                r#"
+          const root = document.documentElement;
+          const target = document.getElementById("target");
+          globalThis.__seen = [];
+          const record = value => __seen.push(value);
+          target.requestPointerLock({ unadjustedMovement: true })
+            .catch(error => record(`reject:${error.name}`));
+          document.addEventListener("pointerlockerror", () => record("error"));
+          document.body.addEventListener("keydown", () => {
+            root.requestFullscreen().then(() => record("full:promise"));
+            root.addEventListener("fullscreenchange", () => record("full:late"), { once: true });
+          }, { once: true });
+          __blitsenDispatchKeyboardEvent("keydown", { key: "Enter", code: "Enter" });
+          record(`full:immediate:${document.fullscreenElement === null}`);
+        "#,
+                "blitsen:test-mode-task-order",
+            )
+            .expect("requests are queued");
+        assert_eq!(seen(&mut engine), "full:immediate:true");
+        settle(&mut engine, &services);
+        assert_eq!(
+            seen(&mut engine),
+            "full:immediate:true|error|reject:NotSupportedError|full:late|full:promise"
+        );
+
+        engine.evaluate_script(r#"
+          document.body.addEventListener("keydown", event => {
+            if (event.key === "Escape") record(`full:escape:${document.fullscreenElement === null}`);
+          }, { once: true });
+          __blitsenDispatchKeyboardEvent("keydown", { key: "Escape", code: "Escape" });
+        "#, "blitsen:test-fullscreen-escape")
+            .expect("Escape exits fullscreen");
+        settle(&mut engine, &services);
+        assert!(seen(&mut engine).ends_with("full:escape:true"));
+    }
+
+    #[test]
+    fn production_mode_dispatch_and_window_authority_are_not_globals() {
+        let (mut engine, _services) = realm(crate::dom_bridge::DocumentMode::Application);
+        let value = engine
+            .evaluate_script(
+                r#"
+          ["__blitsenDispatchPointerEvent", "__blitsenDispatchKeyboardEvent",
+           "__blitsenDispatchLockedPointerMotion", "__blitsenReleaseWindowModes",
+           "__blitsenWindowMode"].every(name => !(name in globalThis))
+        "#,
+                "blitsen:test-private-host-hooks",
+            )
+            .expect("global privacy is testable");
+        assert!(engine.to_boolean(&value).expect("the result is boolean"));
     }
 }

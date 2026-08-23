@@ -1,6 +1,6 @@
-  // One short-lived activation token, granted by native pointer/key dispatch.
-  // Pointer lock requires it; fullscreen additionally consumes it, matching the
-  // ordering that lets one gesture request pointer lock before fullscreen.
+  // One short-lived activation token, granted only by a host-dispatched native
+  // pointer/key event. Production dispatch hooks are retained by Rust and are
+  // not properties application scripts can call or replace.
   let windowModeActivation = false;
   let activationGeneration = 0;
   const grantWindowModeActivation = () => {
@@ -18,14 +18,43 @@
     return true;
   };
 
-  const fullscreenSupported = Boolean(__blitsenWindowMode("supported"));
+  const pointerLockSupported = Boolean(hostWindowMode("pointerLockSupported"));
+  const fullscreenSupported = Boolean(hostWindowMode("fullscreenSupported"));
   let pointerLockElement = null;
   let fullscreenElement = null;
+  let pendingPointerLock = null;
+  let pendingFullscreen = null;
 
-  const modeError = (target, eventType, error) => {
-    target.dispatchEvent(new Event(eventType, { bubbles: true }));
-    return Promise.reject(error);
+  const queueModeTask = callback => hostSetTimeout(callback, 0);
+  const modeError = (target, eventType, error) => new Promise((_, reject) => {
+    queueModeTask(() => {
+      target.dispatchEvent(new Event(eventType, { bubbles: true }));
+      reject(error);
+    });
+  });
+
+  // Pointer lock and pointer capture are mutually exclusive. Clear both the
+  // active and requested override before publishing the lock, and report every
+  // element whose capture was displaced before pointerlockchange.
+  const releasePointerCapturesForLock = () => {
+    const ids = new Set([...pointerCaptures.keys(), ...pendingPointerCaptures.keys()]);
+    for (const pointerId of ids) {
+      const active = pointerCaptures.get(pointerId) ?? null;
+      const pending = pendingPointerCaptures.get(pointerId) ?? null;
+      pointerCaptures.delete(pointerId);
+      pendingPointerCaptures.delete(pointerId);
+      const targets = active === pending ? [active] : [active, pending];
+      for (const target of targets) if (target !== null) {
+        target.dispatchEvent(new PointerEvent("lostpointercapture", {
+          pointerId,
+          pointerType: pointerId === MOUSE_POINTER_ID ? "mouse" : "",
+          bubbles: true,
+          cancelable: false,
+        }));
+      }
+    }
   };
+
   const requestPointerLock = (element, options) => {
     if (options === null || (typeof options !== "object" && typeof options !== "undefined"))
       return modeError(document, "pointerlockerror",
@@ -33,29 +62,66 @@
     if (!element.isConnected)
       return modeError(document, "pointerlockerror", new DOMException(
         "pointer lock requires an element in this document", "WrongDocumentError"));
+    if (options?.unadjustedMovement === true)
+      return modeError(document, "pointerlockerror", new DOMException(
+        "unadjustedMovement is not available from this platform input backend", "NotSupportedError"));
+    if (pointerLockElement === element) return Promise.resolve();
+    if (pendingPointerLock?.element === element) return pendingPointerLock.promise;
     if (!hasWindowModeActivation())
       return modeError(document, "pointerlockerror", new DOMException(
         "pointer lock requires transient user activation", "NotAllowedError"));
-    if (!fullscreenSupported)
+    if (!pointerLockSupported)
       return modeError(document, "pointerlockerror", new DOMException(
         "pointer lock is not supported on this platform", "NotSupportedError"));
-    try { __blitsenWindowMode("lockPointer"); }
+    try { hostWindowMode("lockPointer"); }
     catch (error) {
       return modeError(document, "pointerlockerror", new DOMException(
         error?.message ?? "the platform refused pointer lock", "NotSupportedError"));
     }
-    pointerLockElement = element;
-    document.dispatchEvent(new Event("pointerlockchange"));
-    return Promise.resolve();
+    let resolveRequest;
+    let rejectRequest;
+    const promise = new Promise((resolve, reject) => {
+      resolveRequest = resolve;
+      rejectRequest = reject;
+    });
+    const request = { element, promise, resolve: resolveRequest, reject: rejectRequest };
+    pendingPointerLock = request;
+    queueModeTask(() => {
+      if (pendingPointerLock !== request) return;
+      pendingPointerLock = null;
+      if (!element.isConnected) {
+        try { hostWindowMode("unlockPointer"); } catch {}
+        document.dispatchEvent(new Event("pointerlockerror"));
+        rejectRequest(new DOMException("pointer lock target was disconnected", "WrongDocumentError"));
+        return;
+      }
+      releasePointerCapturesForLock();
+      const changed = pointerLockElement !== element;
+      pointerLockElement = element;
+      if (changed) document.dispatchEvent(new Event("pointerlockchange"));
+      resolveRequest();
+    });
+    return promise;
   };
-  const exitPointerLock = () => {
-    if (pointerLockElement === null) return;
-    try { __blitsenWindowMode("unlockPointer"); }
-    finally {
-      pointerLockElement = null;
-      document.dispatchEvent(new Event("pointerlockchange"));
-    }
+
+  const releasePointerLock = (nativeAlreadyReleased, reason) => {
+    const pending = pendingPointerLock;
+    const previous = pointerLockElement;
+    if (pending === null && previous === null) return false;
+    if (!nativeAlreadyReleased) try { hostWindowMode("unlockPointer"); } catch {}
+    pendingPointerLock = null;
+    pointerLockElement = null;
+    queueModeTask(() => {
+      if (previous !== null) document.dispatchEvent(new Event("pointerlockchange"));
+      if (pending !== null) {
+        document.dispatchEvent(new Event("pointerlockerror"));
+        pending.reject(new DOMException(`pointer lock ended before acquisition (${reason})`, "AbortError"));
+      }
+    });
+    return true;
   };
+
+  const exitPointerLock = () => { releasePointerLock(false, "explicit-exit"); };
 
   const requestFullscreen = (element, options) => {
     if (options === null || (typeof options !== "object" && typeof options !== "undefined"))
@@ -63,45 +129,75 @@
     if (!element.isConnected)
       return modeError(element, "fullscreenerror",
         new TypeError("fullscreen requires an element in this document"));
-    // Blitsen can make the native window fullscreen, but does not yet implement
-    // the Fullscreen top layer needed to present an arbitrary subtree honestly.
     if (element !== document.documentElement)
       return modeError(element, "fullscreenerror", new DOMException(
         "Blitsen currently supports fullscreen only on document.documentElement", "NotSupportedError"));
+    if (fullscreenElement === element) return Promise.resolve();
+    if (pendingFullscreen?.element === element) return pendingFullscreen.promise;
     if (!consumeWindowModeActivation())
       return modeError(element, "fullscreenerror", new DOMException(
         "fullscreen requires transient user activation", "NotAllowedError"));
     if (!fullscreenSupported)
       return modeError(element, "fullscreenerror", new DOMException(
         "fullscreen is not supported on this platform", "NotSupportedError"));
-    try { __blitsenWindowMode("enterFullscreen"); }
+    try { hostWindowMode("enterFullscreen"); }
     catch (error) {
       return modeError(element, "fullscreenerror", new DOMException(
         error?.message ?? "the platform refused fullscreen", "NotSupportedError"));
     }
-    fullscreenElement = element;
-    element.dispatchEvent(new Event("fullscreenchange", { bubbles: true }));
-    return Promise.resolve();
-  };
-  const exitFullscreen = () => {
-    if (fullscreenElement === null) return Promise.resolve();
-    const previous = fullscreenElement;
-    try { __blitsenWindowMode("exitFullscreen"); }
-    catch (error) {
-      return modeError(previous, "fullscreenerror", new DOMException(
-        error?.message ?? "the platform refused to leave fullscreen", "NotSupportedError"));
-    }
-    fullscreenElement = null;
-    previous.dispatchEvent(new Event("fullscreenchange", { bubbles: true }));
-    return Promise.resolve();
+    let resolveRequest;
+    let rejectRequest;
+    const promise = new Promise((resolve, reject) => {
+      resolveRequest = resolve;
+      rejectRequest = reject;
+    });
+    const request = { element, promise, resolve: resolveRequest, reject: rejectRequest };
+    pendingFullscreen = request;
+    queueModeTask(() => {
+      if (pendingFullscreen !== request) return;
+      pendingFullscreen = null;
+      if (!element.isConnected) {
+        try { hostWindowMode("exitFullscreen"); } catch {}
+        element.dispatchEvent(new Event("fullscreenerror", { bubbles: true }));
+        rejectRequest(new TypeError("fullscreen target was disconnected"));
+        return;
+      }
+      const changed = fullscreenElement !== element;
+      fullscreenElement = element;
+      if (changed) element.dispatchEvent(new Event("fullscreenchange", { bubbles: true }));
+      resolveRequest();
+    });
+    return promise;
   };
 
-  // Raw DeviceEvent deltas bypass hit testing and always reach the locked
-  // element. The absolute coordinate pairs stay fixed until lock is released.
+  const releaseFullscreen = (nativeAlreadyReleased, reason) => {
+    const pending = pendingFullscreen;
+    const previous = fullscreenElement;
+    if (pending === null && previous === null) return Promise.resolve();
+    if (!nativeAlreadyReleased) try { hostWindowMode("exitFullscreen"); }
+    catch (error) {
+      return modeError(previous ?? document, "fullscreenerror", new DOMException(
+        error?.message ?? "the platform refused to leave fullscreen", "NotSupportedError"));
+    }
+    pendingFullscreen = null;
+    fullscreenElement = null;
+    return new Promise(resolve => queueModeTask(() => {
+      if (previous !== null)
+        previous.dispatchEvent(new Event("fullscreenchange", { bubbles: true }));
+      if (pending !== null) {
+        pending.element.dispatchEvent(new Event("fullscreenerror", { bubbles: true }));
+        pending.reject(new DOMException(`fullscreen ended before acquisition (${reason})`, "AbortError"));
+      }
+      resolve();
+    }));
+  };
+
+  const exitFullscreen = () => releaseFullscreen(false, "explicit-exit");
+
   const dispatchLockedPointerMotion = (movementX, movementY) => {
     const target = pointerLockElement;
     if (target === null || !target.isConnected) {
-      if (target !== null) releaseWindowModes(true, false, "disconnected");
+      if (target !== null) releasePointerLock(false, "disconnected");
       return false;
     }
     return target.dispatchEvent(new MouseEvent("mousemove", {
@@ -112,17 +208,17 @@
     }));
   };
 
-  // Called after the native side has already restored the cursor/window. Focus
-  // and surface loss are unconditional security releases, not requests an app
-  // can cancel.
-  const releaseWindowModes = (pointer, fullscreen, _reason) => {
-    if (pointer && pointerLockElement !== null) {
-      pointerLockElement = null;
-      document.dispatchEvent(new Event("pointerlockchange"));
-    }
-    if (fullscreen && fullscreenElement !== null) {
-      const previous = fullscreenElement;
-      fullscreenElement = null;
-      previous.dispatchEvent(new Event("fullscreenchange", { bubbles: true }));
-    }
+  const releaseWindowModes = (pointer, fullscreen, reason) => {
+    if (pointer) releasePointerLock(true, String(reason));
+    if (fullscreen) void releaseFullscreen(true, String(reason));
+    return true;
+  };
+
+  windowModesTreeMutation = () => {
+    const pointer = pendingPointerLock?.element ?? pointerLockElement;
+    if (pointer !== null && !pointer.isConnected)
+      releasePointerLock(false, "target-disconnected");
+    const fullscreen = pendingFullscreen?.element ?? fullscreenElement;
+    if (fullscreen !== null && !fullscreen.isConnected)
+      void releaseFullscreen(false, "target-disconnected");
   };

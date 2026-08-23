@@ -34,12 +34,13 @@ on Wayland because that protocol does not expose the operation. Cursor grab mode
 runtime throws when a requested mode is unavailable. Declarative and runtime tray control—including
 nested actions, checkboxes, radio groups, accelerators and action/submenu PNGs—notification
 submission/lifecycle events and focused native input snapshots are available on desktop targets.
-Standard pointer lock and root-element fullscreen are available on desktop through winit. Pointer
-lock uses the compositor/window-system cursor grab and reports a refusal as a rejected promise;
-fullscreen is borderless on the monitor containing the window (primary fallback), never an
-exclusive video-mode switch. Both release on focus or surface loss. Multi-monitor placement and
-grab behavior require acceptance on X11, Wayland, Windows and macOS rather than being inferred from
-synthetic tests.
+Root-element fullscreen is available on every desktop through winit. Pointer lock is currently
+exposed on Windows and macOS only: pinned winit 0.31 reports `Locked` cursor grab as unsupported on
+X11, and Blitsen does not claim a Linux API that can fail on a common backend. Fullscreen is
+borderless on the monitor containing the window (primary fallback), never an exclusive video-mode
+switch. Both modes release on Escape, focus loss, surface loss, or target disconnection. Physical
+multi-monitor placement and grab behavior still require acceptance on Windows and macOS, with
+fullscreen acceptance separately required on X11 and Wayland.
 `os.batteries` reads the machine's own batteries on every desktop target and answers an empty list
 where there are none; `os.displays` and `os.idleTime` are absent by decision, the monitors being
 `window.monitors()` and idle time having no answer a Wayland client can trust.

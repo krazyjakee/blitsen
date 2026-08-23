@@ -467,11 +467,17 @@ The backing store reads values individually rather than loading an application's
 dataset at startup, and it adds no database dependency.
 
 Pointer lock and fullscreen are the narrow winit-backed exception where native window state is
-also standard DOM state. JavaScript owns the target element, promise and event state machine; a
-small native adapter owns only cursor grab/visibility and borderless fullscreen. Raw
+also standard DOM state. JavaScript owns the target element, promise and event state machine; its
+dispatch callbacks are retained as engine values by Rust rather than exposed as forgeable globals.
+A small native adapter owns only cursor grab/visibility and borderless fullscreen, with the native
+module's prior or concurrent desired state restored after the DOM mode. Relative
 `DeviceEvent::PointerMotion` values are queued to the next frame and targeted at the locked
-element. Focus or surface loss releases the native modes immediately and queues the observable DOM
-changes before `blur`. Standard fullscreen selects borderless mode on the window's current monitor
+element. Escape, focus or surface loss releases native modes immediately and queues observable DOM
+changes on a user-interaction task; tree mutation releases a disconnected target synchronously.
+Pointer lock is
+scoped to Windows and macOS because pinned winit cannot lock on X11, and
+`unadjustedMovement: true` is rejected because the backend cannot promise acceleration control.
+Standard fullscreen selects borderless mode on the window's current monitor
 (primary fallback); exclusive video modes are deliberately not guessed because the Web API has no
 mode selector. Arbitrary-element fullscreen remains unsupported until the renderer has a
 Fullscreen top layer.

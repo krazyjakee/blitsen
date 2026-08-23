@@ -94,8 +94,11 @@
         removedNodes: new NodeList([child]), previousSibling, nextSibling });
       return child;
     }
-    remove() { call("remove", this[handle]); }
-    replaceWith(replacement) { call("replaceWith", this[handle], requireNode(replacement)); }
+    remove() { call("remove", this[handle]); windowModesTreeMutation(); }
+    replaceWith(replacement) {
+      call("replaceWith", this[handle], requireNode(replacement));
+      windowModesTreeMutation();
+    }
     // `replaceWith` from the parent's side, which is the form a renderer that
     // owns the parent reaches for — Monaco's line renderer is written entirely
     // in it. The parent has to be the child's own: replacing a node that lives

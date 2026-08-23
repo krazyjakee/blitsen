@@ -164,7 +164,7 @@ impl<E: JsEngine + Clone + 'static> WindowSession<E> {
             Arc::new(blitz::net::Provider::new(Some(Arc::new(proxy.clone()))))
                 as Arc<dyn NetProvider>
         });
-        let document = crate::app::load_document(
+        let document = crate::app::load_window_document(
             engine,
             &files,
             net_provider,
@@ -217,6 +217,7 @@ impl<E: JsEngine + Clone + 'static> WindowSession<E> {
             error: Rc::clone(&error),
             started_at,
             document: document.document,
+            host_hooks: document.host_hooks,
             pending_pointer_input: Vec::new(),
             pending_locked_pointer_movement: Vec::new(),
             pending_keyboard_input: Vec::new(),
@@ -293,7 +294,7 @@ impl<E: JsEngine + Clone + 'static> WindowSession<E> {
         let net_provider = self.files.net_provider().unwrap_or_else(|| {
             Arc::new(blitz::net::Provider::new(Some(Arc::new(proxy)))) as Arc<dyn NetProvider>
         });
-        let document = crate::app::load_document(
+        let document = crate::app::load_window_document(
             engine,
             &self.files,
             net_provider,
@@ -326,6 +327,7 @@ impl<E: JsEngine + Clone + 'static> WindowSession<E> {
         let application = &mut self.application;
         application.state = document.window_state;
         application.document = document.document;
+        application.host_hooks = document.host_hooks;
         application.started_at = Instant::now();
         application.pending_pointer_input.clear();
         application.pending_locked_pointer_movement.clear();

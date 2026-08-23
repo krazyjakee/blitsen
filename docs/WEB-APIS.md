@@ -30,8 +30,8 @@ lists individual globals, classes and members.
 | Area | Current support |
 | --- | --- |
 | DOM | Documents, elements, text, fragments, templates, attributes, selectors, mutation observers and common traversal/mutation APIs |
-| Events | Event targets, custom, mouse, keyboard, focus, input, pointer, wheel, error, submit, clipboard and drag events; pointer lock with raw relative mouse movement |
-| Window modes | Pointer lock and root-element fullscreen on desktop, with standard promises, state properties and change/error events |
+| Events | Event targets, custom, mouse, keyboard, focus, input, pointer, wheel, error, submit, clipboard and drag events; Windows/macOS pointer lock with relative mouse movement |
+| Window modes | Windows/macOS pointer lock and root-element fullscreen on desktop, with standard promises, state properties and change/error events |
 | Forms | Basic input, textarea, select, option, button and form state; keyboard editing and selection |
 | Layout reads | Bounding rectangles, client/offset geometry, computed style, scrolling, ranges, carets and selection |
 | Scheduling | `requestAnimationFrame`, timeouts and intervals |
@@ -117,13 +117,17 @@ cannot remove unsupported names from `lib.dom.d.ts`; doctor checks the built app
 
 ## Pointer lock and fullscreen
 
-On desktop, `Element.requestPointerLock()` and
-`document.documentElement.requestFullscreen()` require a native pointer or keyboard activation.
+On Windows and macOS, `Element.requestPointerLock()` is available; root-element fullscreen is
+available on every desktop. Both it and `document.documentElement.requestFullscreen()` require a
+native pointer or keyboard activation.
 They return promises, update `document.pointerLockElement` or `document.fullscreenElement`, and
 raise the corresponding `pointerlockchange`/`pointerlockerror` or
 `fullscreenchange`/`fullscreenerror` events. Losing window focus, losing the render surface, or
-suspending the application releases both modes. While locked, absolute cursor hit testing stops
-and raw winit device deltas arrive as `mousemove.movementX`/`movementY` on the locked element.
+suspending the application, pressing Escape, or disconnecting the target releases the affected
+mode. While locked, absolute cursor hit testing stops and winit device deltas arrive as
+`mousemove.movementX`/`movementY` on the locked element. The `unadjustedMovement: true` option is
+rejected with `NotSupportedError`: winit exposes relative device deltas, but does not provide the
+cross-platform acceleration-control guarantee that option promises.
 
 The standard fullscreen path is always **borderless fullscreen on the monitor containing the
 window at request time**, falling back to the primary monitor when the platform cannot identify a
@@ -132,11 +136,15 @@ resolution, or refresh-rate selector, so choosing an exclusive mode would be arb
 reconfigure the display. Use the native window API for application-controlled window state, but it
 also intentionally exposes borderless rather than exclusive fullscreen.
 
-Android exposes neither mode: it has no desktop cursor to lock, and its activity surface already
+Linux and Android expose no pointer lock. Pinned winit cannot provide `Locked` cursor grab on X11,
+so Linux is capability-scoped out rather than sometimes claiming an API its selected backend will
+refuse. Android also has no desktop cursor to lock, and its activity surface already
 uses platform-managed fullscreen/immersive policy. `document.fullscreenEnabled` is false there and
 requests reject with `NotSupportedError`. Physical multi-monitor placement and compositor-specific
-grab behavior still need acceptance on each desktop backend; a refused cursor grab rejects rather
-than pretending the lock succeeded.
+grab behavior still need acceptance on the supported backends; a refused cursor grab rejects rather
+than pretending the lock succeeded. DOM modes temporarily override `native:window` fullscreen,
+cursor visibility and cursor-grab settings; changes made through the native API while a DOM mode is
+active become the state restored when that DOM mode exits or a document reloads.
 
 ## Notifications
 

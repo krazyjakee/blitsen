@@ -505,10 +505,8 @@
         screenX: Number(init.screenX ?? 0), screenY: Number(init.screenY ?? 0),
       };
     }
-    // Both edges keep mouse-click handlers usable even though this runtime
-    // drains pointerdown and pointerup on separate frame turns. Secondary
-    // contacts never grant activation.
-    if (isPrimary && (type === "pointerdown" || type === "pointerup"))
+    // Activation begins at the trusted press. A release is not a new gesture.
+    if (isPrimary && type === "pointerdown")
       grantWindowModeActivation();
     // `button` names the button that *changed*, which on a move or a
     // cancellation is none of them. That is a property of the event type rather
@@ -577,6 +575,13 @@
   };
 
   const dispatchKeyboardEvent = (type, init) => {
+    // Escape is an always-available user-agent exit. Native restoration and
+    // DOM state clearing happen before application listeners; preventDefault
+    // cannot retain either security-sensitive mode.
+    if (type === "keydown" && init.key === "Escape" && !init.repeat) {
+      releasePointerLock(false, "escape");
+      void releaseFullscreen(false, "escape");
+    }
     if (type === "keydown" && init.key !== "Escape" && !init.repeat)
       grantWindowModeActivation();
     const event = new KeyboardEvent(String(type), init);
