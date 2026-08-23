@@ -152,7 +152,8 @@ pub enum Instance {
 ///
 /// Binding is both the ownership claim and the hand-off channel: Unix uses a
 /// filesystem domain socket and Windows uses a named pipe. Blitsen retains the
-/// EOF-delimited JSON framing, queue and listener lifecycle above that transport.
+/// Length-prefixed JSON framing, authenticated acknowledgement, queue and
+/// listener lifecycle above that transport.
 ///
 /// Unix endpoints live in a mode-0700 per-user runtime directory. Linux uses
 /// `XDG_RUNTIME_DIR` when it is absolute, owned by the effective user and not
@@ -482,6 +483,13 @@ pub mod single_instance {
                                 && authenticate_client(&stream)
                             {
                                 RECEIVED.lock().push(invocation);
+                                // Keep a real secondary alive until Windows has
+                                // authenticated its connected pipe token and the
+                                // invocation is durably owned by this process.
+                                // Without the acknowledgement a short-lived
+                                // secondary can exit between writing and
+                                // ImpersonateNamedPipeClient.
+                                let _ = write_acknowledgement(&mut stream, WRITE_TIMEOUT);
                             }
                         }
                         Err(error) if error.kind() == ErrorKind::WouldBlock => {
@@ -517,34 +525,18 @@ pub mod single_instance {
     }
 
     fn read_payload(reader: &mut impl Read, timeout: Duration) -> std::io::Result<Vec<u8>> {
-        let mut payload = Vec::new();
-        let mut buffer = [0; 4096];
         let deadline = Instant::now() + timeout;
-        loop {
-            if Instant::now() >= deadline {
-                return Err(std::io::Error::new(
-                    ErrorKind::TimedOut,
-                    "the single-instance invocation frame timed out",
-                ));
-            }
-            match reader.read(&mut buffer) {
-                Ok(0) => break,
-                Ok(read) => {
-                    if payload.len().saturating_add(read) > MAX_INVOCATION_BYTES {
-                        return Err(std::io::Error::new(
-                            ErrorKind::InvalidData,
-                            "the single-instance invocation frame is too large",
-                        ));
-                    }
-                    payload.extend_from_slice(&buffer[..read]);
-                }
-                Err(error) if error.kind() == ErrorKind::WouldBlock => {
-                    std::thread::sleep(POLL_INTERVAL);
-                }
-                Err(error) if error.kind() == ErrorKind::Interrupted => {}
-                Err(error) => return Err(error),
-            }
+        let mut encoded_size = [0; std::mem::size_of::<u32>()];
+        read_exact_until(reader, &mut encoded_size, deadline)?;
+        let size = u32::from_be_bytes(encoded_size) as usize;
+        if size > MAX_INVOCATION_BYTES {
+            return Err(std::io::Error::new(
+                ErrorKind::InvalidData,
+                "the single-instance invocation frame is too large",
+            ));
         }
+        let mut payload = vec![0; size];
+        read_exact_until(reader, &mut payload, deadline)?;
         Ok(payload)
     }
 
@@ -558,7 +550,11 @@ pub mod single_instance {
         write_payload(&mut stream, &payload, WRITE_TIMEOUT).map_err(|error| {
             PlatformError::new(format!("could not hand this invocation over: {error}"))
         })?;
-        drop(stream); // EOF is Blitsen's invocation frame on sockets and pipes.
+        read_acknowledgement(&mut stream, WRITE_TIMEOUT).map_err(|error| {
+            PlatformError::new(format!(
+                "the single-instance owner did not acknowledge this invocation: {error}"
+            ))
+        })?;
         Ok(Instance::Secondary)
     }
 
@@ -573,7 +569,61 @@ pub mod single_instance {
                 "the single-instance invocation frame is too large",
             ));
         }
+        let encoded_size = (payload.len() as u32).to_be_bytes();
         let deadline = Instant::now() + timeout;
+        write_all_until(writer, &encoded_size, deadline)?;
+        write_all_until(writer, payload, deadline)?;
+        writer.flush()
+    }
+
+    fn read_acknowledgement(reader: &mut impl Read, timeout: Duration) -> std::io::Result<()> {
+        let mut acknowledgement = [0];
+        read_exact_until(reader, &mut acknowledgement, Instant::now() + timeout)?;
+        if acknowledgement != [1] {
+            return Err(std::io::Error::new(
+                ErrorKind::InvalidData,
+                "the single-instance owner sent an invalid acknowledgement",
+            ));
+        }
+        Ok(())
+    }
+
+    fn write_acknowledgement(writer: &mut impl Write, timeout: Duration) -> std::io::Result<()> {
+        write_all_until(writer, &[1], Instant::now() + timeout)?;
+        writer.flush()
+    }
+
+    fn read_exact_until(
+        reader: &mut impl Read,
+        buffer: &mut [u8],
+        deadline: Instant,
+    ) -> std::io::Result<()> {
+        let mut read = 0;
+        while read < buffer.len() {
+            if Instant::now() >= deadline {
+                return Err(std::io::Error::new(
+                    ErrorKind::TimedOut,
+                    "the single-instance invocation frame timed out",
+                ));
+            }
+            match reader.read(&mut buffer[read..]) {
+                Ok(0) => return Err(ErrorKind::UnexpectedEof.into()),
+                Ok(count) => read += count,
+                Err(error) if error.kind() == ErrorKind::WouldBlock => {
+                    std::thread::sleep(POLL_INTERVAL);
+                }
+                Err(error) if error.kind() == ErrorKind::Interrupted => {}
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(())
+    }
+
+    fn write_all_until(
+        writer: &mut impl Write,
+        payload: &[u8],
+        deadline: Instant,
+    ) -> std::io::Result<()> {
         let mut written = 0;
         while written < payload.len() {
             if Instant::now() >= deadline {
@@ -592,7 +642,7 @@ pub mod single_instance {
                 Err(error) => return Err(error),
             }
         }
-        writer.flush()
+        Ok(())
     }
 
     #[cfg(test)]
@@ -651,16 +701,21 @@ pub mod single_instance {
                 write_payload(&mut Vec::new(), &oversized, Duration::from_secs(1)).unwrap_err();
             assert_eq!(error.kind(), ErrorKind::InvalidInput);
 
-            struct Drip;
+            struct Drip {
+                offset: usize,
+            }
             impl Read for Drip {
                 fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
                     std::thread::sleep(Duration::from_millis(2));
-                    buffer[0] = b' ';
+                    let frame = [0, 0, 0, 100];
+                    buffer[0] = frame.get(self.offset).copied().unwrap_or(b' ');
+                    self.offset += 1;
                     Ok(1)
                 }
             }
             let started = Instant::now();
-            let error = read_payload(&mut Drip, Duration::from_millis(20)).unwrap_err();
+            let error =
+                read_payload(&mut Drip { offset: 0 }, Duration::from_millis(20)).unwrap_err();
             assert_eq!(error.kind(), ErrorKind::TimedOut);
             assert!(started.elapsed() < Duration::from_millis(200));
 
