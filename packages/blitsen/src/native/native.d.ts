@@ -514,7 +514,13 @@ export interface NativeHidDeviceInfo {
   readonly vendorId: number;
   readonly productId: number;
   readonly releaseNumber: number;
-  /** The first top-level collection, for the common single-collection device. */
+  /**
+   * The first top-level collection, for the common single-collection device.
+   *
+   * Zero on Android until the device is opened: a report descriptor cannot be
+   * read there before its permission has been granted, so select by `vendorId`
+   * and `productId` and read the usages from the opened device's `info`.
+   */
   readonly usagePage: number;
   readonly usage: number;
   /** Every top-level collection reachable through this device. */
@@ -617,7 +623,25 @@ export type NativeNotificationEvent =
       id: string;
       reason: "expired" | "dismissed" | "closed" | "unknown";
     }>
-  | Readonly<{ type: "error"; id: string; message: string }>;
+  | Readonly<{ type: "error"; id: string; message: string }>
+  /**
+   * The notification click that started this run of the application.
+   *
+   * Delivered once, on the first frame turn, so a listener added at the top
+   * level of a module receives it; a reload or a later launch never repeats it.
+   * `id` names the notification as the session that showed it named it, which is
+   * a session that has ended — correlate it with state the application persisted
+   * itself. `action` is null for a body click, `reason` is null everywhere the
+   * platform does not report dismissals.
+   */
+  | Readonly<{
+      type: "activation";
+      id: string;
+      action: string | null;
+      reason: string | null;
+      platform: string;
+      entry: string;
+    }>;
 
 /** `blitsen/notify`: native notification capabilities beyond the web surface. */
 export interface NativeNotify {

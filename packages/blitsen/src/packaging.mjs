@@ -128,11 +128,44 @@ function desktopEntry({ name, executable, icon }) {
     "Type=Application",
     "Version=1.0",
     `Name=${name.replace(/\n/g, " ")}`,
-    `Exec=${desktopExec(executable)}`,
+    // `%u` so the entry can be started with a single argument, which is the
+    // shape a notification activation arrives in: `--notification-activation
+    // <envelope>` is what the runtime reads it from (#252). An ordinary launch
+    // substitutes nothing and the field disappears, which is what the Desktop
+    // Entry Specification says an unsatisfied field code does.
+    `Exec=${desktopExec(executable)} %u`,
     ...icon ? [`Icon=${icon}`] : [],
     "Terminal=false",
+    // The entry a notification's `desktop-entry` hint names is this file, and
+    // the hint is the only way the notification service can tell which installed
+    // application a notification belongs to. Declaring it here is what puts the
+    // application in GNOME's notification settings rather than leaving the user
+    // with a switch they cannot find.
+    "X-GNOME-UsesNotifications=true",
     "",
   ].join("\n");
+}
+
+/**
+ * The identity a notification activation for this artifact is addressed to (#252).
+ *
+ * `null` without an explicit `--bundle-id`, and deliberately not the
+ * `com.blitsen.<title>` an `.app` falls back to: notification permission is
+ * granted per identity, and an identity nobody chose is one two unrelated
+ * applications could end up sharing. So an activation identity is opt-in the way
+ * every other platform identity in this file is.
+ *
+ * `entry` is what the platform's own notification service knows the entry point
+ * by, which is the identity everywhere except Linux — there it is the desktop
+ * entry, and a desktop entry is named after the executable rather than after the
+ * application, so the two genuinely differ.
+ */
+export function activationEntryPoint({ platform, identifier, executable }) {
+  if (!identifier) return null;
+  return {
+    identity: identifier,
+    entry: platform === "linux" ? basename(executable) : identifier,
+  };
 }
 
 function assemblyVersion(version) {
@@ -176,6 +209,13 @@ function windowsManifest({ name, version }) {
 // what Blitsen does is write the artifact a distributor installs or signs with,
 // and say what to do with it — `doctor` reports the same sentences before the
 // build, which is the point at which it is still cheap to act on them.
+//
+// Android is the one entry with no artifact behind it (#248), and that is the
+// fact worth reporting rather than an omission: its answer is a runtime dialog
+// per device, so there is nothing for a distributor to install and nothing for
+// a build to write. The sentence exists because a developer who has shipped the
+// Linux rule and the macOS entitlement will otherwise go looking for the third
+// one.
 export const HID_ACCESS = {
   linux: "Access to a hidraw node is granted by a udev rule, not by the application: "
     + "`blitsen build` writes a `<name>.hid.rules` template beside the executable for the "
@@ -187,6 +227,12 @@ export const HID_ACCESS = {
   win32: "Windows opens HID top-level collections through its own HID class driver and reserves "
     + "some system collections, which no packaging step unlocks and no driver replacement should "
     + "try to. An open refused that way rejects with NotAllowedError rather than NotFoundError.",
+  android: "Android grants USB access one device at a time and at run time: the first open() of a "
+    + "device raises a system dialog, the grant lasts only until that device is unplugged, and a "
+    + "dismissed dialog rejects with NotAllowedError and can be asked again. There is no manifest "
+    + "permission to add — `blitsen build` declares the android.hardware.usb.host feature as "
+    + "optional — so nothing here is a packaging step, and a device attached over OTG has to be "
+    + "attached for the application to see it at all.",
 };
 
 /// The rule a Linux distributor completes and installs, as a file.

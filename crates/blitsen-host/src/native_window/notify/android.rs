@@ -4,24 +4,83 @@
 //! Java-main-thread hop required by `requestPermissions`. NotificationManager
 //! itself is safe to call from the session thread, so delivery, replacement and
 //! cancellation stay synchronous with the native-module command queue.
+//!
+//! # The activation trampoline (#252)
+//!
+//! A tapped Android notification is an `Intent` the system sends on the
+//! application's behalf, and something has to be waiting to receive it. The
+//! obvious receiver is a `BroadcastReceiver`, and Blitsen cannot have one: an
+//! APK built here declares `android:hasCode="false"` and carries no `classes.dex`
+//! (`packages/blitsen/src/android-apk.mjs`), so there is no Java class for a
+//! receiver to be. Adding one would mean adding a Java compiler and a dexer to
+//! the build for a class whose whole body forwards an extra.
+//!
+//! So the trampoline is `PendingIntent.getActivity` aimed at the Activity that
+//! is already there. `android.app.NativeActivity` is the platform's own class,
+//! `android-activity` remains its owner, and what the tap does is start it with
+//! the activation envelope in an extra — which is the smallest trampoline that
+//! exists on a platform whose only alternative is shipping code.
+//!
+//! Two consequences follow and are the honest limits of this design:
+//!
+//! * **A swipe-away is not observable.** `setDeleteIntent` takes a
+//!   `PendingIntent`, and the only kind available without a receiver class is
+//!   one that *starts the Activity* — which is the opposite of what dismissing a
+//!   notification means. Android therefore reports no dismissal, and the
+//!   envelope's dismissal field stays empty there.
+//! * **A tap while the Activity is alive arrives late.** `NativeActivity` does
+//!   not override `onNewIntent`, so `getIntent()` still answers the Intent the
+//!   Activity was created with until it is created again. The envelope is not
+//!   lost — it is in the extra of an Intent the system keeps — and it is read
+//!   the next time a session opens. The nonce is what makes that safe: an Intent
+//!   re-delivered to a recreated Activity carries an envelope the store has
+//!   already handed over, and is dropped rather than replayed.
 
 use std::collections::{HashMap, VecDeque};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use android_activity::AndroidApp;
-use jni::objects::{JObject, JValue};
+use jni::objects::{JObject, JString, JValue};
 use jni::{Env, JavaVM, jni_sig, jni_str};
 use serde_json::{Value, json};
 use winit::event_loop::EventLoopProxy;
 
-use crate::dom_bridge::notify::{NotificationOptions, NotificationPatch};
+use super::ActivationStore;
+use crate::dom_bridge::notify::{Activation, NotificationOptions, NotificationPatch};
 
 const CHANNEL_ID: &str = "blitsen.default";
 const PERMISSION: &str = "android.permission.POST_NOTIFICATIONS";
 const PREFERENCES: &str = "blitsen.notifications";
 const REQUESTED_KEY: &str = "permissionRequested";
 const REQUEST_CODE: i32 = 0x424e;
+
+/// The extra the activation envelope travels in.
+const ACTIVATION_EXTRA: &str = "blitsen.notification.activation";
+
+/// The scheme that makes one trampoline `Intent` different from another.
+///
+/// `PendingIntent` deduplicates by `Intent.filterEquals`, which compares the
+/// action, the data, the type, the component and the categories — and ignores
+/// extras entirely. Two notifications, or a body tap and a button on the same
+/// notification, would therefore collapse into one `PendingIntent` and deliver
+/// whichever envelope was registered first. Giving each one a data URI of its
+/// own is what keeps them distinct, and the nonce is already the thing that is
+/// unique per activation.
+const ACTIVATION_SCHEME: &str = "blitsen-notification";
+
+/// `PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT`.
+///
+/// Immutable is required from API 31 and is right regardless: the envelope is
+/// this application's statement about which notification was tapped, and a
+/// mutable `PendingIntent` is one another application could fill in. Updating
+/// the current one is what makes a replacement (`update`) re-aim an existing
+/// trampoline at its new envelope instead of leaving the old one live.
+const PENDING_INTENT_FLAGS: i32 = 0x0400_0000 | 0x0800_0000;
+
+/// `Intent.FLAG_ACTIVITY_SINGLE_TOP`, matching the manifest's `launchMode`.
+const FLAG_ACTIVITY_SINGLE_TOP: i32 = 0x2000_0000;
 
 static ANDROID_APP: OnceLock<RwLock<Option<AndroidApp>>> = OnceLock::new();
 
@@ -32,7 +91,9 @@ pub(crate) fn set_android_app(app: AndroidApp) {
         .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(app);
 }
 
-fn android_app() -> Result<AndroidApp, String> {
+/// The Activity handle, which is `android-activity`'s and is shared rather than
+/// duplicated: `blitsen/hid` reaches `UsbManager` through the same one (#248).
+pub(crate) fn android_app() -> Result<AndroidApp, String> {
     ANDROID_APP
         .get()
         .and_then(|slot| {
@@ -43,7 +104,12 @@ fn android_app() -> Result<AndroidApp, String> {
         .ok_or_else(|| "the Android activity is not available".to_owned())
 }
 
-fn with_activity<T>(
+/// Runs `operation` with an attached `Env` and this process's Activity.
+///
+/// Shared with `blitsen/hid` for the same reason the handle above is: there is
+/// one Activity, one JVM and one way to reach them, and a second copy of this
+/// would be a second place for the unsafety argument below to be wrong.
+pub(crate) fn with_activity<T>(
     app: &AndroidApp,
     operation: impl FnOnce(&mut Env<'_>, &JObject<'_>) -> jni::errors::Result<T>,
 ) -> Result<T, String> {
@@ -55,7 +121,7 @@ fn with_activity<T>(
         let activity = unsafe { env.as_cast_raw::<JObject>(&raw_activity)? };
         operation(env, &activity)
     })
-    .map_err(|error| format!("Android notification API failed: {error}"))
+    .map_err(|error| format!("the Android platform call failed: {error}"))
 }
 
 fn sdk_int(app: &AndroidApp) -> Result<i32, String> {
@@ -176,6 +242,206 @@ fn request_android_permission(
     }));
 }
 
+/// The application ID this package was installed under.
+///
+/// Read rather than recorded by the export: an Android install is keyed by this
+/// string, the manifest declared it, and the system will not let the two differ
+/// — so asking the Activity is both simpler than carrying it in the artifact and
+/// impossible to get out of step with it.
+pub(crate) fn installed_entry_point() -> Option<crate::ActivationEntryPoint> {
+    let app = android_app().ok()?;
+    let package = with_activity(&app, |env, activity| {
+        let name = env
+            .call_method(
+                activity,
+                jni_str!("getPackageName"),
+                jni_sig!("()Ljava/lang/String;"),
+                &[],
+            )?
+            .l()?;
+        env.cast_local::<JString>(name)?.try_to_string(env)
+    })
+    .ok()?;
+    Some(crate::ActivationEntryPoint {
+        entry: package.clone(),
+        identity: package,
+    })
+}
+
+/// The directory the Activity owns, which is where the activation queue lives.
+///
+/// `filesDir` rather than an XDG path: Android sets none of the variables the
+/// desktop answer reads, which is why `blitsen_platform::app` is absent on this
+/// platform rather than answering a path nothing can write to.
+pub(crate) fn files_directory() -> Result<PathBuf, String> {
+    let app = android_app()?;
+    with_activity(&app, |env, activity| {
+        let directory = env
+            .call_method(
+                activity,
+                jni_str!("getFilesDir"),
+                jni_sig!("()Ljava/io/File;"),
+                &[],
+            )?
+            .l()?;
+        let path = env
+            .call_method(
+                &directory,
+                jni_str!("getAbsolutePath"),
+                jni_sig!("()Ljava/lang/String;"),
+                &[],
+            )?
+            .l()?;
+        let path = env.cast_local::<JString>(path)?;
+        Ok(PathBuf::from(path.try_to_string(env)?))
+    })
+}
+
+/// Adds whatever activation the Intent that created this Activity carries.
+///
+/// Recorded rather than delivered: the store is what decides whether this is a
+/// tap nobody has been told about, and a recreated Activity is handed the same
+/// Intent — and so the same nonce — as the one that was destroyed.
+pub(crate) fn record_intent_activation(store: &ActivationStore) {
+    let Ok(app) = android_app() else {
+        return;
+    };
+    let envelope = with_activity(&app, |env, activity| {
+        let intent = env
+            .call_method(
+                activity,
+                jni_str!("getIntent"),
+                jni_sig!("()Landroid/content/Intent;"),
+                &[],
+            )?
+            .l()?;
+        if intent.is_null() {
+            return Ok(None);
+        }
+        let key = env.new_string(ACTIVATION_EXTRA)?;
+        let extra = env
+            .call_method(
+                &intent,
+                jni_str!("getStringExtra"),
+                jni_sig!("(Ljava/lang/String;)Ljava/lang/String;"),
+                &[JValue::Object(&key)],
+            )?
+            .l()?;
+        if extra.is_null() {
+            return Ok(None);
+        }
+        let extra = env.cast_local::<JString>(extra)?;
+        Ok(Some(extra.try_to_string(env)?))
+    });
+    // A launcher tap carries no extra and an Activity that cannot be asked is
+    // one nothing else in this session could have worked either, so neither is
+    // reported here. An extra that will not parse is: only this build writes
+    // that key, so a value it cannot read came from somewhere it should not
+    // have, and silence would make it look like a tap that never happened. It
+    // is reported against no notification because the field that would have
+    // named one is inside the value that did not parse.
+    let envelope = match envelope {
+        Ok(Some(envelope)) => envelope,
+        Ok(None) | Err(_) => return,
+    };
+    match Activation::parse(&envelope) {
+        Ok(activation) => {
+            let id = activation.id.clone();
+            if let Err(error) = store.record(activation) {
+                crate::dom_bridge::notify::failed(id, error);
+            }
+        }
+        Err(error) => crate::dom_bridge::notify::failed(String::new(), error),
+    }
+}
+
+/// The envelope a tap on `public_id`, or on one of its buttons, will deliver.
+///
+/// `None` when nothing registered an identity for this process: there is then no
+/// application for an activation to be addressed to, and a trampoline built
+/// anyway would hand the next launch an envelope it must refuse.
+fn envelope(public_id: &str, action: Option<&str>, native_id: i32) -> Option<Activation> {
+    let entry_point = super::entry_point()?;
+    // Unique across launches as well as within one: the notification survives
+    // the process, so a nonce built only from the notification's own identity
+    // would collide with one the store had already consumed after a restart.
+    let minted = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |since| since.as_millis());
+    Some(Activation {
+        nonce: format!("{minted:x}-{native_id}-{}", action.unwrap_or("default")),
+        identity: entry_point.identity.clone(),
+        id: public_id.to_owned(),
+        action: action.map(str::to_owned),
+        // Android reports no dismissal; see this module's documentation.
+        dismissed: None,
+        platform: "android".to_owned(),
+        entry: entry_point.entry.clone(),
+    })
+}
+
+/// A `PendingIntent` that starts this Activity carrying `activation`.
+fn trampoline<'env>(
+    env: &mut Env<'env>,
+    activity: &JObject<'_>,
+    activation: &Activation,
+) -> jni::errors::Result<JObject<'env>> {
+    // Explicit rather than filtered: the component is this Activity's own class,
+    // so nothing in the manifest has to declare an intent filter for it and no
+    // other application can be resolved for the tap.
+    let class = JObject::from(env.get_object_class(activity)?);
+    let intent = env.new_object(
+        jni_str!("android/content/Intent"),
+        jni_sig!("(Landroid/content/Context;Ljava/lang/Class;)V"),
+        &[JValue::Object(activity), JValue::Object(&class)],
+    )?;
+    let uri = env.new_string(format!("{ACTIVATION_SCHEME}:{}", activation.nonce))?;
+    let data = env
+        .call_static_method(
+            jni_str!("android/net/Uri"),
+            jni_str!("parse"),
+            jni_sig!("(Ljava/lang/String;)Landroid/net/Uri;"),
+            &[JValue::Object(&uri)],
+        )?
+        .l()?;
+    env.call_method(
+        &intent,
+        jni_str!("setData"),
+        jni_sig!("(Landroid/net/Uri;)Landroid/content/Intent;"),
+        &[JValue::Object(&data)],
+    )?;
+    env.call_method(
+        &intent,
+        jni_str!("addFlags"),
+        jni_sig!("(I)Landroid/content/Intent;"),
+        &[JValue::Int(FLAG_ACTIVITY_SINGLE_TOP)],
+    )?;
+    let key = env.new_string(ACTIVATION_EXTRA)?;
+    let value = env.new_string(
+        serde_json::to_string(activation).expect("an activation envelope serializes"),
+    )?;
+    env.call_method(
+        &intent,
+        jni_str!("putExtra"),
+        jni_sig!("(Ljava/lang/String;Ljava/lang/String;)Landroid/content/Intent;"),
+        &[JValue::Object(&key), JValue::Object(&value)],
+    )?;
+    env.call_static_method(
+        jni_str!("android/app/PendingIntent"),
+        jni_str!("getActivity"),
+        jni_sig!(
+            "(Landroid/content/Context;ILandroid/content/Intent;I)Landroid/app/PendingIntent;"
+        ),
+        &[
+            JValue::Object(activity),
+            JValue::Int(0),
+            JValue::Object(&intent),
+            JValue::Int(PENDING_INTENT_FLAGS),
+        ],
+    )?
+    .l()
+}
+
 fn notification_manager<'env, 'object>(
     env: &mut Env<'env>,
     activity: &JObject<'object>,
@@ -254,12 +520,16 @@ fn small_icon(
     .i()
 }
 
-fn post(app: &AndroidApp, native_id: i32, options: &NotificationOptions) -> Result<(), String> {
-    if !options.actions.is_empty() {
-        return Err(
-            "notification actions require Android activation routing, tracked by issue #252"
-                .to_owned(),
-        );
+fn post(
+    app: &AndroidApp,
+    public_id: &str,
+    native_id: i32,
+    options: &NotificationOptions,
+) -> Result<(), String> {
+    // A button whose tap cannot be addressed back to this application would be
+    // a control that does nothing, so it is refused rather than drawn.
+    if !options.actions.is_empty() && super::entry_point().is_none() {
+        return Err(super::NO_ACTIVATION_IDENTITY.to_owned());
     }
     with_activity(app, |env, activity| {
         let manager = notification_manager(env, activity)?;
@@ -328,6 +598,43 @@ fn post(app: &AndroidApp, native_id: i32, options: &NotificationOptions) -> Resu
                     &[JValue::Long(i64::from(timeout))],
                 )?;
             }
+        }
+        // What a tap does (#252). Without a registered identity there is no
+        // envelope to carry, and a body tap then only dismisses the
+        // notification — which is what it did before this existed.
+        if let Some(activation) = envelope(public_id, None, native_id) {
+            let intent = trampoline(env, activity, &activation)?;
+            env.call_method(
+                &builder,
+                jni_str!("setContentIntent"),
+                jni_sig!("(Landroid/app/PendingIntent;)Landroid/app/Notification$Builder;"),
+                &[JValue::Object(&intent)],
+            )?;
+        }
+        for action in &options.actions {
+            let Some(activation) = envelope(public_id, Some(&action.id), native_id) else {
+                continue;
+            };
+            let intent = trampoline(env, activity, &activation)?;
+            let title = env.new_string(&action.title)?;
+            // Icon 0, because `blitsen/notify` actions carry a title and an ID
+            // and no icon — the same surface every other platform's actions have
+            // here. This constructor is the one that takes the three of them.
+            let built = env.new_object(
+                jni_str!("android/app/Notification$Action"),
+                jni_sig!("(ILjava/lang/CharSequence;Landroid/app/PendingIntent;)V"),
+                &[
+                    JValue::Int(0),
+                    JValue::Object(&title),
+                    JValue::Object(&intent),
+                ],
+            )?;
+            env.call_method(
+                &builder,
+                jni_str!("addAction"),
+                jni_sig!("(Landroid/app/Notification$Action;)Landroid/app/Notification$Builder;"),
+                &[JValue::Object(&built)],
+            )?;
         }
         let notification = env
             .call_method(
@@ -442,7 +749,7 @@ impl NotifyController {
         }
         let native_id = self.next_native_id;
         self.next_native_id = self.next_native_id.saturating_add(1);
-        post(&self.app, native_id, &options)?;
+        post(&self.app, &public_id, native_id, &options)?;
         self.records
             .insert(public_id.clone(), Record { options, native_id });
         Ok(json!(public_id))
@@ -457,7 +764,7 @@ impl NotifyController {
             return Ok(json!(false));
         };
         record.options.apply(patch);
-        post(&self.app, record.native_id, &record.options)?;
+        post(&self.app, public_id, record.native_id, &record.options)?;
         Ok(json!(true))
     }
 

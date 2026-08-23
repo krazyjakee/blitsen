@@ -401,10 +401,13 @@ export function shadeFailures({ final, ever, dump, channels }) {
   // do not.
   check(!ever.has(TITLES.ghost),
     `${TITLES.ghost} was posted, so updating an ID that was never shown created one`);
-  for (const title of [`${PREFIX}-icon`, `${PREFIX}-actions`]) {
-    check(!ever.has(title), `${title} was posted, and the submission that asked for it was `
-      + "rejected — a rejected show must leave nothing behind");
-  }
+  check(!ever.has(`${PREFIX}-icon`), `${PREFIX}-icon was posted, and the submission that asked `
+    + "for it was rejected — a rejected show must leave nothing behind");
+  // The action button, which #252 made a PendingIntent aimed at the Activity: it
+  // is an ordinary delivery now, and its absence would mean the trampoline the
+  // host builds was refused at post time.
+  check(ever.has(`${PREFIX}-actions`), `${PREFIX}-actions was never posted, so a notification `
+    + "carrying an action button did not reach the shade");
 
   // The channel. Every record of ours has to name the one the host creates, and the
   // dump has to contain it at all: a delivery filed under a channel nobody created
@@ -451,7 +454,7 @@ export function transcriptFailures(sdk, scenario, entries) {
   // takes NotificationManager away, and this is the same rejection path.
   if (want.p1 !== "granted") rejects("d.show", "permission");
 
-  for (const key of ["s.alpha", "s.beta", "s.expiring", "s.ongoing"]) {
+  for (const key of ["s.alpha", "s.beta", "s.expiring", "s.ongoing", "s.actions"]) {
     check(!(entries.get(key) ?? "err:missing").startsWith("err"),
       `${key} did not settle to an ID: ${JSON.stringify(entries.get(key) ?? null)}`);
   }
@@ -460,11 +463,10 @@ export function transcriptFailures(sdk, scenario, entries) {
   is("c.beta", "true");
   is("c.beta2", "false");
   is("c.missing", "false");
-  // A failure inside the JNI call, and one the host refuses in front of it. Both
-  // have to arrive as a rejected promise; #245's contract is that no platform
-  // callback ever enters JavaScript, so a swallowed error has nowhere else to go.
+  // A failure inside the JNI call. It has to arrive as a rejected promise; #245's
+  // contract is that no platform callback ever enters JavaScript, so a swallowed
+  // error has nowhere else to go.
   rejects("e.icon", "Android notification API failed");
-  rejects("e.actions", "#252");
   is("ev", `close:${entries.get("s.beta")}:closed`);
   return failures;
 }

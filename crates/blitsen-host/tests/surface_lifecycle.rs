@@ -143,6 +143,7 @@ fn run_cycle(entrypoint: &Path) {
         window: Default::default(),
         tray: None,
         menu: None,
+        activation: Default::default(),
     };
     let mut session = WindowSession::open(&mut engine, files, options).expect("a window opens");
 

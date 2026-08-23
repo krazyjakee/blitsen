@@ -27,9 +27,6 @@ use crate::drag_drop::PendingDrag;
 use crate::pointer_input::{PendingPointerInput, PointerIds};
 use crate::surface_lifecycle::{SurfaceState, SyntheticPhase};
 
-// Raw HID is desktop-only: S10 kept Android's `UsbManager` permission flow out
-// of this path entirely, so there is no backend here to compile there.
-#[cfg(not(target_os = "android"))]
 pub(crate) mod hid;
 pub(crate) mod menu;
 pub(crate) mod notify;
@@ -150,7 +147,6 @@ pub struct WindowApplication<Rend: anyrender::WindowRenderer, E: JsEngine + Clon
     #[cfg(any(target_os = "windows", target_os = "macos"))]
     pub(crate) app_menu: Option<menu::AppMenuController>,
     pub(crate) notify: notify::NotifyController,
-    #[cfg(not(target_os = "android"))]
     pub(crate) hid: hid::HidController,
     pub(crate) quit_requested: bool,
 }

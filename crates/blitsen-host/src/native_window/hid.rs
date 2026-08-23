@@ -18,6 +18,15 @@
 //! thing the type system allows — and every report, completion and disconnect
 //! crosses back as a signal that [`HidController::poll`] turns into a frame-turn
 //! message.
+//!
+//! The third arrangement is Android's, and it is why opening is allowed to take
+//! more than one turn (#248). There a device is reached through `UsbManager`
+//! and access is a permission a person grants to a system dialog, so a backend
+//! may answer "asked, not answered yet" — `Ok(None)` — and the controller keeps
+//! the caller's promise open across frames until the answer arrives. Everything
+//! after the handle exists is identical on both platforms, which is the point:
+//! one worker, one bound check, one terminal event, one set of `DOMException`
+//! names.
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -29,6 +38,16 @@ use serde_json::{Value, json};
 
 use crate::dom_bridge::hid::{Failure, Message};
 
+/// Android's `UsbManager` backend, whose logic is compiled and tested here.
+///
+/// `cfg(test)` puts it in a Linux build as well as an Android one on purpose.
+/// None of it is Android-specific except the JNI calls it makes through
+/// [`android::UsbApi`], and a permission state machine that only exists on a
+/// platform this workspace cannot run tests on would be a permission state
+/// machine nothing ever checked.
+#[cfg(any(target_os = "android", test))]
+pub(crate) mod android;
+#[cfg(not(target_os = "android"))]
 mod platform;
 
 /// Usages an application may never open, whatever it asks for.
@@ -102,7 +121,16 @@ pub(crate) trait HidHandle: Send {
 /// Enumeration and opening, so both can be driven without hardware.
 pub(crate) trait HidBackend: Send {
     fn enumerate(&mut self) -> Result<Vec<BackendDevice>, String>;
-    fn open(&mut self, device: &BackendDevice) -> Result<Box<dyn HidHandle>, Failure>;
+    /// Opens a device, answering `None` while the platform is still deciding.
+    ///
+    /// A desktop open either has the access or does not and the answer is the
+    /// syscall's. Android asks a person, through a dialog that stays up for as
+    /// long as they take, so `None` means "asked, no answer yet" — the caller's
+    /// promise is held rather than rejected, and the backend is asked again on
+    /// the next frame turn. Rejecting and making the application call `open` a
+    /// second time would have made one call mean two different things on two
+    /// platforms.
+    fn open(&mut self, device: &BackendDevice) -> Result<Option<Box<dyn HidHandle>>, Failure>;
 }
 
 /// What a device worker is asked to do between reads.
@@ -150,6 +178,19 @@ impl Default for ReportLimits {
     }
 }
 
+/// An open the platform has been asked about and has not answered yet.
+///
+/// The device is remembered rather than looked up again on each retry: a
+/// permission dialog is up for as long as a person takes to read it, and
+/// re-enumerating the USB tree once a frame for the whole of that would be a
+/// device-tree walk per frame to learn something the retry itself reports.
+struct PendingOpen {
+    target: BackendDevice,
+    info: Value,
+    /// The one command this will settle.
+    command_id: u64,
+}
+
 struct OpenDevice {
     commands: Sender<Command>,
     stop: Arc<AtomicBool>,
@@ -172,6 +213,8 @@ pub(crate) struct HidController {
     /// The last enumeration, keyed by public id, which hot-plug diffs against.
     present: BTreeMap<String, Value>,
     open: HashMap<String, OpenDevice>,
+    /// Opens waiting on a permission answer, by public id.
+    pending: HashMap<String, PendingOpen>,
     /// Command id to the device that owes it an answer.
     inflight: HashMap<u64, String>,
     last_scan: Option<Instant>,
@@ -412,6 +455,7 @@ impl HidController {
             next_id: 1,
             present: BTreeMap::new(),
             open: HashMap::new(),
+            pending: HashMap::new(),
             inflight: HashMap::new(),
             last_scan: None,
         }
@@ -477,10 +521,28 @@ impl HidController {
     }
 
     /// Opens a device by public id, refusing everything S10 said to refuse.
-    pub(crate) fn open(&mut self, device_id: &str) -> Result<Value, Failure> {
+    ///
+    /// Answers `Ok(None)` when the platform has been asked for access and has
+    /// not answered: the command id is held until it does, and the completion
+    /// is pushed from [`HidController::poll`] instead of returned here.
+    pub(crate) fn open(
+        &mut self,
+        device_id: &str,
+        command_id: u64,
+    ) -> Result<Option<Value>, Failure> {
         if self.open.contains_key(device_id) {
             return Err(Failure::invalid_state(format!(
                 "HID device {device_id} is already open"
+            )));
+        }
+        // A second open while the first is still waiting is refused with the
+        // same name a second open of an open device gets. Two reasons, and they
+        // point the same way: an application that did this on a desktop was
+        // told `InvalidStateError`, and one permission dialog per device is the
+        // most a person should ever be shown for one request.
+        if self.pending.contains_key(device_id) {
+            return Err(Failure::invalid_state(format!(
+                "an open of HID device {device_id} is already waiting for permission"
             )));
         }
         // Re-enumerated rather than read from the last snapshot: a device can
@@ -499,8 +561,35 @@ impl HidController {
             )));
         };
         self.diff(scan.snapshot());
+        if let Some(opened) = self.start(device_id, &target, &info)? {
+            return Ok(Some(opened));
+        }
+        self.pending.insert(
+            device_id.to_owned(),
+            PendingOpen {
+                target,
+                info,
+                command_id,
+            },
+        );
+        Ok(None)
+    }
 
-        let handle = self.backend.open(&target)?;
+    /// Takes a resolved device from the backend's answer to a live handle.
+    ///
+    /// Split out of [`HidController::open`] because a pending open runs it
+    /// again on later turns, and everything it does — the descriptor gate, the
+    /// worker, the bounds an application is told — has to be identical whether
+    /// permission was already held or was granted a second later.
+    fn start(
+        &mut self,
+        device_id: &str,
+        target: &BackendDevice,
+        info: &Value,
+    ) -> Result<Option<Value>, Failure> {
+        let Some(handle) = self.backend.open(target)? else {
+            return Ok(None);
+        };
         let mut limits = ReportLimits::default();
         if let Ok(descriptor) = handle.report_descriptor()
             && let Some((declared, collections)) = limits_of(&descriptor)
@@ -546,12 +635,12 @@ impl HidController {
                 terminated: false,
             },
         );
-        Ok(json!({
+        Ok(Some(json!({
             "device": info,
             "maxInputReportSize": limits.input,
             "maxOutputReportSize": limits.output,
             "maxFeatureReportSize": limits.feature,
-        }))
+        })))
     }
 
     /// Stops a device's worker, drops its handle, and settles what was in flight.
@@ -701,6 +790,7 @@ impl HidController {
                 }
             }
         }
+        self.resolve_pending();
         if !crate::dom_bridge::hid::watching() {
             self.last_scan = None;
             return;
@@ -714,6 +804,32 @@ impl HidController {
         self.last_scan = Some(Instant::now());
         if let Ok(scan) = self.scan() {
             self.diff(scan.snapshot());
+        }
+    }
+
+    /// Asks the backend again about every open that is waiting for permission.
+    ///
+    /// Every frame turn rather than on the hot-plug interval, because what is
+    /// being waited for is a person tapping a dialog and the application's
+    /// promise cannot settle before the attempt that observes it. The device is
+    /// the one the request named, so nothing is enumerated: waiting costs one
+    /// backend call per turn per outstanding request, and a backend that still
+    /// has no answer says so without touching the device.
+    fn resolve_pending(&mut self) {
+        for device_id in self.pending.keys().cloned().collect::<Vec<_>>() {
+            let Some(pending) = self.pending.get(&device_id) else {
+                continue;
+            };
+            let (target, info) = (pending.target.clone(), pending.info.clone());
+            let settled = match self.start(&device_id, &target, &info) {
+                Ok(None) => continue,
+                Ok(Some(opened)) => Ok(opened),
+                Err(failure) => Err(failure),
+            };
+            let Some(pending) = self.pending.remove(&device_id) else {
+                continue;
+            };
+            crate::dom_bridge::hid::complete(pending.command_id, settled);
         }
     }
 }
@@ -759,6 +875,7 @@ fn check_length(data: &[u8], limit: usize, what: &str) -> Result<(), Failure> {
 }
 
 /// The controller a window session drives, over the platform's own backend.
+#[cfg(not(target_os = "android"))]
 pub(crate) fn controller(proxy: winit::event_loop::EventLoopProxy) -> HidController {
     HidController::with_backend(
         Box::new(platform::HidApiBackend::default()),
@@ -766,19 +883,33 @@ pub(crate) fn controller(proxy: winit::event_loop::EventLoopProxy) -> HidControl
     )
 }
 
+/// The same controller over `UsbManager`, which is Android's whole HID story.
+#[cfg(target_os = "android")]
+pub(crate) fn controller(proxy: winit::event_loop::EventLoopProxy) -> HidController {
+    HidController::with_backend(
+        Box::new(android::UsbHidBackend::new(android::usb::ActivityUsb)),
+        Arc::new(move || proxy.wake_up()),
+    )
+}
+
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::AtomicUsize;
+    use std::sync::atomic::{AtomicIsize, AtomicUsize};
 
     use super::*;
 
     /// A backend with no hardware behind it.
+    ///
+    /// `defer` is how a platform that asks a person for permission is driven
+    /// from a test: the first `defer` opens answer `Pending`, as Android's does
+    /// while its dialog is up, and the one after that produces the handle.
     #[derive(Default)]
     struct FakeBackend {
         devices: Arc<Mutex<Vec<BackendDevice>>>,
         handles: Arc<Mutex<Vec<FakeState>>>,
         refuse: Option<Failure>,
         unavailable: Option<String>,
+        defer: Arc<AtomicIsize>,
     }
 
     /// Input reports the fake handle answers, then a read error to end on.
@@ -841,16 +972,19 @@ mod tests {
             Ok(crate::dom_bridge::net_lock(&self.devices).clone())
         }
 
-        fn open(&mut self, device: &BackendDevice) -> Result<Box<dyn HidHandle>, Failure> {
+        fn open(&mut self, device: &BackendDevice) -> Result<Option<Box<dyn HidHandle>>, Failure> {
             if let Some(failure) = &self.refuse {
                 return Err(failure.clone());
             }
             let _ = device;
+            if self.defer.fetch_sub(1, Ordering::AcqRel) > 0 {
+                return Ok(None);
+            }
             let state = crate::dom_bridge::net_lock(&self.handles)
                 .first()
                 .cloned()
                 .unwrap_or_default();
-            Ok(Box::new(FakeHandle(state)))
+            Ok(Some(Box::new(FakeHandle(state))))
         }
     }
 
@@ -1006,16 +1140,15 @@ mod tests {
                 descriptor: vendor_descriptor(),
                 ..FakeState::default()
             }])),
-            refuse: None,
-            unavailable: None,
+            ..FakeBackend::default()
         });
         controller.devices().expect("enumeration succeeds");
         assert_eq!(
-            controller.open("d2").expect_err("the keyboard node").name,
+            controller.open("d2", 1).expect_err("the keyboard node").name,
             "NotSupportedError"
         );
         assert_eq!(
-            controller.open("d9").expect_err("no such device").name,
+            controller.open("d9", 2).expect_err("no such device").name,
             "NotFoundError"
         );
 
@@ -1027,7 +1160,7 @@ mod tests {
         let (mut controller, _) = controller_over(denied);
         controller.devices().expect("enumeration succeeds");
         assert_eq!(
-            controller.open("d1").expect_err("permission denied").name,
+            controller.open("d1", 1).expect_err("permission denied").name,
             "NotAllowedError"
         );
 
@@ -1041,7 +1174,7 @@ mod tests {
         controller.devices().expect("enumeration succeeds");
         controller.backend = Box::new(FakeBackend::default());
         assert_eq!(
-            controller.open("d1").expect_err("unplugged since").name,
+            controller.open("d1", 1).expect_err("unplugged since").name,
             "NotFoundError"
         );
 
@@ -1051,7 +1184,7 @@ mod tests {
         };
         let (mut controller, _) = controller_over(broken);
         assert_eq!(
-            controller.open("d1").expect_err("the backend itself failed").name,
+            controller.open("d1", 1).expect_err("the backend itself failed").name,
             "OperationError"
         );
     }
@@ -1065,11 +1198,12 @@ mod tests {
                 descriptor: composite_descriptor(),
                 ..FakeState::default()
             }])),
-            refuse: None,
-            unavailable: None,
+            ..FakeBackend::default()
         });
         controller.devices().expect("enumeration succeeds");
-        let failure = controller.open("d1").expect_err("the descriptor betrays it");
+        let failure = controller
+            .open("d1", 1)
+            .expect_err("the descriptor betrays it");
         assert_eq!(failure.name, "NotSupportedError");
         assert!(
             failure.message.contains("0x0001"),
@@ -1093,11 +1227,13 @@ mod tests {
                 reports: Arc::clone(&reports),
                 ..FakeState::default()
             }])),
-            refuse: None,
-            unavailable: None,
+            ..FakeBackend::default()
         });
         controller.devices().expect("enumeration succeeds");
-        let opened = controller.open("d1").expect("the vendor device opens");
+        let opened = controller
+            .open("d1", 1)
+            .expect("the vendor device opens")
+            .expect("a desktop open settles on the turn that asked");
         assert_eq!(opened["maxInputReportSize"], 4);
         assert_eq!(opened["maxOutputReportSize"], 2);
         let delivered = settle(&mut controller, 3);
@@ -1127,11 +1263,12 @@ mod tests {
                 written: Arc::clone(&written),
                 ..FakeState::default()
             }])),
-            refuse: None,
-            unavailable: None,
+            ..FakeBackend::default()
         });
         controller.devices().expect("enumeration succeeds");
-        controller.open("d1").expect("the vendor device opens");
+        controller
+            .open("d1", 9)
+            .expect("the vendor device opens");
         let refused = controller
             .write("d1", 1, vec![0x03; 64])
             .expect_err("64 bytes is past the declared output report");
@@ -1166,11 +1303,12 @@ mod tests {
                 descriptor: vendor_descriptor(),
                 ..FakeState::default()
             }])),
-            refuse: None,
-            unavailable: None,
+            ..FakeBackend::default()
         });
         controller.devices().expect("enumeration succeeds");
-        controller.open("d1").expect("the vendor device opens");
+        controller
+            .open("d1", 9)
+            .expect("the vendor device opens");
         controller
             .send_feature_report("d1", 1, vec![0x03, 0x7f])
             .expect("the feature report is within bounds");
@@ -1195,11 +1333,12 @@ mod tests {
                 ]))),
                 ..FakeState::default()
             }])),
-            refuse: None,
-            unavailable: None,
+            ..FakeBackend::default()
         });
         controller.devices().expect("enumeration succeeds");
-        controller.open("d1").expect("the vendor device opens");
+        controller
+            .open("d1", 9)
+            .expect("the vendor device opens");
         let delivered = settle(&mut controller, 2);
         assert_eq!(delivered.len(), 2);
         assert_eq!(delivered[1].value, json!({"type":"disconnect","deviceId":"d1"}));
@@ -1211,6 +1350,90 @@ mod tests {
             controller.close("d1").expect_err("the handle is closed").name,
             "InvalidStateError"
         );
+    }
+
+    /// The Android open, driven entirely through the shared controller (#248).
+    ///
+    /// Nothing here knows what a `UsbManager` is: a backend that answers "asked,
+    /// no answer yet" is the whole of the platform difference, and what this
+    /// asserts is the part an application can observe — the promise stays open
+    /// across frames, several opens of one device settle together on the one
+    /// answer, and the answer arrives as a completion on a frame turn rather
+    /// than from the call that asked.
+    #[test]
+    fn an_open_awaiting_permission_settles_on_a_later_frame_turn() {
+        crate::dom_bridge::hid::reset();
+        let (mut controller, _) = controller_over(FakeBackend {
+            devices: Arc::new(Mutex::new(vec![device("usb/001/002#0", 0xff00, 0x0001)])),
+            handles: Arc::new(Mutex::new(vec![FakeState {
+                descriptor: vendor_descriptor(),
+                ..FakeState::default()
+            }])),
+            defer: Arc::new(AtomicIsize::new(2)),
+            ..FakeBackend::default()
+        });
+        controller.devices().expect("enumeration succeeds");
+        assert!(
+            controller.open("d1", 1).expect("the dialog is up").is_none(),
+            "an open with no answer yet does not settle in the call that made it"
+        );
+        assert_eq!(
+            controller
+                .open("d1", 2)
+                .expect_err("one device, one dialog, one answer")
+                .name,
+            "InvalidStateError",
+            "a second open while the first waits is refused as it is on desktop"
+        );
+        controller.poll();
+        assert!(
+            crate::dom_bridge::hid::take_messages().is_empty(),
+            "a turn with no answer produces no completion"
+        );
+
+        controller.poll();
+        let settled = crate::dom_bridge::hid::take_messages();
+        assert_eq!(settled.len(), 1, "the open settles once, on a later turn");
+        assert_eq!(settled[0].value["type"], "completion");
+        assert_eq!(settled[0].value["commandId"], 1);
+        assert_eq!(settled[0].value["error"], Value::Null);
+        assert_eq!(settled[0].value["value"]["device"]["id"], "d1");
+        assert_eq!(settled[0].value["value"]["maxInputReportSize"], 4);
+        controller.close("d1").expect("the device closes");
+    }
+
+    /// A refusal that arrives after the wait, which is what a denial is.
+    #[test]
+    fn a_refusal_after_the_wait_rejects_the_open_that_was_waiting() {
+        crate::dom_bridge::hid::reset();
+        let devices = Arc::new(Mutex::new(vec![device("usb/001/002#0", 0xff00, 0x0001)]));
+        let (mut controller, _) = controller_over(FakeBackend {
+            devices: Arc::clone(&devices),
+            defer: Arc::new(AtomicIsize::new(1)),
+            ..FakeBackend::default()
+        });
+        controller.devices().expect("enumeration succeeds");
+        assert!(controller.open("d1", 1).expect("the dialog is up").is_none());
+        controller.backend = Box::new(FakeBackend {
+            devices,
+            refuse: Some(Failure::not_allowed("the user dismissed the dialog".into())),
+            ..FakeBackend::default()
+        });
+        controller.poll();
+        let settled = crate::dom_bridge::hid::take_messages();
+        assert_eq!(settled.len(), 1);
+        // The name, not the text: a denial has to be separable from a device
+        // that vanished while the dialog was up, which is a NotFoundError.
+        assert_eq!(settled[0].value["errorName"], "NotAllowedError");
+        assert_eq!(
+            controller
+                .close("d1")
+                .expect_err("a refused open left nothing open")
+                .name,
+            "InvalidStateError"
+        );
+        // And the refusal is not remembered: asking again asks the platform.
+        assert!(controller.open("d1", 2).is_err());
     }
 
     #[test]

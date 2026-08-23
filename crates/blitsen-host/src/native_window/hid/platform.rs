@@ -168,13 +168,15 @@ impl HidBackend for HidApiBackend {
             .collect())
     }
 
-    fn open(&mut self, device: &BackendDevice) -> Result<Box<dyn HidHandle>, Failure> {
+    fn open(&mut self, device: &BackendDevice) -> Result<Option<Box<dyn HidHandle>>, Failure> {
         let path = CString::new(device.path.as_bytes()).map_err(|_| {
             Failure::not_found("that HID device's platform path is no longer valid".into())
         })?;
         let api = self.api().map_err(Failure::operation)?;
         match api.open_path(&path) {
-            Ok(handle) => Ok(Box::new(Handle(handle))),
+            // Never `None`: this open has already happened by the time it
+            // answers. Only Android's has a person in the middle of it.
+            Ok(handle) => Ok(Some(Box::new(Handle(handle)))),
             Err(error) => Err(open_failure(device, &error)),
         }
     }

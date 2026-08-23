@@ -197,6 +197,9 @@ describe("Phase 2 link step", () => {
         menuIcons: ["blitsen.tray-menu.0.png", "blitsen.tray-menu.1.png"],
       });
       expect(runtime.menu).toEqual(menu);
+      // No `--bundle-id`, so nothing registered an identity for this artifact
+      // and there is none for a notification activation to be addressed to.
+      expect(runtime.activation).toBeNull();
       const side = await buildStandalone({
         root, width: 800, height: 600, title: "Classic", outfile: join(directory, "Side"),
         window, tray, assets: "side-loaded",
@@ -204,6 +207,18 @@ describe("Phase 2 link step", () => {
       expect(await readFile(join(side.assetDirectory, "blitsen.tray.png"))).toEqual(trayIcon);
       expect(await readFile(join(side.assetDirectory, "blitsen.tray-menu.0.png"))).toEqual(trayIcon);
       expect(await readFile(join(side.assetDirectory, "blitsen.tray-menu.1.png"))).toEqual(trayIcon);
+
+      // Issue #252. The identity a notification activation is addressed to has
+      // to be inside the executable the platform starts, because the process it
+      // starts has no other way to learn it: the runtime is a generic host and
+      // the artifact's path is not an identity.
+      const identified = await buildStandalone({
+        root, width: 800, height: 600, title: "Classic", outfile: join(directory, "Identified"),
+        bundleId: "com.example.classic", platform: "linux",
+      }, nativePath);
+      const record = readBundle(await readFile(identified.outfile));
+      expect(JSON.parse(record.files.get("blitsen.runtime.json").toString("utf8")).activation)
+        .toEqual({ identity: "com.example.classic", entry: basename(identified.outfile) });
     });
   }, 120_000);
 

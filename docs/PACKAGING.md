@@ -65,8 +65,39 @@ Packaging differs by target:
 | macOS | `.app` bundle with executable, `Info.plist` and optional `.icns` |
 | Windows | `.exe`, external application manifest and optional `.ico` |
 
-Set a stable macOS identity with `--bundle-id com.example.myapp`. `--app-version` is normalized for
-the target's metadata format.
+Set a stable application identity with `--bundle-id com.example.myapp`. `--app-version` is
+normalized for the target's metadata format.
+
+## Register the notification entry point
+
+`--bundle-id` is also what a notification activation is addressed to. Without it an artifact has no
+identity: two unrelated applications could share one, and notification permission is granted per
+identity, so Blitsen never invents one for this purpose — the `com.blitsen.<name>` an `.app` falls
+back to for its `Info.plist` deliberately does not become an activation identity.
+
+With it, `blitsen build` records the identity inside the executable and the packaging step writes
+what each platform's notification service reads:
+
+| Platform | Registered by the build | Registered at startup |
+| --- | --- | --- |
+| Linux | A `.desktop` entry with `X-GNOME-UsesNotifications=true` and an `Exec` taking one argument | Every notification carries the entry's name as the freedesktop `desktop-entry` hint |
+| macOS | The `.app`'s `CFBundleIdentifier` | — |
+| Windows | — | The AppUserModelID, under the running user's own `SOFTWARE\Classes\AppUserModelId` |
+| Android | — | The application ID the package was installed as, read from the Activity |
+
+Windows and Android register at startup rather than at build time on purpose: `blitsen build`
+cross-compiles, so the machine that writes a Windows artifact is routinely not the machine that will
+run it, and the key that has to exist belongs to the user who eventually does.
+
+Where a platform, distribution or installer can hand a launch context over itself, it does so as
+`--notification-activation <envelope>` on the application's own command line. What each platform
+will actually start, and what it will not, is [Platform
+support](PLATFORM-SUPPORT.md#notifications); what the application receives is [Native
+APIs](NATIVE-APIS.md#cold-start-activation).
+
+A development run registers nothing and has no identity, so a notification it shows can only be
+acted on while it is still running, and an activation handed to it is refused with a message saying
+so.
 
 ## Sign the artifact
 

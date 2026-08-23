@@ -41,7 +41,7 @@ lists individual globals, classes and members.
 | Audio | `<audio>` and a focused Web Audio subset |
 | Storage | `localStorage` and `sessionStorage`, both in-memory for one process |
 | Canvas | `<canvas>` with a full 2D context: paths, text, images, gradients, patterns, compositing, `getImageData` and `toDataURL` |
-| Notifications | Standard `Notification` construction, permission, close, and lifecycle events on Linux, Windows and eligible packaged macOS apps; see platform limits below |
+| Notifications | Standard `Notification` construction, permission, close, and lifecycle events on Linux, Windows, eligible packaged macOS apps and launched Android packages; see platform limits below |
 
 ## Important absences
 
@@ -121,13 +121,20 @@ frame-turn event queue. The constructor maps `body`, `icon`, `actions`, and `req
 vibration, renotify, silent delivery, and per-action icons throw `NotSupportedError` instead of
 being silently accepted.
 
-The global exists on Linux, on Windows, and in macOS application bundles with the identity required
-by `UNUserNotificationCenter`. It is absent in an unbundled macOS development host and on Android
-until notification intent routing lands in #252. Windows reports the notifier's own setting, so
+The global exists on Linux, on Windows, in macOS application bundles with the identity required by
+`UNUserNotificationCenter`, and in an Android package the platform launched—there a body tap is a
+`PendingIntent` addressed to an installed application identity, so a package has one and a runtime
+started against a directory standing in for `assets/` does not. It is absent in an unbundled macOS
+development host. Windows reports the notifier's own setting, so
 `Notification.permission` is `"granted"` or `"denied"` there and `requestPermission()` reads rather
 than prompts. Test
 `"Notification" in globalThis`; use `blitsen/notify` when the richer native event/action identity
-is required. Cold-start activation remains #252.
+is required.
+
+Cold-start activation is `blitsen/notify` only. A click on a notification whose process has exited
+is delivered as an `activation` event on `notify.onEvent`
+([Native APIs](NATIVE-APIS.md#cold-start-activation)); it cannot become a `click` on a `Notification`
+object, because the object it would belong to was created by a session that has ended.
 
 ## Internationalisation
 

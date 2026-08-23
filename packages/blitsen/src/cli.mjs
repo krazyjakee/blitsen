@@ -45,7 +45,9 @@ Options:
   --accept-errors    Export despite compatibility errors, accepting what they cost
   --assets <layout>  embedded (default) or side-loaded next to the executable
   --icon <path>      Application icon: PNG, or a platform-native .ico/.icns/.svg
-  --bundle-id <id>   macOS CFBundleIdentifier (default: com.blitsen.<title>)
+  --bundle-id <id>   Application identity: the macOS CFBundleIdentifier (default:
+                     com.blitsen.<title>), and the identity a notification
+                     activation is addressed to, which has no default
   --app-version <v>  Application version recorded in the platform metadata
   --sign <command>   Signing hook, run with the packaged artifact as its argument
   --dev-bundle       macOS, run only: build a signed development .app around this

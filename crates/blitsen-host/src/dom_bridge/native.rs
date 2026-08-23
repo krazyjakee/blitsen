@@ -7,13 +7,12 @@
 //! detection selects a fallback (COMPATIBILITY.md, "Capability tiers").
 //!
 //! Android is where that sentence stops being a formality, because the platform
-//! answers "no" to most of it. `os`, focused `input` snapshots and notifications
-//! survive there; app, clipboard, dialog, window and tray remain absent for the
-//! reasons their module or platform documentation states.
+//! answers "no" to most of it. `os`, focused `input` snapshots, notifications
+//! and — since #248 gave it a `UsbManager` backend — raw HID survive there; app,
+//! clipboard, dialog, window and tray remain absent for the reasons their module
+//! or platform documentation states.
 
-use blitsen_js::{JsEngine, JsError};
-#[cfg(not(target_os = "android"))]
-use blitsen_js::{TypedArray, TypedArrayKind};
+use blitsen_js::{JsEngine, JsError, TypedArray, TypedArrayKind};
 #[cfg(not(target_os = "android"))]
 use blitsen_platform::PlatformError;
 #[cfg(not(target_os = "android"))]
@@ -147,6 +146,23 @@ fn install_notify<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsError> 
             }),
         )?;
     }
+    // Android joins them when the activation contract is present (#252). The
+    // facade's `click` event is a body tap, and a body tap on Android is a
+    // `PendingIntent` addressed to an installed application identity — without
+    // one there is nothing for the tap to come back to, and a `Notification`
+    // whose `onclick` could never fire is a promise the constructor should not
+    // make. The identity is installed by the window session before the document
+    // loads, so this reads a decision already taken rather than one it makes.
+    #[cfg(target_os = "android")]
+    if crate::native_window::notify::entry_point().is_some() {
+        engine.define_global_function(
+            "__blitsenNativeNotifyStandard",
+            Box::new(move |call| {
+                let mut engine = E::from_value(&call.this);
+                Ok(engine.boolean(true))
+            }),
+        )?;
+    }
 
     engine.define_global_function(
         "__blitsenNativeNotifyUpdate",
@@ -207,7 +223,6 @@ fn install_notify<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsError> 
 /// controller before it allocates or transfers anything. This is the earlier,
 /// cruder guard: it stops a caller from parking an arbitrarily large buffer in
 /// the request queue for a frame before the controller ever sees it.
-#[cfg(not(target_os = "android"))]
 fn report_argument<E: JsEngine>(
     engine: &mut E,
     call: &blitsen_js::NativeCall<E::Value>,
@@ -232,7 +247,6 @@ fn report_argument<E: JsEngine>(
     Ok(report.bytes)
 }
 
-#[cfg(not(target_os = "android"))]
 fn install_hid<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsError> {
     fn command<E: JsEngine>(engine: &mut E, id: u64) -> Result<E::Value, JsError> {
         engine.string(&id.to_string())
@@ -344,15 +358,6 @@ fn install_hid<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsError> {
             engine.array(&messages)
         }),
     )
-}
-
-// Android reaches USB devices through `UsbManager` and an explicit per-device
-// permission result the Activity owns (S10). That is a different module with a
-// different lifecycle, not this one with its backend swapped out, so nothing is
-// installed here rather than something that would always fail.
-#[cfg(target_os = "android")]
-fn install_hid<E: JsEngine + 'static>(_engine: &mut E) -> Result<(), JsError> {
-    Ok(())
 }
 
 fn install_input<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsError> {

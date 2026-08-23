@@ -43,7 +43,8 @@ target; a Windows toast carries that ID as its own tag, which is what an update 
 close removes from the screen and from notification history. Individual notification-server
 policies still decide how a submitted notification is presented.
 
-`blitsen/hid` is available on every desktop target. On Linux a hidraw node is owned by udev, so a
+`blitsen/hid` is available on every desktop target, and on Android over a different backend (see
+"Android"). On Linux a hidraw node is owned by udev, so a
 packaged application reaches an intended device only once a distribution or installer has added a
 rule granting access; `blitsen build` writes a `<name>.hid.rules` template beside the executable and
 `blitsen doctor` reports the requirement. Blitsen never installs a rule itself and running the
@@ -71,11 +72,48 @@ application as root is not a supported substitute.
   navigation drawer — are views inside the activity's own layout rather than a menu the platform
   owns.
 
-The standard Web `Notification` facade is installed on Linux, on Windows, and on any macOS process
+The standard Web `Notification` facade is installed on Linux, on Windows, on any macOS process
 carrying a bundle identity—an exported application, or a development run inside `blitsen run
---dev-bundle`. It is absent in an unbundled macOS development host, and absent on Android until
-intent activation is wired through #252. The native `blitsen/notify` module is available on every
-desktop target and Android, and exposes its platform limits directly.
+--dev-bundle`—and on any Android package the platform launched, where a body tap has an application
+identity to be addressed back to. It is absent in an unbundled macOS development host and in an
+Android runtime started against a directory standing in for `assets/`. The native `blitsen/notify`
+module is available on every desktop target and Android, and exposes its platform limits directly.
+
+### Notifications
+
+A notification outlives the process that showed it, so activating one belonging to a stopped
+application is a launch rather than an event. Blitsen delivers that launch context once, on the
+first frame turn, as an `activation` event on `notify.onEvent`, and never replays one it has already
+delivered—see [Native APIs](NATIVE-APIS.md#cold-start-activation). What each platform does to
+produce it differs, and only the parts named here exist:
+
+- **Linux** — `blitsen build` writes a desktop entry declaring `X-GNOME-UsesNotifications=true` and
+  an `Exec` that takes one argument, and every notification carries that entry's name in the
+  freedesktop `desktop-entry` hint. That is what attributes a notification to an installed
+  application and lists it in the desktop's notification settings. It is not enough to start a
+  stopped one: the freedesktop notification service delivers an activation to the sender's own D-Bus
+  connection, and a sender that has exited has none. Starting the application instead would need a
+  D-Bus-activatable service and a notification submitted through `org.gtk.Notifications` or the
+  portal, which is a second submission backend rather than an entry point.
+- **Windows** — an export built with `--bundle-id` registers that AppUserModelID with the
+  notification platform at startup, which is what gives it a notifier of its own and a permission
+  state to read. Windows starts a stopped desktop application for a toast only through a registered
+  COM activator implementing `INotificationActivationCallback`; Blitsen does not implement one, so
+  toast activation reaches a running process and not a stopped one.
+- **macOS** — an exported `.app` is relaunched by the notification centre, and the response is
+  delivered to the `UNUserNotificationCenter` delegate. The delegate Blitsen's notification library
+  installs discards a response for a notification the running process did not itself submit, so a
+  cold-start response is not surfaced.
+- **Android** — a body tap and each action button are a `PendingIntent` that starts the Activity
+  with the activation envelope in an extra. Dismissal is not reported: it would need a
+  `BroadcastReceiver`, a receiver needs a Java class, and a Blitsen APK declares
+  `android:hasCode="false"` and carries no `classes.dex`. A tap while the Activity is alive is
+  delivered when the Activity is next created, because `NativeActivity` does not forward
+  `onNewIntent`.
+
+Where a platform, distribution or installer can hand an envelope over itself, the entry point is
+`--notification-activation <envelope>` on the application's own command line; both hosts read it,
+and a launch without one is an ordinary launch.
 
 ## macOS requirements
 
@@ -110,7 +148,8 @@ rejects with `NotAllowedError`, separately from a device that disappeared.
 Windows notification permission is what the notifier reports, so it is `"granted"` or `"denied"`
 and never `"default"`; `requestPermission()` reads it without prompting, because Windows gives an
 application no prompt to show. Toasts are delivered under an application identity Windows already
-knows rather than under `appName`; registering one of your own is the packaging work #252 tracks.
+knows rather than under `appName`. An export built with `--bundle-id` registers that identity at
+startup and files its toasts under it; a development run borrows Windows PowerShell's.
 Windows keeps that setting per registered AppUserModelID, so a machine that has registered none—an
 image stripped of Start Menu entries, such as a CI runner or a Server Core install—has no notifier
 to read: `permission()` and `requestPermission()` reject there, naming the missing identity, rather
@@ -122,14 +161,26 @@ Android output is an APK built from a Blitsen source checkout. It supports `arm6
 by default; `armeabi-v7a` can be requested but has not been run by this project. Android supports
 the focus-scoped `input.snapshot` member and `blitsen/notify`. Notifications use Android's stable
 `blitsen.default` channel; API 33+ requests `POST_NOTIFICATIONS`, while API 26–32 reports permission
-as granted. Submission, same-session replacement and close are supported. Tap, action and dismiss
-events are not exposed until #252 adds Android intent activation, so action-bearing submissions
-reject. The standard Web `Notification` global remains absent for the same reason. Android does not
-support Blitsen's app, clipboard, dialog, window, tray, menu or hid native modules in this
-release. Raw
-HID on Android is `UsbManager` and its explicit per-device permission grant rather than desktop
-enumeration, which is a separate implementation this release does not have.
+as granted. Submission, same-session replacement, close, body taps and action buttons are
+supported; dismissal is not, because a swipe-away needs a `BroadcastReceiver` and an APK carrying no
+`classes.dex` has no class for one to be. The standard Web `Notification` global appears only where
+that lifecycle contract is present. Android does not support Blitsen's app, clipboard, dialog,
+window, tray or menu native modules in this release.
 
+`blitsen/hid` is present and reaches USB HID devices through `UsbManager`. Enumeration needs no
+permission and lists the HID interfaces of every attached USB device; `open()` raises Android's
+per-device permission dialog and the promise it returned stays unsettled until that dialog is
+answered, resolving on a grant and rejecting with `NotAllowedError` on a dismissal — which can be
+asked again. A grant belongs to one device and Android revokes it when that device is unplugged.
+Two differences from desktop are worth planning for: `usagePage` and `usage` are `0` in the
+enumeration, because a HID report descriptor cannot be read before permission is granted, so filter
+by `vendorId` and `productId` there and read the usages after `open()`; and a boot keyboard or
+mouse interface is refused before it can be opened, exactly as the desktop collections are.
+
+**This path has never been executed.** It type-checks for `aarch64-linux-android` and its logic is
+covered by tests on the host, but no report has been exchanged with a real device: a Blitsen APK
+cannot currently start on the CI emulator (#151), and an emulator has no USB host controller to
+attach a HID device to, so the acceptance evidence needs physical hardware.
 `blitsen/os` is available, and `os.batteries` is the one member of it that is not: the library
 behind that reading has no Android backend, and the platform's own answer is `BatteryManager` over
 JNI with its own semantics. The input snapshot reports the touch position and a primary button for

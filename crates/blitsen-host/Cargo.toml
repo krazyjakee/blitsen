@@ -63,6 +63,23 @@ jiff = "0.2"
 # three platforms and no dependencies in this crate.
 sys-locale = "0.3"
 writeable = "0.6"
+# The report descriptor of an opened `blitsen/hid` device (#247). A descriptor
+# is a bit-level grammar with global/local item state, delimiters and pushes,
+# and the two things Blitsen needs from it — the longest report of each kind, so
+# a write is bounded by what the device declared, and every top-level collection
+# behind one handle, so a composite device cannot smuggle a keyboard past the
+# filter — both require parsing the whole of it. `default-features = false`
+# drops both of the crate's defaults. `hut` is the usage-table names, and this
+# reads numbers and compares them with the four protected Generic Desktop
+# usages, so it never prints one; `std` only adds the standard-library error
+# traits to a parse failure this module already maps onto its own diagnostics.
+#
+# Not target-specific, unlike the backends that produce the descriptor: Android
+# reads the same bytes off the same device through a `GET_DESCRIPTOR` control
+# transfer (#248), and the gate a descriptor exists to feed — the bounds, and
+# the collections a composite device would otherwise hide — has to be the same
+# gate there. The crate is pure Rust and links nothing.
+hidreport = { version = "0.6", default-features = false }
 image = { version = "0.25", default-features = false, features = ["png"] }
 peniko = "0.6"
 png = "0.18"
@@ -120,17 +137,6 @@ harness = false
 # call reaches a framework that aborts the process without it.
 [target.'cfg(not(target_os = "android"))'.dependencies]
 notify-rust = { version = "4.18.0", default-features = false, features = ["preview-macos-un", "z-with-tokio"] }
-# The report descriptor of an opened `blitsen/hid` device (#247). A descriptor
-# is a bit-level grammar with global/local item state, delimiters and pushes,
-# and the two things Blitsen needs from it — the longest report of each kind, so
-# a write is bounded by what the device declared, and every top-level collection
-# behind one handle, so a composite device cannot smuggle a keyboard past the
-# filter — both require parsing the whole of it. `default-features = false`
-# drops both of the crate's defaults. `hut` is the usage-table names, and this
-# reads numbers and compares them with the four protected Generic Desktop
-# usages, so it never prints one; `std` only adds the standard-library error
-# traits to a parse failure this module already maps onto its own diagnostics.
-hidreport = { version = "0.6", default-features = false }
 
 # An APK's `assets/`, read through `AAssetManager` (#144). Android only: the
 # other six targets have no asset manager, and the same provider reads a

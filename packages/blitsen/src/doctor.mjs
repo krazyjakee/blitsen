@@ -75,16 +75,27 @@ function nativeModuleRules(target) {
 //
 // Nothing is reported on a platform where the module does not exist at all; the
 // absence finding already covers that and says more.
+//
+// Android splits the sentence in two (#248). The other three targets are told
+// to the *install*: a rule is shipped, an entitlement is signed, and until that
+// happens every open fails. Android's grant is given while the application is
+// running, by the person using it, one device at a time — so there is nothing
+// to do before shipping and nothing that "until it does" could refer to.
 function nativeHidRules(target) {
   const platform = platformOf(target);
   const requirement = HID_ACCESS[platform];
   if (!requirement || absentNativeModules(target).some(entry => entry.module === "hid")) return [];
+  const granted = platform === "android";
   return [[
     "NATIVE_HID_ACCESS",
     "warning",
     /["'`]blitsen\/hid["'`]/g,
-    `blitsen/hid opens devices that the ${platform} install has to grant access to.`,
-    `${requirement} Until it does, open() rejects with a NotAllowedError naming the device.`,
+    granted
+      ? "blitsen/hid opens devices the person using the application grants one at a time."
+      : `blitsen/hid opens devices that the ${platform} install has to grant access to.`,
+    granted
+      ? requirement
+      : `${requirement} Until it does, open() rejects with a NotAllowedError naming the device.`,
   ]];
 }
 
