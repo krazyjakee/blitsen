@@ -68,7 +68,7 @@ That distinction drives every scoping decision:
 | --- | --- | --- | --- | --- |
 | Renderer you control & ship | ✗ | ✓ | ✗ | ✓ |
 | Consistent across OS versions | ✗ | ✓ | ✗ | ✓ |
-| Bare app size | n/a | **327.4 MB** | **11.9 MB** | **57.6 MB** (§9) |
+| Bare app size | n/a | **327.4 MB** | **11.9 MB** | **57.8 MB** (§9) |
 | Full OS access | ✗ | ✓ | ✓ | ✓ |
 | npm ecosystem | ✓ | ✓ | ✓ | ✓ |
 | Adopt without restructuring the project | n/a | partial | partial | compatible apps: one dev dependency |
@@ -442,7 +442,7 @@ workspace and a clean `cargo ndk check` without scaffolding.
 
 | # | Requirement | Target | Notes |
 | --- | --- | --- | --- |
-| P1 | Bare exported app size | **57.6 MB installed, 21.6 MB compressed** — measured on Linux x64 with rustc 1.97.1 after #102 removed the accidentally enabled platform accessibility adapter. It replaces the stale 55.8/20.9 MB row. CI records the current Phase 2 bare export on all six targets; §9 names the artifacts and remote-only values. | S0's ≤50 MB estimate is withdrawn: the current full runtime is 9.7% above its 52.48 MB floor. On the same Linux host and exact bare HTML, Electron 43.4.1 is 327.4 MB and Tauri 2.11.5 is 11.9 MB; Tauri excludes the system WebView it relies on, while the other two ship their renderer. Android remains P1b, not a seventh value in this row. |
+| P1 | Bare exported app size | **57.8 MB installed, 21.6 MB compressed** — measured on Linux x64 with rustc 1.97.1 after #102 and the durable-storage/native-IME integration. It replaces the stale 55.8/20.9 MB row. CI records the current Phase 2 bare export on all six targets; §9 names the artifacts and remote-only values. | S0's ≤50 MB estimate is withdrawn: the current full runtime is 10.1% above its 52.48 MB floor. On the same Linux host and exact bare HTML, Electron 43.4.1 is 327.4 MB and Tauri 2.11.5 is 11.9 MB; Tauri excludes the system WebView it relies on, while the other two ship their renderer. Android remains P1b, not a seventh value in this row. |
 | P1b | Bare APK size, per ABI | **35.2 MB installed, 14.7 MB downloaded** — historical GPU-renderer measurement for `arm64-v8a`, release, on the same bare application P1 uses (#150); the #151 CPU default awaits an NDK remeasurement | The budget is one ABI's, because a device installs one ABI and runs it. The two-ABI APK `blitsen build --android` defaults to is **74.6 MB**, and the half of it the device cannot use is carried anyway — so `--android-abi arm64-v8a` is the shipping build and the default set is the one a developer can also put on an emulator. Both numbers are stated because they answer different questions: the APK is what a sideload transfers, and 14.7 MB is what Play's own `bundletool get-size` reports a per-ABI split delivering. Android's vendored OpenSSL is measured rather than asserted, at **≥3.6 MB** of the library, and it does not show up as a premium: at equal architecture the whole APK is *smaller* than the desktop executable. Play measures every limit on the compressed download, and this is 3% of the 500 MB base-module ceiling — size is not the argument for an AAB. Breakdown, method and limits in §9. |
 | P2 | Cold start to first frame | < 500 ms on mid-range hardware | Should beat Electron decisively or the pitch weakens. |
 | P3 | Idle RAM, bare app | < 100 MB | |
@@ -487,11 +487,11 @@ Bare app on the shipping host (Linux x64, 2026-08-13, `bun run --cwd packages/bl
   ─────────────────────────────────────────
   shipped total                 38,090,586 B  the executable, and that is all
 
-Current full-surface checkpoint (Linux x64, rustc 1.97.1, #102 incorporated)
-  Blitsen runtime export        57,569,613 B  measured from the explicitly pinned checkout runtime
-  gzip -9                       21,594,228 B
-  runtime executable            57,469,888 B  the application payload is 99,725 B
-  S0 floor delta                +5,088,709 B  +9.7%; the old estimate stays withdrawn
+Current full-surface checkpoint (Linux x64, rustc 1.97.1, #102/storage/IME integrated)
+  Blitsen runtime export        57,767,973 B  measured from the explicitly pinned checkout runtime
+  gzip -9                       21,631,059 B
+  runtime executable            57,767,240 B  the application payload is 733 B
+  S0 floor delta                +5,287,069 B  +10.1%; the old estimate stays withdrawn
   previous c6e43ca baseline     57,638,189 B  before #102 and the later integration changes
   #102 isolated adapter delta       -8,640 B  -390 B gzip on its own baseline; not inferred from
                                               the two different full-tree checkpoints
@@ -501,8 +501,8 @@ Same-host bare comparison (2026-08-23; exact same 968d9e… HTML, 800×600 relea
     filewise gzip -9           124,665,308 B  compression proxy, not an installer
   Tauri 2.11.5                  11,864,824 B  one executable; system WebView excluded
     gzip -9                      2,696,602 B
-  Blitsen checkpoint            57,569,613 B  renderer + QuickJS-ng included
-    gzip -9                     21,594,228 B
+  Blitsen checkpoint            57,767,973 B  renderer + QuickJS-ng included
+    gzip -9                     21,631,059 B
 
 Adopted since the measurement above
   strip = "symbols" on release  13,078,232 B  off both artifacts; it is in [profile.release], so a
