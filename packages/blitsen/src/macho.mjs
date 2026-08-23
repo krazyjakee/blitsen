@@ -34,7 +34,13 @@ const LC_DYLD_INFO_ONLY = 0x80000022;
 const HEADER_SIZE = 32;
 const SEGMENT_COMMAND_SIZE = 72;
 const SECTION_SIZE = 80;
-const NEW_SEGMENT_COMMAND_SIZE = SEGMENT_COMMAND_SIZE + SECTION_SIZE;
+// The shipped arm64 runtime has 96 bytes of load-command padding. A segment
+// command fits at 72 bytes; adding an 80-byte section record would not. Keep
+// the application in a named read-only segment and place its trailer at the
+// segment end, which preserves an exact discoverable boundary without moving
+// the executable's first mapped page.
+const NEW_SEGMENT_COMMAND_SIZE = SEGMENT_COMMAND_SIZE;
+const BUNDLE_TRAILER_SIZE = 64;
 const LINKEDIT_DATA_COMMANDS = new Set([
   LC_SEGMENT_SPLIT_INFO, LC_FUNCTION_STARTS, LC_DATA_IN_CODE, LC_DYLIB_CODE_SIGN_DRS, LC_ATOM_INFO,
   LC_LINKER_OPTIMIZATION_HINT, LC_DYLD_EXPORTS_TRIE, LC_DYLD_CHAINED_FIXUPS,
@@ -206,14 +212,6 @@ function segmentCommand({ vmaddr, vmsize, fileoff, filesize }) {
   command.writeBigUInt64LE(BigInt(filesize), 48);
   command.writeUInt32LE(1, 56); // maxprot: VM_PROT_READ
   command.writeUInt32LE(1, 60); // initprot: VM_PROT_READ
-  command.writeUInt32LE(1, 64);
-
-  const section = SEGMENT_COMMAND_SIZE;
-  fixedName("__payload").copy(command, section);
-  fixedName("__BLITSEN").copy(command, section + 16);
-  command.writeBigUInt64LE(BigInt(vmaddr), section + 32);
-  // `size` and `offset` are filled by the caller, which knows the unpadded data.
-  command.writeUInt32LE(4, section + 52); // 16-byte section alignment
   return command;
 }
 
@@ -260,7 +258,7 @@ function adHocSignature(bytes, codeLimit, text) {
 }
 
 /**
- * Installs `sectionData` as `__BLITSEN,__payload` immediately before
+ * Installs `sectionData` in a read-only `__BLITSEN` segment immediately before
  * `__LINKEDIT`, then replaces the now-invalid inherited signature with a
  * deterministic ad-hoc signature. `codesign --force` may replace it later;
  * having one here keeps an ordinary unsigned arm64 export runnable too.
@@ -270,6 +268,7 @@ export function injectMachOPayload(executable, sectionData) {
   if (!parsed) return null;
   const { commands, commandsEnd, linkedit, text, signatureCommand,
     signatureOffset: oldSignatureOffset, pageSize } = parsed;
+  if (sectionData.length < BUNDLE_TRAILER_SIZE) malformed("the bundle has no complete trailer");
   const segmentFilesize = align(sectionData.length, pageSize);
   const segmentVmsize = segmentFilesize;
   const linkeditData = executable.subarray(linkedit.fileoff, oldSignatureOffset);
@@ -287,8 +286,6 @@ export function injectMachOPayload(executable, sectionData) {
     vmaddr: linkedit.vmaddr, vmsize: segmentVmsize,
     fileoff: linkedit.fileoff, filesize: segmentFilesize,
   });
-  embedded.writeBigUInt64LE(BigInt(sectionData.length), SEGMENT_COMMAND_SIZE + 40);
-  embedded.writeUInt32LE(linkedit.fileoff, SEGMENT_COMMAND_SIZE + 48);
 
   const rebuiltCommands = [];
   let inserted = false;
@@ -321,12 +318,14 @@ export function injectMachOPayload(executable, sectionData) {
   const commandBytes = Buffer.concat(rebuiltCommands);
   const newCommandsEnd = HEADER_SIZE + commandBytes.length;
   const bodyBeforeLinkedit = executable.subarray(newCommandsEnd, linkedit.fileoff);
+  const trailerAt = sectionData.length - BUNDLE_TRAILER_SIZE;
   const unsigned = Buffer.concat([
     header,
     commandBytes,
     bodyBeforeLinkedit,
-    sectionData,
+    sectionData.subarray(0, trailerAt),
     Buffer.alloc(segmentFilesize - sectionData.length),
+    sectionData.subarray(trailerAt),
     linkeditData,
   ]);
   if (unsigned.length !== newSignatureOffset)

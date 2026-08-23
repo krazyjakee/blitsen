@@ -81,7 +81,7 @@ export function buildTrailer(payload, payloadOffset) {
  *
  * On ELF and PE the bundle remains an append-only trailer. A Mach-O has a
  * stricter shape: `__LINKEDIT` must remain last, so its payload is installed as
- * `__BLITSEN,__payload` immediately before that segment and the inherited
+ * read-only `__BLITSEN` segment immediately before it and the inherited
  * signature is replaced by an ad-hoc one. The export pipeline's signing hook
  * still runs afterwards and may replace that signature with the user's.
  *

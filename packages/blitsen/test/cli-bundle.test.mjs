@@ -172,7 +172,9 @@ describe("Phase 2 link step", () => {
   test("puts a Darwin payload in a real segment before __LINKEDIT and ad-hoc signs it", () => {
     for (const cpu of [0x01000007, 0x0100000c]) {
       const { executable, linkeditAt, page } = machoFixture(cpu);
-      const section = Buffer.from("a payload that belongs to __BLITSEN");
+      const payload = Buffer.from("a payload that belongs to __BLITSEN");
+      const trailer = Buffer.alloc(64, 0xa5);
+      const section = Buffer.concat([payload, trailer]);
       expect(machOPayloadOffset(executable)).toBe(linkeditAt);
       const linked = injectMachOPayload(executable, section);
       const commands = machoCommands(linked);
@@ -183,9 +185,9 @@ describe("Phase 2 link step", () => {
 
       expect(linked.readBigUInt64LE(embedded.offset + 40)).toBe(BigInt(linkeditAt));
       expect(linked.readBigUInt64LE(embedded.offset + 48)).toBe(BigInt(page));
-      expect(linked.readBigUInt64LE(embedded.offset + 72 + 40)).toBe(BigInt(section.length));
-      expect(linked.readUInt32LE(embedded.offset + 72 + 48)).toBe(linkeditAt);
-      expect(linked.subarray(linkeditAt, linkeditAt + section.length)).toEqual(section);
+      expect(linked.readUInt32LE(embedded.offset + 64)).toBe(0);
+      expect(linked.subarray(linkeditAt, linkeditAt + payload.length)).toEqual(payload);
+      expect(linked.subarray(linkeditAt + page - trailer.length, linkeditAt + page)).toEqual(trailer);
       expect(linked.readBigUInt64LE(linkedit.offset + 40)).toBe(BigInt(linkeditAt + page));
       expect(Number(linked.readBigUInt64LE(linkedit.offset + 40)
         + linked.readBigUInt64LE(linkedit.offset + 48))).toBe(linked.length);

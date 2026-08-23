@@ -3,7 +3,7 @@
 use sha2::{Digest, Sha256};
 use std::io::{Read, Seek, SeekFrom};
 
-use super::{BundleError, malformed};
+use super::{BundleError, TRAILER_SIZE, malformed};
 
 const MH_MAGIC_64: u32 = 0xfeedfacf;
 const MH_EXECUTE: u32 = 2;
@@ -35,7 +35,12 @@ const LC_DYLD_INFO_ONLY: u32 = 0x80000022;
 const HEADER_SIZE: usize = 32;
 const SEGMENT_COMMAND_SIZE: usize = 72;
 const SECTION_SIZE: usize = 80;
-const NEW_SEGMENT_COMMAND_SIZE: usize = SEGMENT_COMMAND_SIZE + SECTION_SIZE;
+// A shipped arm64 runtime has 96 bytes of load-command padding. A segment
+// command is 72 bytes; adding a section record would make it 152 and require
+// moving the executable's first mapped page. The payload therefore occupies a
+// named read-only segment directly. Its trailer is placed at the segment end,
+// so the command still records the exact searchable container boundary.
+const NEW_SEGMENT_COMMAND_SIZE: usize = SEGMENT_COMMAND_SIZE;
 
 const CSMAGIC_CODEDIRECTORY: u32 = 0xfade0c02;
 const CSMAGIC_EMBEDDED_SIGNATURE: u32 = 0xfade0cc0;
@@ -302,22 +307,14 @@ pub(super) fn payload_section(file: &mut std::fs::File) -> Result<Option<(u64, u
             )));
         }
         if kind == LC_SEGMENT_64 && name(&commands, offset + 8)? == b"__BLITSEN" {
-            if size < NEW_SEGMENT_COMMAND_SIZE || read_u32(&commands, offset + 64)? != 1 {
+            if size != SEGMENT_COMMAND_SIZE || read_u32(&commands, offset + 64)? != 0 {
                 return Err(malformed(
-                    "the Mach-O __BLITSEN segment does not contain exactly one section",
-                ));
-            }
-            let section = offset + SEGMENT_COMMAND_SIZE;
-            if name(&commands, section)? != b"__payload"
-                || name(&commands, section + 16)? != b"__BLITSEN"
-            {
-                return Err(malformed(
-                    "the Mach-O __BLITSEN segment does not contain __payload",
+                    "the Mach-O __BLITSEN segment has an unexpected section table",
                 ));
             }
             return Ok(Some((
-                read_u32(&commands, section + 48)? as u64,
-                read_u64(&commands, section + 40)?,
+                read_u64(&commands, offset + 40)?,
+                read_u64(&commands, offset + 48)?,
             )));
         }
         offset += size;
@@ -401,13 +398,7 @@ fn patch_command(
     }
 }
 
-fn segment_command(
-    vmaddr: u64,
-    vmsize: usize,
-    fileoff: usize,
-    filesize: usize,
-    section_size: usize,
-) -> Vec<u8> {
+fn segment_command(vmaddr: u64, vmsize: usize, fileoff: usize, filesize: usize) -> Vec<u8> {
     let mut command = vec![0_u8; NEW_SEGMENT_COMMAND_SIZE];
     write_u32(&mut command, 0, LC_SEGMENT_64);
     write_u32(&mut command, 4, NEW_SEGMENT_COMMAND_SIZE as u32);
@@ -418,13 +409,6 @@ fn segment_command(
     write_u64(&mut command, 48, filesize as u64);
     write_u32(&mut command, 56, 1);
     write_u32(&mut command, 60, 1);
-    write_u32(&mut command, 64, 1);
-    fixed_name(&mut command, SEGMENT_COMMAND_SIZE, b"__payload");
-    fixed_name(&mut command, SEGMENT_COMMAND_SIZE + 16, b"__BLITSEN");
-    write_u64(&mut command, SEGMENT_COMMAND_SIZE + 32, vmaddr);
-    write_u64(&mut command, SEGMENT_COMMAND_SIZE + 40, section_size as u64);
-    write_u32(&mut command, SEGMENT_COMMAND_SIZE + 48, fileoff as u32);
-    write_u32(&mut command, SEGMENT_COMMAND_SIZE + 52, 4);
     command
 }
 
@@ -483,6 +467,9 @@ pub(super) fn inject(
             "the Mach-O runtime already contains a __BLITSEN segment",
         ));
     }
+    if section_data.len() < TRAILER_SIZE {
+        return Err(malformed("the Mach-O bundle has no complete trailer"));
+    }
     let segment_filesize = align(section_data.len(), macho.page_size)?;
     let linkedit_at = usize_of(macho.linkedit.fileoff)?;
     let linkedit_data = &executable[linkedit_at..macho.signature_offset];
@@ -510,7 +497,6 @@ pub(super) fn inject(
         segment_filesize,
         linkedit_at,
         segment_filesize,
-        section_data.len(),
     );
     let mut rebuilt_commands = Vec::new();
     let mut inserted = false;
@@ -560,8 +546,10 @@ pub(super) fn inject(
     unsigned.extend_from_slice(&header);
     unsigned.extend_from_slice(&rebuilt_commands);
     unsigned.extend_from_slice(&executable[new_commands_end..linkedit_at]);
-    unsigned.extend_from_slice(section_data);
+    let trailer_at = section_data.len() - TRAILER_SIZE;
+    unsigned.extend_from_slice(&section_data[..trailer_at]);
     unsigned.resize(unsigned.len() + segment_filesize - section_data.len(), 0);
+    unsigned.extend_from_slice(&section_data[trailer_at..]);
     unsigned.extend_from_slice(linkedit_data);
     if unsigned.len() != new_signature_offset {
         return Err(malformed(
@@ -653,10 +641,16 @@ mod tests {
     fn both_darwin_architectures_keep_linkedit_and_the_signature_last() {
         for cpu in [CPU_TYPE_X86_64, CPU_TYPE_ARM64] {
             let (runtime, linkedit_at, page) = fixture(cpu);
-            let section = b"a payload that belongs to __BLITSEN";
-            let linked = inject(&runtime, section).unwrap().unwrap();
+            let mut section = vec![0x5a; TRAILER_SIZE + 37];
+            let magic_at = section.len() - 8;
+            section[magic_at..].copy_from_slice(b"BLITSEN\x1a");
+            let linked = inject(&runtime, &section).unwrap().unwrap();
             let parsed = parse(&linked).unwrap().unwrap();
-            assert_eq!(&linked[linkedit_at..linkedit_at + section.len()], section);
+            assert_eq!(&linked[linkedit_at..linkedit_at + 37], &section[..37]);
+            assert_eq!(
+                &linked[linkedit_at + page - TRAILER_SIZE..linkedit_at + page],
+                &section[37..]
+            );
             assert_eq!(parsed.linkedit.fileoff, (linkedit_at + page) as u64);
             assert_eq!(
                 parsed.linkedit.fileoff + parsed.linkedit.filesize,

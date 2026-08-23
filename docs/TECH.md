@@ -733,7 +733,7 @@ that, and duplicating it would make Blitsen a competitor to Vite instead of a ta
   in `blitsen_core::bundle`. The payload carries a version header, an index and the file data,
   followed by a trailer that locates and checksums it; startup reads the index and then files from
   their recorded offsets, never unpacking to disk. ELF and PE retain the append-only layout. Mach-O
-  uses a real read-only `__BLITSEN,__payload` segment immediately before `__LINKEDIT`, shifts the
+  uses a real read-only `__BLITSEN` segment immediately before `__LINKEDIT`, shifts the
   link-edit file offsets, and replaces the inherited runtime signature with an ad-hoc SHA-256
   signature so an ordinary arm64 export still starts. `__LINKEDIT` and its signature remain the
   final bytes, which lets the step ⑤ hook replace the ad-hoc signature with a distribution identity

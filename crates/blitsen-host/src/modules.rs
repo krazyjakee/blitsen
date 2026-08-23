@@ -484,12 +484,12 @@ fn source_mapping_url(source: &str) -> Option<&str> {
                 continue;
             }
         }
-        if let Some(comment) = before.rfind("/*") {
-            if before[comment + 2..].trim() == "#" || before[comment + 2..].trim() == "@" {
-                let value_start = offset + "sourceMappingURL=".len();
-                if let Some(end) = source[value_start..].find("*/") {
-                    found = nonempty(&source[value_start..value_start + end]);
-                }
+        if let Some(comment) = before.rfind("/*")
+            && (before[comment + 2..].trim() == "#" || before[comment + 2..].trim() == "@")
+        {
+            let value_start = offset + "sourceMappingURL=".len();
+            if let Some(end) = source[value_start..].find("*/") {
+                found = nonempty(&source[value_start..value_start + end]);
             }
         }
     }

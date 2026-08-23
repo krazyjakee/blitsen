@@ -2,8 +2,8 @@
 //!
 //! Step ④ of the export pipeline links the runtime and the application into one
 //! file. Phase 1 does that with `bun build --compile`, which carries a whole Bun
-//! runtime; Phase 2 appends the collected output to Blitsen's own executable as
-//! a section this module reads.
+//! runtime; Phase 2 links the collected output into Blitsen's own executable in
+//! a container this module reads.
 //!
 //! # Layout
 //!
@@ -42,7 +42,7 @@
 //!
 //! **Link first, then apply the distribution signature.** ELF and PE keep the
 //! append-only layout. Mach-O cannot: `__LINKEDIT` must be last, so the writers
-//! install a read-only `__BLITSEN,__payload` segment immediately before it,
+//! install a read-only `__BLITSEN` segment immediately before it,
 //! shift every file offset into `__LINKEDIT`, and replace the inherited runtime
 //! signature with a deterministic ad-hoc SHA-256 signature. That replacement
 //! keeps an ordinary arm64 export runnable; the step ⑤ signing hook may replace
@@ -62,7 +62,7 @@
 //! trailer move and this reader has to learn that; the first macOS or Windows
 //! signing run is where that is found out.
 //!
-//! The reader locates that Mach-O section from its load command. It retains the
+//! The reader locates that Mach-O segment from its load command. It retains the
 //! bounded backwards scan for the append-only formats and old bundles, where an
 //! Authenticode certificate can legitimately follow the trailer.
 //!
@@ -498,27 +498,23 @@ fn find_trailer(file: &mut File, size: u64) -> Result<Option<Trailer>, BundleErr
         Ok(Some(Trailer { digest, payload }))
     };
 
-    // A Mach-O payload is a named section before __LINKEDIT, so use the load
+    // A Mach-O payload is a named segment before __LINKEDIT, so use the load
     // command instead of making the bounded compatibility scan depend on how
     // large that executable's symbols and code signature happen to be.
     if let Some((section_at, section_size)) = macho::payload_section(file)? {
         if section_size < TRAILER_SIZE as u64 || section_at.saturating_add(section_size) > size {
-            return Err(malformed(
-                "Mach-O __BLITSEN,__payload lies outside the file",
-            ));
+            return Err(malformed("Mach-O __BLITSEN lies outside the file"));
         }
         let magic_at = section_at + section_size - 8;
         let mut magic = [0_u8; 8];
         file.seek(SeekFrom::Start(magic_at))?;
         file.read_exact(&mut magic)?;
         if &magic != TRAILER_MAGIC {
-            return Err(malformed(
-                "Mach-O __BLITSEN,__payload has no bundle trailer",
-            ));
+            return Err(malformed("Mach-O __BLITSEN has no bundle trailer"));
         }
         return consider(file, magic_at)?
             .map(Some)
-            .ok_or_else(|| malformed("Mach-O __BLITSEN,__payload has an invalid bundle trailer"));
+            .ok_or_else(|| malformed("Mach-O __BLITSEN has an invalid bundle trailer"));
     }
 
     let at_end = size - TRAILER_SIZE as u64;
