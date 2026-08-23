@@ -118,6 +118,7 @@ winit = "=0.31.0-beta.2"
 # be hosting (#146).
 [dev-dependencies]
 blitsen-quickjs = { path = "../blitsen-quickjs" }
+tempfile.workspace = true
 
 # No libtest harness: a winit event loop must be created on the main thread, and
 # libtest runs every test on one it spawned. `fn main()` is the only way to be

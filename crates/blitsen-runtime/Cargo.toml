@@ -38,5 +38,8 @@ serde_json = "1"
 # an environment variable set from `main` would be too late for libc startup.
 libc = "0.2"
 
+[dev-dependencies]
+tempfile.workspace = true
+
 [lints]
 workspace = true

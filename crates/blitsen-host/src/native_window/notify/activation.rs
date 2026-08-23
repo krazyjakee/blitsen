@@ -405,22 +405,21 @@ mod tests {
         }
     }
 
-    /// A directory of this process's own, removed when the test ends.
-    struct Scratch(PathBuf);
+    /// A unique directory removed when the test ends, including after a panic.
+    struct Scratch(tempfile::TempDir);
 
     impl Scratch {
         fn new(name: &str) -> Self {
-            let path = std::env::temp_dir()
-                .join(format!("blitsen-activation-{}-{name}", std::process::id()));
-            let _ = std::fs::remove_dir_all(&path);
-            std::fs::create_dir_all(&path).expect("a scratch directory");
-            Self(path)
+            Self(
+                tempfile::Builder::new()
+                    .prefix(&format!("blitsen-activation-{name}-"))
+                    .tempdir()
+                    .expect("a scratch directory"),
+            )
         }
-    }
 
-    impl Drop for Scratch {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.0);
+        fn path(&self) -> &Path {
+            self.0.path()
         }
     }
 
@@ -459,7 +458,7 @@ mod tests {
     #[test]
     fn an_activation_is_handed_over_once_and_never_again() {
         let scratch = Scratch::new("once");
-        let store = store(&scratch.0);
+        let store = store(scratch.path());
         store
             .record(activation("a1", Some("open")))
             .expect("the queue is writable");
@@ -475,7 +474,7 @@ mod tests {
                 .is_empty()
         );
         assert!(
-            ActivationStore::new(&scratch.0, "com.example.app")
+            ActivationStore::new(scratch.path(), "com.example.app")
                 .take()
                 .expect("the replay guard is durable")
                 .is_empty()
@@ -485,7 +484,7 @@ mod tests {
     #[test]
     fn the_same_envelope_offered_again_is_not_a_second_click() {
         let scratch = Scratch::new("replay");
-        let store = store(&scratch.0);
+        let store = store(scratch.path());
         store.record(activation("a1", None)).expect("recorded");
         assert_eq!(store.take().expect("the replay guard is durable").len(), 1);
 
@@ -509,7 +508,7 @@ mod tests {
     #[test]
     fn an_envelope_from_another_install_is_discarded_rather_than_delivered() {
         let scratch = Scratch::new("identity");
-        let previous = ActivationStore::new(&scratch.0, "com.example.previous");
+        let previous = ActivationStore::new(scratch.path(), "com.example.previous");
         previous
             .record(Activation {
                 identity: "com.example.previous".to_owned(),
@@ -518,7 +517,7 @@ mod tests {
             .expect("recorded");
 
         assert!(
-            store(&scratch.0)
+            store(scratch.path())
                 .take()
                 .expect("the replay guard is durable")
                 .is_empty(),
@@ -537,7 +536,7 @@ mod tests {
     #[test]
     fn ordering_survives_the_queue() {
         let scratch = Scratch::new("order");
-        let store = store(&scratch.0);
+        let store = store(scratch.path());
         for nonce in ["a1", "a2", "a3"] {
             store
                 .record(activation(nonce, Some(nonce)))
@@ -558,7 +557,7 @@ mod tests {
     #[test]
     fn a_platform_inbox_is_drained_in_order_and_malformed_data_is_quarantined() {
         let scratch = Scratch::new("inbox");
-        let inbox = scratch.0.join("inbox");
+        let inbox = scratch.path().join("inbox");
         std::fs::create_dir_all(&inbox).expect("an inbox");
         let first = activation("a1", None);
         let second = Activation {
@@ -580,7 +579,7 @@ mod tests {
         std::fs::write(inbox.join("still-writing.tmp"), b"ignored")
             .expect("an incomplete callback is present");
 
-        let store = store(&scratch.0);
+        let store = store(scratch.path());
         let failures = store.record_inbox(&inbox);
         assert_eq!(failures.len(), 1);
         assert!(
@@ -614,13 +613,13 @@ mod tests {
     #[test]
     fn an_inbox_filename_must_be_the_safe_nonce_inside_its_envelope() {
         let scratch = Scratch::new("inbox-nonce");
-        let inbox = scratch.0.join("inbox");
+        let inbox = scratch.path().join("inbox");
         std::fs::create_dir_all(&inbox).expect("an inbox");
         let bytes = serde_json::to_vec(&activation("a1", None)).expect("an envelope");
         std::fs::write(inbox.join("a2.json"), &bytes).expect("a mismatched callback");
         std::fs::write(inbox.join("unsafe!.json"), &bytes).expect("an unsafe callback");
 
-        let store = store(&scratch.0);
+        let store = store(scratch.path());
         let failures = store.record_inbox(&inbox);
         assert_eq!(failures.len(), 2);
         assert!(
@@ -640,7 +639,7 @@ mod tests {
     #[test]
     fn a_failed_replay_guard_write_delivers_nothing_and_can_be_retried() {
         let scratch = Scratch::new("take-failure");
-        let store = store(&scratch.0);
+        let store = store(scratch.path());
         store.record(activation("a1", None)).expect("recorded");
 
         let result = store.take_with_writer(|_| Err("disk full".to_owned()));
@@ -658,7 +657,7 @@ mod tests {
     #[test]
     fn queue_updates_leave_one_synced_target_and_no_temporary_files() {
         let scratch = Scratch::new("atomic");
-        let store = store(&scratch.0);
+        let store = store(scratch.path());
         for index in 0..32 {
             let nonce = format!("a{index:x}");
             store
@@ -671,7 +670,7 @@ mod tests {
             .expect("the target is always complete JSON");
         }
         assert!(
-            std::fs::read_dir(&scratch.0)
+            std::fs::read_dir(scratch.path())
                 .expect("the store directory")
                 .all(|entry| !entry
                     .unwrap()
@@ -695,7 +694,7 @@ mod tests {
     #[test]
     fn a_truncated_queue_blocks_record_and_delivery_without_being_overwritten() {
         let scratch = Scratch::new("truncated");
-        let store = store(&scratch.0);
+        let store = store(scratch.path());
         let truncated = br#"{"pending":["#;
         std::fs::write(&store.path, truncated).expect("a truncated durable queue");
 
@@ -709,7 +708,7 @@ mod tests {
     #[test]
     fn a_structurally_corrupt_queue_is_not_treated_as_a_fresh_install() {
         let scratch = Scratch::new("corrupt");
-        let store = store(&scratch.0);
+        let store = store(scratch.path());
         let corrupt = br#"{"consumed":{},"pending":[]}"#;
         std::fs::write(&store.path, corrupt).expect("a corrupt durable queue");
 
@@ -723,7 +722,7 @@ mod tests {
     #[test]
     fn an_unreadable_queue_path_is_not_treated_as_an_absent_queue() {
         let scratch = Scratch::new("unreadable");
-        let store = store(&scratch.0);
+        let store = store(scratch.path());
         // A directory is a portable read failure even when the tests run as a
         // privileged user, unlike permission bits which root may bypass.
         std::fs::create_dir(&store.path).expect("an unreadable queue path");
