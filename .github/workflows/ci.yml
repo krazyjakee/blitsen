@@ -485,44 +485,12 @@ jobs:
   # (see `apkPlan`), and a `min_sdk_version` of 26, which is where the NDK first
   # ships the `libaaudio` that `cpal` links.
   #
-  # ## What this job still stops short of, and why
+  # ## Device evidence stays in its own tier
   #
-  # It does not boot an emulator, and it stays that way: the emulator tier is the
-  # `android-notifications` job below, which takes this job's APKs as an artifact
-  # rather than growing a device into this one. Two reasons, and only the second
-  # is about cost. An emulator boot is the flakiest thing in this file, and a
-  # cross-compile gate that fails because a hosted AVD did not come up has stopped
-  # being a cross-compile gate. The framebuffer half — `bun run --cwd
-  # packages/blitsen test:android --apk <path> --package <id>`, which asserts a
-  # painted frame against a control taken before the install — is still not wired
-  # to any device, and is left that way deliberately: it and the notification job
-  # meet the same two open questions below, and running one of them first is how
-  # those questions get an answer that is not two failures at once.
-  #
-  # The two questions, recorded here because they are the decisions and not the
-  # plumbing:
-  #
-  #   * **The GPU mode is `-gpu lavapipe`, not `swiftshader_indirect`.** #139
-  #     measured `swiftshader_indirect` reproducibly *killing the emulator* the
-  #     moment the application initialised wgpu, including for a build that
-  #     rasterised entirely on the CPU and used wgpu only to present — so the
-  #     variable was SwiftShader's Vulkan, not the rasteriser. A hosted runner
-  #     has no GPU, so `-gpu host` is not available and `swangle` is the same
-  #     Vulkan under another name. Lavapipe is a different implementation
-  #     entirely, and emulator 36.4.9 (10 Feb 2026) made it "the default
-  #     graphics software renderer to improve Vulkan compatibility across all
-  #     platforms". That is the one software path #139 did not try, and it is
-  #     the reason to think a hosted emulator tier is possible at all. It is a
-  #     hypothesis, not a result: nobody has yet run Vello's compute pipelines
-  #     on lavapipe under the emulator's Vulkan translation.
-  #   * **A hosted runner may not be enough.** GitHub's own changelog announced
-  #     hardware-accelerated Android virtualisation for *larger* runners; that
-  #     `/dev/kvm` works on the standard ones with a udev rule is user-reported
-  #     and not documented by GitHub. Without KVM the emulator falls back to
-  #     interpretation, which the action's own README warns "might not work at
-  #     all" on newer API levels. If the tier turns out to need real hardware,
-  #     the lever is a repository variable naming a self-hosted runner, exactly
-  #     as the `architectures` job above takes its three labels.
+  # It does not boot an emulator. The `android-notifications` tier below takes
+  # this job's APK as an artifact and is a required check in its own right. The
+  # separation keeps an AVD boot failure from masquerading as a cross-compile
+  # failure while still making both failures gate the change.
   android:
     name: android (smoke)
     runs-on: ubuntu-latest
@@ -605,6 +573,13 @@ jobs:
       # emulator ABI unbuilt — which is precisely the one an emulator tier needs.
       - name: Cross-compile the Android entry point for both default ABIs
         run: cargo ndk -t arm64-v8a -t x86_64 -P 26 build --release -p blitsen-android
+      # The shipped build above takes Android's CPU/softbuffer path. Keep the
+      # Vello/wgpu path compiling for deliberate physical-device qualification;
+      # it is an opt-in experiment, not an automatic runtime fallback (#151).
+      - name: The Android GPU qualification build still type-checks
+        run: >-
+          cargo ndk -t x86_64 -P 26 check --release -p blitsen-android
+          --features android-vello-gpu
       # A `.so` that links and does not export `android_main` is a crash inside
       # `dlopen` with nothing to read, so the symbol is checked rather than
       # assumed — it is the entire contract between the platform and this crate.
@@ -781,19 +756,12 @@ jobs:
   # dialog on. All of it is uploaded on failure *and* on success, because a run
   # that passes for the wrong reason is diagnosed from the same files.
   #
-  # Non-gating, and #151 is why. A Blitsen APK cannot currently start on this
-  # emulator at all: `-gpu lavapipe` reports `max_buffer_size: 0`, Vello asks
-  # wgpu for 256 MiB, device creation fails and the process panics before any
-  # application code runs. `anyrender_vello_cpu` is linked only for Intel macOS
-  # (#229), so Android has nothing to fall back to. Nothing in #254 can pass
-  # until that decision lands, and the emulator is not the problem — it boots,
-  # `/dev/kvm` works, and `lavapipe` survives where `swiftshader_indirect` did
-  # not. The job stays because its logcat and dumpsys are the evidence #151 is
-  # being decided on, and it starts gating the day an Android build can open a
-  # window without a conforming Vulkan device. It is not a permitted failure in
-  # the sense of a flaky test: it is a blocked one, recorded on #254.
+  # Android's default CPU renderer does not create a wgpu device, so the API
+  # 32/33 lavapipe adapter's zero storage-buffer limit no longer prevents the
+  # fixture reaching application code (#151). This is consequently a required
+  # check: a boot, launch, renderer or notification failure fails the workflow.
   android-notifications:
-    name: android (notifications, API ${{ matrix.api-level }}, blocked on #151)
+    name: android (notifications, API ${{ matrix.api-level }})
     needs: android
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -828,22 +796,14 @@ jobs:
       # the teardown, and every one of those is a thing this repository would
       # otherwise get wrong once and then maintain.
       #
-      # `-gpu lavapipe` is the decision recorded in the job above: #139 measured
-      # `swiftshader_indirect` killing the emulator at wgpu initialisation, and this
-      # fixture initialises wgpu like any other Blitsen document. `-no-window` and
-      # `-no-boot-anim` because nothing here reads pixels, and `disable-animations`
-      # because `uiautomator dump` refuses while a window is still moving and the
-      # permission dialog is a window that moves.
+      # Keep lavapipe rather than the SwiftShader mode #139 measured killing the
+      # emulator. The default Blitsen renderer no longer asks it for a wgpu
+      # device—it presents CPU pixels through ANativeWindow—but the emulator's
+      # own compositor still needs a graphics backend. `-no-window` and
+      # `-no-boot-anim` because nothing here reads pixels, and
+      # `disable-animations` because `uiautomator dump` refuses while a window is
+      # still moving and the permission dialog is a window that moves.
       - name: Notification coverage on a booted emulator
-        id: coverage
-        # Tolerated, because #151 stops the fixture starting at all and a check
-        # that is permanently red teaches people to ignore red checks — which is
-        # how this repository went weeks with macOS and Windows not compiling.
-        # What it must not do instead is read as a pass. Tolerating it here makes
-        # every step report success, so the outcome is turned into an annotation
-        # below and the blocker is in the job's own name: a green tick on this
-        # matrix entry never means Android notifications were exercised.
-        continue-on-error: true
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: ${{ matrix.api-level }}
@@ -867,16 +827,6 @@ jobs:
             adb devices -l
             adb shell getprop ro.build.fingerprint
             bun run --cwd packages/blitsen test:android-notify -- --apk ${{ runner.temp }}/apk/Notify.apk --package com.blitsen.notifyfixture --out ${{ runner.temp }}/android-notify
-      # Silence is what made the tolerated failure dangerous: the run published
-      # twenty green checks and nothing in them said the fixture never started.
-      - name: Say what the coverage actually did
-        if: always()
-        run: |
-          if [ "${{ steps.coverage.outcome }}" = "success" ]; then
-            echo "::notice::Android notification coverage ran and passed on API ${{ matrix.api-level }}. If #151 is still open that is unexpected — check the uploaded logcat before believing it."
-          else
-            echo "::warning::Android notification coverage did not complete on API ${{ matrix.api-level }}, which is expected while #151 is open: a Blitsen APK cannot start on the emulator, so nothing in #254 can be verified. The uploaded logcat says whether it stopped for that reason or another."
-          fi
       - uses: actions/upload-artifact@v4
         if: always()
         with:

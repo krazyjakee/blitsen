@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 import { chmod, readFile, stat, writeFile } from "node:fs/promises";
 
+import { injectMachOPayload, machOPayloadOffset } from "./macho.mjs";
+
 // The Phase 2 link step (issue #88): the application is appended to Blitsen's
 // own runtime executable and read back out of it at startup, without ever being
 // unpacked. The format is specified in `crates/blitsen-core/src/bundle.rs`, and
@@ -77,17 +79,23 @@ export function buildTrailer(payload, payloadOffset) {
 /**
  * Links `files` into a copy of the runtime executable at `runtime`.
  *
- * Signing happens afterwards, never before: appending to an already-signed
- * binary is what breaks the signature (see the Rust module's "Signing" note),
- * so the export pipeline's signing hook runs over the result of this.
+ * On ELF and PE the bundle remains an append-only trailer. A Mach-O has a
+ * stricter shape: `__LINKEDIT` must remain last, so its payload is installed as
+ * read-only `__BLITSEN` segment immediately before it and the inherited
+ * signature is replaced by an ad-hoc one. The export pipeline's signing hook
+ * still runs afterwards and may replace that signature with the user's.
  *
  * Returns what was written, for the `④ link` line the CLI prints.
  */
 export async function linkBundle({ runtime, output, files }) {
   const executable = await readFile(runtime);
   const payload = buildPayload(files);
-  const trailer = buildTrailer(payload, executable.length);
-  await writeFile(output, Buffer.concat([executable, payload, trailer]));
+  const machoOffset = machOPayloadOffset(executable);
+  const payloadOffset = machoOffset ?? executable.length;
+  const trailer = buildTrailer(payload, payloadOffset);
+  const section = Buffer.concat([payload, trailer]);
+  const linked = injectMachOPayload(executable, section) ?? Buffer.concat([executable, section]);
+  await writeFile(output, linked);
   // The runtime arrives from an npm tarball, which does not always preserve the
   // executable bit; the linked application is useless without it.
   const mode = (await stat(runtime)).mode & 0o777;
@@ -95,7 +103,7 @@ export async function linkBundle({ runtime, output, files }) {
   return {
     files: files.size,
     payloadBytes: payload.length,
-    totalBytes: executable.length + payload.length + trailer.length,
+    totalBytes: linked.length,
     digest: trailer.subarray(0, 32).toString("hex"),
   };
 }

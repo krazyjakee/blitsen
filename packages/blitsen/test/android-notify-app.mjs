@@ -51,6 +51,11 @@ export const TITLES = {
 /// leave "expired" and "never delivered" looking identical.
 export const EXPIRY = 6_000;
 
+/// `dumpsys notification` can itself take about four seconds on a hosted
+/// software-rendered AVD. Keep the original titles present for two such reads so
+/// replacement and close evidence cannot happen entirely between samples.
+export const OBSERVATION = 8_000;
+
 /// Log entries per carrier notification. Android drops the oldest once a package
 /// holds more than twenty-five, and the probes are already using four of them.
 export const LOG_BATCH = 3;
@@ -128,9 +133,9 @@ export const NOTIFY_APP = `<!doctype html><html><head><meta charset="utf-8"><tit
   await settled("s.ongoing",
     notify.show({ title: "${TITLES.ongoing}", body: "ongoing", timeout: 0 }));
   const posted = Date.now();
-  // Long enough for the harness's one-second poll to see all four together, so
-  // "expired" is later distinguishable from "never arrived".
-  await wait(2500);
+  // Long enough for the harness to complete two slow dumpsys reads and see all
+  // four together, so "replaced/closed" cannot happen between its samples.
+  await wait(${OBSERVATION});
 
   await settled("u.alpha", notify.update(alpha, { title: "${TITLES.alphaUpdated}" }));
   await settled("u.missing", notify.update("no-such-id", { title: "${TITLES.ghost}" }));

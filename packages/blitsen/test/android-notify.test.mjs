@@ -16,7 +16,9 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { uiNodes } from "./android-device.mjs";
-import { EXPIRY, LOG_BATCH, NOTIFY_APP, PREFIX, TITLES } from "./android-notify-app.mjs";
+import {
+  EXPIRY, LOG_BATCH, NOTIFY_APP, OBSERVATION, PREFIX, TITLES,
+} from "./android-notify-app.mjs";
 import {
   CHANNEL, PERMISSION, RUNTIME_PERMISSION_SDK, expected, grantedInPackageDump,
   notificationRecords, scenarioPlan, shadeFailures, transcript, transcriptFailures,
@@ -243,6 +245,7 @@ function fakeHost({ initial, request, grantAfter = null }) {
         next += 1;
         posted.set(id, options.title);
         shown.push(options.title);
+        for (const listener of listeners) listener({ type: "show", id, reason: null });
         return id;
       },
       update: async (id, patch) => {
@@ -434,6 +437,7 @@ describe("the fixture and the harness agree with the rest of the repository", ()
     // never delivered — which is a pass, because both end with nothing on screen.
     expect(NOTIFY_APP).toContain(`timeout: ${EXPIRY}`);
     expect(NOTIFY_APP).toContain(`${EXPIRY} + 2000`);
+    expect(OBSERVATION).toBeGreaterThan(EXPIRY);
     expect(LOG_BATCH).toBeGreaterThan(0);
   });
 

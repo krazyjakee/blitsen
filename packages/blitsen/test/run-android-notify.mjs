@@ -466,8 +466,14 @@ export function transcriptFailures(sdk, scenario, entries) {
   // A failure inside the JNI call. It has to arrive as a rejected promise; #245's
   // contract is that no platform callback ever enters JavaScript, so a swallowed
   // error has nowhere else to go.
-  rejects("e.icon", "Android notification API failed");
-  is("ev", `close:${entries.get("s.beta")}:closed`);
+  // The platform wrapper prefixes JNI failures by operation; the stable evidence
+  // is the platform's specific cause and that it reached JavaScript as a rejection.
+  rejects("e.icon", "notification icon resource");
+  const closeEvent = `close:${entries.get("s.beta")}:closed`;
+  const events = (entries.get("ev") ?? "").split(",").filter(Boolean);
+  check(events.filter(event => event === closeEvent).length === 1,
+    `ev was ${JSON.stringify(entries.get("ev") ?? null)}, and it must contain exactly one `
+    + `${JSON.stringify(closeEvent)} event`);
   return failures;
 }
 

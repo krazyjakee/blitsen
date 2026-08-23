@@ -549,6 +549,7 @@ dependencies = [
  "anyrender",
  "anyrender_vello",
  "anyrender_vello_cpu",
+ "base64 0.22.1",
  "blitsen-blitz",
  "blitsen-core",
  "blitsen-dom",

@@ -27,7 +27,12 @@ const DOCUMENT = `<!doctype html><html>
 // A module graph with a query string in it, because a dev server answers
 // `?v=1` and `?v=2` differently and Blitsen has to ask as written.
 const ENTRY_MODULE = `import { greeting } from "./greeting.js?v=1";
-globalThis.__proxy = { module: import.meta.url, greeting, hmr: "connecting" };
+import { externalFailure } from "./external.generated.js?v=7";
+import { inlineFailure } from "./inline.generated.js?v=8";
+import "./missing-map.js";
+import "./malformed-map.js";
+globalThis.__proxy = { module: import.meta.url, greeting, hmr: "connecting",
+  externalFailure, inlineFailure };
 document.getElementById("out").textContent = greeting;
 fetch(new URL("./served.json", import.meta.url).href)
   .then(response => response.json())
@@ -49,27 +54,56 @@ socket.addEventListener("close", event => {
 globalThis.__proxySocket = socket;
 `;
 
+const INLINE_MAP = Buffer.from(JSON.stringify({
+  version: 3,
+  sourceRoot: "../original",
+  sources: ["inline.ts"],
+  mappings: "AAoBK",
+})).toString("base64");
+
+const EXTERNAL_MODULE = `export function externalFailure() { throw new Error("external mapped failure"); }
+//# sourceMappingURL=external.generated.js.map?v=7`;
+const INLINE_MODULE = `export function inlineFailure() { throw new Error("inline mapped failure"); }
+//# sourceMappingURL=data:application/json;base64,${INLINE_MAP}`;
+
 const FILES = {
   "/index.html": ["text/html", DOCUMENT],
   "/src/main.js": ["text/javascript", ENTRY_MODULE],
   "/src/greeting.js": ["text/javascript", `export const greeting = "served over http";`],
+  "/src/external.generated.js": ["text/javascript", EXTERNAL_MODULE],
+  "/src/external.generated.js.map?v=7": ["application/json", JSON.stringify({
+    version: 3,
+    sourceRoot: "../original",
+    sources: ["external.ts"],
+    mappings: "AAoBK",
+  })],
+  "/src/inline.generated.js": ["text/javascript", INLINE_MODULE],
+  "/src/missing-map.js": ["text/javascript",
+    `globalThis.__missingMapRan = true;\n//# sourceMappingURL=not-there.map`],
+  "/src/malformed-map.js": ["text/javascript",
+    `globalThis.__malformedMapRan = true;\n//# sourceMappingURL=malformed-map.js.map`],
+  "/src/malformed-map.js.map": ["application/json", "not source-map JSON"],
   "/src/served.json": ["application/json", `{"served":"yes"}`],
   "/src/style.css": ["text/css", "#out { color: rgb(10, 20, 30); }"],
 };
 
 /** A dev server: static files, and a hot-reload socket that answers. */
 function devServer(port = 0) {
+  const requests = [];
   const server = Bun.serve({
     port,
     hostname: "127.0.0.1",
     fetch(request, self) {
-      const path = new URL(request.url).pathname;
+      const url = new URL(request.url);
+      const path = url.pathname;
+      const requested = path + url.search;
+      requests.push(requested);
       // The channel a dev server keeps open to the document it served. Vite's
       // is `/@vite/client` talking back to `/`; the shape is what matters here.
       if (path === "/hmr") {
         return self.upgrade(request) ? undefined : new Response("no upgrade", { status: 400 });
       }
-      const file = FILES[path];
+      const file = FILES[requested] ?? FILES[path];
       if (!file) return new Response("not found", { status: 404 });
       // Substituted as it is served, exactly as a dev server substitutes its
       // own HMR constants while transforming a module.
@@ -84,6 +118,7 @@ function devServer(port = 0) {
   });
   return {
     port: () => server.port,
+    requests,
     close: async () => { await server.stop(true); },
   };
 }
@@ -142,6 +177,8 @@ try {
       text: document.getElementById("out").textContent,
       color: getComputedStyle(document.getElementById("out")).color,
       readyState: globalThis.__proxySocket.readyState,
+      missingMapRan: globalThis.__missingMapRan,
+      malformedMapRan: globalThis.__malformedMapRan,
     }))`,
   });
   assert.equal(report.code, 0, `the runtime refused a served application:\n${report.stderr}`);
@@ -155,6 +192,32 @@ try {
   assert.equal(probe.read, "yes", "fetch did not read a file the server serves");
   assert.match(probe.module, /^blitsen:\/\/app\/src\/main\.js$/,
     `a served module is addressed as an application: ${probe.module}`);
+  assert.equal(probe.missingMapRan, true, "a missing optional source map stopped its module");
+  assert.equal(probe.malformedMapRan, true, "a malformed optional source map stopped its module");
+  assert.ok(dev.requests.includes("/src/greeting.js?v=1"),
+    `the module query was not served as written: ${dev.requests.join(", ")}`);
+  assert.ok(dev.requests.includes("/src/external.generated.js.map?v=7"),
+    `the external source-map query was not served as written: ${dev.requests.join(", ")}\n${report.stderr}`);
+  assert.ok(dev.requests.includes("/src/not-there.map"),
+    "the missing source-map URL was not discovered");
+  assert.ok(dev.requests.includes("/src/malformed-map.js.map"),
+    "the malformed source-map URL was not discovered");
+
+  // Uncaught exceptions are diagnostics, so both kinds of map are applied
+  // before stderr is printed. Failures to obtain optional maps above remained
+  // non-fatal and left their generated positions available instead.
+  for (const [call, original] of [
+    ["globalThis.__proxy.externalFailure()", "external.ts"],
+    ["globalThis.__proxy.inlineFailure()", "inline.ts"],
+  ]) {
+    const failed = await runtimeAgainst(origin, { assert: call });
+    assert.notEqual(failed.code, 0, `${call} did not fail the standalone check`);
+    assert.match(failed.stderr,
+      new RegExp(`blitsen://app/original/${original}:21:6`),
+      `the uncaught frame was not mapped through ${original}:\n${failed.stderr}`);
+    assert.doesNotMatch(failed.stderr, /generated\.js\?v=[78]:1:\d+/,
+      `the generated frame survived source-map remapping:\n${failed.stderr}`);
+  }
 
   // ② The hot-reload channel. The document opened a socket back to the server
   // and the server answered on it — which is the whole of what Blitsen owes
@@ -199,8 +262,8 @@ try {
   assert.match(doctored.stderr, /needs a directory of built output, not a URL/,
     `doctor should say why: ${doctored.stderr}`);
 
-  console.log("Proxy mode passed: document, module graph (with a query), stylesheet and a "
-    + "fetched file all read over HTTP.");
+  console.log("Proxy mode passed: document, module graph (with queries), source maps, stylesheet "
+    + "and a fetched file all read over HTTP.");
   console.log("  Hot-reload channel delivered, a refused URL is reported, and a restarted "
     + "server is waited for and connected to.");
   console.log(`  Runtime: ${runtime.path}`);

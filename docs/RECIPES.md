@@ -48,7 +48,8 @@ npx blitsen http://localhost:5173
 ```
 
 If Vite's HMR client cannot infer its socket address, set `server.hmr.host` and `clientPort` in
-`vite.config.js`. Source maps are not currently applied to stack traces.
+`vite.config.js`. Inline and served external source maps remap uncaught runtime diagnostics;
+`error.stack` inspected by application code remains the engine's generated stack.
 
 ## Include runtime-loaded files
 

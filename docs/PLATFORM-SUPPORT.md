@@ -167,6 +167,13 @@ supported; dismissal is not, because a swipe-away needs a `BroadcastReceiver` an
 that lifecycle contract is present. Android does not support Blitsen's app, clipboard, dialog,
 window, tray or menu native modules in this release.
 
+Android rasterises native windows on the CPU and presents the finished buffer through
+`ANativeWindow`. This is the shipping default rather than an adapter probe: the API 32/33 CI
+emulator's lavapipe adapter cannot satisfy classic Vello's wgpu device request, and physical Mali
+and Adreno coverage is not broad enough to make that GPU path a safe default. Source builds retain
+`blitsen-android`'s `android-vello-gpu` feature solely to qualify named physical devices; applications cannot
+switch renderer at run time.
+
 `blitsen/hid` is present and reaches USB HID devices through `UsbManager`. Enumeration needs no
 permission and lists the HID interfaces of every attached USB device; `open()` raises Android's
 per-device permission dialog and the promise it returned stays unsettled until that dialog is
@@ -177,10 +184,11 @@ enumeration, because a HID report descriptor cannot be read before permission is
 by `vendorId` and `productId` there and read the usages after `open()`; and a boot keyboard or
 mouse interface is refused before it can be opened, exactly as the desktop collections are.
 
-**This path has never been executed.** It type-checks for `aarch64-linux-android` and its logic is
-covered by tests on the host, but no report has been exchanged with a real device: a Blitsen APK
-cannot currently start on the CI emulator (#151), and an emulator has no USB host controller to
-attach a HID device to, so the acceptance evidence needs physical hardware.
+**This HID path has never been executed.** It type-checks for `aarch64-linux-android` and its logic
+is covered by tests on the host, but no report has been exchanged with a real device. The default
+renderer no longer asks the CI AVD for the Vulkan capability that blocked application startup, but
+an emulator has no USB host controller to attach a HID device to, so the HID acceptance evidence
+still needs physical hardware.
 `blitsen/os` is available, and `os.batteries` is the one member of it that is not: the library
 behind that reading has no Android backend, and the platform's own answer is `BatteryManager` over
 JNI with its own semantics. The input snapshot reports the touch position and a primary button for
