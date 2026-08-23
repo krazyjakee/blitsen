@@ -9,11 +9,10 @@
 //! they come back at different times.
 //!
 //! * **The directories** are the Activity's `filesDir` and `cacheDir`, and only
-//!   the Activity can name them. [`base_directory`] resolves `XDG_DATA_HOME` and
-//!   its siblings against `HOME`; Android sets none of those, so the XDG arm
-//!   would fall through to a `HOME` that is either unset or `/`, and hand back a
-//!   path nothing can write to. That is a plausible-looking wrong answer, which
-//!   is the shape `docs/PRODUCT.md` §7 exists to refuse. There is also no third
+//!   the Activity can name them. The desktop directory provider cannot discover
+//!   that Activity-owned location and may fall through to a plausible-looking
+//!   but unwritable home path. That is the shape `docs/PRODUCT.md` §7 exists to
+//!   refuse. There is also no third
 //!   kind: Android's configuration is `SharedPreferences`, a store rather than a
 //!   place, so `Directory::Config` has no honest answer even once the other two
 //!   arrive.
@@ -75,63 +74,32 @@ fn validated_name(name: &str) -> Result<&str, PlatformError> {
     Ok(name)
 }
 
-/// Returns `variable` when it names an absolute path, as XDG requires.
+/// Returns an absolute runtime endpoint directory named by the environment.
+///
+/// This is deliberately limited to the Unix single-instance socket below;
+/// persistent application directories come from the platform provider.
+#[cfg(unix)]
 fn absolute_from_environment(variable: &str) -> Option<PathBuf> {
     std::env::var_os(variable)
         .map(PathBuf::from)
         .filter(|path| path.is_absolute())
 }
 
-/// The user's home directory, which every platform's answer is rooted in.
-#[cfg(unix)]
-fn home() -> Result<PathBuf, PlatformError> {
-    absolute_from_environment("HOME").ok_or_else(|| {
-        PlatformError::new("HOME names no absolute path, so there is no home directory")
-    })
-}
-
-// The XDG platforms, named rather than spelled as "unix that is not macOS" —
-// the mobile unixes are not XDG either, and the crate-level `cfg` that keeps
-// this module off Android is not the thing that should be load-bearing here. A
-// build that puts the module back on a platform this arm does not name fails to
-// find a `base_directory` at all, which is the decision being forced rather than
-// a path silently resolving to somewhere unwritable (#139, #147).
-#[cfg(all(
-    unix,
-    not(any(target_os = "macos", target_os = "android", target_os = "ios"))
-))]
 fn base_directory(kind: Directory) -> Result<PathBuf, PlatformError> {
-    let (variable, fallback) = match kind {
-        Directory::Data => ("XDG_DATA_HOME", ".local/share"),
-        Directory::Cache => ("XDG_CACHE_HOME", ".cache"),
-        Directory::Config => ("XDG_CONFIG_HOME", ".config"),
+    let directory = match kind {
+        Directory::Data => dirs::data_dir(),
+        Directory::Cache => dirs::cache_dir(),
+        Directory::Config => dirs::config_dir(),
     };
-    match absolute_from_environment(variable) {
-        Some(path) => Ok(path),
-        None => Ok(home()?.join(fallback)),
-    }
-}
-
-// Data and config resolve to the same directory, which is what macOS says:
-// `~/Library/Preferences` is for the property lists `defaults` writes, not for
-// an application's own configuration files.
-#[cfg(target_os = "macos")]
-fn base_directory(kind: Directory) -> Result<PathBuf, PlatformError> {
-    let home = home()?;
-    Ok(match kind {
-        Directory::Data | Directory::Config => home.join("Library/Application Support"),
-        Directory::Cache => home.join("Library/Caches"),
-    })
-}
-
-#[cfg(windows)]
-fn base_directory(kind: Directory) -> Result<PathBuf, PlatformError> {
-    let variable = match kind {
-        Directory::Data | Directory::Config => "APPDATA",
-        Directory::Cache => "LOCALAPPDATA",
-    };
-    absolute_from_environment(variable).ok_or_else(|| {
-        PlatformError::new(format!("{variable} names no absolute path on this system"))
+    directory.ok_or_else(|| {
+        PlatformError::new(format!(
+            "the operating system did not provide a {} directory",
+            match kind {
+                Directory::Data => "data",
+                Directory::Cache => "cache",
+                Directory::Config => "configuration",
+            }
+        ))
     })
 }
 
@@ -346,6 +314,12 @@ mod single_instance {
 mod tests {
     use super::*;
 
+    #[cfg(all(
+        unix,
+        not(any(target_os = "macos", target_os = "android", target_os = "ios"))
+    ))]
+    const DIRECTORY_CHILD: &str = "BLITSEN_DIRECTORY_PROVIDER_CHILD";
+
     #[test]
     fn application_names_are_one_path_segment() {
         assert!(validated_name("My App").is_ok());
@@ -374,5 +348,57 @@ mod tests {
         let data = directory(Directory::Data, "blitsen-unit-test").expect("a home directory");
         let cache = directory(Directory::Cache, "blitsen-unit-test").expect("a home directory");
         assert_ne!(data, cache);
+    }
+
+    // Environment-sensitive XDG cases run in child test processes. Mutating
+    // HOME/XDG variables in this process would race the test runner's threads.
+    #[cfg(all(
+        unix,
+        not(any(target_os = "macos", target_os = "android", target_os = "ios"))
+    ))]
+    #[test]
+    fn xdg_directories_honor_absolute_values_and_reject_relative_ones() {
+        let executable = std::env::current_exe().expect("the test executable has a path");
+        for scenario in ["absolute", "fallback"] {
+            let mut child = std::process::Command::new(&executable);
+            child
+                .args([
+                    "--exact",
+                    "app::tests::xdg_directory_provider_child",
+                    "--ignored",
+                ])
+                .env(DIRECTORY_CHILD, scenario)
+                .env("HOME", "/tmp/blitsen-dirs-home")
+                .env(
+                    "XDG_DATA_HOME",
+                    if scenario == "absolute" {
+                        "/tmp/blitsen-dirs-data"
+                    } else {
+                        "relative-is-invalid"
+                    },
+                );
+            let output = child.output().expect("the child test starts");
+            assert!(
+                output.status.success(),
+                "{scenario} child failed:\n{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+    }
+
+    #[cfg(all(
+        unix,
+        not(any(target_os = "macos", target_os = "android", target_os = "ios"))
+    ))]
+    #[test]
+    #[ignore = "invoked hermetically by xdg_directories_honor_absolute_values_and_reject_relative_ones"]
+    fn xdg_directory_provider_child() {
+        let expected = match std::env::var(DIRECTORY_CHILD).as_deref() {
+            Ok("absolute") => PathBuf::from("/tmp/blitsen-dirs-data"),
+            Ok("fallback") => PathBuf::from("/tmp/blitsen-dirs-home/.local/share"),
+            scenario => panic!("unexpected child scenario: {scenario:?}"),
+        };
+        assert_eq!(base_directory(Directory::Data).unwrap(), expected);
     }
 }

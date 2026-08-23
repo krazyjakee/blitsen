@@ -567,6 +567,7 @@ name = "blitsen-platform"
 version = "0.0.0"
 dependencies = [
  "arboard",
+ "dirs",
  "raw-window-handle",
  "rfd",
  "serde",
