@@ -73,6 +73,15 @@ to sign and notarise, on a macOS host, and `--sign` is the seam for it. A cross-
 is never signed and notarised is refused by Gatekeeper on any machine that did not build it; see the
 cross-target section of the package README.
 
+There is no credential hidden behind that statement. Completing notarisation needs an Apple
+Developer Program team, a Developer ID Application certificate for the final `.app`, and
+credentials accepted by `notarytool` (an App Store Connect issuer/key pair or an Apple ID app
+password), supplied by the account holder. The final application must be submitted and the ticket
+stapled after signing. This repository has none of those account materials and the release workflow
+does not claim to perform those steps. Windows distribution signing likewise still needs a real
+code-signing certificate supplied as `WINDOWS_CERTIFICATE_PFX` and its password; absent it, the
+workflow records that the PE files are unsigned.
+
 ## Prerequisites
 
 None of these are in the repository, and the workflow runs without them — every signing step is
@@ -162,24 +171,60 @@ never executed on its own platform is not evidence that it works there. Re-open 
 measurement, not with the engine's old constraint.
 
 What the choice costs is **measured rather than argued**. Each build job records its own wall clock
-in the job summary. The first clean dry run, 2026-08-14:
+in the job summary. The four most recent successful releases available when this was reviewed were
+[0.1.3 dry run](https://github.com/krazyjakee/blitsen/actions/runs/32075145025),
+[0.1.3 publish](https://github.com/krazyjakee/blitsen/actions/runs/32076477729),
+[0.2.0](https://github.com/krazyjakee/blitsen/actions/runs/32323533439), and
+[0.2.1](https://github.com/krazyjakee/blitsen/actions/runs/32506681508). Their native build jobs,
+including setup, tests, packing and upload, measured:
 
-| Target | Runner | Wall clock | Published size |
-| --- | --- | --- | --- |
-| `linux-x64` | `ubuntu-latest` | 96s † | 31.4 MB |
-| `linux-arm64` | `ubuntu-24.04-arm` | 107s † | 29.4 MB |
-| `darwin-arm64` | `macos-latest` | 61s † | 25.5 MB |
-| `darwin-x64` | `macos-15-intel` | 898s | 27.0 MB |
-| `win32-x64` | `windows-latest` | 846s | 28.7 MB |
-| `win32-arm64` | `windows-11-arm` | 634s | 26.6 MB |
+| Target | Median job time | Observed range |
+| --- | ---: | ---: |
+| `linux-x64` | 5m 29s | 1m 51s–9m 10s |
+| `linux-arm64` | 5m 00s | 2m 24s–6m 19s |
+| `darwin-x64` | 8m 19s | 3m 55s–10m 23s |
+| `darwin-arm64` | 3m 41s | 2m 02s–8m 31s |
+| `win32-x64` | 13m 11s | 7m 20s–15m 02s |
+| `win32-arm64` | 10m 29s | 6m 12s–11m 53s |
 
-† A warm `Swatinem/rust-cache` from an earlier dispatch. The three without a dagger are what a cold
-build of that target costs, and they are the honest numbers to argue cross-compilation with; the
-daggered three would sit in the same range cold. Published size is `npm pack`'s own figure for the
-platform package — both binaries and both notices files, compressed.
+The six jobs consumed 23m 44s–61m 18s of aggregate runner time per release. Parallelism kept the
+whole workflow, including publication, between 9m 35s and 17m 47s. These are elapsed runner
+minutes, not a dollar estimate: runner pricing and public-repository allowances are account policy,
+not properties of this build.
 
-Note that macOS runners bill at a multiplier, so wall clock is not the same as cost; multiply before
-comparing. Revisit cross-compilation when there are numbers from a few real releases to argue with.
+The decision is therefore to **retain six native builds**. Cross-compiling QuickJS-ng is feasible,
+but it does not remove the native jobs that load each addon, exercise the platform package, inspect
+the host object format and run `codesign` or `signtool`; it would add target SDK/linker maintenance
+while the measured release stays below eighteen minutes. Revisit if several releases exceed thirty
+minutes wall-clock, paid native-runner consumption becomes material, or native validation can be
+split into a demonstrably cheaper smoke job. At that point compare the complete cross-build plus
+native-validation pipeline, not compiler time alone.
+
+## Reproducibility boundary
+
+Reproducible means the two **unsigned Cargo release outputs** — `blitsen.node` and
+`blitsen-runtime` (`.exe` on Windows) — are byte-identical for the same commit, `Cargo.lock`, pinned
+Rust version, runner image and native SDK/system-library floor. The check happens immediately after
+Cargo and before either signing step. Apple secure timestamps and Windows RFC 3161 timestamps are
+supposed to differ between invocations, so signed files are outside the boundary. npm tarballs and
+GitHub's artifact zip are packaging envelopes and are outside it too; their contents still come
+from the checked native bytes.
+
+Every matrix row prints the unsigned size and SHA-256 of both artifacts. To keep the gate useful
+without doubling all six builds, `linux-x64`, `darwin-x64` and `win32-x64` each compile once in the
+shipping checkout and once in a second clean source and target directory, with compiler caching
+disabled. That is one pinned native runner per executable format and OS; the arm64 sibling uses the
+same source and platform linker family and retains its recorded hashes. A mismatch reports both
+hashes and sizes, the first differing byte and surrounding bytes.
+
+The source roots differ deliberately. `--remap-path-prefix` maps Rust paths to `/src/blitsen`, and
+the native compiler gets the equivalent `-ffile-prefix-map` or MSVC `/pathmap`, because QuickJS-ng's
+C `__FILE__` strings otherwise retain its Cargo output directory after symbols are stripped.
+`SOURCE_DATE_EPOCH` is the commit timestamp for native build scripts that observe the standard.
+Windows additionally uses MSVC `/Brepro`, alongside the existing static CRT flag, because PE linker
+metadata otherwise owns a build timestamp. No post-build normalisation is allowed: a passing
+comparison is evidence about the files that proceed to signing, while a failing one preserves the
+difference for diagnosis.
 
 ## What CI covers, and what only a release build touches
 
