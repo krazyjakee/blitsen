@@ -14,13 +14,34 @@ case "${OSTYPE:-}" in
   msys* | cygwin*) source_root=$(pwd -W) ;;
   *) source_root=$PWD ;;
 esac
-release_flags="--remap-path-prefix=${source_root}=/src/blitsen"
+
+# CARGO_ENCODED_RUSTFLAGS keeps each flag byte-for-byte. This matters on
+# Windows: RUSTFLAGS is whitespace-split and a backslash spelling of a path can
+# otherwise be consumed as shell escaping before it reaches rustc.
+encoded_rustflags=${CARGO_ENCODED_RUSTFLAGS:-}
+if [[ -z "$encoded_rustflags" && -n "${RUSTFLAGS:-}" ]]; then
+  read -r -a inherited_rustflags <<< "$RUSTFLAGS"
+  for flag in "${inherited_rustflags[@]}"; do
+    encoded_rustflags="${encoded_rustflags:+${encoded_rustflags}$'\x1f'}$flag"
+  done
+fi
+unset RUSTFLAGS
+append_rustflag() {
+  encoded_rustflags="${encoded_rustflags:+${encoded_rustflags}$'\x1f'}$1"
+}
+append_rustflag "--remap-path-prefix=${source_root}=/src/blitsen"
 
 # QuickJS-ng and a few platform dependencies compile C/C++ through the `cc`
 # crate. rustc's remap does not reach their __FILE__ strings, so give the pinned
 # native compiler the equivalent mapping as well.
 case "$target" in
-  win32-*) native_map="/pathmap:${source_root}=/src/blitsen" ;;
+  win32-*)
+    # rustc and cl.exe can receive the same absolute path with either separator.
+    # Prefix remapping is deliberately textual, so cover both representations.
+    source_root_backslash=${source_root//\//\\}
+    append_rustflag "--remap-path-prefix=${source_root_backslash}=/src/blitsen"
+    native_map="/pathmap:${source_root}=/src/blitsen /pathmap:${source_root_backslash}=/src/blitsen"
+    ;;
   *) native_map="-ffile-prefix-map=${source_root}=/src/blitsen" ;;
 esac
 export CFLAGS="${CFLAGS:+$CFLAGS }$native_map"
@@ -29,13 +50,18 @@ export CXXFLAGS="${CXXFLAGS:+$CXXFLAGS }$native_map"
 # link.exe otherwise owns the PE timestamp. /Brepro asks the pinned MSVC linker
 # for deterministic metadata as well as deterministic section contents.
 case "$target" in
-  win32-*) release_flags="$release_flags -C target-feature=+crt-static -C link-arg=/Brepro" ;;
+  win32-*)
+    append_rustflag "-C"
+    append_rustflag "target-feature=+crt-static"
+    append_rustflag "-C"
+    append_rustflag "link-arg=/Brepro"
+    ;;
 esac
 
 # SOURCE_DATE_EPOCH is the source commit, not the time this particular runner
 # happened to start. Cargo/rustc do not promise to consume it themselves, but
 # native build scripts which follow the standard receive a stable value.
 export SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH:-$(git show -s --format=%ct HEAD)}
-export RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }$release_flags"
+export CARGO_ENCODED_RUSTFLAGS=$encoded_rustflags
 
 cargo build --locked --release -p blitsen-node -p blitsen-runtime
