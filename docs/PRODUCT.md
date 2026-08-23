@@ -334,10 +334,11 @@ Displays stay `window.monitors()` and idle time is an argued absence rather than
 WebGL / WebGPU · WebRTC · anything else earning its size. `<canvas>` 2D was on this list and has
 landed early (#99).
 
-**Where the v1 line was drawn, stated plainly.** Advanced text input and IME (#103) and
-accessibility (#102) are **not v1**. Basic keyboard editing, caret placement, drag selection and
-clipboard editing in text controls have landed; undo/redo, composition and `contenteditable` have
-not. `<canvas>` was the third entry here, and the sharpest one: the element shipped in the document
+**Where the v1 line was drawn, stated plainly.** The complete advanced-text surface (#103) and
+accessibility (#102) are **not v1**. Keyboard and clipboard editing, caret placement, drag
+selection, and a native IME preedit/commit path for `<input>` and `<textarea>` have landed;
+undo/redo, `contenteditable`, surrounding-text IME operations and human-verified CJK/RTL native
+input have not. `<canvas>` was the third entry here, and the sharpest one: the element shipped in the document
 and nothing painted inside it, so it was a `doctor` **error** rather than a warning, and an
 application that drew was refused at export. It draws now — a full 2D context composited into the
 same frame as the DOM — so the error is gone and what is still refused is a GPU context.

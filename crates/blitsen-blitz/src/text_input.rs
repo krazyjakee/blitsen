@@ -13,7 +13,9 @@
 //! answer. That bit is kept beside the control and dropped the moment anything
 //! moves the caret, so it can never outlive the range it was assigned to.
 
-use blitsen_dom::{SelectionDirection, TextEdit, TextMotion, TextSelection};
+use blitsen_dom::{
+    DomBackend, DomError, DomName, Rect, SelectionDirection, TextEdit, TextMotion, TextSelection,
+};
 use blitz::dom::NodeId;
 use blitz::dom::node::TextInputData;
 
@@ -246,6 +248,127 @@ impl BlitzDom {
         state.directionless = false;
         self.mutate(Some(node), Some(node));
         true
+    }
+
+    /// Replaces the preedit range Parley keeps inside the painted editor.
+    pub(crate) fn set_editor_composition(
+        &mut self,
+        node: NodeId,
+        text: &str,
+        cursor: Option<(usize, usize)>,
+    ) -> Result<bool, DomError> {
+        if cursor.is_some_and(|(start, end)| {
+            start > end
+                || end > text.len()
+                || !text.is_char_boundary(start)
+                || !text.is_char_boundary(end)
+        }) {
+            return Err(DomError::Backend(
+                "IME preedit cursor is not a UTF-8 boundary inside the preedit text".into(),
+            ));
+        }
+        let mut edited = false;
+        self.document.with_text_input(node, |mut driver| {
+            edited = true;
+            if text.is_empty() {
+                driver.clear_compose();
+            } else {
+                driver.set_compose(text, cursor);
+            }
+        });
+        self.finish_composition_edit(node, edited);
+        Ok(edited)
+    }
+
+    /// Commits text over the current preedit, or at the selection when the
+    /// platform commits without first reporting a preedit.
+    pub(crate) fn commit_editor_composition(&mut self, node: NodeId, text: &str) -> bool {
+        let mut edited = false;
+        self.document.with_text_input(node, |mut driver| {
+            edited = true;
+            if driver.editor.raw_compose().is_some() {
+                if text.is_empty() {
+                    driver.clear_compose();
+                } else {
+                    driver.set_compose(text, Some((text.len(), text.len())));
+                    driver.finish_compose();
+                }
+            } else {
+                driver.insert_or_replace_selection(text);
+            }
+        });
+        self.finish_composition_edit(node, edited);
+        edited
+    }
+
+    /// Cancels the current preedit without inserting it.
+    pub(crate) fn clear_editor_composition(&mut self, node: NodeId) -> bool {
+        let mut edited = false;
+        self.document.with_text_input(node, |mut driver| {
+            edited = driver.editor.raw_compose().is_some();
+            driver.clear_compose();
+        });
+        self.finish_composition_edit(node, edited);
+        edited
+    }
+
+    fn finish_composition_edit(&mut self, node: NodeId, edited: bool) {
+        if !edited {
+            return;
+        }
+        let value = self.editor_text(node).unwrap_or_default();
+        let state = self.form_state.entry(node).or_default();
+        state.value = Some(value);
+        state.pending = false;
+        state.directionless = false;
+        self.mutate(Some(node), Some(node));
+    }
+
+    /// Resolves the focused editor caret into viewport-relative CSS pixels for
+    /// winit's candidate-window placement request.
+    pub(crate) fn editor_cursor_area(&self) -> Option<(NodeId, Rect)> {
+        let node_id = self.document.get_focussed_node_id()?;
+        if DomBackend::attribute(self, node_id, &DomName::attribute("readonly"))
+            .ok()
+            .flatten()
+            .is_some()
+        {
+            return None;
+        }
+        let node = self.document.get_node(node_id)?;
+        let input = node.element_data()?.text_input_data()?;
+        let editor_layout = input.editor.try_layout()?;
+        let scale = editor_layout.scale();
+        // Parley expands this beyond a one-pixel caret and, while composing,
+        // around the whole marked range. That gives a candidate popup enough
+        // context not to cover the text it is offering to replace.
+        let caret = input.editor.ime_cursor_area();
+        let layout = node.final_layout();
+        let position = node.absolute_position(0.0, 0.0);
+        let viewport_scroll = self.document.viewport_scroll();
+        let mut origin_y = layout.border.top + layout.padding.top;
+        if !input.is_multiline {
+            origin_y +=
+                ((layout.content_box_height() - editor_layout.height() / scale) / 2.0).max(0.0);
+        }
+        let (scroll_x, scroll_y) = if input.is_multiline {
+            (0.0, input.scroll_offset)
+        } else {
+            (input.scroll_offset, 0.0)
+        };
+        Some((
+            node_id,
+            Rect {
+                x: position.x + layout.border.left + layout.padding.left + caret.x0 as f32 / scale
+                    - scroll_x
+                    - viewport_scroll.x as f32,
+                y: position.y + origin_y + caret.y0 as f32 / scale
+                    - scroll_y
+                    - viewport_scroll.y as f32,
+                width: ((caret.x1 - caret.x0) as f32 / scale).max(1.0),
+                height: ((caret.y1 - caret.y0) as f32 / scale).max(1.0),
+            },
+        ))
     }
 
     /// Tells the renderer which node is focused.

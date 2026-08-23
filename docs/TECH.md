@@ -344,7 +344,11 @@ has finished, so any non-passive listener on the path can suppress them with `pr
 enabled form control, link, or element with a nonnegative `tabindex`; Tab and Shift+Tab traverse
 those connected elements in document order. `focus()` and `blur()` update active state before
 dispatching their non-bubbling events. Keyboard input targets the active element, with logical
-`key`, physical `code`, repeat state, and tracked modifiers. Text input and IME remain outside v0.
+`key`, physical `code`, repeat state, and tracked modifiers. An editable text control also enables
+winit IME: preedit and commit are queued into the same frame-turn boundary as keys, routed through
+composition and composing `InputEvent`s, and applied to Parley's painted composing range. After a
+frame the native candidate-window area is updated from that range or caret. `contenteditable`,
+surrounding-text deletion and native-language acceptance remain outside this slice.
 
 `DOMContentLoaded` exists in v0. It fires on `document` after the post-parse script list has
 completed, moving `document.readyState` from `loading` to `interactive`. `load` then fires once on
@@ -1181,7 +1185,11 @@ requirements are implemented and tested, feature detection truthfully finds no `
    nothing that is currently spent. Revisit only if a profile shows property access on a hot path.
    Note what *does* cost: `getBoundingClientRect` is 10.5 µs clean and 66.8 µs after a write, so
    layout flushing, not property access, is the thing worth avoiding in a frame.
-5. **Text input and IME** — a large, easily underestimated surface; where does it live?
+5. **Text input and IME: bounded and split by owner.** Winit owns native enable/disable, preedit,
+   commit and candidate-window placement. The DOM bootstrap owns composition event ordering and
+   focus lifetime. Blitz/Parley owns the value, marked range, caret and paint. This covers editable
+   `<input>` and `<textarea>` only; `contenteditable`, undo/redo, surrounding-text deletion,
+   advanced selection events and human native CJK/RTL verification remain separate acceptance.
 6. **Accessibility** — Blitz's AccessKit story, and whether v0 can defer it. Deferring has a
    real cost for the dashboard/tooling audience.
 7. **Font fallback and shaping: decided.** Enumerate system fonts and register author-provided

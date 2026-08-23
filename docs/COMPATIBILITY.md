@@ -10,8 +10,9 @@ architecture surface plus `fetch`, `WebSocket`, images, web fonts, audio playbac
 say so where they are documented: `dialog.*` is Linux/BSD only, `app.requestSingleInstanceLock`
 is Unix-only, and `window.create` is deliberately absent until the decided isolated-context host
 model is implemented. What is *not* v1 is stated as plainly: WebGL and
-WebGPU are absent, accessibility is absent, and text controls provide basic editing and selection
-but not IME or the advanced editing surface — see [What v1 is not](#what-v1-is-not).
+WebGPU are absent, accessibility is absent, and text controls provide editing, selection and a
+native preedit/commit path, but not the full advanced editing surface or verified input-language
+coverage — see [What v1 is not](#what-v1-is-not).
 
 ## Window renderer by platform
 
@@ -932,11 +933,26 @@ forward or backward and have no third answer, so `"none"` — the direction a ra
 has until something says otherwise — is kept beside the control and dropped the moment anything
 moves the caret.
 
-What is **not** here: undo and redo, IME composition (`compositionstart` and the rest — there is no IME path into this runtime, which is
-why `InputEvent.isComposing` is always false), `getTargetRanges()` on a `beforeinput`, the
-`selectionchange` event, implicit form submission on Enter, and the `change` event a text control
-fires when its value is committed on blur. A framework that listens for `input` — React's
-`onChange` is `input` — is unaffected by that last one.
+**Native IME preedit and commit have a bounded path.** When an editable `<input>` or `<textarea>`
+holds focus, the window enables winit's IME and continually supplies the viewport-relative Parley
+editing area so a desktop candidate window can stay beside the marked text. A preedit lives in
+Parley's own composing range, so the renderer paints and shapes it rather than keeping an invisible
+bridge-side copy. The first update dispatches `compositionstart`; every update dispatches
+`compositionupdate`, then cancelable `beforeinput`, applies `insertCompositionText`, and reports
+`input`. Commit applies `insertFromComposition` before `compositionend`. Those `InputEvent`s carry
+`isComposing: true`; ordinary keyboard edits remain false. Moving focus or receiving IME disable
+clears the preedit and ends the composition, and readonly controls never enable it.
+
+That is software-tested with synthetic Unicode preedit/commit sequences and painted author-font
+fixtures. It is **not** a claim that a native Chinese, Japanese, Korean, Arabic or other complex
+input method has been exercised by a user on every target. Winit surrounding-text deletion is not
+requested or implemented, and the renderer gives marked text no dedicated platform underline.
+Manual native CJK and RTL input remains release acceptance.
+
+What is **not** here: undo and redo, `contenteditable`, advanced document selections,
+`getTargetRanges()` on a `beforeinput`, the `selectionchange` event, implicit form submission on
+Enter, and the `change` event a text control fires when its value is committed on blur. A framework
+that listens for `input` — React's `onChange` is `input` — is unaffected by that last one.
 
 ### What is absent
 
@@ -1315,7 +1331,7 @@ actually draws it rather than where the pitch would prefer.
 | --- | --- | --- |
 | Canvas shadows and `filter` | The four `shadow*` properties and `ctx.filter` are **absent**, so `"shadowBlur" in ctx` is false and a feature test selects a fallback. Both need a blur, and the paint pipeline under this renderer has none — the same reason CSS `filter` is reported ignored | [#99](https://github.com/krazyjakee/blitsen/issues/99) |
 | `OffscreenCanvas`, `ImageBitmap` | `WEB_CANVAS`, a warning. A canvas that is never in the document is the supported way to draw off-screen: `document.createElement("canvas")` draws, reads back and encodes without being connected | [#99](https://github.com/krazyjakee/blitsen/issues/99) |
-| Advanced text input and IME | Text controls support keyboard editing, caret movement, click placement, drag selection and `beforeinput`/`input`; clipboard editing, undo/redo, composition/IME, `contenteditable`, `selectionchange`, target ranges and native complex-script input workflows remain incomplete. Static complex text is shaped separately—see [Font fallback and complex text](#font-fallback-and-complex-text) | [#103](https://github.com/krazyjakee/blitsen/issues/103) |
+| Advanced text input and IME | Text controls support keyboard and clipboard editing, caret movement, click placement, drag selection, `beforeinput`/`input`, and a winit preedit/commit composition path with painted marked text. Undo/redo, `contenteditable`, `selectionchange`, target ranges, surrounding-text deletion and human-verified native complex-script workflows remain incomplete. Static complex text is shaped separately—see [Font fallback and complex text](#font-fallback-and-complex-text) | [#103](https://github.com/krazyjakee/blitsen/issues/103) |
 | Accessibility | No accessibility tree is exported to the platform, so a screen reader finds nothing | [#102](https://github.com/krazyjakee/blitsen/issues/102) |
 | WebGL, WebGPU, WebRTC | `WEB_GPU`, a warning. `<blitsen-view>` is the supported way to put GPU output on screen | — |
 
@@ -1363,7 +1379,7 @@ determinism gate instead.
 | --- | --- | --- |
 | WEB_DOM | `document`, `Document`, `Node`, `Element`, `NodeList`, `DOMTokenList`, `Attr`, `NamedNodeMap`, `CSSStyleDeclaration`, `MutationObserver`, `HTMLElement`, `HTMLIFrameElement`, `SVGElement`, `Text`, `Comment`, `DocumentFragment`, `HTMLLinkElement`, `HTMLTemplateElement`, `HTMLImageElement`, `Image`, `HTMLImageElement.src`, `HTMLImageElement.naturalWidth`, `HTMLImageElement.naturalHeight`, `HTMLImageElement.complete`, `HTMLImageElement.onload`, `HTMLImageElement.onerror`, `Element.querySelector`, `Element.querySelectorAll`, `Element.closest`, `Element.matches`, `Element.cloneNode`, `Element.contains`, `Element.children`, `Element.previousSibling`, `Element.lastChild`, `Element.parentElement`, `Element.dataset`, `Element.nodeValue`, `Element.before`, `Element.after`, `Element.getElementsByTagName`, `Element.outerHTML`, `Element.insertAdjacentHTML`, `Element.scrollIntoView`, `Element.getElementsByClassName`, `Element.firstElementChild`, `Element.lastElementChild`, `Element.nextElementSibling`, `Element.previousElementSibling`, `Element.childElementCount`, `Element.append`, `Element.prepend`, `Element.replaceChildren`, `Element.getAttributeNS`, `Element.setAttributeNS`, `Element.removeAttributeNS`, `Element.hasAttributes`, `Element.getAttributeNames`, `Element.toggleAttribute`, `Element.getClientRects`, `Element.getRootNode`, `Element.normalize`, `Element.attributes`, `Element.insertAdjacentElement`, `Element.innerText`, `Element.compareDocumentPosition`, `Element.offsetParent`, `Element.clientTop`, `Element.clientLeft`, `Element.hidden`, `Element.tabIndex`, `Element.title`, `Document.title`, `Document.dir`, `Document.getElementsByName`, `Document.elementFromPoint`, `Document.elementsFromPoint`, `Document.scrollingElement`, `Document.characterSet`, `Document.documentURI`, `Document.hasFocus`, `Document.adoptNode`, `HTMLLinkElement.relList`, `HTMLLinkElement.onload`, `HTMLLinkElement.onerror`, `HTMLTemplateElement.content`, `DOMTokenList.supports`, `Document.createElementNS`, `Document.createComment`, `Document.createDocumentFragment`, `Document.getElementsByTagName`, `Document.getElementsByClassName`, `Document.importNode`, `NodeList.item`, `NodeList.forEach` | `Element.attachShadow`, `Document.currentScript` |
 | WEB_FORM_CONTROLS | `HTMLInputElement`, `HTMLTextAreaElement`, `HTMLSelectElement`, `HTMLOptionElement`, `HTMLButtonElement`, `HTMLFormElement`, `HTMLInputElement.value`, `HTMLInputElement.defaultValue`, `HTMLInputElement.checked`, `HTMLInputElement.defaultChecked`, `HTMLInputElement.type`, `HTMLInputElement.name`, `HTMLInputElement.disabled`, `HTMLInputElement.form`, `HTMLInputElement.select`, `HTMLInputElement.setSelectionRange`, `HTMLInputElement.selectionStart`, `HTMLInputElement.selectionEnd`, `HTMLInputElement.selectionDirection`, `HTMLTextAreaElement.value`, `HTMLTextAreaElement.defaultValue`, `HTMLTextAreaElement.select`, `HTMLTextAreaElement.setSelectionRange`, `HTMLTextAreaElement.selectionStart`, `HTMLTextAreaElement.selectionEnd`, `HTMLTextAreaElement.selectionDirection`, `HTMLSelectElement.options`, `HTMLSelectElement.selectedIndex`, `HTMLSelectElement.value`, `HTMLSelectElement.length`, `HTMLSelectElement.selectedOptions`, `HTMLSelectElement.multiple`, `HTMLOptionElement.value`, `HTMLOptionElement.text`, `HTMLOptionElement.selected`, `HTMLOptionElement.index`, `HTMLOptionElement.label`, `HTMLOptionElement.defaultSelected`, `HTMLButtonElement.value`, `HTMLButtonElement.type`, `HTMLFormElement.elements`, `HTMLFormElement.requestSubmit` | `HTMLInputElement.files`, `HTMLInputElement.labels`, `HTMLInputElement.validity`, `HTMLInputElement.checkValidity`, `HTMLSelectElement.add`, `HTMLFormElement.submit`, `HTMLFormElement.reset`, `HTMLFormElement.action`, `HTMLFormElement.method`, `HTMLFormElement.checkValidity` |
-| WEB_EVENTS | `EventTarget`, `Event`, `CustomEvent`, `SubmitEvent`, `MouseEvent`, `KeyboardEvent`, `FocusEvent`, `InputEvent`, `PointerEvent`, `WheelEvent`, `addEventListener`, `removeEventListener`, `dispatchEvent`, `ErrorEvent`, `Element.setPointerCapture`, `Element.releasePointerCapture`, `Element.hasPointerCapture` | — |
+| WEB_EVENTS | `EventTarget`, `Event`, `CustomEvent`, `SubmitEvent`, `MouseEvent`, `KeyboardEvent`, `FocusEvent`, `InputEvent`, `CompositionEvent`, `PointerEvent`, `WheelEvent`, `addEventListener`, `removeEventListener`, `dispatchEvent`, `ErrorEvent`, `Element.setPointerCapture`, `Element.releasePointerCapture`, `Element.hasPointerCapture` | — |
 | WEB_TRANSFER | `ClipboardEvent`, `DragEvent`, `DataTransfer`, `DataTransfer.dropEffect`, `DataTransfer.effectAllowed`, `DataTransfer.types`, `DataTransfer.getData`, `DataTransfer.setData`, `DataTransfer.clearData`, `DataTransfer.paths` | `DataTransfer.files`, `DataTransfer.items`, `DataTransfer.setDragImage` |
 | WEB_SCROLL | `scrollTo`, `scrollBy`, `scroll`, `scrollX`, `scrollY`, `pageXOffset`, `pageYOffset` | — |
 | WEB_SELECTION | `getSelection`, `Range`, `Selection`, `CaretPosition`, `Document.createRange`, `Document.getSelection`, `Document.caretRangeFromPoint`, `Document.caretPositionFromPoint`, `Range.setStart`, `Range.setEnd`, `Range.setStartBefore`, `Range.setStartAfter`, `Range.setEndBefore`, `Range.setEndAfter`, `Range.selectNode`, `Range.selectNodeContents`, `Range.collapse`, `Range.cloneRange`, `Range.startContainer`, `Range.startOffset`, `Range.endContainer`, `Range.endOffset`, `Range.collapsed`, `Range.commonAncestorContainer`, `Range.comparePoint`, `Range.compareBoundaryPoints`, `Range.intersectsNode`, `Range.isPointInRange`, `Range.toString`, `Range.getClientRects`, `Range.getBoundingClientRect`, `Selection.anchorNode`, `Selection.anchorOffset`, `Selection.focusNode`, `Selection.focusOffset`, `Selection.isCollapsed`, `Selection.rangeCount`, `Selection.type`, `Selection.direction`, `Selection.getRangeAt`, `Selection.addRange`, `Selection.removeAllRanges`, `Selection.setBaseAndExtent`, `Selection.collapse`, `Selection.extend`, `Selection.selectAllChildren`, `Selection.containsNode`, `Selection.toString`, `CaretPosition.offsetNode`, `CaretPosition.offset`, `CaretPosition.getClientRect` | `Range.deleteContents`, `Range.extractContents`, `Range.cloneContents`, `Range.insertNode`, `Range.surroundContents` |

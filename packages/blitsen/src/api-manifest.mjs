@@ -86,7 +86,7 @@ const CATALOGUE = {
   // because it is the pointer-event surface: it means nothing without a
   // `pointerId`, and an application that reaches for one reaches for both.
   WEB_EVENTS: ["EventTarget", "Event", "CustomEvent", "SubmitEvent", "MouseEvent",
-    "KeyboardEvent", "FocusEvent", "InputEvent", "PointerEvent", "WheelEvent",
+    "KeyboardEvent", "FocusEvent", "InputEvent", "CompositionEvent", "PointerEvent", "WheelEvent",
     "addEventListener", "removeEventListener", "dispatchEvent", "ErrorEvent",
     "Element.setPointerCapture", "Element.releasePointerCapture",
     "Element.hasPointerCapture"],

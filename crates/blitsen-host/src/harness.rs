@@ -580,7 +580,35 @@ pub fn execute_document_animation_harness<E: JsEngine + Clone + 'static>(
 
 #[cfg(test)]
 mod tests {
+    use blitsen_quickjs::QuickJs;
+
     use super::*;
+
+    fn ime_document(html: &str) -> (QuickJs, Rc<RefCell<BlitzDom>>) {
+        let dom = BlitzDom::from_html(
+            html,
+            DocumentConfig {
+                viewport: Some(Viewport::new(400, 160, 1.0, ColorScheme::Light)),
+                ..Default::default()
+            },
+        );
+        let runtime = DomRuntime::new(dom);
+        let document = runtime.document();
+        let mut engine = QuickJs::new().expect("a QuickJS runtime");
+        let _services = crate::runtime_services::RuntimeServices::install(&mut engine)
+            .expect("the embedded runtime services install");
+        dom_bridge::install(
+            &mut engine,
+            runtime,
+            InstallOptions::new(400, 160, 1.0, DocumentMode::Application, None),
+        )
+        .expect("the DOM bridge installs");
+        document
+            .borrow_mut()
+            .flush_layout()
+            .expect("the controls lay out");
+        (engine, document)
+    }
 
     #[test]
     fn element_view_preserves_tree_and_attribute_order() {
@@ -662,5 +690,111 @@ mod tests {
             record_frame(&blocker, 13, &pixels, 1, 1).expect_err("writing below a file fails");
         assert!(error.message().starts_with("could not record frame 13:"));
         std::fs::remove_dir_all(directory).expect("the scratch directory is removed");
+    }
+
+    #[test]
+    fn synthetic_ime_events_keep_dom_order_state_and_is_composing() {
+        let (mut engine, _) = ime_document("<input id=field>");
+        engine
+            .evaluate_script(
+                r#"
+                globalThis.field = document.getElementById("field");
+                globalThis.imeLog = [];
+                for (const type of ["compositionstart", "compositionupdate", "beforeinput",
+                                    "input", "compositionend"]) {
+                  field.addEventListener(type, event => imeLog.push({
+                    type: event.type,
+                    data: event.data,
+                    inputType: event instanceof InputEvent ? event.inputType : "",
+                    isComposing: event instanceof InputEvent ? event.isComposing : null,
+                    value: field.value,
+                  }));
+                }
+                field.focus();
+                "#,
+                "blitsen:test-ime-listeners",
+            )
+            .unwrap();
+        for script in [
+            r#"__blitsenDispatchImeEvent("preedit", { data: "🙂", cursorStart: 4, cursorEnd: 4 })"#,
+            r#"__blitsenDispatchImeEvent("preedit", { data: "🙂🙂", cursorStart: 4, cursorEnd: 8 })"#,
+            r#"__blitsenDispatchImeEvent("commit", { data: "🙂" })"#,
+        ] {
+            engine
+                .evaluate_script(script, "blitsen:test-ime-event")
+                .unwrap();
+        }
+        let result = engine
+            .evaluate_script(
+                "JSON.stringify({ log: imeLog, value: field.value, start: field.selectionStart })",
+                "blitsen:test-ime-result",
+            )
+            .and_then(|value| engine.to_string(&value))
+            .unwrap();
+        let result: serde_json::Value = serde_json::from_str(&result).unwrap();
+
+        assert_eq!(
+            result["log"],
+            serde_json::json!([
+                {"type":"compositionstart", "data":"", "inputType":"", "isComposing":null, "value":""},
+                {"type":"compositionupdate", "data":"🙂", "inputType":"", "isComposing":null, "value":""},
+                {"type":"beforeinput", "data":"🙂", "inputType":"insertCompositionText", "isComposing":true, "value":""},
+                {"type":"input", "data":"🙂", "inputType":"insertCompositionText", "isComposing":true, "value":"🙂"},
+                {"type":"compositionupdate", "data":"🙂🙂", "inputType":"", "isComposing":null, "value":"🙂"},
+                {"type":"beforeinput", "data":"🙂🙂", "inputType":"insertCompositionText", "isComposing":true, "value":"🙂"},
+                {"type":"input", "data":"🙂🙂", "inputType":"insertCompositionText", "isComposing":true, "value":"🙂🙂"},
+                {"type":"beforeinput", "data":"🙂", "inputType":"insertFromComposition", "isComposing":true, "value":"🙂🙂"},
+                {"type":"input", "data":"🙂", "inputType":"insertFromComposition", "isComposing":true, "value":"🙂"},
+                {"type":"compositionend", "data":"🙂", "inputType":"", "isComposing":null, "value":"🙂"},
+            ])
+        );
+        assert_eq!(result["value"], "🙂");
+        assert_eq!(result["start"], 2, "DOM selection offsets remain UTF-16");
+    }
+
+    #[test]
+    fn focus_change_cancels_preedit_and_readonly_never_starts_one() {
+        let (mut engine, _) = ime_document(
+            "<input id=field><input id=locked readonly><textarea id=notes></textarea>",
+        );
+        let result = engine
+            .evaluate_script(
+                r#"
+                const field = document.getElementById("field");
+                const locked = document.getElementById("locked");
+                const notes = document.getElementById("notes");
+                const ended = [];
+                field.addEventListener("compositionend", event => ended.push(event.data));
+                field.focus();
+                __blitsenDispatchImeEvent("preedit", { data: "draft", cursorStart: 5, cursorEnd: 5 });
+                notes.focus();
+                locked.focus();
+                const readonlyHandled = __blitsenDispatchImeEvent("preedit",
+                  { data: "blocked", cursorStart: 7, cursorEnd: 7 });
+                notes.focus();
+                __blitsenDispatchImeEvent("preedit", { data: "ok", cursorStart: 2, cursorEnd: 2 });
+                __blitsenDispatchImeEvent("commit", { data: "ok" });
+                field.focus();
+                __blitsenDispatchImeEvent("preedit",
+                  { data: "cancel", cursorStart: 6, cursorEnd: 6 });
+                __blitsenDispatchImeEvent("preedit", { data: "" });
+                JSON.stringify({ field: field.value, notes: notes.value, locked: locked.value,
+                                 ended, readonlyHandled });
+                "#,
+                "blitsen:test-ime-focus",
+            )
+            .and_then(|value| engine.to_string(&value))
+            .unwrap();
+        let result: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(
+            result,
+            serde_json::json!({
+                "field": "",
+                "notes": "ok",
+                "locked": "",
+                "ended": ["", ""],
+                "readonlyHandled": false,
+            })
+        );
     }
 }

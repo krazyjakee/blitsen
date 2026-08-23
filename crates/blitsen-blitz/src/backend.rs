@@ -283,6 +283,30 @@ impl DomBackend for BlitzDom {
         Ok(self.edit_editor_value(node, edit))
     }
 
+    fn set_form_composition(
+        &mut self,
+        node: NodeId,
+        text: &str,
+        cursor: Option<(usize, usize)>,
+    ) -> Result<bool, DomError> {
+        self.ensure_element(node)?;
+        self.set_editor_composition(node, text, cursor)
+    }
+
+    fn commit_form_composition(&mut self, node: NodeId, text: &str) -> Result<bool, DomError> {
+        self.ensure_element(node)?;
+        Ok(self.commit_editor_composition(node, text))
+    }
+
+    fn clear_form_composition(&mut self, node: NodeId) -> Result<bool, DomError> {
+        self.ensure_element(node)?;
+        Ok(self.clear_editor_composition(node))
+    }
+
+    fn focused_form_cursor_area(&self) -> Option<(NodeId, Rect)> {
+        self.editor_cursor_area()
+    }
+
     fn set_focused(&mut self, node: Option<NodeId>) -> Result<(), DomError> {
         if let Some(node) = node {
             self.ensure_element(node)?;

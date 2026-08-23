@@ -315,7 +315,7 @@ that is down, while raw `movementX`/`movementY` and the wheel fields are mouse s
 produce. A second finger does not disturb the pointer the first one set; multi-touch is the DOM
 pointer events, which carry every contact with its own `pointerId`. Keys are held by physical
 code, so an Android soft keyboard — which reports characters without the key behind them — appears
-in `keydown` rather than here.
+as DOM composition and `input` events rather than here. Hardware keys still produce `keydown`.
 
 ## Raw HID devices
 

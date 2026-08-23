@@ -1348,6 +1348,13 @@
       "pattern": "(?<![.\\w$])InputEvent\\b"
     },
     {
+      "api": "CompositionEvent",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_EVENTS",
+      "pattern": "(?<![.\\w$])CompositionEvent\\b"
+    },
+    {
       "api": "PointerEvent",
       "kind": "global",
       "status": "implemented",

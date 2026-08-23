@@ -26,6 +26,114 @@
   const editableControl = element =>
     element?.hasAttribute("readonly") ? null : textControl(element);
 
+  // One native composition belongs to the control that held focus when its
+  // first preedit arrived. Updates keep targeting it until commit, cancellation
+  // or a focus move; reading `activeElement` again midway would let an event
+  // handler redirect half a composition into another field.
+  let compositionTarget = null;
+
+  const compositionInput = (target, operation, data, inputType, cursor = null) => {
+    const before = new InputEvent("beforeinput", {
+      bubbles: true, cancelable: operation !== "clear", data, inputType, isComposing: true,
+    });
+    if (!target.dispatchEvent(before)) return "canceled";
+    // A beforeinput listener can move focus. That synchronously cancels this
+    // composition; do not resurrect its preedit in the control that just
+    // blurred.
+    if (operation !== "clear" && compositionTarget !== target) return "aborted";
+    const previous = target.value;
+    if (operation === "set") {
+      call("setFormComposition", target[handle], data ?? "",
+        cursor === null ? "" : cursor[0], cursor === null ? "" : cursor[1]);
+    } else if (operation === "commit") {
+      call("commitFormComposition", target[handle], data ?? "");
+    } else {
+      call("clearFormComposition", target[handle]);
+    }
+    if (target.value !== previous) {
+      target.dispatchEvent(new InputEvent("input", {
+        bubbles: true, data, inputType, isComposing: true,
+      }));
+    }
+    return "applied";
+  };
+
+  const startComposition = target => {
+    compositionTarget = target;
+    target.dispatchEvent(new CompositionEvent("compositionstart", {
+      bubbles: true, data: "",
+    }));
+  };
+
+  cancelTextComposition = () => {
+    const target = compositionTarget;
+    if (target === null) return false;
+    // Clear first so a focus change from a beforeinput listener cannot re-enter
+    // cancellation for the same marked range.
+    compositionTarget = null;
+    compositionInput(target, "clear", null, "deleteCompositionText");
+    target.dispatchEvent(new CompositionEvent("compositionend", {
+      bubbles: true, data: "",
+    }));
+    return true;
+  };
+
+  // Typed entry point for winit's `Ime` events. Cursor offsets stay UTF-8 byte
+  // indices all the way to Parley; JavaScript does not reinterpret them as its
+  // UTF-16 string offsets.
+  const dispatchImeEvent = (kind, init = {}) => {
+    kind = String(kind);
+    if (kind === "enabled") return false;
+    if (kind === "disabled") return cancelTextComposition();
+    if (kind === "deleteSurrounding") return false;
+
+    const data = String(init.data ?? "");
+    let target = compositionTarget;
+    if (target === null) {
+      // Winit uses an empty preedit to clear an existing marked range. With no
+      // range there is no composition to begin or DOM event to synthesize.
+      if (kind === "preedit" && data === "") return false;
+      target = editableControl(activeElement) === null ? null : activeElement;
+      if (target === null) return false;
+      startComposition(target);
+      if (compositionTarget !== target) return false;
+    }
+
+    if (kind === "preedit") {
+      target.dispatchEvent(new CompositionEvent("compositionupdate", {
+        bubbles: true, data,
+      }));
+      if (compositionTarget !== target) return false;
+      if (data === "") {
+        compositionInput(target, "clear", null, "deleteCompositionText");
+        if (compositionTarget !== target) return false;
+        compositionTarget = null;
+        target.dispatchEvent(new CompositionEvent("compositionend", {
+          bubbles: true, data: "",
+        }));
+        return true;
+      }
+      const cursor = init.cursorStart === null || init.cursorStart === undefined
+        ? null : [Number(init.cursorStart), Number(init.cursorEnd)];
+      return compositionInput(target, "set", data, "insertCompositionText", cursor) !== "aborted";
+    }
+    if (kind === "commit") {
+      const result = compositionInput(target, "commit", data, "insertFromComposition");
+      if (result === "aborted") return false;
+      if (compositionTarget !== target) return false;
+      // The platform has ended this composition even if script canceled the
+      // committed insertion. Remove the marked text without synthesizing an
+      // `input` for the canceled default action.
+      if (result === "canceled") call("clearFormComposition", target[handle]);
+      compositionTarget = null;
+      target.dispatchEvent(new CompositionEvent("compositionend", {
+        bubbles: true, data,
+      }));
+      return true;
+    }
+    return false;
+  };
+
   // What a navigation key means to a caret. `ArrowUp` in a single-line field is
   // the start of the value and `ArrowDown` its end, because there is no line
   // above or below one to reach. Ctrl is the modifier that widens each of them

@@ -194,7 +194,7 @@ behind that reading has no Android backend, and the platform's own answer is `Ba
 JNI with its own semantics. The input snapshot reports the touch position and a primary button for
 the finger that is down; raw pointer movement and wheel deltas stay zero because Android produces
 neither, and keys held by physical code exclude the soft keyboard, whose input arrives as DOM
-`keydown`.
+composition and `input` events rather than in that snapshot.
 
 The output is an APK for direct installation, not an Android App Bundle. It cannot be used to
 create a new Google Play listing that requires AAB upload. See [Build an Android
@@ -205,9 +205,11 @@ APK](PACKAGING.md#build-an-android-apk) for prerequisites and signing.
 - WebGL, WebGPU and WebRTC are not implemented. `<canvas>` 2D is, without shadows or
   `ctx.filter`.
 - There is no platform accessibility tree, so screen readers cannot access the application.
-- Text input lacks complete IME/composition, clipboard editing, undo/redo and `contenteditable`.
-  Static Arabic/RTL and other complex text is shaped, but native complex-script input workflows
-  remain part of IME acceptance.
+- Editable `<input>` and `<textarea>` controls route winit preedit/commit through composition
+  events into a painted Parley composing range, with candidate-window placement on desktop.
+  Undo/redo, `contenteditable`, surrounding-text IME deletion and advanced selection events remain
+  absent. Native CJK/RTL input has synthetic coverage only and still needs target-specific human
+  verification; static Arabic/RTL and other complex text shaping is a separate tested path.
 - Font fallback uses installed system fonts plus application-provided `@font-face` files; no
   universal fallback is bundled. Ship author fonts for stable coverage and metrics. Platform
   emoji, colour fonts and ZWJ sequences still need target-specific verification.

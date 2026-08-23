@@ -63,7 +63,7 @@ lists individual globals, classes and members.
 | Custom elements and shadow DOM | Absent; `DOMParser` is supported |
 | Video and text tracks | Absent; audio is supported |
 | Accessibility tree | Not exported to the platform in this release |
-| Full IME and complex text editing | Incomplete; verify every input language and workflow you support |
+| Full IME and complex text editing | `<input>`/`<textarea>` preedit and commit are implemented; `contenteditable`, surrounding-text deletion and native CJK/RTL workflows remain unverified |
 
 ## Dropped files are paths
 

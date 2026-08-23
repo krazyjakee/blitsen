@@ -219,6 +219,7 @@ impl<E: JsEngine + Clone + 'static> WindowSession<E> {
             document: document.document,
             pending_pointer_input: Vec::new(),
             pending_keyboard_input: Vec::new(),
+            ime_targets: HashMap::new(),
             pending_drag_input: Vec::new(),
             drag_paths: std::rc::Rc::from([]),
             pending_resize: HashMap::new(),
@@ -306,6 +307,13 @@ impl<E: JsEngine + Clone + 'static> WindowSession<E> {
             .windows
             .get_mut(&window_id)
             .expect("window id was read from this map");
+        if self.application.ime_targets.remove(&window_id).is_some() {
+            view.window
+                .request_ime_update(winit::window::ImeRequest::Disable)
+                .map_err(|error| {
+                    JsError::new(format!("could not disable IME for reload: {error}"))
+                })?;
+        }
         view.replace_document(
             Box::new(SharedBlitzDocument(Rc::clone(&document.document))),
             false,

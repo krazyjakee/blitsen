@@ -56,7 +56,7 @@
     CanvasGradient, CanvasPattern, TextMetrics,
     Range, Selection, CaretPosition, getSelection,
     getComputedStyle, matchMedia, MediaQueryList, MediaQueryListEvent,
-    Event, MouseEvent, KeyboardEvent, CustomEvent, SubmitEvent, PopStateEvent, HashChangeEvent,
+    Event, MouseEvent, KeyboardEvent, CompositionEvent, CustomEvent, SubmitEvent, PopStateEvent, HashChangeEvent,
     MessageEvent, CloseEvent, ErrorEvent, FocusEvent, InputEvent, PointerEvent, WheelEvent,
     ClipboardEvent, DragEvent, DataTransfer,
     Worker, MessagePort, MessageChannel, structuredClone,
@@ -92,6 +92,7 @@
     __blitsenDispatchMouseEvent: dispatchMouseEvent,
     __blitsenDispatchPointerEvent: dispatchPointerEvent,
     __blitsenDispatchKeyboardEvent: dispatchKeyboardEvent,
+    __blitsenDispatchImeEvent: dispatchImeEvent,
     __blitsenDispatchDragEvent: dispatchDragEvent,
     __blitsenDispatchLifecycleEvent: dispatchLifecycleEvent,
     __blitsenDisposeContext: () => {
