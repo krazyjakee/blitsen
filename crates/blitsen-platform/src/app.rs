@@ -164,9 +164,11 @@ pub enum Instance {
 ///
 /// Windows endpoints are discoverable as
 /// `\\.\pipe\blitsen-<user SID>-<application>`. Their protected DACL grants only
-/// that SID access, and a client also verifies the server process has that SID
-/// before sending an invocation, preventing a different user from pre-binding
-/// the discoverable name.
+/// that SID access once Blitsen owns the pipe. A different user can still race
+/// to create a discoverable name first, so clients verify the connected pipe
+/// object's owner SID before sending; servers impersonate each connected client
+/// and verify its token SID. Processes under the same SID share this trust
+/// boundary and can intentionally contend for the same application name.
 #[cfg(not(target_os = "android"))]
 pub mod single_instance {
     use std::io::{ErrorKind, Read, Write};
@@ -196,8 +198,13 @@ pub mod single_instance {
     static SERVERS: Mutex<Vec<Server>> = Mutex::new(Vec::new());
 
     /// A peer that connects and then says nothing must not stall the hand-off.
+    #[cfg(not(test))]
     const READ_TIMEOUT: Duration = Duration::from_secs(5);
+    #[cfg(test)]
+    const READ_TIMEOUT: Duration = Duration::from_millis(250);
+    const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
     const POLL_INTERVAL: Duration = Duration::from_millis(5);
+    const MAX_INVOCATION_BYTES: usize = 1024 * 1024;
 
     struct Endpoint {
         name: Name<'static>,
@@ -227,15 +234,11 @@ pub mod single_instance {
                         drop(election);
                         hand_over(stream, invocation)
                     }
-                    #[cfg(windows)]
-                    Err(error) => Err(PlatformError::new(format!(
-                        "could not connect to the single-instance owner: {error}"
-                    ))),
                     #[cfg(unix)]
                     // Nothing is listening: the socket outlived the process that
                     // made it. The election lock prevents two recovering
                     // processes from both unlinking a successor's live socket.
-                    Err(_) => {
+                    Err(error) if unix_endpoint_is_stale(&error) => {
                         let _ = std::fs::remove_file(&endpoint.path);
                         let listener = bind(&endpoint).map_err(|error| {
                             PlatformError::new(format!(
@@ -245,6 +248,9 @@ pub mod single_instance {
                         })?;
                         serve(listener)
                     }
+                    Err(error) => Err(PlatformError::new(format!(
+                        "could not connect to the single-instance owner: {error}"
+                    ))),
                 }
             }
             Err(error) => Err(PlatformError::new(format!(
@@ -258,6 +264,18 @@ pub mod single_instance {
             // FILE_FLAG_FIRST_PIPE_INSTANCE reports ERROR_ACCESS_DENIED when
             // another server owns the discoverable pipe name.
             || cfg!(windows) && error.kind() == ErrorKind::PermissionDenied
+    }
+
+    #[cfg(unix)]
+    fn unix_endpoint_is_stale(error: &std::io::Error) -> bool {
+        // These are the only connect results that prove there is no listener.
+        // Permission, timeout, interruption and resource errors may be
+        // transient or an authentication boundary and must never trigger an
+        // unlink of a possibly live owner's endpoint.
+        matches!(
+            error.kind(),
+            ErrorKind::ConnectionRefused | ErrorKind::NotFound
+        )
     }
 
     /// Drains the invocations received since the last call.
@@ -427,30 +445,23 @@ pub mod single_instance {
     fn connect(endpoint: &Endpoint) -> std::io::Result<LocalSocketStream> {
         let stream = LocalSocketStream::connect(endpoint.name.borrow())?;
         authenticate_peer(&stream, endpoint)?;
+        stream.set_nonblocking(true)?;
         Ok(stream)
     }
 
     fn authenticate_peer(stream: &LocalSocketStream, _endpoint: &Endpoint) -> std::io::Result<()> {
-        let credentials = stream.peer_creds()?;
         #[cfg(unix)]
-        if credentials.euid() != Some(unsafe { libc::geteuid() }) {
-            return Err(std::io::Error::new(
-                ErrorKind::PermissionDenied,
-                "the single-instance peer belongs to another user",
-            ));
-        }
-        #[cfg(windows)]
         {
-            let process = credentials.pid().ok_or_else(|| {
-                std::io::Error::other("the named-pipe peer did not provide a process id")
-            })?;
-            if windows::process_user_sid(process)? != _endpoint.user_sid {
+            let credentials = stream.peer_creds()?;
+            if credentials.euid() != Some(unsafe { libc::geteuid() }) {
                 return Err(std::io::Error::new(
                     ErrorKind::PermissionDenied,
-                    "the single-instance pipe owner belongs to another user",
+                    "the single-instance peer belongs to another user",
                 ));
             }
         }
+        #[cfg(windows)]
+        windows::authenticate_server(stream, &_endpoint.user_sid)?;
         Ok(())
     }
 
@@ -462,9 +473,13 @@ pub mod single_instance {
             .spawn(move || {
                 while !thread_stop.load(Ordering::Acquire) {
                     match listener.accept() {
-                        Ok(stream) => {
-                            if authenticate_peer_without_endpoint(&stream)
-                                && let Some(invocation) = receive(stream)
+                        Ok(mut stream) => {
+                            // Windows impersonation is bound to the last bytes
+                            // read from this pipe, so authenticate after the
+                            // bounded frame has been consumed and before it is
+                            // admitted to the application queue.
+                            if let Some(invocation) = receive(&mut stream)
+                                && authenticate_client(&stream)
                             {
                                 RECEIVED.lock().push(invocation);
                             }
@@ -486,41 +501,51 @@ pub mod single_instance {
         Ok(Instance::Primary)
     }
 
-    fn authenticate_peer_without_endpoint(stream: &LocalSocketStream) -> bool {
-        let Ok(credentials) = stream.peer_creds() else {
-            return false;
-        };
+    fn authenticate_client(stream: &LocalSocketStream) -> bool {
         #[cfg(unix)]
-        return credentials.euid() == Some(unsafe { libc::geteuid() });
+        return stream
+            .peer_creds()
+            .is_ok_and(|credentials| credentials.euid() == Some(unsafe { libc::geteuid() }));
         #[cfg(windows)]
-        return credentials
-            .pid()
-            .and_then(|process| windows::process_user_sid(process).ok())
-            .is_some_and(|sid| windows::current_user_sid().is_ok_and(|current| sid == current));
+        return windows::current_user_sid()
+            .is_ok_and(|sid| windows::authenticate_client(stream, &sid).is_ok());
     }
 
-    fn receive(mut stream: LocalSocketStream) -> Option<Invocation> {
+    fn receive(stream: &mut LocalSocketStream) -> Option<Invocation> {
+        let payload = read_payload(stream, READ_TIMEOUT).ok()?;
+        serde_json::from_slice(&payload).ok()
+    }
+
+    fn read_payload(reader: &mut impl Read, timeout: Duration) -> std::io::Result<Vec<u8>> {
         let mut payload = Vec::new();
         let mut buffer = [0; 4096];
-        let mut deadline = Instant::now() + READ_TIMEOUT;
+        let deadline = Instant::now() + timeout;
         loop {
-            match stream.read(&mut buffer) {
+            if Instant::now() >= deadline {
+                return Err(std::io::Error::new(
+                    ErrorKind::TimedOut,
+                    "the single-instance invocation frame timed out",
+                ));
+            }
+            match reader.read(&mut buffer) {
                 Ok(0) => break,
                 Ok(read) => {
+                    if payload.len().saturating_add(read) > MAX_INVOCATION_BYTES {
+                        return Err(std::io::Error::new(
+                            ErrorKind::InvalidData,
+                            "the single-instance invocation frame is too large",
+                        ));
+                    }
                     payload.extend_from_slice(&buffer[..read]);
-                    deadline = Instant::now() + READ_TIMEOUT;
                 }
                 Err(error) if error.kind() == ErrorKind::WouldBlock => {
-                    if Instant::now() >= deadline {
-                        return None;
-                    }
                     std::thread::sleep(POLL_INTERVAL);
                 }
                 Err(error) if error.kind() == ErrorKind::Interrupted => {}
-                Err(_) => return None,
+                Err(error) => return Err(error),
             }
         }
-        serde_json::from_slice(&payload).ok()
+        Ok(payload)
     }
 
     fn hand_over(
@@ -530,18 +555,49 @@ pub mod single_instance {
         let payload = serde_json::to_vec(invocation).map_err(|error| {
             PlatformError::new(format!("could not encode this invocation: {error}"))
         })?;
-        stream
-            .write_all(&payload)
-            .and_then(|()| stream.flush())
-            .map_err(|error| {
-                PlatformError::new(format!("could not hand this invocation over: {error}"))
-            })?;
+        write_payload(&mut stream, &payload, WRITE_TIMEOUT).map_err(|error| {
+            PlatformError::new(format!("could not hand this invocation over: {error}"))
+        })?;
         drop(stream); // EOF is Blitsen's invocation frame on sockets and pipes.
         Ok(Instance::Secondary)
     }
 
+    fn write_payload(
+        writer: &mut impl Write,
+        payload: &[u8],
+        timeout: Duration,
+    ) -> std::io::Result<()> {
+        if payload.len() > MAX_INVOCATION_BYTES {
+            return Err(std::io::Error::new(
+                ErrorKind::InvalidInput,
+                "the single-instance invocation frame is too large",
+            ));
+        }
+        let deadline = Instant::now() + timeout;
+        let mut written = 0;
+        while written < payload.len() {
+            if Instant::now() >= deadline {
+                return Err(std::io::Error::new(
+                    ErrorKind::TimedOut,
+                    "the single-instance invocation hand-off timed out",
+                ));
+            }
+            match writer.write(&payload[written..]) {
+                Ok(0) => return Err(std::io::ErrorKind::WriteZero.into()),
+                Ok(count) => written += count,
+                Err(error) if error.kind() == ErrorKind::WouldBlock => {
+                    std::thread::sleep(POLL_INTERVAL);
+                }
+                Err(error) if error.kind() == ErrorKind::Interrupted => {}
+                Err(error) => return Err(error),
+            }
+        }
+        writer.flush()
+    }
+
     #[cfg(test)]
     mod tests {
+        use std::io::{Cursor, Read, Write};
         use std::sync::Barrier;
         use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -582,6 +638,68 @@ pub mod single_instance {
         fn reset() {
             release();
             take();
+        }
+
+        #[test]
+        fn invocation_frames_are_bounded_in_size_and_wall_clock_time() {
+            let oversized = vec![b'x'; MAX_INVOCATION_BYTES + 1];
+            let error =
+                read_payload(&mut Cursor::new(&oversized), Duration::from_secs(1)).unwrap_err();
+            assert_eq!(error.kind(), ErrorKind::InvalidData);
+
+            let error =
+                write_payload(&mut Vec::new(), &oversized, Duration::from_secs(1)).unwrap_err();
+            assert_eq!(error.kind(), ErrorKind::InvalidInput);
+
+            struct Drip;
+            impl Read for Drip {
+                fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+                    std::thread::sleep(Duration::from_millis(2));
+                    buffer[0] = b' ';
+                    Ok(1)
+                }
+            }
+            let started = Instant::now();
+            let error = read_payload(&mut Drip, Duration::from_millis(20)).unwrap_err();
+            assert_eq!(error.kind(), ErrorKind::TimedOut);
+            assert!(started.elapsed() < Duration::from_millis(200));
+
+            struct Blocked;
+            impl Write for Blocked {
+                fn write(&mut self, _buffer: &[u8]) -> std::io::Result<usize> {
+                    Err(ErrorKind::WouldBlock.into())
+                }
+
+                fn flush(&mut self) -> std::io::Result<()> {
+                    Ok(())
+                }
+            }
+            let started = Instant::now();
+            let error = write_payload(
+                &mut Blocked,
+                br#"{"argv":[],"cwd":"/"}"#,
+                Duration::from_millis(20),
+            )
+            .unwrap_err();
+            assert_eq!(error.kind(), ErrorKind::TimedOut);
+            assert!(started.elapsed() < Duration::from_millis(200));
+        }
+
+        #[cfg(unix)]
+        #[test]
+        fn only_errors_proving_no_unix_listener_allow_stale_recovery() {
+            for kind in [ErrorKind::ConnectionRefused, ErrorKind::NotFound] {
+                assert!(unix_endpoint_is_stale(&std::io::Error::from(kind)));
+            }
+            for kind in [
+                ErrorKind::PermissionDenied,
+                ErrorKind::TimedOut,
+                ErrorKind::WouldBlock,
+                ErrorKind::Interrupted,
+                ErrorKind::ConnectionReset,
+            ] {
+                assert!(!unix_endpoint_is_stale(&std::io::Error::from(kind)));
+            }
         }
 
         #[test]
@@ -694,8 +812,18 @@ pub mod single_instance {
             let _serial = SERIAL.lock();
             reset();
             let name = unique_name("release");
+            let endpoint = endpoint(&name).unwrap();
             assert_eq!(request(&name, &invocation(0)).unwrap(), Instance::Primary);
+
+            // A silent peer parks the listener in the frame reader. Its fixed
+            // deadline must still let release join the thread promptly.
+            let silent = LocalSocketStream::connect(endpoint.name.borrow()).unwrap();
+            std::thread::sleep(POLL_INTERVAL * 4);
+            let started = Instant::now();
             release();
+            assert!(started.elapsed() < Duration::from_secs(1));
+            drop(silent);
+
             assert_eq!(request(&name, &invocation(1)).unwrap(), Instance::Primary);
             reset();
         }
@@ -726,12 +854,46 @@ pub mod single_instance {
 
         #[cfg(windows)]
         #[test]
-        fn windows_pipe_name_and_dacl_are_scoped_to_the_user_sid() {
+        fn windows_pipe_name_dacl_owner_and_client_are_scoped_to_the_user_sid() {
             let _serial = SERIAL.lock();
             let endpoint = endpoint(&unique_name("security")).unwrap();
             assert!(endpoint.name.is_namespaced());
             assert!(endpoint.user_sid.starts_with("S-1-"));
             windows::security_descriptor(&endpoint.user_sid).unwrap();
+
+            let listener = bind(&endpoint).unwrap();
+            let client = LocalSocketStream::connect(endpoint.name.borrow()).unwrap();
+            windows::authenticate_server(&client, &endpoint.user_sid).unwrap();
+            assert_eq!(
+                windows::authenticate_server(&client, "S-1-0-0")
+                    .unwrap_err()
+                    .kind(),
+                ErrorKind::PermissionDenied
+            );
+            let mut server = loop {
+                match listener.accept() {
+                    Ok(stream) => break stream,
+                    Err(error) if error.kind() == ErrorKind::WouldBlock => {
+                        std::thread::sleep(POLL_INTERVAL);
+                    }
+                    Err(error) => panic!("could not accept the test pipe: {error}"),
+                }
+            };
+            write_payload(
+                &mut &client,
+                br#"{"argv":[],"cwd":"C:\\"}"#,
+                Duration::from_secs(1),
+            )
+            .unwrap();
+            drop(client);
+            read_payload(&mut server, Duration::from_secs(1)).unwrap();
+            windows::authenticate_client(&server, &endpoint.user_sid).unwrap();
+            assert_eq!(
+                windows::authenticate_client(&server, "S-1-0-0")
+                    .unwrap_err()
+                    .kind(),
+                ErrorKind::PermissionDenied
+            );
         }
     }
 
@@ -739,19 +901,25 @@ pub mod single_instance {
     mod windows {
         use std::ffi::c_void;
         use std::io;
+        use std::mem::{align_of, size_of};
+        use std::os::windows::io::{AsHandle, AsRawHandle};
         use std::ptr;
 
         use interprocess::os::windows::security_descriptor::SecurityDescriptor;
         use widestring::U16CString;
-        use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
-        use windows_sys::Win32::Security::Authorization::ConvertSidToStringSidW;
+        use windows_sys::Win32::Foundation::{CloseHandle, ERROR_SUCCESS, HANDLE, LocalFree};
+        use windows_sys::Win32::Security::Authorization::{
+            ConvertSidToStringSidW, GetSecurityInfo, SE_KERNEL_OBJECT,
+        };
         use windows_sys::Win32::Security::{
-            GetTokenInformation, TOKEN_QUERY, TOKEN_USER, TokenUser,
+            GetTokenInformation, OWNER_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID,
+            TOKEN_QUERY, TOKEN_USER, TokenUser,
         };
         use windows_sys::Win32::System::Threading::{
-            GetCurrentProcess, OpenProcess, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION,
+            GetCurrentProcess, GetCurrentThread, OpenProcessToken, OpenThreadToken,
         };
 
+        use super::LocalSocketStream;
         use crate::PlatformError;
 
         struct Handle(HANDLE);
@@ -764,46 +932,62 @@ pub mod single_instance {
             }
         }
 
+        struct LocalAllocation(*mut c_void);
+
+        impl Drop for LocalAllocation {
+            fn drop(&mut self) {
+                unsafe {
+                    LocalFree(self.0);
+                }
+            }
+        }
+
         pub(super) fn current_user_sid() -> Result<String, PlatformError> {
-            process_user_sid(std::process::id()).map_err(|error| {
+            current_process_user_sid().map_err(|error| {
                 PlatformError::new(format!(
                     "could not read the current Windows user SID: {error}"
                 ))
             })
         }
 
-        pub(super) fn process_user_sid(process_id: u32) -> io::Result<String> {
-            let process = if process_id == std::process::id() {
-                None
-            } else {
-                let handle =
-                    unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, process_id) };
-                if handle.is_null() {
-                    return Err(io::Error::last_os_error());
-                }
-                Some(Handle(handle))
-            };
-            let process_handle = process
-                .as_ref()
-                .map_or_else(|| unsafe { GetCurrentProcess() }, |handle| handle.0);
+        fn current_process_user_sid() -> io::Result<String> {
             let mut token = ptr::null_mut();
-            if unsafe { OpenProcessToken(process_handle, TOKEN_QUERY, &mut token) } == 0 {
+            if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) } == 0 {
                 return Err(io::Error::last_os_error());
             }
             let token = Handle(token);
+            token_user_sid(token.0)
+        }
+
+        fn current_thread_user_sid() -> io::Result<String> {
+            let mut token = ptr::null_mut();
+            if unsafe { OpenThreadToken(GetCurrentThread(), TOKEN_QUERY, 0, &mut token) } == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            let token = Handle(token);
+            token_user_sid(token.0)
+        }
+
+        fn token_user_sid(token: HANDLE) -> io::Result<String> {
             let mut size = 0;
             unsafe {
-                GetTokenInformation(token.0, TokenUser, ptr::null_mut(), 0, &mut size);
+                GetTokenInformation(token, TokenUser, ptr::null_mut(), 0, &mut size);
             }
             if size == 0 {
                 return Err(io::Error::last_os_error());
             }
-            let mut bytes = vec![0_u8; size as usize];
+            // `TOKEN_USER` contains a pointer and must not be read from a
+            // byte-aligned `Vec<u8>`. Word storage supplies pointer alignment
+            // while still reserving the variable-sized SID bytes Windows
+            // writes after the structure.
+            let words = (size as usize).div_ceil(size_of::<usize>());
+            let mut storage = vec![0_usize; words];
+            debug_assert_eq!(storage.as_ptr().align_offset(align_of::<TOKEN_USER>()), 0);
             if unsafe {
                 GetTokenInformation(
-                    token.0,
+                    token,
                     TokenUser,
-                    bytes.as_mut_ptr().cast::<c_void>(),
+                    storage.as_mut_ptr().cast::<c_void>(),
                     size,
                     &mut size,
                 )
@@ -811,21 +995,84 @@ pub mod single_instance {
             {
                 return Err(io::Error::last_os_error());
             }
-            let token_user = unsafe { &*bytes.as_ptr().cast::<TOKEN_USER>() };
+            let token_user = unsafe { &*storage.as_ptr().cast::<TOKEN_USER>() };
+            sid_string(token_user.User.Sid)
+        }
+
+        fn sid_string(sid: PSID) -> io::Result<String> {
             let mut string_sid = ptr::null_mut();
-            if unsafe { ConvertSidToStringSidW(token_user.User.Sid, &mut string_sid) } == 0 {
+            if unsafe { ConvertSidToStringSidW(sid, &mut string_sid) } == 0 {
                 return Err(io::Error::last_os_error());
             }
+            let allocation = LocalAllocation(string_sid.cast());
             let mut length = 0;
             while unsafe { *string_sid.add(length) } != 0 {
                 length += 1;
             }
             let sid = String::from_utf16(unsafe { std::slice::from_raw_parts(string_sid, length) })
                 .map_err(io::Error::other);
-            unsafe {
-                windows_sys::Win32::Foundation::LocalFree(string_sid.cast());
-            }
+            drop(allocation);
             sid
+        }
+
+        pub(super) fn authenticate_server(
+            stream: &LocalSocketStream,
+            expected_sid: &str,
+        ) -> io::Result<()> {
+            let LocalSocketStream::NamedPipe(stream) = stream;
+            let mut owner = ptr::null_mut();
+            let mut descriptor: PSECURITY_DESCRIPTOR = ptr::null_mut();
+            let status = unsafe {
+                GetSecurityInfo(
+                    stream.as_handle().as_raw_handle(),
+                    SE_KERNEL_OBJECT,
+                    OWNER_SECURITY_INFORMATION,
+                    &mut owner,
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                    &mut descriptor,
+                )
+            };
+            if status != ERROR_SUCCESS {
+                return Err(io::Error::from_raw_os_error(status as i32));
+            }
+            if descriptor.is_null() || owner.is_null() {
+                if !descriptor.is_null() {
+                    unsafe {
+                        LocalFree(descriptor.cast());
+                    }
+                }
+                return Err(io::Error::other("the named pipe has no owner SID"));
+            }
+            let descriptor = LocalAllocation(descriptor.cast());
+            let owner_sid = sid_string(owner)?;
+            drop(descriptor);
+            require_sid(&owner_sid, expected_sid, "pipe owner")
+        }
+
+        pub(super) fn authenticate_client(
+            stream: &LocalSocketStream,
+            expected_sid: &str,
+        ) -> io::Result<()> {
+            let LocalSocketStream::NamedPipe(stream) = stream;
+            // The guard binds the token lookup to this connected pipe instance;
+            // unlike a peer PID, the impersonation token cannot be redirected
+            // by process exit and PID reuse between two system calls.
+            let _impersonation = stream.inner().impersonate_client()?;
+            let client_sid = current_thread_user_sid()?;
+            require_sid(&client_sid, expected_sid, "pipe client")
+        }
+
+        fn require_sid(actual: &str, expected: &str, peer: &str) -> io::Result<()> {
+            if actual == expected {
+                Ok(())
+            } else {
+                Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    format!("the single-instance {peer} belongs to another user"),
+                ))
+            }
         }
 
         pub(super) fn security_descriptor(user_sid: &str) -> io::Result<SecurityDescriptor> {
