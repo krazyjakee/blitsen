@@ -226,9 +226,11 @@ linker copies the absolute output path into `LC_ID_DYLIB`, changing the load-com
 the shipping checkout and the deliberately different second checkout. Node loads the addon by its
 actual file path, so this identity changes no runtime resolution.
 Windows additionally uses MSVC `/Brepro`, alongside the existing static CRT flag, because PE linker
-metadata otherwise owns a build timestamp. No post-build normalisation is allowed: a passing
-comparison is evidence about the files that proceed to signing, while a failing one preserves the
-difference for diagnosis.
+metadata otherwise owns a build timestamp. `/PDBALTPATH:%_PDB%` keeps only the stable PDB basename
+in the PE debug record; MSVC's default absolute PDB path exposed both deliberately different
+checkout roots in the first Windows reproducibility run. No post-build normalisation is allowed: a
+passing comparison is evidence about the files that proceed to signing, while a failing one
+preserves the difference for diagnosis.
 
 ## What CI covers, and what only a release build touches
 
