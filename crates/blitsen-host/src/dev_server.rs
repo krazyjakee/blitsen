@@ -30,10 +30,11 @@
 //!   that will own the DOM waits on the request rather than turning a loop
 //!   around it. They run on the same pool `fetch` and `WebSocket` already use.
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
 use blitsen_js::JsError;
+use parking_lot::Mutex;
 use url::Url;
 
 use crate::modules::AppSource;
@@ -111,7 +112,7 @@ impl DevServer {
 
     /// Why the last read failed, if it did.
     pub fn last_error(&self) -> Option<String> {
-        crate::dom_bridge::net_lock(&self.last_error).clone()
+        self.last_error.lock().clone()
     }
 
     /// Waits for the server to answer for `path`, then reports what it found.
@@ -195,8 +196,7 @@ impl AppSource for DevServer {
         match self.request(path) {
             Ok(bytes) => {
                 if bytes.is_none() {
-                    *crate::dom_bridge::net_lock(&self.last_error) =
-                        Some(format!("{} answered 404", self.url_for(path)));
+                    *self.last_error.lock() = Some(format!("{} answered 404", self.url_for(path)));
                 }
                 bytes
             }
@@ -206,7 +206,7 @@ impl AppSource for DevServer {
                 // once, and the next read after it comes back succeeds. Nothing
                 // here takes the window down.
                 let message = format!("{}: {error}", self.url_for(path));
-                let mut last = crate::dom_bridge::net_lock(&self.last_error);
+                let mut last = self.last_error.lock();
                 if last.as_deref() != Some(message.as_str()) {
                     eprintln!("blitsen: {message}");
                     *last = Some(message);

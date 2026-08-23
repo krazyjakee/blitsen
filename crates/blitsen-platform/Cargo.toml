@@ -29,6 +29,10 @@ sysinfo = { version = "0.39", default-features = false, features = ["system", "d
 # resolves to nothing there and the crate does not compile. See `src/clipboard.rs`
 # for why that absence is inherited rather than worked around.
 arboard = { version = "3.6", features = ["wayland-data-control"] }
+# Resolve XDG, macOS Library and Windows known-folder locations through one
+# platform-aware implementation rather than interpreting environment variables
+# in the application bridge.
+dirs = "6"
 # The battery, which `sysinfo` above does not read at any feature level — it has
 # no battery feature to turn on, so this is a second library rather than a
 # heavier configuration of the one already here. Power is a fourth source on
@@ -40,6 +44,12 @@ arboard = { version = "3.6", features = ["wayland-data-control"] }
 # `compile_error!` on Android, which is why it is under this predicate; the
 # reading there is `BatteryManager` over JNI and is not this.
 starship-battery = "0.11"
+
+# The process queues in `app` deliberately survive a panicking hand-off thread.
+# Only Unix builds compile that single-instance implementation; the XDG dialog
+# queue is narrower still, so this keeps the direct dependency off other targets.
+[target.'cfg(all(unix, not(target_os = "android")))'.dependencies]
+parking_lot.workspace = true
 
 # Dialogs exist only where the XDG desktop portal does; see `src/dialog.rs` for
 # why macOS and Windows are absent rather than approximated. `rfd` speaks the

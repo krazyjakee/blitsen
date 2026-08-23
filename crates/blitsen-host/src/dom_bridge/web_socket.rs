@@ -13,11 +13,12 @@
 //! the shape `binaryType` asked for rather than through a string.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
 
 use blitsen_js::JsError;
 use futures_util::{SinkExt, StreamExt};
+use parking_lot::Mutex;
 use serde_json::{Value, json};
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
@@ -29,7 +30,7 @@ use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
 use tokio_tungstenite::tungstenite::{Bytes, Message, Utf8Bytes, protocol::CloseFrame};
 use url::Url;
 
-use super::net_pool::{lock, runtime as net_runtime};
+use super::net_pool::runtime as net_runtime;
 
 /// Reported when a connection ends without a close frame from either side.
 const ABNORMAL_CLOSURE: u16 = 1006;
@@ -56,7 +57,7 @@ struct Shared {
 
 impl Shared {
     fn push(&self, event: Value) {
-        lock(&self.events).push(event);
+        self.events.lock().push(event);
     }
 
     /// Ends a connection the way the spec's "fail the WebSocket connection"
@@ -165,7 +166,7 @@ async fn run(
                 })),
                 Some(Ok(Message::Binary(bytes))) => {
                     sequence += 1;
-                    lock(&shared.payloads).insert((id, sequence), bytes.to_vec());
+                    shared.payloads.lock().insert((id, sequence), bytes.to_vec());
                     shared.push(json!({ "id": id, "type": "message", "binary": sequence }));
                 }
                 // The peer closed first. Reading on lets the protocol send the
@@ -234,7 +235,7 @@ impl WebSocketHost {
         let task = self
             .runtime
             .spawn(run(id, request, shared, Arc::clone(&buffered), receiver));
-        lock(&self.open).insert(
+        self.open.lock().insert(
             id,
             Connection {
                 commands,
@@ -251,7 +252,7 @@ impl WebSocketHost {
     /// on a closed socket itself, and the close it has not drained yet is one the
     /// spec discards the message for.
     fn queue(&self, id: u64, message: Message, bytes: usize) {
-        let open = lock(&self.open);
+        let open = self.open.lock();
         let Some(connection) = open.get(&id) else {
             return;
         };
@@ -277,14 +278,15 @@ impl WebSocketHost {
 
     /// Bytes queued and not yet handed to the transport.
     pub(super) fn buffered(&self, id: u64) -> usize {
-        lock(&self.open)
+        self.open
+            .lock()
             .get(&id)
             .map_or(0, |connection| connection.buffered.load(Ordering::Relaxed))
     }
 
     /// Starts the close handshake. The `close` event follows from the worker.
     pub(super) fn close(&self, id: u64, code: Option<u16>, reason: &str) {
-        let open = lock(&self.open);
+        let open = self.open.lock();
         let Some(connection) = open.get(&id) else {
             return;
         };
@@ -297,8 +299,8 @@ impl WebSocketHost {
 
     /// Drains everything the connections observed since the previous frame turn.
     pub(super) fn poll(&self) -> Value {
-        let events = std::mem::take(&mut *lock(&self.shared.events));
-        let mut open = lock(&self.open);
+        let events = std::mem::take(&mut *self.shared.events.lock());
+        let mut open = self.open.lock();
         for event in &events {
             if event["type"] == "close"
                 && let Some(id) = event["id"].as_u64()
@@ -311,18 +313,20 @@ impl WebSocketHost {
 
     /// Takes a binary message's bytes, which are handed over exactly once.
     pub(super) fn take_binary(&self, id: u64, sequence: u64) -> Result<Vec<u8>, JsError> {
-        lock(&self.shared.payloads)
+        self.shared
+            .payloads
+            .lock()
             .remove(&(id, sequence))
             .ok_or_else(|| JsError::new("the WebSocket message is no longer available"))
     }
 
     /// Drops every connection and everything they had queued.
     pub(super) fn dispose(&self) {
-        for (_, connection) in lock(&self.open).drain() {
+        for (_, connection) in self.open.lock().drain() {
             connection.task.abort();
         }
-        lock(&self.shared.events).clear();
-        lock(&self.shared.payloads).clear();
+        self.shared.events.lock().clear();
+        self.shared.payloads.lock().clear();
     }
 }
 

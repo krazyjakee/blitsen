@@ -7,17 +7,15 @@
 //! Nothing to do with a web worker, which is a JavaScript context of its own and
 //! lives in [`crate::worker`]. This file was called `worker.rs` until there were
 //! both of them.
+//!
+//! The fetch, socket, event-source and audio queues around this runtime use
+//! non-poisoning locks: a panicking task is isolated to its own operation and
+//! must not disable networking for every other context in the process.
 
-use std::sync::{Mutex, MutexGuard, OnceLock, PoisonError};
+use std::sync::OnceLock;
 
 use blitsen_js::JsError;
 use tokio::runtime::Runtime;
-
-/// Locks without propagating poisoning: a panicked task must not disable
-/// networking for the rest of the process.
-pub(super) fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(PoisonError::into_inner)
-}
 
 /// Returns the process-wide network pool, starting it on first use.
 pub(super) fn runtime() -> Result<&'static Runtime, JsError> {

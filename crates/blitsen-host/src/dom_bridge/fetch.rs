@@ -11,17 +11,18 @@
 //! for. The bootstrap releases an unread body when its `Response` is collected.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
 
 use blitsen_js::JsError;
+use parking_lot::Mutex;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use reqwest::{Client, Method, Url};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::runtime::Runtime;
 
-use super::net_pool::{lock, runtime as net_runtime};
+use super::net_pool::runtime as net_runtime;
 
 /// A `fetch` call as the bootstrap describes it, with the body passed
 /// separately so binary payloads never round-trip through a string.
@@ -92,7 +93,7 @@ fn failure(id: u64, error: &reqwest::Error) -> Value {
 fn local_completion(id: u64, url: &Url, bytes: Vec<u8>, shared: &Shared) -> Value {
     let length = bytes.len();
     let content_type = content_type(url.path());
-    lock(&shared.bodies).insert(id, bytes);
+    shared.bodies.lock().insert(id, bytes);
     json!({
         "id": id,
         "ok": true,
@@ -176,7 +177,7 @@ async fn completion(
     match response.bytes().await {
         Err(error) => failure(id, &error),
         Ok(bytes) => {
-            lock(&shared.bodies).insert(id, bytes.to_vec());
+            shared.bodies.lock().insert(id, bytes.to_vec());
             json!({
                 "id": id,
                 "ok": status.is_success(),
@@ -241,9 +242,9 @@ impl FetchHost {
                 Ok(response) => completion(id, &requested, response, &shared).await,
                 Err(error) => failure(id, &error),
             };
-            lock(&shared.completed).push(record);
+            shared.completed.lock().push(record);
         });
-        lock(&self.inflight).insert(id, task.abort_handle());
+        self.inflight.lock().insert(id, task.abort_handle());
         Ok(id)
     }
 
@@ -280,7 +281,7 @@ impl FetchHost {
                     // An empty body rather than none: `take_body` treats a
                     // missing entry as a body already read, and a 404 whose
                     // `.text()` threw would be a different bug to chase.
-                    lock(&shared.bodies).insert(id, Vec::new());
+                    shared.bodies.lock().insert(id, Vec::new());
                     json!({
                         "id": id,
                         "ok": false,
@@ -299,9 +300,9 @@ impl FetchHost {
                     },
                 }),
             };
-            lock(&shared.completed).push(record);
+            shared.completed.lock().push(record);
         });
-        lock(&self.inflight).insert(id, task.abort_handle());
+        self.inflight.lock().insert(id, task.abort_handle());
         Ok(id)
     }
 
@@ -312,8 +313,8 @@ impl FetchHost {
 
     /// Drains everything that finished since the previous frame turn.
     pub(super) fn poll(&self) -> Value {
-        let completed = std::mem::take(&mut *lock(&self.shared.completed));
-        let mut inflight = lock(&self.inflight);
+        let completed = std::mem::take(&mut *self.shared.completed.lock());
+        let mut inflight = self.inflight.lock();
         for record in &completed {
             if let Some(id) = record["id"].as_u64() {
                 inflight.remove(&id);
@@ -326,27 +327,32 @@ impl FetchHost {
     ///
     /// Also the release path for a `Response` whose body was never read.
     pub(super) fn cancel(&self, id: u64) {
-        if let Some(task) = lock(&self.inflight).remove(&id) {
+        if let Some(task) = self.inflight.lock().remove(&id) {
             task.abort();
         }
-        lock(&self.shared.bodies).remove(&id);
-        lock(&self.shared.completed).retain(|record| record["id"].as_u64() != Some(id));
+        self.shared.bodies.lock().remove(&id);
+        self.shared
+            .completed
+            .lock()
+            .retain(|record| record["id"].as_u64() != Some(id));
     }
 
     /// Takes the response body, which may be read exactly once.
     pub(super) fn take_body(&self, id: u64) -> Result<Vec<u8>, JsError> {
-        lock(&self.shared.bodies)
+        self.shared
+            .bodies
+            .lock()
             .remove(&id)
             .ok_or_else(|| JsError::new("the response body is no longer available"))
     }
 
     /// Cancels every request and drops every unread body.
     pub(super) fn dispose(&self) {
-        for (_, task) in lock(&self.inflight).drain() {
+        for (_, task) in self.inflight.lock().drain() {
             task.abort();
         }
-        lock(&self.shared.bodies).clear();
-        lock(&self.shared.completed).clear();
+        self.shared.bodies.lock().clear();
+        self.shared.completed.lock().clear();
     }
 }
 

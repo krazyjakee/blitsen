@@ -25,8 +25,10 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, PoisonError};
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
+
+use parking_lot::{Condvar, Mutex};
 
 /// One JavaScript context that can own ports: the document, or a worker.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, PartialOrd, Ord)]
@@ -77,7 +79,7 @@ pub struct Waker {
 impl Waker {
     /// Marks work as available and releases a parked thread.
     pub fn wake(&self) {
-        *lock(&self.signalled) = true;
+        *self.signalled.lock() = true;
         self.condvar.notify_all();
     }
 
@@ -86,29 +88,18 @@ impl Waker {
     /// A wake that arrives before the wait starts is not lost: the flag is
     /// checked first, which is why it is a flag rather than a bare condvar.
     pub fn wait(&self, timeout: Option<Duration>) {
-        let mut signalled = lock(&self.signalled);
+        let mut signalled = self.signalled.lock();
         if std::mem::take(&mut *signalled) {
             return;
         }
-        let mut signalled = match timeout {
-            Some(timeout) => self
-                .condvar
-                .wait_timeout(signalled, timeout)
-                .map(|(guard, _)| guard)
-                .unwrap_or_else(|error| error.into_inner().0),
-            None => self
-                .condvar
-                .wait(signalled)
-                .unwrap_or_else(PoisonError::into_inner),
-        };
+        match timeout {
+            Some(timeout) => {
+                self.condvar.wait_for(&mut signalled, timeout);
+            }
+            None => self.condvar.wait(&mut signalled),
+        }
         *signalled = false;
     }
-}
-
-/// Locks without propagating poisoning, for the same reason the network pool
-/// does: a panicked context must not stop every other context messaging.
-fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 struct Port {
@@ -126,6 +117,9 @@ struct Port {
 }
 
 /// Every live port in the process, and the contexts waiting on them.
+///
+/// These locks deliberately do not poison: one panicking JavaScript context
+/// must not stop unrelated contexts from routing messages or waking workers.
 #[derive(Default)]
 pub struct PortRegistry {
     ports: Mutex<HashMap<PortId, Port>>,
@@ -148,7 +142,7 @@ impl PortRegistry {
 
     /// Registers how to wake `context` when one of its ports is written to.
     pub fn attach_waker(&self, context: ContextId, waker: Arc<Waker>) {
-        lock(&self.wakers).insert(context, waker);
+        self.wakers.lock().insert(context, waker);
     }
 
     /// Creates an entangled pair, owned by the contexts named.
@@ -160,7 +154,7 @@ impl PortRegistry {
     pub fn entangle(&self, first: ContextId, second: ContextId) -> (PortId, PortId) {
         let a = PortId(self.next_port.fetch_add(1, Ordering::Relaxed) + 1);
         let b = PortId(self.next_port.fetch_add(1, Ordering::Relaxed) + 1);
-        let mut ports = lock(&self.ports);
+        let mut ports = self.ports.lock();
         ports.insert(
             a,
             Port {
@@ -188,7 +182,7 @@ impl PortRegistry {
     /// refused, which is what the specification says and what an application
     /// that posts to a worker it has already terminated relies on.
     pub fn post(&self, from: PortId, delivery: Delivery) {
-        let mut ports = lock(&self.ports);
+        let mut ports = self.ports.lock();
         let Some(peer) = ports.get(&from).and_then(|port| port.peer) else {
             return;
         };
@@ -223,7 +217,7 @@ impl PortRegistry {
 
     /// Starts delivery on a port, as `start()` and setting `onmessage` do.
     pub fn start(&self, port: PortId) {
-        if let Some(state) = lock(&self.ports).get_mut(&port) {
+        if let Some(state) = self.ports.lock().get_mut(&port) {
             state.started = true;
         }
     }
@@ -234,7 +228,7 @@ impl PortRegistry {
     /// concerned; across ports the order is the map's, which the specification
     /// leaves to the implementation.
     pub fn drain(&self, context: ContextId) -> Vec<(PortId, Delivery)> {
-        let mut ports = lock(&self.ports);
+        let mut ports = self.ports.lock();
         let mut drained = Vec::new();
         for (id, port) in ports.iter_mut() {
             if port.owner != Some(context) || !port.started {
@@ -252,14 +246,15 @@ impl PortRegistry {
     /// The document asks this to decide whether the frame loop is owed another
     /// turn, exactly as it asks whether a socket is still open.
     pub fn pending(&self, context: ContextId) -> bool {
-        lock(&self.ports)
+        self.ports
+            .lock()
             .values()
             .any(|port| port.owner == Some(context) && port.started && !port.queue.is_empty())
     }
 
     /// Detaches one end, telling the other that nothing more is coming.
     pub fn close(&self, port: PortId) {
-        let mut ports = lock(&self.ports);
+        let mut ports = self.ports.lock();
         let Some(state) = ports.remove(&port) else {
             return;
         };
@@ -280,7 +275,9 @@ impl PortRegistry {
 
     /// Closes every port a context owns, as its teardown does.
     pub fn release(&self, context: ContextId) {
-        let owned = lock(&self.ports)
+        let owned = self
+            .ports
+            .lock()
             .iter()
             .filter(|(_, port)| port.owner == Some(context))
             .map(|(id, _)| *id)
@@ -288,11 +285,11 @@ impl PortRegistry {
         for port in owned {
             self.close(port);
         }
-        lock(&self.wakers).remove(&context);
+        self.wakers.lock().remove(&context);
     }
 
     fn wake(&self, context: ContextId) {
-        let waker = lock(&self.wakers).get(&context).map(Arc::clone);
+        let waker = self.wakers.lock().get(&context).map(Arc::clone);
         if let Some(waker) = waker {
             waker.wake();
         }
@@ -441,5 +438,56 @@ mod tests {
         let started = std::time::Instant::now();
         waker.wait(Some(Duration::from_secs(30)));
         assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    #[test]
+    fn a_waiting_thread_is_released_by_a_later_notification() {
+        let waker = Arc::new(Waker::default());
+        let waiting = Arc::clone(&waker);
+        let (entered_send, entered_receive) = std::sync::mpsc::channel();
+        let (finished_send, finished_receive) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            entered_send.send(()).expect("the test is listening");
+            waiting.wait(None);
+            finished_send.send(()).expect("the test is listening");
+        });
+
+        entered_receive
+            .recv_timeout(Duration::from_secs(1))
+            .expect("the waiter started");
+        waker.wake();
+        finished_receive
+            .recv_timeout(Duration::from_secs(1))
+            .expect("notify released the waiter");
+    }
+
+    #[test]
+    fn a_timed_wait_returns_without_a_notification() {
+        let waker = Waker::default();
+        let started = std::time::Instant::now();
+        waker.wait(Some(Duration::from_millis(20)));
+        assert!(started.elapsed() >= Duration::from_millis(10));
+        assert!(started.elapsed() < Duration::from_secs(1));
+    }
+
+    #[test]
+    fn a_panicking_context_does_not_poison_the_process_registry() {
+        let registry = Arc::new(PortRegistry::default());
+        let panicking = Arc::clone(&registry);
+        assert!(
+            std::thread::spawn(move || {
+                let _ports = panicking.ports.lock();
+                panic!("simulated context failure while routing");
+            })
+            .join()
+            .is_err()
+        );
+
+        let one = registry.new_context();
+        let two = registry.new_context();
+        let (a, b) = registry.entangle(one, two);
+        registry.start(b);
+        registry.post(a, envelope("after panic"));
+        assert_eq!(messages(registry.drain(two)), ["after panic"]);
     }
 }

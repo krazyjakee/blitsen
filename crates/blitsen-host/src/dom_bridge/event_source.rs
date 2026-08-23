@@ -24,18 +24,19 @@
 //! order amounts to for well-formed UTF-8.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use blitsen_js::JsError;
 use futures_util::StreamExt;
+use parking_lot::Mutex;
 use reqwest::header::{ACCEPT, CACHE_CONTROL, CONTENT_TYPE, HeaderValue};
 use reqwest::{Client, Url};
 use serde_json::{Value, json};
 use tokio::runtime::Runtime;
 
-use super::net_pool::{lock, runtime as net_runtime};
+use super::net_pool::runtime as net_runtime;
 
 /// How long to wait before reconnecting when no server has said otherwise.
 ///
@@ -55,7 +56,7 @@ struct Shared {
 
 impl Shared {
     fn push(&self, event: Value) {
-        lock(&self.events).push(event);
+        self.events.lock().push(event);
     }
 }
 
@@ -327,7 +328,7 @@ impl EventSourceHost {
             parsed,
             Arc::clone(&self.shared),
         ));
-        lock(&self.open).insert(id, task.abort_handle());
+        self.open.lock().insert(id, task.abort_handle());
         Ok(id)
     }
 
@@ -337,15 +338,15 @@ impl EventSourceHost {
     /// and the specification fires no event for it, so the only observable is
     /// the `readyState` the bootstrap has already set.
     pub(super) fn close(&self, id: u64) {
-        if let Some(task) = lock(&self.open).remove(&id) {
+        if let Some(task) = self.open.lock().remove(&id) {
             task.abort();
         }
     }
 
     /// Drains everything the streams observed since the previous frame turn.
     pub(super) fn poll(&self) -> Value {
-        let events = std::mem::take(&mut *lock(&self.shared.events));
-        let mut open = lock(&self.open);
+        let events = std::mem::take(&mut *self.shared.events.lock());
+        let mut open = self.open.lock();
         for event in &events {
             if event["fatal"] == Value::Bool(true)
                 && let Some(id) = event["id"].as_u64()
@@ -358,10 +359,10 @@ impl EventSourceHost {
 
     /// Drops every stream and everything they had queued.
     pub(super) fn dispose(&self) {
-        for (_, task) in lock(&self.open).drain() {
+        for (_, task) in self.open.lock().drain() {
             task.abort();
         }
-        lock(&self.shared.events).clear();
+        self.shared.events.lock().clear();
     }
 }
 

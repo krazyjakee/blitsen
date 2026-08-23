@@ -29,11 +29,12 @@
 //! names.
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
-use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use parking_lot::Mutex;
 use serde_json::{Value, json};
 
 use crate::dom_bridge::hid::{Failure, Message};
@@ -362,7 +363,7 @@ fn worker(
     wake: Arc<dyn Fn() + Send + Sync>,
 ) {
     let emit = |signal| {
-        crate::dom_bridge::net_lock(&signals).push_back(signal);
+        signals.lock().push_back(signal);
         wake();
     };
     let mut buffer = vec![0u8; limits.input];
@@ -759,9 +760,7 @@ impl HidController {
     /// only place enumeration happens without the application asking: while
     /// nothing is listening for device changes there is no scan at all.
     pub(crate) fn poll(&mut self) {
-        let signals = crate::dom_bridge::net_lock(&self.signals)
-            .drain(..)
-            .collect::<Vec<_>>();
+        let signals = self.signals.lock().drain(..).collect::<Vec<_>>();
         for signal in signals {
             match signal {
                 Signal::Input {
@@ -931,24 +930,24 @@ mod tests {
         }
 
         fn write(&self, data: &[u8]) -> Result<(), String> {
-            crate::dom_bridge::net_lock(&self.0.written).push(data.to_vec());
+            self.0.written.lock().push(data.to_vec());
             Ok(())
         }
 
         fn send_feature_report(&self, data: &[u8]) -> Result<(), String> {
-            *crate::dom_bridge::net_lock(&self.0.feature) = data.to_vec();
+            *self.0.feature.lock() = data.to_vec();
             Ok(())
         }
 
         fn get_feature_report(&self, buffer: &mut [u8]) -> Result<usize, String> {
-            let stored = crate::dom_bridge::net_lock(&self.0.feature).clone();
+            let stored = self.0.feature.lock().clone();
             let len = stored.len().min(buffer.len());
             buffer[..len].copy_from_slice(&stored[..len]);
             Ok(len)
         }
 
         fn read_timeout(&self, buffer: &mut [u8], timeout: i32) -> Result<usize, String> {
-            let next = crate::dom_bridge::net_lock(&self.0.reports).pop_front();
+            let next = self.0.reports.lock().pop_front();
             match next {
                 Some(Ok(report)) => {
                     let len = report.len().min(buffer.len());
@@ -969,7 +968,7 @@ mod tests {
             if let Some(error) = &self.unavailable {
                 return Err(error.clone());
             }
-            Ok(crate::dom_bridge::net_lock(&self.devices).clone())
+            Ok(self.devices.lock().clone())
         }
 
         fn open(&mut self, device: &BackendDevice) -> Result<Option<Box<dyn HidHandle>>, Failure> {
@@ -980,10 +979,7 @@ mod tests {
             if self.defer.fetch_sub(1, Ordering::AcqRel) > 0 {
                 return Ok(None);
             }
-            let state = crate::dom_bridge::net_lock(&self.handles)
-                .first()
-                .cloned()
-                .unwrap_or_default();
+            let state = self.handles.lock().first().cloned().unwrap_or_default();
             Ok(Some(Box::new(FakeHandle(state))))
         }
     }
@@ -1115,9 +1111,9 @@ mod tests {
         let first = controller.devices().expect("enumeration succeeds");
         // The first device goes away and comes back; the second keeps its id
         // throughout, and the first never reuses the id of anything else.
-        crate::dom_bridge::net_lock(&devices).remove(0);
+        devices.lock().remove(0);
         controller.devices().expect("enumeration succeeds");
-        crate::dom_bridge::net_lock(&devices).push(device("/dev/hidraw0", 0xff00, 0x0001));
+        devices.lock().push(device("/dev/hidraw0", 0xff00, 0x0001));
         let third = controller.devices().expect("enumeration succeeds");
         assert_eq!((&first[0]["id"], &first[0]["usage"]), (&json!("d1"), &json!(1)));
         assert_eq!((&third[0]["id"], &third[0]["usage"]), (&json!("d1"), &json!(1)));
@@ -1287,7 +1283,7 @@ mod tests {
             json!({"type":"completion","commandId":2,"error":null,"errorName":null,"value":null})
         );
         assert_eq!(
-            *crate::dom_bridge::net_lock(&written),
+            *written.lock(),
             vec![vec![0x03, 0x42]],
             "only the report inside the bound reached the device"
         );
@@ -1445,7 +1441,7 @@ mod tests {
             ..FakeBackend::default()
         });
         controller.devices().expect("enumeration succeeds");
-        crate::dom_bridge::net_lock(&devices).push(device("/dev/hidraw1", 0xff00, 0x0002));
+        devices.lock().push(device("/dev/hidraw1", 0xff00, 0x0002));
         controller.poll();
         assert!(
             crate::dom_bridge::hid::take_messages().is_empty(),
@@ -1460,7 +1456,7 @@ mod tests {
         assert_eq!(connected[0].value["change"], "connected");
         assert_eq!(connected[0].value["device"]["id"], "d2");
 
-        crate::dom_bridge::net_lock(&devices).pop();
+        devices.lock().pop();
         controller.last_scan = None;
         controller.poll();
         let disconnected = crate::dom_bridge::hid::take_messages();

@@ -88,11 +88,6 @@ pub(crate) fn net_runtime() -> Result<&'static tokio::runtime::Runtime, JsError>
     net_pool::runtime()
 }
 
-/// Locks without propagating poisoning, for the rest of the host.
-pub(crate) fn net_lock<T>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    net_pool::lock(mutex)
-}
-
 /// Whether a document receives only application globals or test-only helpers too.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DocumentMode {

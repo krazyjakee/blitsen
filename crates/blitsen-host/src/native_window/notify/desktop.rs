@@ -5,11 +5,12 @@
 //! those callbacks become public events.
 
 use std::collections::{HashMap, VecDeque};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use notify_rust::{CloseReason, NotificationResponse, Urgency};
 #[cfg(not(target_os = "windows"))]
 use notify_rust::{Notification, Timeout};
+use parking_lot::Mutex;
 use serde_json::{Value, json};
 use winit::event_loop::EventLoopProxy;
 
@@ -302,7 +303,7 @@ fn queue(
     token: u64,
     kind: SignalKind,
 ) {
-    crate::dom_bridge::net_lock(signals).push_back(Signal {
+    signals.lock().push_back(Signal {
         public_id,
         token,
         kind,
@@ -694,9 +695,7 @@ impl NotifyController {
     }
 
     pub(crate) fn poll(&mut self) {
-        let signals = crate::dom_bridge::net_lock(&self.signals)
-            .drain(..)
-            .collect::<Vec<_>>();
+        let signals = self.signals.lock().drain(..).collect::<Vec<_>>();
         for signal in signals {
             if self
                 .records
@@ -736,7 +735,7 @@ impl NotifyController {
             let _ = self.close(&id);
         }
         self.records.clear();
-        crate::dom_bridge::net_lock(&self.signals).clear();
+        self.signals.lock().clear();
     }
 }
 

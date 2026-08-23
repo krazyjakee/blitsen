@@ -9,9 +9,9 @@
 //! rather than in a second copy of the tree.
 
 use std::collections::VecDeque;
-use std::sync::Mutex;
 
 use image::GenericImageView;
+use parking_lot::Mutex;
 use winit::event_loop::EventLoopProxy;
 
 use crate::{MenuDefinition, TrayAction};
@@ -510,7 +510,7 @@ pub(crate) fn queue(
     pending: &Mutex<VecDeque<MenuSignal>>,
     proxy: &EventLoopProxy,
 ) {
-    crate::dom_bridge::net_lock(pending).push_back(signal);
+    pending.lock().push_back(signal);
     proxy.wake_up();
 }
 
@@ -635,9 +635,10 @@ mod native {
 
     use std::collections::HashMap;
     use std::collections::VecDeque;
+    use std::sync::Arc;
     use std::sync::atomic::{AtomicU64, Ordering};
-    use std::sync::{Arc, Mutex};
 
+    use parking_lot::Mutex;
     use tray_icon::menu::{
         CheckMenuItem, IconMenuItem, IsMenuItem, Menu, MenuItem as NativeMenuItem,
         PredefinedMenuItem, Submenu,
@@ -1068,9 +1069,7 @@ mod native {
         }
 
         pub(crate) fn take_signals(&self) -> Vec<MenuSignal> {
-            crate::dom_bridge::net_lock(&self.pending)
-                .drain(..)
-                .collect()
+            self.pending.lock().drain(..).collect()
         }
     }
 

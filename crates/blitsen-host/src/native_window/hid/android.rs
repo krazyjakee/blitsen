@@ -363,14 +363,14 @@ pub(crate) struct UsbHidHandle<C: UsbConnection> {
     /// `Mutex` because [`HidHandle`] takes `&self` — the handle is owned by one
     /// worker thread and never shared, so this is uncontended and exists only
     /// to keep the trait's shape, which is `hidapi`'s.
-    checked: std::sync::Mutex<Option<Instant>>,
+    checked: parking_lot::Mutex<Option<Instant>>,
 }
 
 impl<C: UsbConnection> UsbHidHandle<C> {
     fn new(connection: C) -> Self {
         Self {
             connection,
-            checked: std::sync::Mutex::new(None),
+            checked: parking_lot::Mutex::new(None),
         }
     }
 }
@@ -428,14 +428,14 @@ impl<C: UsbConnection> HidHandle for UsbHidHandle<C> {
 
     fn read_timeout(&self, buffer: &mut [u8], timeout: i32) -> Result<usize, String> {
         if let Some(read) = self.connection.interrupt_in(buffer, timeout)? {
-            *crate::dom_bridge::net_lock(&self.checked) = None;
+            *self.checked.lock() = None;
             return Ok(read);
         }
         // Nothing arrived, which Android reports the same way whether the
         // device is idle or gone. Idle is overwhelmingly the common case, so it
         // is the one that costs nothing; the question is asked at most once a
         // second, and only of a device that has been silent for that long.
-        let mut checked = crate::dom_bridge::net_lock(&self.checked);
+        let mut checked = self.checked.lock();
         if checked.is_some_and(|last| last.elapsed() < LIVENESS_INTERVAL) {
             return Ok(0);
         }
@@ -449,9 +449,10 @@ impl<C: UsbConnection> HidHandle for UsbHidHandle<C> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Mutex};
+    use std::sync::Arc;
 
     use super::*;
+    use parking_lot::Mutex;
 
     /// A `UsbManager` with no Android under it.
     #[derive(Default)]
@@ -484,7 +485,7 @@ mod tests {
         }
 
         fn interrupt_in(&self, buffer: &mut [u8], _timeout: i32) -> Result<Option<usize>, String> {
-            let mut input = crate::dom_bridge::net_lock(&self.input);
+            let mut input = self.input.lock();
             if input.is_empty() {
                 return Ok(None);
             }
@@ -498,14 +499,16 @@ mod tests {
             if !self.has_out_endpoint {
                 return Ok(false);
             }
-            crate::dom_bridge::net_lock(&self.interrupt).push(data.to_vec());
+            self.interrupt.lock().push(data.to_vec());
             Ok(true)
         }
 
         fn set_report(&self, report_type: u8, report_id: u8, data: &[u8]) -> Result<(), String> {
-            crate::dom_bridge::net_lock(&self.control).push((report_type, report_id, data.to_vec()));
+            self.control
+                .lock()
+                .push((report_type, report_id, data.to_vec()));
             if report_type == REPORT_TYPE_FEATURE {
-                *crate::dom_bridge::net_lock(&self.feature) = data.to_vec();
+                *self.feature.lock() = data.to_vec();
             }
             Ok(())
         }
@@ -516,33 +519,33 @@ mod tests {
             _report_id: u8,
             buffer: &mut [u8],
         ) -> Result<usize, String> {
-            let stored = crate::dom_bridge::net_lock(&self.feature).clone();
+            let stored = self.feature.lock().clone();
             let len = stored.len().min(buffer.len());
             buffer[..len].copy_from_slice(&stored[..len]);
             Ok(len)
         }
 
         fn attached(&self) -> Result<bool, String> {
-            Ok(*crate::dom_bridge::net_lock(&self.attached))
+            Ok(*self.attached.lock())
         }
     }
 
     impl UsbApi for FakeUsb {
         fn interfaces(&mut self) -> Result<Vec<UsbInterface>, String> {
-            Ok(crate::dom_bridge::net_lock(&self.interfaces).clone())
+            Ok(self.interfaces.lock().clone())
         }
 
         fn has_permission(&mut self, device_name: &str) -> Result<bool, String> {
-            Ok(crate::dom_bridge::net_lock(&self.granted).iter().any(|name| name == device_name))
+            Ok(self.granted.lock().iter().any(|name| name == device_name))
         }
 
         fn request_permission(&mut self, device_name: &str) -> Result<(), String> {
-            crate::dom_bridge::net_lock(&self.requested).push(device_name.to_owned());
+            self.requested.lock().push(device_name.to_owned());
             Ok(())
         }
 
         fn focused(&mut self) -> Result<bool, String> {
-            Ok(*crate::dom_bridge::net_lock(&self.focused))
+            Ok(*self.focused.lock())
         }
 
         type Connection = FakeConnection;
@@ -665,18 +668,18 @@ mod tests {
             );
         }
         assert_eq!(
-            *crate::dom_bridge::net_lock(&api.requested),
+            *api.requested.lock(),
             vec!["/dev/bus/usb/001/002"],
             "five turns of waiting must raise one dialog"
         );
 
-        crate::dom_bridge::net_lock(&api.granted).push("/dev/bus/usb/001/002".into());
+        api.granted.lock().push("/dev/bus/usb/001/002".into());
         assert!(
             backend.open(target).expect("the grant opens it").is_some(),
             "a granted device produces a handle on the turn that sees the grant"
         );
         assert_eq!(
-            crate::dom_bridge::net_lock(&api.requested).len(),
+            api.requested.lock().len(),
             1,
             "the grant is observed, not asked for again"
         );
@@ -691,9 +694,9 @@ mod tests {
         assert!(matches!(backend.open(target), Ok(None)));
         // The dialog takes focus, and focus coming back with nothing granted is
         // the only signal Android gives that the question was answered "no".
-        *crate::dom_bridge::net_lock(&api.focused) = false;
+        *api.focused.lock() = false;
         assert!(matches!(backend.open(target), Ok(None)));
-        *crate::dom_bridge::net_lock(&api.focused) = true;
+        *api.focused.lock() = true;
         let Err(denied) = backend.open(target) else {
             panic!("a dismissed dialog is a denial, not a handle");
         };
@@ -701,7 +704,7 @@ mod tests {
 
         // Asking again raises the dialog again rather than replaying the no.
         assert!(matches!(backend.open(target), Ok(None)));
-        assert_eq!(crate::dom_bridge::net_lock(&api.requested).len(), 2);
+        assert_eq!(api.requested.lock().len(), 2);
     }
 
     #[test]
@@ -716,7 +719,7 @@ mod tests {
         // grant the user made in the meantime is the system's own record. A
         // backend that had kept the answer in a receiver it registered would
         // have lost it here; this one reads it and never asks twice.
-        crate::dom_bridge::net_lock(&api.granted).push("/dev/bus/usb/001/002".into());
+        api.granted.lock().push("/dev/bus/usb/001/002".into());
         let mut recreated = UsbHidBackend::new(FakeUsb {
             interfaces: Arc::clone(&api.interfaces),
             granted: Arc::clone(&api.granted),
@@ -727,15 +730,15 @@ mod tests {
         recreated.enumerate().expect("enumeration succeeds");
         assert!(matches!(recreated.open(&target), Ok(Some(_))));
         assert_eq!(
-            crate::dom_bridge::net_lock(&api.requested).len(),
+            api.requested.lock().len(),
             1,
             "recreation must not raise a second dialog for a granted device"
         );
 
         // Unplugged: Android revokes the grant with the device, and the id that
         // named it is now a device nobody can find rather than one refused.
-        crate::dom_bridge::net_lock(&api.interfaces).clear();
-        crate::dom_bridge::net_lock(&api.granted).clear();
+        api.interfaces.lock().clear();
+        api.granted.lock().clear();
         recreated.enumerate().expect("enumeration succeeds");
         let Err(gone) = recreated.open(&target) else {
             panic!("a detached device cannot be opened");
@@ -743,10 +746,10 @@ mod tests {
         assert_eq!(gone.name, "NotFoundError");
 
         // Reattached: the same device is a fresh question, not a stale answer.
-        *crate::dom_bridge::net_lock(&api.interfaces) = interfaces;
+        *api.interfaces.lock() = interfaces;
         recreated.enumerate().expect("enumeration succeeds");
         assert!(matches!(recreated.open(&target), Ok(None)));
-        assert_eq!(crate::dom_bridge::net_lock(&api.requested).len(), 2);
+        assert_eq!(api.requested.lock().len(), 2);
     }
 
     #[test]
@@ -767,12 +770,9 @@ mod tests {
         // A device that does not is spelled `0` by the caller, and zero is not
         // a report ID — it is the absence of one, and must not be transmitted.
         handle.write(&[0x00, 0x42]).expect("the report goes out");
-        assert_eq!(
-            *crate::dom_bridge::net_lock(&interrupt),
-            vec![vec![0x03, 0x42], vec![0x42]]
-        );
+        assert_eq!(*interrupt.lock(), vec![vec![0x03, 0x42], vec![0x42]]);
         assert!(
-            crate::dom_bridge::net_lock(&control).is_empty(),
+            control.lock().is_empty(),
             "an interface with an OUT endpoint never falls back to the control pipe"
         );
 
@@ -780,7 +780,7 @@ mod tests {
             .send_feature_report(&[0x05, 0x7f])
             .expect("the feature report goes out");
         assert_eq!(
-            *crate::dom_bridge::net_lock(&control),
+            *control.lock(),
             vec![(REPORT_TYPE_FEATURE, 0x05, vec![0x05, 0x7f])]
         );
         let mut buffer = vec![0u8; 8];
@@ -807,7 +807,7 @@ mod tests {
         handle.write(&[0x03, 0x42]).expect("the report goes out");
         handle.write(&[0x00, 0x42]).expect("the report goes out");
         assert_eq!(
-            *crate::dom_bridge::net_lock(&control),
+            *control.lock(),
             vec![
                 (REPORT_TYPE_OUTPUT, 0x03, vec![0x03, 0x42]),
                 (REPORT_TYPE_OUTPUT, 0x00, vec![0x42]),
@@ -831,12 +831,12 @@ mod tests {
         assert_eq!(handle.read_timeout(&mut buffer, 8), Ok(0));
         assert_eq!(handle.read_timeout(&mut buffer, 8), Ok(0));
 
-        *crate::dom_bridge::net_lock(&attached) = false;
+        *attached.lock() = false;
         // The liveness question was asked on the first silent read, so it is
         // not asked again until the interval is up — the check is deliberately
         // not on the read path's hot loop.
         assert_eq!(handle.read_timeout(&mut buffer, 8), Ok(0));
-        *crate::dom_bridge::net_lock(&handle.checked) = None;
+        *handle.checked.lock() = None;
         assert!(
             handle.read_timeout(&mut buffer, 8).is_err(),
             "a detached device ends the worker, which is the one terminal event"
