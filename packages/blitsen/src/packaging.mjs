@@ -17,6 +17,9 @@ function slug(text) {
   return cleaned || "app";
 }
 
+/** Stable identity used by packaging and application-owned persistent data. */
+export const defaultApplicationIdentifier = title => `com.blitsen.${slug(title)}`;
+
 export function pngDimensions(bytes, path) {
   if (bytes.length < 24 || PNG_SIGNATURE.some((byte, index) => bytes[index] !== byte)) {
     throw new Error(`icon is not a PNG file: ${path}`);
@@ -329,7 +332,7 @@ export async function packageBuild({
     await writeFile(join(contents, "Info.plist"), infoPlist({
       name: title,
       executable: plan.name,
-      identifier: identifier ?? `com.blitsen.${slug(title)}`,
+      identifier: identifier ?? defaultApplicationIdentifier(title),
       icon: resource?.file ?? null,
       version,
     }));

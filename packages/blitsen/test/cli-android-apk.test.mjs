@@ -741,7 +741,7 @@ describe("an Android build, with every subprocess stubbed", () => {
       expect(result.applicationId).toBe("com.blitsen.pong");
       expect(result.versionCode).toBe(versionCode("1.2.3"));
       expect(result.abis).toEqual(["arm64-v8a", "x86_64"]);
-      expect(result.assets).toBe(3);
+      expect(result.assets).toBe(4);
       expect(result.debugSigned).toBe(true);
       expect((await stat(result.outfile)).size).toBeGreaterThan(0);
       // The archive holds one shared object per ABI and the application under
@@ -753,6 +753,7 @@ describe("an Android build, with every subprocess stubbed", () => {
         `assets/${ASSET_ROOT}/app.js`,
         `assets/${ASSET_ROOT}/assets/app.css`,
         `assets/${ASSET_ROOT}/${ASSET_INDEX}`,
+        `assets/${ASSET_ROOT}/blitsen.runtime.json`,
         `assets/${ASSET_ROOT}/index.html`,
       ]);
       const staging = join(directory, ".Pong.apk.blitsen-android");
@@ -760,6 +761,9 @@ describe("an Android build, with every subprocess stubbed", () => {
         .toContain('package="com.blitsen.pong"');
       expect(await readFile(join(staging, "assets", ASSET_ROOT, "index.html"), "utf8"))
         .toContain("./assets/app.css");
+      expect(JSON.parse(await readFile(
+        join(staging, "assets", ASSET_ROOT, "blitsen.runtime.json"), "utf8",
+      )).storageIdentity).toBe("com.blitsen.pong");
       // The three notes a reader has to see: what was signed, that every entry
       // is stored (#144's noCompress), and that it is not an AAB.
       const notes = steps.flatMap(step => step.notes ?? []).join("\n");

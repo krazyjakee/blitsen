@@ -18,7 +18,18 @@
   const FORM_CONTROLS = "button, fieldset, input, object, output, select, textarea";
   const reflected = (element, name) => element.getAttribute(name) ?? "";
   const controlValue = element => call("formValue", element[handle]);
-  const setControlValue = (element, value) => call("setFormValue", element[handle], value);
+  // Filled by text_editing.js. A programmatic value replacement starts a new
+  // controlled state and therefore invalidates user-edit history. Echoing the
+  // value an input listener just received does not, and while composing it
+  // must not accidentally turn the same visible preedit into committed text.
+  let resetTextHistory = () => {};
+  let textCompositionOwns = () => false;
+  const setControlValue = (element, value) => {
+    const previous = controlValue(element);
+    if (previous === value && textCompositionOwns(element)) return;
+    call("setFormValue", element[handle], value);
+    if (previous !== value) resetTextHistory(element);
+  };
   const controlChecked = element => call("formChecked", element[handle]);
   const setControlChecked = (element, checked) => call("setFormChecked", element[handle], checked);
   // The form owner: an explicit `form` attribute naming one, else the ancestor.
@@ -296,4 +307,3 @@
       submitForm(this, submitter);
     }
   }
-

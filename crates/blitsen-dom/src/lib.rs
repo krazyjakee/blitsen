@@ -135,6 +135,28 @@ pub trait DomBackend {
     /// value flag, exactly as [`DomBackend::set_form_value`] does.
     fn edit_form_value(&mut self, node: Self::NodeId, edit: TextEdit<'_>)
     -> Result<bool, DomError>;
+    /// Replaces the active IME preedit range in a text control.
+    ///
+    /// `cursor` is a pair of UTF-8 byte offsets within `text`, matching the
+    /// native IME boundary. `None` hides the composition caret. Reports
+    /// whether the control had an editor able to display the preedit.
+    fn set_form_composition(
+        &mut self,
+        node: Self::NodeId,
+        text: &str,
+        cursor: Option<(usize, usize)>,
+    ) -> Result<bool, DomError>;
+    /// Replaces the active IME preedit with committed text.
+    fn commit_form_composition(&mut self, node: Self::NodeId, text: &str)
+    -> Result<bool, DomError>;
+    /// Removes an active IME preedit without committing it.
+    fn clear_form_composition(&mut self, node: Self::NodeId) -> Result<bool, DomError>;
+    /// Returns the focused editable control and its viewport-relative caret.
+    ///
+    /// Native window backends use this rectangle to keep an IME candidate
+    /// window beside the text being edited. A readonly control, a non-text
+    /// control and an unlaid-out control return `None`.
+    fn focused_form_cursor_area(&self) -> Option<(Self::NodeId, Rect)>;
     /// Focuses a node in the renderer, or clears focus when given nothing.
     ///
     /// Focus is the bridge's to decide — it runs the focus events and knows

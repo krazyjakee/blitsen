@@ -106,9 +106,20 @@
     }
   }
 
+  class CompositionEvent extends Event {
+    constructor(type, options = {}) {
+      super(type, options);
+      defineMembers(this, {
+        data: String(options.data ?? ""),
+        locale: String(options.locale ?? ""),
+      });
+    }
+  }
+
   // `data` is the text an input contributed and `inputType` how it got there.
-  // Composition is never in progress: there is no IME path into this runtime,
-  // so `isComposing` is false rather than unknown.
+  // `isComposing` is supplied by the native IME path for edits between
+  // `compositionstart` and `compositionend`; ordinary keyboard edits omit it
+  // and therefore remain false.
   class InputEvent extends Event {
     constructor(type, options = {}) {
       super(type, options);
@@ -317,6 +328,10 @@
   };
 
   let activeElement = null;
+  // Filled by text_editing.js once the form-control helpers exist. Focus is
+  // defined earlier in the bootstrap, but moving it must synchronously discard
+  // a preedit from the control that is about to blur.
+  let cancelTextComposition = () => {};
   let readyState = "loading";
   const elementTag = element => call("tagName", element[handle]);
   const isFocusable = element => element instanceof Element && call("isFocusable", element[handle]);
@@ -329,6 +344,7 @@
     const next = element ?? document.body;
     const previous = activeElement ?? document.body;
     if (next === previous) { activeElement = next; return; }
+    cancelTextComposition();
     activeElement = next;
     // The renderer paints from its own idea of focus — the caret in a field,
     // the highlight behind a selection, every `:focus` rule — and is told here

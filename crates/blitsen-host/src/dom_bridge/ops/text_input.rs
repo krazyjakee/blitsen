@@ -48,6 +48,21 @@ fn coordinate(arguments: &[String], index: usize) -> Result<f32, JsError> {
         .map_err(|_| JsError::new("invalid caret coordinate"))
 }
 
+/// Reads winit's optional UTF-8 byte range within a preedit string.
+fn composition_cursor(arguments: &[String]) -> Result<Option<(usize, usize)>, JsError> {
+    let start = bridge_arg(arguments, 2, "composition cursor start")?;
+    let end = bridge_arg(arguments, 3, "composition cursor end")?;
+    if start.is_empty() && end.is_empty() {
+        return Ok(None);
+    }
+    let parse = |value: &str| {
+        value
+            .parse::<usize>()
+            .map_err(|_| JsError::new("invalid composition cursor"))
+    };
+    Ok(Some((parse(start)?, parse(end)?)))
+}
+
 pub(super) fn dispatch(
     runtime: &DomRuntime,
     dom: &mut BlitzDom,
@@ -113,6 +128,28 @@ pub(super) fn dispatch(
             let edit = edit(bridge_arg(arguments, 1, "text edit")?, data)?;
             Ok(Value::Bool(
                 dom.edit_form_value(node, edit).map_err(dom_error)?,
+            ))
+        }
+        "setFormComposition" => {
+            let node = handle(runtime, arguments, 0)?;
+            let text = bridge_arg(arguments, 1, "composition text")?;
+            let cursor = composition_cursor(arguments)?;
+            Ok(Value::Bool(
+                dom.set_form_composition(node, text, cursor)
+                    .map_err(dom_error)?,
+            ))
+        }
+        "commitFormComposition" => {
+            let node = handle(runtime, arguments, 0)?;
+            let text = bridge_arg(arguments, 1, "committed composition text")?;
+            Ok(Value::Bool(
+                dom.commit_form_composition(node, text).map_err(dom_error)?,
+            ))
+        }
+        "clearFormComposition" => {
+            let node = handle(runtime, arguments, 0)?;
+            Ok(Value::Bool(
+                dom.clear_form_composition(node).map_err(dom_error)?,
             ))
         }
         // An empty handle is no focus rather than a missing argument: the

@@ -100,9 +100,10 @@ Blitsen supports application navigation, but an exported application has no HTTP
 routes and asset paths that can be resolved within the application. Test direct navigation, back
 and forward behavior, and refresh-like reloads in the native runtime.
 
-`sessionStorage` and `localStorage` are currently in-memory. Both lose their contents when the
-process exits. The standard runtime does not yet expose a general filesystem API; durable state
-currently needs a native addon and an application data directory returned by `blitsen/app`. See
+`localStorage` is synchronous and durable under the platform application-data directory, with no
+Blitsen-imposed quota. `sessionStorage` belongs to the current JavaScript realm and is discarded on
+reload or exit. The standard runtime does not expose a general filesystem API; arbitrary files and
+databases still need a native addon. See
 [Persistent application data](RECIPES.md#persistent-application-data).
 
 ## Native modules

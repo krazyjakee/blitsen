@@ -39,7 +39,8 @@ pub(crate) struct FormState {
 }
 
 impl BlitzDom {
-    /// Returns the text Blitz's editor holds for a control, if it has one.
+    /// Returns the text Blitz's editor visibly holds for a control, including
+    /// an active IME preedit, if it has one.
     ///
     /// The editor is built while layout resolves, so a control the renderer has
     /// never laid out has no state here yet and the caller falls back to the
@@ -51,7 +52,7 @@ impl BlitzDom {
                 .element_data()?
                 .text_input_data()?
                 .editor
-                .text()
+                .raw_text()
                 .to_string(),
         )
     }
@@ -70,7 +71,7 @@ impl BlitzDom {
         else {
             return false;
         };
-        if input.editor.text() == value {
+        if input.editor.raw_text() == value && input.editor.raw_compose().is_none() {
             return true;
         }
         input.editor.set_text(value);

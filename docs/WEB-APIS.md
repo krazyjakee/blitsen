@@ -39,7 +39,7 @@ lists individual globals, classes and members.
 | Routing | `location`, `history`, hash changes and popstate within the application |
 | Styling | Stylesheets, rule source, media queries, CSS support checks and resize observers |
 | Audio | `<audio>` and a focused Web Audio subset |
-| Storage | `localStorage` and `sessionStorage`, both in-memory for one process |
+| Storage | synchronous durable `localStorage` and realm-scoped `sessionStorage` |
 | Canvas | `<canvas>` with a full 2D context: paths, text, images, gradients, patterns, compositing, `getImageData` and `toDataURL` |
 | Notifications | Standard `Notification` construction, permission, close, and lifecycle events on Linux, Windows, eligible packaged macOS apps and launched Android packages; see platform limits below |
 
@@ -62,8 +62,8 @@ lists individual globals, classes and members.
 | Cookies | No cookie jar; `document.cookie` is absent |
 | Custom elements and shadow DOM | Absent; `DOMParser` is supported |
 | Video and text tracks | Absent; audio is supported |
-| Accessibility tree | Not exported to the platform in this release |
-| Full IME and complex text editing | Incomplete; verify every input language and workflow you support |
+| Accessibility tree | Deliberately not exported: screen readers receive no roles, names, focus state or live regions; DOM keyboard focus remains separate and supported |
+| Full IME and complex text editing | `<input>`/`<textarea>` preedit, commit and bounded undo/redo are implemented; `contenteditable`, form reset, surrounding-text deletion and native CJK/RTL workflows remain unverified |
 
 ## Dropped files are paths
 
@@ -159,7 +159,9 @@ configured for. The details and the deviations are in
 
 HTML and CSS are rendered by Blitz rather than a browser engine. Some valid browser styles render
 differently or are ignored. Current high-impact areas include transitions, fixed/sticky positioning,
-paint effects, form-control styling, font fallback and complex text.
+paint effects, form-control styling, host-dependent font metrics, colour emoji and complex text
+input. Static complex text uses Parley/HarfRust shaping; ship `@font-face` files when coverage and
+metrics must be portable.
 
 **SVG paints** — inline `<svg>`, `<img src="icon.svg">` and CSS `background-image`, as vectors
 rather than as rasterised images. Shapes, paths, `viewBox`, transforms, gradients, dashed strokes,

@@ -8,9 +8,11 @@ The tier this profile publishes is [PRODUCT.md §7](PRODUCT.md#7-scope-by-tier)'
 architecture surface plus `fetch`, `WebSocket`, images, web fonts, audio playback and the
 `blitsen/{app,window,dialog,clipboard}` modules. Three of its members are partial by design and
 say so where they are documented: `dialog.*` is Linux/BSD only, `app.requestSingleInstanceLock`
-is Unix-only, and `window.create` is absent. What is *not* v1 is stated as plainly: WebGL and
-WebGPU are absent, accessibility is absent, and text controls provide basic editing and selection
-but not IME or the advanced editing surface — see [What v1 is not](#what-v1-is-not).
+is Unix-only, and `window.create` is deliberately absent until the decided isolated-context host
+model is implemented. What is *not* v1 is stated as plainly: WebGL and
+WebGPU are absent, accessibility is absent, and text controls provide editing, selection and a
+native preedit/commit path, but not the full advanced editing surface or verified input-language
+coverage — see [What v1 is not](#what-v1-is-not).
 
 ## Window renderer by platform
 
@@ -65,6 +67,30 @@ JavaScript comes from the [generated manifest](#capability-tiers) below.
 | Routing | In-memory `history` and `location`, `popstate` and `hashchange` |
 | CSS | Static block, flex and grid layout; bounded absolute positioning; spacing, borders, backgrounds, colors and system typography |
 | Subresources | `<img>` and CSS `background-image` (PNG, JPEG, GIF, WebP and SVG), and `@font-face` web fonts (WOFF2, WOFF, TTF, OTF), loaded from local files; `<video>` is not. Audio is loaded and decoded by Web Audio rather than as a renderer subresource — see [Audio](#audio). A subresource the export cannot serve — a remote URL, or a local file that is missing — is answered with an empty body, so the document paints without it rather than waiting on it |
+
+## Font fallback and complex text
+
+Blitsen enumerates the platform's system fonts and adds every author font loaded through
+`@font-face` to the same shared collection used by DOM and canvas text. CSS family order is kept;
+Parley selects a covering face per Unicode cluster and supplies script/locale fallback from the
+fonts actually present. HarfRust shapes the selected face, and Unicode bidi determines visual run
+order. The automated renderer coverage includes Arabic joining and RTL order, CJK falling through
+to a second author family, and a single-scalar outline emoji.
+
+There is **no bundled universal fallback font**. Applications that require stable coverage or
+metrics must ship appropriately licensed fonts and name them in `@font-face`; otherwise the
+available glyphs, advances and line breaks are the host's. If no declared or system face covers a
+scalar, the selected face's glyph zero (`.notdef`) is used. Its appearance is font-defined and can
+be a box, another mark or blank—Blitsen does not invent a replacement glyph.
+
+Emoji has the same boundary. An author-provided outline glyph shapes and paints. Platform emoji,
+colour-font formats, variation-selector presentation and multi-codepoint ZWJ sequences depend on
+the installed face and the underlying Parley/Vello support and are not claimed by the current
+tests. Verify those exact sequences on every target where they matter.
+
+P6 byte identity is conditional on font inputs: the conformance corpus and captured framework case
+use committed author fonts. A page that uses system fonts is expected to differ across operating
+systems and is deliberately excluded from byte-exact goldens.
 
 The M3b acceptance app intentionally uses the normal Vite default output, including
 root-relative `/assets/...` references and Vite's module-preload bootstrap. It contains no
@@ -386,8 +412,11 @@ process's stderr. The worker keeps running, as a browser's does.
 
 `window.postMessage(message)` also works, and means the same-window one: the message is serialized
 at the call, delivered as a later task, and `targetOrigin` is accepted and ignored, because there
-is one origin behind an application. `SharedWorker`, `ServiceWorker` and `BroadcastChannel` are
-absent — all three are about sharing something between documents, and there is one document.
+is one origin behind an application. The current release still has one document. A future second
+native window will have an [isolated context](TECH.md#multi-window-contexts-isolated-on-one-ui-thread)
+on the same UI thread, and will communicate only through explicitly transferred `MessagePort`
+endpoints — `window.postMessage` will not become a cross-window shortcut. `SharedWorker`,
+`ServiceWorker` and `BroadcastChannel` remain absent; there is no implicit application-wide bus.
 
 ## Audio
 
@@ -904,11 +933,42 @@ forward or backward and have no third answer, so `"none"` — the direction a ra
 has until something says otherwise — is kept beside the control and dropped the moment anything
 moves the caret.
 
-What is **not** here: undo and redo, IME composition (`compositionstart` and the rest — there is no IME path into this runtime, which is
-why `InputEvent.isComposing` is always false), `getTargetRanges()` on a `beforeinput`, the
-`selectionchange` event, implicit form submission on Enter, and the `change` event a text control
-fires when its value is committed on blur. A framework that listens for `input` — React's
-`onChange` is `input` — is unaffected by that last one.
+**Native IME preedit and commit have a bounded path.** When an editable `<input>` or `<textarea>`
+holds focus, the window enables winit's IME and continually supplies the viewport-relative Parley
+editing area so a desktop candidate window can stay beside the marked text. A preedit lives in
+Parley's own composing range, so the renderer paints and shapes it rather than keeping an invisible
+bridge-side copy. The first update dispatches `compositionstart`; every update dispatches
+`compositionupdate`, then cancelable `beforeinput`, applies `insertCompositionText`, and reports
+`input`. Commit applies `insertFromComposition` before `compositionend`. Those `InputEvent`s carry
+`isComposing: true`; ordinary keyboard edits remain false. Moving focus or receiving IME disable
+clears the preedit and ends the composition, and readonly controls never enable it.
+
+That is software-tested with synthetic Unicode preedit/commit sequences and painted author-font
+fixtures. It is **not** a claim that a native Chinese, Japanese, Korean, Arabic or other complex
+input method has been exercised by a user on every target. Winit surrounding-text deletion is not
+requested or implemented, and the renderer gives marked text no dedicated platform underline.
+Manual native CJK and RTL input remains release acceptance.
+
+**Text-control undo and redo are local and bounded.** An accepted key edit, cut or paste is one
+transaction; there is deliberately no timing-dependent typing coalescing. All preedit updates plus
+their commit are one transaction, while a canceled preedit records nothing. Ctrl/Cmd+Z dispatches
+cancelable `beforeinput` and then `input` with `historyUndo`; Ctrl/Cmd+Shift+Z and Ctrl/Cmd+Y use
+`historyRedo`. Both events have `data: null` and `isComposing: false`, and restoring a transaction
+restores its UTF-16 selection and direction as well as its value. The first undo during a live
+preedit cancels only that uncommitted text.
+
+History belongs to one `<input>` or `<textarea>` and survives moving focus away and back. A new
+edit after undo discards that control's redo branch. A programmatic replacement with a different
+`.value` starts a new controlled state and clears both stacks; a controlled component echoing the
+same value from its `input` listener does not. Each control retains at most 100 transactions and
+1,000,000 UTF-16 code units of snapshots. A document reload starts fresh. `HTMLFormElement.reset()`
+remains absent with the rest of full form reset rather than being approximated as a history-only
+operation.
+
+What is **not** here: `contenteditable`, advanced document selections,
+`getTargetRanges()` on a `beforeinput`, the `selectionchange` event, implicit form submission on
+Enter, and the `change` event a text control fires when its value is committed on blur. A framework
+that listens for `input` — React's `onChange` is `input` — is unaffected by that last one.
 
 ### What is absent
 
@@ -1176,18 +1236,22 @@ one.
 
 ## Storage
 
-`localStorage` and `sessionStorage` exist, hold what is put in them, and **lose it when the
-application exits**. There is no profile directory behind an exported application yet, so both are
-one process's memory: `sessionStorage` is therefore exactly right, and `localStorage` is a session
-store wearing a longer name.
+`localStorage` is durable and synchronous. Each value is an atomic keyed file below Blitsen's
+platform application-data directory; a small index preserves Storage key order without reading
+large values into memory at startup. Interrupted writes retain the old or new complete value, and a
+damaged index is quarantined and rebuilt from valid keyed records. There is no Blitsen quota: the
+platform filesystem is the limit, and a failed write throws synchronously.
 
-It is implemented anyway because the absence is not survivable and the forgetfulness is. Libraries
-read `localStorage` unguarded inside a render — shadcn's theme provider does it in a `useState`
-initialiser — so an absent global takes the application down before first paint, while an empty one
-degrades to the default theme. What must not happen is that the difference goes unnoticed, so
-`doctor` reports every `localStorage.setItem` as `WEB_STORAGE_MEMORY`, on every build, for as long
-as this is true. Keep anything that has to outlive the process in a file the application owns.
-Real persistence is tracked separately.
+Exports use their packaging identity (`--bundle-id`, or the stable `com.blitsen.<name>` default).
+Development directories use their canonical path, and proxy runs use the normalized server origin
+and entrypoint, so unrelated projects do not share state. Moving a development directory therefore
+creates a new namespace; changing a dev-server port does too.
+
+`sessionStorage` remains private to one JavaScript realm and disappears when that realm is replaced
+or the process exits. Blitsen currently opens one window. When multi-window support lands, windows
+with the same application identity will share the local area and receive `storage` events, while
+each top-level window keeps its own session area. Workers do not expose Web Storage; a future worker
+store must use the same serialized backend rather than a per-thread copy.
 
 `indexedDB` stays absent.
 
@@ -1283,8 +1347,8 @@ actually draws it rather than where the pitch would prefer.
 | --- | --- | --- |
 | Canvas shadows and `filter` | The four `shadow*` properties and `ctx.filter` are **absent**, so `"shadowBlur" in ctx` is false and a feature test selects a fallback. Both need a blur, and the paint pipeline under this renderer has none — the same reason CSS `filter` is reported ignored | [#99](https://github.com/krazyjakee/blitsen/issues/99) |
 | `OffscreenCanvas`, `ImageBitmap` | `WEB_CANVAS`, a warning. A canvas that is never in the document is the supported way to draw off-screen: `document.createElement("canvas")` draws, reads back and encodes without being connected | [#99](https://github.com/krazyjakee/blitsen/issues/99) |
-| Advanced text input and IME | Text controls support keyboard editing, caret movement, click placement, drag selection and `beforeinput`/`input`; clipboard editing, undo/redo, composition/IME, `contenteditable`, `selectionchange`, target ranges and complex-script coverage remain incomplete | [#103](https://github.com/krazyjakee/blitsen/issues/103) |
-| Accessibility | No accessibility tree is exported to the platform, so a screen reader finds nothing | [#102](https://github.com/krazyjakee/blitsen/issues/102) |
+| Advanced text input and IME | Text controls support keyboard and clipboard editing, bounded per-control undo/redo with selection restoration, caret movement, click placement, drag selection, `beforeinput`/`input`, and a winit preedit/commit composition path with painted marked text. `contenteditable`, `selectionchange`, target ranges, surrounding-text deletion and human-verified native complex-script workflows remain incomplete. Static complex text is shaped separately—see [Font fallback and complex text](#font-fallback-and-complex-text) | [#103](https://github.com/krazyjakee/blitsen/issues/103) |
+| Accessibility | Deliberately absent: no roles, accessible names, focus state or live regions are exported to the platform, so a screen reader finds nothing. DOM keyboard focus and text editing remain available, but they are not an accessibility tree | [#102](https://github.com/krazyjakee/blitsen/issues/102) |
 | WebGL, WebGPU, WebRTC | `WEB_GPU`, a warning. `<blitsen-view>` is the supported way to put GPU output on screen | — |
 
 `<canvas>` used to be the first row of this table and a build-blocking `HTML_CANVAS` error, on the
@@ -1331,7 +1395,7 @@ determinism gate instead.
 | --- | --- | --- |
 | WEB_DOM | `document`, `Document`, `Node`, `Element`, `NodeList`, `DOMTokenList`, `Attr`, `NamedNodeMap`, `CSSStyleDeclaration`, `MutationObserver`, `HTMLElement`, `HTMLIFrameElement`, `SVGElement`, `Text`, `Comment`, `DocumentFragment`, `HTMLLinkElement`, `HTMLTemplateElement`, `HTMLImageElement`, `Image`, `HTMLImageElement.src`, `HTMLImageElement.naturalWidth`, `HTMLImageElement.naturalHeight`, `HTMLImageElement.complete`, `HTMLImageElement.onload`, `HTMLImageElement.onerror`, `Element.querySelector`, `Element.querySelectorAll`, `Element.closest`, `Element.matches`, `Element.cloneNode`, `Element.contains`, `Element.children`, `Element.previousSibling`, `Element.lastChild`, `Element.parentElement`, `Element.dataset`, `Element.nodeValue`, `Element.before`, `Element.after`, `Element.getElementsByTagName`, `Element.outerHTML`, `Element.insertAdjacentHTML`, `Element.scrollIntoView`, `Element.getElementsByClassName`, `Element.firstElementChild`, `Element.lastElementChild`, `Element.nextElementSibling`, `Element.previousElementSibling`, `Element.childElementCount`, `Element.append`, `Element.prepend`, `Element.replaceChildren`, `Element.getAttributeNS`, `Element.setAttributeNS`, `Element.removeAttributeNS`, `Element.hasAttributes`, `Element.getAttributeNames`, `Element.toggleAttribute`, `Element.getClientRects`, `Element.getRootNode`, `Element.normalize`, `Element.attributes`, `Element.insertAdjacentElement`, `Element.innerText`, `Element.compareDocumentPosition`, `Element.offsetParent`, `Element.clientTop`, `Element.clientLeft`, `Element.hidden`, `Element.tabIndex`, `Element.title`, `Document.title`, `Document.dir`, `Document.getElementsByName`, `Document.elementFromPoint`, `Document.elementsFromPoint`, `Document.scrollingElement`, `Document.characterSet`, `Document.documentURI`, `Document.hasFocus`, `Document.adoptNode`, `HTMLLinkElement.relList`, `HTMLLinkElement.onload`, `HTMLLinkElement.onerror`, `HTMLTemplateElement.content`, `DOMTokenList.supports`, `Document.createElementNS`, `Document.createComment`, `Document.createDocumentFragment`, `Document.getElementsByTagName`, `Document.getElementsByClassName`, `Document.importNode`, `NodeList.item`, `NodeList.forEach` | `Element.attachShadow`, `Document.currentScript` |
 | WEB_FORM_CONTROLS | `HTMLInputElement`, `HTMLTextAreaElement`, `HTMLSelectElement`, `HTMLOptionElement`, `HTMLButtonElement`, `HTMLFormElement`, `HTMLInputElement.value`, `HTMLInputElement.defaultValue`, `HTMLInputElement.checked`, `HTMLInputElement.defaultChecked`, `HTMLInputElement.type`, `HTMLInputElement.name`, `HTMLInputElement.disabled`, `HTMLInputElement.form`, `HTMLInputElement.select`, `HTMLInputElement.setSelectionRange`, `HTMLInputElement.selectionStart`, `HTMLInputElement.selectionEnd`, `HTMLInputElement.selectionDirection`, `HTMLTextAreaElement.value`, `HTMLTextAreaElement.defaultValue`, `HTMLTextAreaElement.select`, `HTMLTextAreaElement.setSelectionRange`, `HTMLTextAreaElement.selectionStart`, `HTMLTextAreaElement.selectionEnd`, `HTMLTextAreaElement.selectionDirection`, `HTMLSelectElement.options`, `HTMLSelectElement.selectedIndex`, `HTMLSelectElement.value`, `HTMLSelectElement.length`, `HTMLSelectElement.selectedOptions`, `HTMLSelectElement.multiple`, `HTMLOptionElement.value`, `HTMLOptionElement.text`, `HTMLOptionElement.selected`, `HTMLOptionElement.index`, `HTMLOptionElement.label`, `HTMLOptionElement.defaultSelected`, `HTMLButtonElement.value`, `HTMLButtonElement.type`, `HTMLFormElement.elements`, `HTMLFormElement.requestSubmit` | `HTMLInputElement.files`, `HTMLInputElement.labels`, `HTMLInputElement.validity`, `HTMLInputElement.checkValidity`, `HTMLSelectElement.add`, `HTMLFormElement.submit`, `HTMLFormElement.reset`, `HTMLFormElement.action`, `HTMLFormElement.method`, `HTMLFormElement.checkValidity` |
-| WEB_EVENTS | `EventTarget`, `Event`, `CustomEvent`, `SubmitEvent`, `MouseEvent`, `KeyboardEvent`, `FocusEvent`, `InputEvent`, `PointerEvent`, `WheelEvent`, `addEventListener`, `removeEventListener`, `dispatchEvent`, `ErrorEvent`, `Element.setPointerCapture`, `Element.releasePointerCapture`, `Element.hasPointerCapture` | — |
+| WEB_EVENTS | `EventTarget`, `Event`, `CustomEvent`, `SubmitEvent`, `MouseEvent`, `KeyboardEvent`, `FocusEvent`, `InputEvent`, `CompositionEvent`, `PointerEvent`, `WheelEvent`, `addEventListener`, `removeEventListener`, `dispatchEvent`, `ErrorEvent`, `Element.setPointerCapture`, `Element.releasePointerCapture`, `Element.hasPointerCapture` | — |
 | WEB_TRANSFER | `ClipboardEvent`, `DragEvent`, `DataTransfer`, `DataTransfer.dropEffect`, `DataTransfer.effectAllowed`, `DataTransfer.types`, `DataTransfer.getData`, `DataTransfer.setData`, `DataTransfer.clearData`, `DataTransfer.paths` | `DataTransfer.files`, `DataTransfer.items`, `DataTransfer.setDragImage` |
 | WEB_SCROLL | `scrollTo`, `scrollBy`, `scroll`, `scrollX`, `scrollY`, `pageXOffset`, `pageYOffset` | — |
 | WEB_SELECTION | `getSelection`, `Range`, `Selection`, `CaretPosition`, `Document.createRange`, `Document.getSelection`, `Document.caretRangeFromPoint`, `Document.caretPositionFromPoint`, `Range.setStart`, `Range.setEnd`, `Range.setStartBefore`, `Range.setStartAfter`, `Range.setEndBefore`, `Range.setEndAfter`, `Range.selectNode`, `Range.selectNodeContents`, `Range.collapse`, `Range.cloneRange`, `Range.startContainer`, `Range.startOffset`, `Range.endContainer`, `Range.endOffset`, `Range.collapsed`, `Range.commonAncestorContainer`, `Range.comparePoint`, `Range.compareBoundaryPoints`, `Range.intersectsNode`, `Range.isPointInRange`, `Range.toString`, `Range.getClientRects`, `Range.getBoundingClientRect`, `Selection.anchorNode`, `Selection.anchorOffset`, `Selection.focusNode`, `Selection.focusOffset`, `Selection.isCollapsed`, `Selection.rangeCount`, `Selection.type`, `Selection.direction`, `Selection.getRangeAt`, `Selection.addRange`, `Selection.removeAllRanges`, `Selection.setBaseAndExtent`, `Selection.collapse`, `Selection.extend`, `Selection.selectAllChildren`, `Selection.containsNode`, `Selection.toString`, `CaretPosition.offsetNode`, `CaretPosition.offset`, `CaretPosition.getClientRect` | `Range.deleteContents`, `Range.extractContents`, `Range.cloneContents`, `Range.insertNode`, `Range.surroundContents` |
@@ -1367,7 +1431,6 @@ determinism gate instead.
 | Diagnostic | Severity | Reported as |
 | --- | --- | --- |
 | `WEB_FETCH` | error | fetch names a path this application does not ship, and there is no server behind it. |
-| `WEB_STORAGE_MEMORY` | warning | localStorage is in memory only: what it stores is gone when the application exits. |
 | `WEB_DOM` | warning | This DOM method is not implemented. |
 | `WEB_FORM_CONTROLS` | warning | This form-control API is not implemented. |
 | `WEB_TRANSFER` | warning | This part of DataTransfer is not implemented; a dropped file is a path, not a File. |
@@ -1523,7 +1586,7 @@ lib. The capability tiers above are the list, and `blitsen doctor` is the check.
 | `app.onResume` | The counterpart of `onSuspend`, absent for the same reason. |
 | `app.registerProtocol` | Registering `myapp://` on Linux means installing a `.desktop` entry that names the executable, which is what `blitsen build` already writes. A running process editing that entry would fight its own packaging. The activation itself arrives: the desktop launches the handler with the URL in `argv`, and the single-instance lock hands that to the instance already running. |
 | `app.registerFileAssociation` | The same `.desktop` entry, with `MimeType` instead of a scheme. |
-| `window.create` | A second window needs the shared-versus-isolated JavaScript context question answered first: whether two windows see one `document` and one module graph or two decides what `create` even returns, and it cannot be settled by implementing it. The window this run already opened is what the rest of this module operates on. |
+| `window.create` | The architecture is decided: every future window gets an isolated Window, Document, JavaScript heap and evaluated module graph, scheduled with the other windows on one OS UI thread. Application data crosses an explicitly transferred MessagePort; no context receives another window's global. The per-window host state and opaque lifecycle capability needed to uphold that contract are not implemented, so this release exposes no create member. The rest of this module operates on the calling document's native window. |
 | `window.setTransparent` | Transparency is chosen when a window is created — winit's own setter does nothing on X11 after that — so honouring it would mean replacing the window, which is `create`. Run `blitsen` against a directory whose window should be transparent and the attribute belongs on that window, not on a call. |
 | `window.isAlwaysOnTop` | winit sets the window level and cannot read it back, and the window manager may change it without telling the application. Remembering what was last set would be a second source of truth that quietly goes stale. |
 | `window.startFileDrag` | Dropping *into* the window is winit's to report and is implemented; dragging *out* of it is not something winit can start. A drag source is a platform object driven from the thread that owns the window — `IDropSource` with `DoDragDrop`, an `NSDraggingSession`, a `wl_data_device` offer — and the first two run a modal loop that does not return until the drop, on the one thread Blitsen keeps free to paint. That is a design question rather than a missing call, so the module says so instead of answering it. |

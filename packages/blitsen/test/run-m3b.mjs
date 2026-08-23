@@ -18,6 +18,11 @@ const addon = await buildAddon({ purpose: "M3b", release: true });
 const temporary = await mkdtemp(join(tmpdir(), "blitsen-m3b-"));
 const executable = join(temporary, process.platform === "win32" ? "ReactAcceptance.exe" : "ReactAcceptance");
 const cli = join(example, "node_modules/blitsen/bin/blitsen.mjs");
+const storageEnvironment = process.platform === "win32"
+  ? { APPDATA: join(temporary, "app-data"), LOCALAPPDATA: join(temporary, "local-data") }
+  : process.platform === "darwin"
+    ? { HOME: join(temporary, "home") }
+    : { XDG_DATA_HOME: join(temporary, "data") };
 
 try {
   const cliEnvironment = { ...process.env, BLITSEN_NATIVE_PATH: addon };
@@ -50,6 +55,7 @@ try {
     cmd: [executable],
     cwd: temporary,
     env: {
+      ...storageEnvironment,
       PATH: "",
       BLITSEN_STANDALONE_CHECK: "1",
       BLITSEN_STANDALONE_CHECK_DELAY: "250",

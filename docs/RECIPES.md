@@ -80,9 +80,16 @@ resources](WEB-APIS.md#local-and-remote-resources) before relying on them.
 
 ## Persistent application data
 
-`localStorage` is process-memory only in this release. The standard runtime does not expose a
-general filesystem API, so durable state currently requires a native addon. Use `blitsen/app` to
-choose the platform-appropriate directory:
+Use the synchronous standard API for durable key-value state; it has no Blitsen-imposed quota:
+
+```js
+localStorage.setItem("lastWorkspace", workspace.id);
+const previous = localStorage.getItem("lastWorkspace");
+```
+
+Large values are stored separately, so opening an application does not read the entire store. For
+arbitrary files or a queryable database schema, the standard runtime still exposes no general
+filesystem API. That case requires a native addon; use `blitsen/app` to choose its directory:
 
 ```js
 import app from "blitsen/app";
@@ -94,8 +101,7 @@ if (!directory) {
 ```
 
 The helper returns a path and does not create it. The addon must create the directory and perform
-the reads/writes. Carrying a `.node` addon selects the larger Bun host and changes packaging
-obligations, so keep that tradeoff explicit.
+the reads/writes. `localStorage` itself needs no addon and works in the smaller shipped runtime.
 
 ## Use a file dialog with a fallback
 

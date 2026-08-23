@@ -220,6 +220,29 @@ impl AppFiles {
         }
     }
 
+    /// Stable development identity used when no export recorded an installed
+    /// application identity. Canonical directory paths keep sibling projects
+    /// apart; served applications use the normalized origin and entrypoint.
+    pub fn storage_identity(&self) -> String {
+        match self {
+            Self::Directory { root, .. } => format!("directory:{}", root.to_string_lossy()),
+            Self::Server { server, entrypoint } => {
+                format!("server:{}{entrypoint}", server.origin())
+            }
+            Self::Bundle { entrypoint, .. } => format!(
+                "bundle:{}:{entrypoint}",
+                std::env::current_exe()
+                    .map(|path| path.to_string_lossy().into_owned())
+                    .unwrap_or_else(|_| "unknown-executable".to_owned())
+            ),
+            // Android's files directory is already isolated by package. The
+            // fallback is only for an old package with no recorded identity.
+            Self::Assets { assets, entrypoint } => {
+                format!("assets:{}:{entrypoint}", assets.root())
+            }
+        }
+    }
+
     /// How many of the application's own files this carries.
     ///
     /// The number the standalone check reports, so it counts what the export
@@ -428,6 +451,7 @@ pub struct LoadOptions {
     height: u32,
     viewport: Option<Viewport>,
     mode: DocumentMode,
+    storage: Option<crate::storage::LocalStorage>,
 }
 
 impl LoadOptions {
@@ -438,7 +462,14 @@ impl LoadOptions {
             height,
             viewport: None,
             mode,
+            storage: None,
         }
+    }
+
+    /// Supplies this application's durable Web Storage area.
+    pub fn with_storage(mut self, storage: crate::storage::LocalStorage) -> Self {
+        self.storage = Some(storage);
+        self
     }
 
     /// Preserves a live native viewport while reloading its document.
@@ -481,6 +512,7 @@ pub fn load_document<E: JsEngine + Clone + 'static>(
         height,
         viewport,
         mode,
+        storage,
     } = options;
     APPLICATION_ROOT.with(|current| {
         *current.borrow_mut() = match files {
@@ -528,6 +560,7 @@ pub fn load_document<E: JsEngine + Clone + 'static>(
             mode,
             loader: loader.as_ref(),
             reader: Some(files.reader()),
+            storage,
         },
     )?;
     document
@@ -716,6 +749,10 @@ mod tests {
     fn a_dev_server_provider_preserves_queries_missing_errors_and_callbacks() {
         let (origin, server) = app_server();
         let files = AppFiles::server(&origin).unwrap();
+        assert_eq!(
+            files.storage_identity(),
+            format!("server:{origin}/index.html")
+        );
         let provider = files.net_provider().expect("a server serves its files");
         let collector = Collector::default();
 
@@ -754,6 +791,13 @@ mod tests {
         std::fs::write(root.join("index.html"), b"<p>hi").unwrap();
         std::fs::write(root.join("assets/app.css"), b"body{margin:0}").unwrap();
         let files = AppFiles::directory(root.join("index.html")).unwrap();
+        assert_eq!(
+            files.storage_identity(),
+            format!(
+                "directory:{}",
+                simplified(root.canonicalize().unwrap()).display()
+            )
+        );
         let provider = files
             .net_provider()
             .expect("a directory serves its own files");

@@ -140,3 +140,177 @@ fn text_paints_in_the_fallback_while_a_web_font_is_still_loading() {
         "the arriving font reshapes the already-painted run"
     );
 }
+
+/// Arabic exercises both halves of the complex-text stack: Unicode bidi puts
+/// the run right-to-left, and HarfRust applies the joining features in the
+/// author font. The fixture's four beh forms have distinct glyph IDs, so three
+/// cmap hits cannot pass this assertion without shaping.
+#[test]
+fn an_author_font_shapes_arabic_joining_and_visual_rtl_order() {
+    let mut dom = fixture_document(
+        r#"<style>
+                 @font-face { font-family: "World";
+                              src: url("block-world.ttf") format("truetype") }
+                 div { font: 48px "World"; direction: rtl; color: #000 }
+               </style>
+               <div id="run">ببب</div>"#,
+        None,
+    );
+    dom.flush_layout().unwrap();
+    let node = dom.get_element_by_id("run").unwrap().unwrap();
+    let inline = dom
+        .node(node)
+        .unwrap()
+        .element_data()
+        .unwrap()
+        .inline_layout_data
+        .as_ref()
+        .expect("the Arabic run was laid out");
+    assert!(
+        inline.layout.is_rtl(),
+        "the paragraph base direction is RTL"
+    );
+    let runs = inline.layout.get(0).unwrap().runs().collect::<Vec<_>>();
+    assert_eq!(runs.len(), 1, "one face and style make one Arabic run");
+    let run = &runs[0];
+    assert!(run.is_rtl(), "the Arabic shaping run is RTL");
+    let glyphs = run
+        .clusters()
+        .flat_map(|cluster| cluster.glyphs().map(|glyph| glyph.id))
+        .collect::<Vec<_>>();
+    assert_eq!(glyphs.len(), 3, "three joined letters remain three glyphs");
+    assert!(
+        glyphs.iter().all(|glyph| *glyph != 0),
+        "no letter is .notdef"
+    );
+    let mut forms = glyphs.clone();
+    forms.sort_unstable();
+    forms.dedup();
+    assert_eq!(
+        forms.len(),
+        3,
+        "initial, medial and final forms were selected"
+    );
+    assert_eq!(
+        run.visual_clusters()
+            .map(|cluster| cluster.text_range().start)
+            .collect::<Vec<_>>(),
+        vec![4, 2, 0],
+        "visual traversal reverses the logical UTF-8 cluster order"
+    );
+    assert!(inked_bounds(&render(&mut dom, 400, 120), 400).is_some());
+}
+
+/// Font fallback is per character cluster and follows the CSS family list.
+/// The first fixture covers ASCII only and the second covers one CJK scalar,
+/// making the selected face observable without depending on host fonts.
+#[test]
+fn a_cjk_cluster_falls_through_to_the_next_author_family() {
+    let mut dom = fixture_document(
+        r#"<style>
+                 @font-face { font-family: "ASCII";
+                              src: url("block-ascii.ttf") format("truetype") }
+                 @font-face { font-family: "World";
+                              src: url("block-world.ttf") format("truetype") }
+                 div { font: 40px "ASCII", "World", sans-serif; color: #000 }
+               </style>
+               <div id="run">A中A</div>"#,
+        None,
+    );
+    dom.flush_layout().unwrap();
+    let node = dom.get_element_by_id("run").unwrap().unwrap();
+    let inline = dom
+        .node(node)
+        .unwrap()
+        .element_data()
+        .unwrap()
+        .inline_layout_data
+        .as_ref()
+        .expect("the mixed run was laid out");
+    let runs = inline.layout.get(0).unwrap().runs().collect::<Vec<_>>();
+    assert_eq!(runs.len(), 3, "ASCII, CJK fallback, then ASCII again");
+    assert_eq!(runs[0].font(), runs[2].font());
+    assert_ne!(runs[0].font(), runs[1].font(), "CJK uses the next family");
+    assert!(
+        runs.iter()
+            .flat_map(|run| run.clusters())
+            .flat_map(|cluster| cluster.glyphs())
+            .all(|glyph| glyph.id != 0),
+        "each author font covers the cluster it was selected for"
+    );
+    let (_, _, width, _) =
+        inked_bounds(&render(&mut dom, 400, 120), 400).expect("the fallback run painted");
+    assert_eq!(width, 120, "three one-em author glyphs painted at 40px");
+}
+
+/// Emoji selection is a distinct Parley cluster path. This fixture proves an
+/// author-provided outline emoji is shaped and painted; it deliberately says
+/// nothing about platform colour-font formats or multi-codepoint ZWJ sequences.
+#[test]
+fn an_author_outline_emoji_is_clustered_and_painted() {
+    let mut dom = fixture_document(
+        r#"<style>
+                 @font-face { font-family: "World";
+                              src: url("block-world.ttf") format("truetype") }
+                 div { font: 64px "World", emoji; color: #000 }
+               </style>
+               <div id="run">🙂</div>"#,
+        None,
+    );
+    dom.flush_layout().unwrap();
+    let node = dom.get_element_by_id("run").unwrap().unwrap();
+    let inline = dom
+        .node(node)
+        .unwrap()
+        .element_data()
+        .unwrap()
+        .inline_layout_data
+        .as_ref()
+        .expect("the emoji was laid out");
+    let runs = inline.layout.get(0).unwrap().runs().collect::<Vec<_>>();
+    let clusters = runs
+        .iter()
+        .flat_map(|run| run.clusters())
+        .collect::<Vec<_>>();
+    assert_eq!(clusters.len(), 1);
+    assert!(
+        clusters[0].is_emoji(),
+        "the scalar takes the emoji font path"
+    );
+    assert!(clusters[0].glyphs().all(|glyph| glyph.id != 0));
+    assert!(inked_bounds(&render(&mut dom, 160, 120), 160).is_some());
+}
+
+/// No universal runtime fallback is hidden behind the author stack. When no
+/// discovered or declared face maps a scalar, shaping keeps the selected
+/// face's glyph zero and paints that face's `.notdef` outline.
+#[test]
+fn an_uncovered_scalar_uses_notdef_instead_of_an_invented_fallback() {
+    let html = r#"<style>
+                     @font-face { font-family: "World";
+                                  src: url("block-world.ttf") format("truetype") }
+                     div { font: 48px "World"; color: #000 }
+                   </style>
+                   <div id="run">MISSING</div>"#
+        .replace("MISSING", "\u{0378}");
+    let mut dom = fixture_document(&html, None);
+    dom.flush_layout().unwrap();
+    let node = dom.get_element_by_id("run").unwrap().unwrap();
+    let inline = dom
+        .node(node)
+        .unwrap()
+        .element_data()
+        .unwrap()
+        .inline_layout_data
+        .as_ref()
+        .expect("the missing scalar was laid out");
+    let runs = inline.layout.get(0).unwrap().runs().collect::<Vec<_>>();
+    let glyphs = runs
+        .iter()
+        .flat_map(|run| run.clusters())
+        .flat_map(|cluster| cluster.glyphs())
+        .collect::<Vec<_>>();
+    assert_eq!(glyphs.len(), 1);
+    assert_eq!(glyphs[0].id, 0, "the face's .notdef glyph is explicit");
+    assert!(inked_bounds(&render(&mut dom, 120, 100), 120).is_some());
+}

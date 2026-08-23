@@ -1,8 +1,9 @@
 # Layout conformance corpus
 
-Product requirement **P6** is that a Blitsen application lays out the same way on every platform.
-This corpus is the gate on that claim: a set of static documents rendered headlessly to PNG,
-compared against committed golden images, run on Linux, macOS and Windows in CI.
+Product requirement **P6** is byte-identical layout across platforms for the test corpus under
+pinned inputs—not a claim that different operating-system fonts have identical metrics. This
+corpus is the gate on that claim: static documents rendered headlessly to PNG, compared against
+committed golden images, run on Linux, macOS and Windows in CI.
 
 ```sh
 bun run --cwd packages/blitsen test:conformance   # or: cargo test -p blitsen-blitz --test conformance
@@ -77,11 +78,17 @@ which holds the pinned fonts and the 8x4 red/blue image the image cases probe.
 Two different problems, two different answers.
 
 **Fonts.** Text metrics decide every box below the first line of text, and a CI runner has
-different fonts from a laptop. So the corpus ships its own: `block-*.ttf`, built by
-[`fixtures/generate.py`](../crates/blitsen-blitz/fixtures/generate.py), whose every glyph is a solid
-em block one em wide with an ascent of exactly one em and no descent. Every metric a case depends on
-therefore comes out of a committed file, and — because no system fallback paints a filled
+different fonts from a laptop. So the corpus ships the `block-regular`, `block-bold`,
+`block-italic` and `block-ascii` faces, built by
+[`fixtures/generate.py`](../crates/blitsen-blitz/fixtures/generate.py). Their glyphs are solid
+rectangles one em wide with an ascent of exactly one em and no descent. Every metric a case depends
+on therefore comes out of a committed file, and — because no system fallback paints a filled
 rectangle — the frame also says *which* font was used rather than merely that one was.
+
+That is also the product policy outside the corpus: system fonts are available, but an application
+that needs portable coverage or metrics supplies its own `@font-face` files. Blitsen bundles no
+universal fallback. The `host-typography` case deliberately proves only that a discovered host face
+paints and carries neither a golden nor metric assertions.
 
 **Rasterization.** Antialiasing is the CPU's, and vello_cpu selects SIMD kernels at runtime. So the
 harness renders a fixed fixture, digests it, and compares golden images only where that fingerprint

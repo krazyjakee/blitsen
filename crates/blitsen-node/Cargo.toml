@@ -18,7 +18,7 @@ blitsen-dom = { path = "../blitsen-dom" }
 blitsen-host = { path = "../blitsen-host" }
 blitsen-js = { path = "../blitsen-js" }
 blitsen-quickjs = { path = "../blitsen-quickjs" }
-blitz = { git = "https://github.com/DioxusLabs/blitz", rev = "111ed2f7224e49cd3177ef3cb5990efc279d3e73" }
+blitz.workspace = true
 # napi7 for `napi_detach_arraybuffer`, which is what a `postMessage` transfer
 # list does to a buffer. Bun implements Node-API 8, so the level costs nothing
 # here and buys a worker message that means the same thing on both hosts.

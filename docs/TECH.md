@@ -344,7 +344,14 @@ has finished, so any non-passive listener on the path can suppress them with `pr
 enabled form control, link, or element with a nonnegative `tabindex`; Tab and Shift+Tab traverse
 those connected elements in document order. `focus()` and `blur()` update active state before
 dispatching their non-bubbling events. Keyboard input targets the active element, with logical
-`key`, physical `code`, repeat state, and tracked modifiers. Text input and IME remain outside v0.
+`key`, physical `code`, repeat state, and tracked modifiers. An editable text control also enables
+winit IME: preedit and commit are queued into the same frame-turn boundary as keys, routed through
+composition and composing `InputEvent`s, and applied to Parley's painted composing range. After a
+frame the native candidate-window area is updated from that range or caret. The bridge also owns a
+bounded snapshot history per text control: one accepted edit is one transaction, an IME commit is
+one transaction across all of its preedits, and undo/redo restores the renderer value and selection
+before dispatching its `input`. `contenteditable`, surrounding-text deletion, form reset and
+native-language acceptance remain outside this slice.
 
 `DOMContentLoaded` exists in v0. It fires on `document` after the post-parse script list has
 completed, moving `document.readyState` from `loading` to `interactive`. `load` then fires once on
@@ -455,8 +462,10 @@ service workers, `SharedWorker`, `BroadcastChannel`, `document.write`, quirks mo
 after navigation are all about sharing something between documents, and there is one document. `history` and `location` do exist, but as an
 in-memory session history at a synthetic address — enough for a client-side router, and nothing
 that navigates. `navigator` answers identity (`userAgent`, `platform`, `language`) and no
-capability. `localStorage` and `sessionStorage` hold data for the life of the process and say so
-through a `doctor` warning on every build; durable storage is a separate question.
+capability. `localStorage` is the synchronous standard facade over an atomic keyed-file store in
+the application's platform data directory; `sessionStorage` belongs only to the current realm.
+The backing store reads values individually rather than loading an application's whole durable
+dataset at startup, and it adds no database dependency.
 
 ### Where the DOM surface is narrower than its name
 
@@ -573,6 +582,16 @@ usvg and paints it as vectors (#238). That feature did not compile until upstrea
 coming. `@font-face` descriptors — `font-family`, `font-weight`, `font-style` — are what select a
 face, not the metadata inside the file, so a family whose files disagree with the CSS about their
 own name still matches.
+
+**Fallback policy: system fonts plus author fonts, no universal bundle.** Parley's collection
+enumerates the host and registers `@font-face` data into the same shared source cache used by DOM
+and canvas text. It chooses a covering face per cluster, then HarfRust shapes it and Unicode bidi
+orders the runs. This already brings the shaping stack the runtime needs; adding a general-purpose
+font would add artifact bytes and a redistribution/licensing policy without making host metrics
+portable. Applications that need portable glyph coverage and line breaks ship their own faces.
+An uncovered scalar stays glyph zero in the selected face, whose `.notdef` may paint or may be
+blank. Outline emoji supplied by an author works; colour emoji formats and ZWJ sequences are not
+claimed without targeted renderer evidence.
 
 **Blitsen is FOUT, never FOIT.** Nothing registers a font as a render-blocking resource, so text
 paints in the fallback face immediately and reshapes when the web font arrives. The alternative
@@ -1089,6 +1108,56 @@ Rules that, if broken, cost a rewrite rather than a refactor:
 
 ---
 
+### Multi-window contexts: isolated on one UI thread
+
+This is the architecture decision for #105. The current `WindowSession` still opens one native
+window backed by one `WindowApplication`, JavaScript engine, `Document` and module registry. A
+future second native window does **not** join that realm. It gets its own global `Window`, DOM tree,
+JavaScript heap, timers and evaluated module graph, including independent module-singleton state.
+Immutable application bytes may be cached across contexts; JavaScript values, module namespace
+objects and DOM nodes may not be.
+
+Isolation does not mean a thread per window. Winit's one OS UI event loop continues to own every
+native window, every DOM and every window JavaScript context. The loop selects a window's context
+for its event or frame and runs callbacks to completion before selecting another one. Dedicated
+workers remain the only JavaScript contexts that run on their own threads. Code must therefore
+use messages for isolation, not assume parallel window callbacks or attempt cross-thread DOM use.
+
+Cross-window application communication is asynchronous structured clone over an explicitly
+transferred `MessagePort`. Creating code may make a `MessageChannel`, retain one endpoint and make
+the other available as bootstrap data to the new context; the receiving context adopts that port
+before it can drain messages. Transfer detaches the sender's object, queued messages travel with
+the endpoint, and the receiver starts delivery with `start()` or `onmessage`. There is no direct
+reference to another window's global, `Document` or module exports, and no `WindowProxy`, `opener`
+or shared-global shortcut. `window.postMessage()` keeps its current meaning — a later task in the
+same window. Cross-window `postMessage` is a method of the handed-over port.
+
+The application session owns the native windows and their contexts. The context that requested a
+window may hold a future opaque lifecycle capability, but it does not own the target's JavaScript
+objects and its own teardown does not implicitly close the target. Closing a window disposes only
+that window's DOM, heap, timers, workers and module evaluation state and releases every port the
+context owns. A peer port then becomes disentangled and later sends are discarded, matching the
+current `MessagePort.close()` contract; port closure is not a synthetic message. Any application
+that needs a positive close notification must receive it through the eventual lifecycle surface,
+not infer it from message delivery. Closing the application session disposes every window. Closing
+the last window follows the existing application-lifetime policy, including any tray keepalive.
+
+Failures are context-scoped too. Failure to load or evaluate the new window's entry module must
+fail the future creation operation and tear down only that partially created window. A later
+uncaught exception is reported against the window where it occurred; it is never rethrown into the
+creator and does not implicitly close that window or a sibling. A message that cannot be decoded
+raises `messageerror` only on its receiving port. Only a fatal session, renderer or engine failure
+may end every window.
+
+This decision deliberately does not add an API. Before `blitsen/window.create` can exist, the host
+must replace its session-wide engine, document, parked-error slot and thread-local current-window
+slot with records keyed by the native `WindowId`/messaging `ContextId`; native module calls must be
+routed through the calling context. Any eventual creation surface must expose an opaque lifecycle
+capability and a way to transfer bootstrap ports, never the target global itself. Until those
+requirements are implemented and tested, feature detection truthfully finds no `create` member.
+
+---
+
 ## 17. Open technical questions
 
 1. **Engine acquisition for Phase 2: decided, then reversed, and closed.** The first answer was
@@ -1104,8 +1173,10 @@ Rules that, if broken, cost a rewrite rather than a refactor:
    the engine's module loader. A pre-bundled single graph was rejected because real framework
    output is already split and every router in the audience documents `import()` as the way to code
    split. See [`MODULES.md`](MODULES.md).
-3. **Multi-window JS contexts** — one shared context or one per window? Shared is simpler and
-   matches the single-thread model; isolated is safer and matches the web.
+3. **Multi-window JS contexts: decided — isolated on one UI thread.** The complete context,
+   communication, ownership, close and failure contract is recorded in
+   [Multi-window contexts](#multi-window-contexts-isolated-on-one-ui-thread). `window.create`
+   remains absent until the host can uphold it.
 4. **DOM property access cost: decided — no wrapper-side cache.** Measured on the Phase 1 host
    (Linux x64, release): a `style.top` write costs 3.37 µs, a style read 1.41 µs, `setAttribute`
    1.69 µs, `getAttribute` 0.61 µs, `textContent` 1.04/0.48 µs, `getElementById` 2.03 µs, against
@@ -1117,10 +1188,30 @@ Rules that, if broken, cost a rewrite rather than a refactor:
    nothing that is currently spent. Revisit only if a profile shows property access on a hot path.
    Note what *does* cost: `getBoundingClientRect` is 10.5 µs clean and 66.8 µs after a write, so
    layout flushing, not property access, is the thing worth avoiding in a frame.
-5. **Text input and IME** — a large, easily underestimated surface; where does it live?
-6. **Accessibility** — Blitz's AccessKit story, and whether v0 can defer it. Deferring has a
-   real cost for the dashboard/tooling audience.
-7. **Font fallback and shaping** across platforms without pulling in a large font stack.
+5. **Text input and IME: bounded and split by owner.** Winit owns native enable/disable, preedit,
+   commit and candidate-window placement. The DOM bootstrap owns composition event ordering and
+   focus lifetime. Blitz/Parley owns the value, marked range, caret and paint. This covers editable
+   `<input>` and `<textarea>` only; `contenteditable`, form reset, surrounding-text deletion,
+   advanced selection events and human native CJK/RTL verification remain separate acceptance.
+6. **Accessibility: decided — not v1.** Upstream Blitz defaults to an AccessKit platform adapter
+   that exports a tree but does not implement requested actions. Shipping that partial adapter
+   would contradict the public boundary, so Blitsen disables `blitz/accessibility`. Semantic HTML
+   and ARIA attributes remain ordinary DOM data, but no roles, names, focus state or live regions
+   reach a platform accessibility API. DOM focus, keyboard events and text-control editing are a
+   separate input path and remain enabled.
+
+   One internal dependency remains for now: upstream `blitz-dom/custom-widget` activates
+   `blitz-dom/accessibility`, so the AccessKit node model is compiled for the custom-widget seam
+   canvas and `<blitsen-view>` need. `blitz-shell/accessibility` and `accesskit_xplat` are absent,
+   therefore that model is never connected to the operating system. Remove it when upstream
+   decouples custom widgets; do not enable the adapter until Blitsen implements actions and passes
+   human screen-reader verification on every platform.
+7. **Font fallback and shaping: decided.** Enumerate system fonts and register author-provided
+   `@font-face` files into the shared Parley collection; bundle no universal fallback. HarfRust,
+   Unicode script analysis and bidi are already in that pipeline. Portable applications pin their
+   fonts, and P6 byte identity applies only to the pinned-font corpus. Automated fixtures cover
+   Arabic joining/RTL, CJK author-family fallback, outline emoji and explicit `.notdef`; platform
+   colour emoji and particular ZWJ sequences remain claims only after targeted evidence.
 8. **Hot reload state** — accept full restart, or attempt module-level replacement? Largely moot
    in proxy mode, where the user's own HMR handles it.
 9. **Absolute-path assets: decided.** Rewrite at ingest. Server-root subresource URLs in HTML and

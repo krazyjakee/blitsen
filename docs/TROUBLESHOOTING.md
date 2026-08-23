@@ -160,8 +160,9 @@ addEventListener("load", () => {
 
 ## Data disappears after restart
 
-`localStorage` and `sessionStorage` are both in-memory in this release. Put durable state in a file
-under a directory from `blitsen/app`; the returned directory is not created automatically.
+`localStorage` persists automatically. If expected data is absent, check whether the development
+directory moved or the proxy server's origin/port changed: both intentionally select a different
+application namespace. `sessionStorage` is expected to reset with the JavaScript realm.
 
 ## A cross-built application is blocked by the OS
 

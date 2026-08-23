@@ -69,26 +69,32 @@ jobs:
             runner: ubuntu-22.04
             library: libblitsen_node.so
             executable: blitsen-runtime
+            reproducible: true
           - target: linux-arm64
             runner: ${{ vars.LINUX_ARM64_RUNNER || 'ubuntu-22.04-arm' }}
             library: libblitsen_node.so
             executable: blitsen-runtime
+            reproducible: false
           - target: darwin-x64
             runner: ${{ vars.DARWIN_X64_RUNNER || 'macos-15-intel' }}
             library: libblitsen_node.dylib
             executable: blitsen-runtime
+            reproducible: true
           - target: darwin-arm64
             runner: macos-latest
             library: libblitsen_node.dylib
             executable: blitsen-runtime
+            reproducible: false
           - target: win32-x64
             runner: windows-2022
             library: blitsen_node.dll
             executable: blitsen-runtime.exe
+            reproducible: true
           - target: win32-arm64
             runner: ${{ vars.WIN32_ARM64_RUNNER || 'windows-11-arm' }}
             library: blitsen_node.dll
             executable: blitsen-runtime.exe
+            reproducible: false
     steps:
       - uses: actions/checkout@v4
       - id: started
@@ -128,11 +134,11 @@ jobs:
       - name: Build the runtime
         shell: bash
         run: |
-          # A clean Windows installation is not guaranteed to carry the MSVC
-          # toolset runtime. Link it statically into both artifacts rather than
-          # making VCRUNTIME140.dll an undocumented installation prerequisite.
-          case "${{ matrix.target }}" in win32-*) export RUSTFLAGS="-C target-feature=+crt-static";; esac
-          cargo build --release -p blitsen-node -p blitsen-runtime
+          # The selected reproducibility rows must compile independently rather
+          # than receiving an earlier job's object bytes from sccache.
+          if [ "${{ matrix.reproducible }}" = true ]; then unset RUSTC_WRAPPER; fi
+          CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target" \
+            bash scripts/build-release-runtime.sh "${{ matrix.target }}"
 
       # A platform package is its committed manifest plus exactly these artifacts.
       - name: Stage the runtime
@@ -140,6 +146,34 @@ jobs:
         run: |
           cp "target/release/${{ matrix.library }}" "packages/platforms/${{ matrix.target }}/blitsen.node"
           cp "target/release/${{ matrix.executable }}" "packages/platforms/${{ matrix.target }}/${{ matrix.executable }}"
+
+      # Signing timestamps are intentionally variable, so reproducibility is a
+      # property of these unsigned Cargo outputs. Record all six targets' hashes
+      # and do a second independent compile for one pinned runner per OS/object
+      # format. The architecture siblings use the same source and linker family;
+      # doubling those as well would buy little for three more full builds.
+      - name: Record unsigned artifact hashes
+        shell: bash
+        run: |
+          bun scripts/compare-release-builds.mjs --hash \
+            "target/release" "${{ matrix.library }}" "${{ matrix.executable }}"
+
+      - name: Verify unsigned reproducibility
+        if: matrix.reproducible
+        shell: bash
+        run: |
+          second_source="$RUNNER_TEMP/blitsen-repro-source"
+          git clone --quiet --no-hardlinks "$GITHUB_WORKSPACE" "$second_source"
+          git -C "$second_source" checkout --quiet --detach "$GITHUB_SHA"
+          (
+            cd "$second_source"
+            unset RUSTC_WRAPPER
+            CARGO_TARGET_DIR="$second_source/target" \
+              bash scripts/build-release-runtime.sh "${{ matrix.target }}"
+          )
+          bun scripts/compare-release-builds.mjs --compare \
+            "target/release" "$second_source/target/release" \
+            "${{ matrix.library }}" "${{ matrix.executable }}"
 
       # Ubuntu 22.04 is the oldest hosted image available for both Linux
       # architectures and therefore the binary compatibility floor. Building

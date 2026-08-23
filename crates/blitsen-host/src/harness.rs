@@ -177,6 +177,7 @@ pub(crate) struct WindowScriptOptions<'a> {
     pub(crate) mode: DocumentMode,
     pub(crate) loader: &'a dyn blitsen_core::ScriptLoader,
     pub(crate) reader: Option<crate::app::AppReader>,
+    pub(crate) storage: Option<crate::storage::LocalStorage>,
 }
 
 pub(crate) fn execute_window_scripts_from<E: JsEngine + 'static>(
@@ -192,6 +193,7 @@ pub(crate) fn execute_window_scripts_from<E: JsEngine + 'static>(
         mode,
         loader,
         reader,
+        storage,
     } = options;
     let module_root = Path::new(entrypoint)
         .parent()
@@ -222,11 +224,11 @@ pub(crate) fn execute_window_scripts_from<E: JsEngine + 'static>(
             })()"#
     .replace("__BLITSEN_RELOAD_ROOT__", &module_root);
     engine.evaluate_script(&cleanup, "blitsen:dispose-document-context")?;
-    let window_state = dom_bridge::install(
-        engine,
-        runtime,
-        InstallOptions::new(width, height, 1.0, mode, reader),
-    )?;
+    let mut install = InstallOptions::new(width, height, 1.0, mode, reader);
+    if let Some(storage) = storage {
+        install = install.with_storage(storage);
+    }
+    let window_state = dom_bridge::install(engine, runtime, install)?;
     engine.evaluate_script(
         r#"(() => {
               if (!globalThis.__blitsenRuntimeBaseline) {
@@ -578,7 +580,35 @@ pub fn execute_document_animation_harness<E: JsEngine + Clone + 'static>(
 
 #[cfg(test)]
 mod tests {
+    use blitsen_quickjs::QuickJs;
+
     use super::*;
+
+    fn ime_document(html: &str) -> (QuickJs, Rc<RefCell<BlitzDom>>) {
+        let dom = BlitzDom::from_html(
+            html,
+            DocumentConfig {
+                viewport: Some(Viewport::new(400, 160, 1.0, ColorScheme::Light)),
+                ..Default::default()
+            },
+        );
+        let runtime = DomRuntime::new(dom);
+        let document = runtime.document();
+        let mut engine = QuickJs::new().expect("a QuickJS runtime");
+        let _services = crate::runtime_services::RuntimeServices::install(&mut engine)
+            .expect("the embedded runtime services install");
+        dom_bridge::install(
+            &mut engine,
+            runtime,
+            InstallOptions::new(400, 160, 1.0, DocumentMode::Application, None),
+        )
+        .expect("the DOM bridge installs");
+        document
+            .borrow_mut()
+            .flush_layout()
+            .expect("the controls lay out");
+        (engine, document)
+    }
 
     #[test]
     fn element_view_preserves_tree_and_attribute_order() {
@@ -660,5 +690,265 @@ mod tests {
             record_frame(&blocker, 13, &pixels, 1, 1).expect_err("writing below a file fails");
         assert!(error.message().starts_with("could not record frame 13:"));
         std::fs::remove_dir_all(directory).expect("the scratch directory is removed");
+    }
+
+    #[test]
+    fn synthetic_ime_events_keep_dom_order_state_and_is_composing() {
+        let (mut engine, _) = ime_document("<input id=field>");
+        engine
+            .evaluate_script(
+                r#"
+                globalThis.field = document.getElementById("field");
+                globalThis.imeLog = [];
+                for (const type of ["compositionstart", "compositionupdate", "beforeinput",
+                                    "input", "compositionend"]) {
+                  field.addEventListener(type, event => imeLog.push({
+                    type: event.type,
+                    data: event.data,
+                    inputType: event instanceof InputEvent ? event.inputType : "",
+                    isComposing: event instanceof InputEvent ? event.isComposing : null,
+                    value: field.value,
+                  }));
+                }
+                field.focus();
+                "#,
+                "blitsen:test-ime-listeners",
+            )
+            .unwrap();
+        for script in [
+            r#"__blitsenDispatchImeEvent("preedit", { data: "🙂", cursorStart: 4, cursorEnd: 4 })"#,
+            r#"__blitsenDispatchImeEvent("preedit", { data: "🙂🙂", cursorStart: 4, cursorEnd: 8 })"#,
+            r#"__blitsenDispatchImeEvent("commit", { data: "🙂" })"#,
+        ] {
+            engine
+                .evaluate_script(script, "blitsen:test-ime-event")
+                .unwrap();
+        }
+        let result = engine
+            .evaluate_script(
+                "JSON.stringify({ log: imeLog, value: field.value, start: field.selectionStart })",
+                "blitsen:test-ime-result",
+            )
+            .and_then(|value| engine.to_string(&value))
+            .unwrap();
+        let result: serde_json::Value = serde_json::from_str(&result).unwrap();
+
+        assert_eq!(
+            result["log"],
+            serde_json::json!([
+                {"type":"compositionstart", "data":"", "inputType":"", "isComposing":null, "value":""},
+                {"type":"compositionupdate", "data":"🙂", "inputType":"", "isComposing":null, "value":""},
+                {"type":"beforeinput", "data":"🙂", "inputType":"insertCompositionText", "isComposing":true, "value":""},
+                {"type":"input", "data":"🙂", "inputType":"insertCompositionText", "isComposing":true, "value":"🙂"},
+                {"type":"compositionupdate", "data":"🙂🙂", "inputType":"", "isComposing":null, "value":"🙂"},
+                {"type":"beforeinput", "data":"🙂🙂", "inputType":"insertCompositionText", "isComposing":true, "value":"🙂"},
+                {"type":"input", "data":"🙂🙂", "inputType":"insertCompositionText", "isComposing":true, "value":"🙂🙂"},
+                {"type":"beforeinput", "data":"🙂", "inputType":"insertFromComposition", "isComposing":true, "value":"🙂🙂"},
+                {"type":"input", "data":"🙂", "inputType":"insertFromComposition", "isComposing":true, "value":"🙂"},
+                {"type":"compositionend", "data":"🙂", "inputType":"", "isComposing":null, "value":"🙂"},
+            ])
+        );
+        assert_eq!(result["value"], "🙂");
+        assert_eq!(result["start"], 2, "DOM selection offsets remain UTF-16");
+    }
+
+    #[test]
+    fn focus_change_cancels_preedit_and_readonly_never_starts_one() {
+        let (mut engine, _) = ime_document(
+            "<input id=field><input id=locked readonly><textarea id=notes></textarea>",
+        );
+        let result = engine
+            .evaluate_script(
+                r#"
+                const field = document.getElementById("field");
+                const locked = document.getElementById("locked");
+                const notes = document.getElementById("notes");
+                const ended = [];
+                field.addEventListener("compositionend", event => ended.push(event.data));
+                field.focus();
+                __blitsenDispatchImeEvent("preedit", { data: "draft", cursorStart: 5, cursorEnd: 5 });
+                notes.focus();
+                locked.focus();
+                const readonlyHandled = __blitsenDispatchImeEvent("preedit",
+                  { data: "blocked", cursorStart: 7, cursorEnd: 7 });
+                notes.focus();
+                __blitsenDispatchImeEvent("preedit", { data: "ok", cursorStart: 2, cursorEnd: 2 });
+                __blitsenDispatchImeEvent("commit", { data: "ok" });
+                field.focus();
+                __blitsenDispatchImeEvent("preedit",
+                  { data: "cancel", cursorStart: 6, cursorEnd: 6 });
+                __blitsenDispatchImeEvent("preedit", { data: "" });
+                JSON.stringify({ field: field.value, notes: notes.value, locked: locked.value,
+                                 ended, readonlyHandled });
+                "#,
+                "blitsen:test-ime-focus",
+            )
+            .and_then(|value| engine.to_string(&value))
+            .unwrap();
+        let result: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(
+            result,
+            serde_json::json!({
+                "field": "",
+                "notes": "ok",
+                "locked": "",
+                "ended": ["", ""],
+                "readonlyHandled": false,
+            })
+        );
+    }
+
+    #[test]
+    fn text_history_restores_unicode_values_selections_and_ime_transactions() {
+        let (mut engine, _) =
+            ime_document(r#"<input id=field value="A🙂B"><textarea id=notes>line</textarea>"#);
+        let result = engine
+            .evaluate_script(
+                r#"
+                const field = document.getElementById("field");
+                const notes = document.getElementById("notes");
+                const historyLog = [];
+                for (const type of ["beforeinput", "input"]) {
+                  notes.addEventListener(type, event => {
+                    if (event.inputType.startsWith("history")) historyLog.push({
+                      type, inputType: event.inputType, data: event.data,
+                      isComposing: event.isComposing, value: notes.value,
+                      start: notes.selectionStart, end: notes.selectionEnd,
+                      direction: notes.selectionDirection,
+                    });
+                  });
+                }
+                const key = (key, options = {}) => __blitsenDispatchKeyboardEvent("keydown",
+                  { key, code: `Key${key.toUpperCase()}`, ...options });
+
+                notes.focus();
+                notes.value = "A🙂B";
+                notes.setSelectionRange(1, 3, "backward");
+                __blitsenDispatchImeEvent("preedit",
+                  { data: "n", cursorStart: 1, cursorEnd: 1 });
+                __blitsenDispatchImeEvent("preedit",
+                  { data: "ni", cursorStart: 2, cursorEnd: 2 });
+                __blitsenDispatchImeEvent("commit", { data: "你" });
+                const committed = { value: notes.value, start: notes.selectionStart,
+                                    end: notes.selectionEnd };
+                key("z", { ctrlKey: true });
+                const undone = { value: notes.value, start: notes.selectionStart,
+                                 end: notes.selectionEnd,
+                                 direction: notes.selectionDirection };
+                key("z", { metaKey: true, shiftKey: true });
+                const redone = { value: notes.value, start: notes.selectionStart,
+                                 end: notes.selectionEnd };
+
+                field.focus();
+                field.setSelectionRange(1, 3, "forward");
+                key("界");
+                key("z", { ctrlKey: true });
+                const inputUndone = { value: field.value, start: field.selectionStart,
+                                     end: field.selectionEnd,
+                                     direction: field.selectionDirection };
+                JSON.stringify({ committed, undone, redone, inputUndone, historyLog });
+                "#,
+                "blitsen:test-text-history-unicode",
+            )
+            .and_then(|value| engine.to_string(&value))
+            .unwrap();
+        let result: serde_json::Value = serde_json::from_str(&result).unwrap();
+
+        assert_eq!(
+            result["committed"],
+            serde_json::json!({"value":"A你B", "start":2, "end":2})
+        );
+        assert_eq!(
+            result["undone"],
+            serde_json::json!({"value":"A🙂B", "start":1, "end":3, "direction":"backward"})
+        );
+        assert_eq!(
+            result["redone"],
+            serde_json::json!({"value":"A你B", "start":2, "end":2})
+        );
+        assert_eq!(
+            result["inputUndone"],
+            serde_json::json!({"value":"A🙂B", "start":1, "end":3, "direction":"forward"})
+        );
+        assert_eq!(
+            result["historyLog"],
+            serde_json::json!([
+                {"type":"beforeinput", "inputType":"historyUndo", "data":null,
+                 "isComposing":false, "value":"A你B", "start":2, "end":2, "direction":"none"},
+                {"type":"input", "inputType":"historyUndo", "data":null,
+                 "isComposing":false, "value":"A🙂B", "start":1, "end":3,
+                 "direction":"backward"},
+                {"type":"beforeinput", "inputType":"historyRedo", "data":null,
+                 "isComposing":false, "value":"A🙂B", "start":1, "end":3,
+                 "direction":"backward"},
+                {"type":"input", "inputType":"historyRedo", "data":null,
+                 "isComposing":false, "value":"A你B", "start":2, "end":2, "direction":"none"},
+            ])
+        );
+    }
+
+    #[test]
+    fn text_history_has_control_local_bounded_and_controlled_value_boundaries() {
+        let (mut engine, _) =
+            ime_document("<input id=field><input id=other><textarea id=bounded></textarea>");
+        let result = engine
+            .evaluate_script(
+                r#"
+                const field = document.getElementById("field");
+                const other = document.getElementById("other");
+                const bounded = document.getElementById("bounded");
+                const key = (key, options = {}) => __blitsenDispatchKeyboardEvent("keydown",
+                  { key, code: `Key${key.toUpperCase()}`, ...options });
+
+                // A controlled component's same-value echo retains history.
+                field.addEventListener("input", event => {
+                  if (event.inputType === "insertText") field.value = field.value;
+                });
+                let cancelHistory = true;
+                field.addEventListener("beforeinput", event => {
+                  if (cancelHistory && event.inputType === "historyUndo") event.preventDefault();
+                });
+                field.focus();
+                key("a");
+                key("b");
+                key("z", { ctrlKey: true });
+                const canceledUndo = field.value;
+                cancelHistory = false;
+                other.focus();
+                field.focus();
+                key("z", { ctrlKey: true });
+                const focusRetained = field.value;
+                key("y", { ctrlKey: true });
+                const ctrlYRedone = field.value;
+                key("z", { ctrlKey: true });
+                key("x");
+                key("y", { ctrlKey: true });
+                const branchClearedRedo = field.value;
+                field.value = "controlled";
+                key("z", { ctrlKey: true });
+                const replacementClearedHistory = field.value;
+
+                bounded.focus();
+                for (let index = 0; index < 105; index++) key("x");
+                for (let index = 0; index < 101; index++) key("z", { ctrlKey: true });
+                JSON.stringify({ canceledUndo, focusRetained, ctrlYRedone, branchClearedRedo,
+                                 replacementClearedHistory, bounded: bounded.value.length });
+                "#,
+                "blitsen:test-text-history-boundaries",
+            )
+            .and_then(|value| engine.to_string(&value))
+            .unwrap();
+        let result: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(
+            result,
+            serde_json::json!({
+                "canceledUndo": "ab",
+                "focusRetained": "a",
+                "ctrlYRedone": "ab",
+                "branchClearedRedo": "ax",
+                "replacementClearedHistory": "controlled",
+                "bounded": 5,
+            })
+        );
     }
 }

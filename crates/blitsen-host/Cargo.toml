@@ -18,7 +18,7 @@ blitsen-core = { path = "../blitsen-core" }
 blitsen-dom = { path = "../blitsen-dom" }
 blitsen-js = { path = "../blitsen-js" }
 blitsen-platform = { path = "../blitsen-platform" }
-blitz = { git = "https://github.com/DioxusLabs/blitz", rev = "111ed2f7224e49cd3177ef3cb5990efc279d3e73" }
+blitz.workspace = true
 # `<blitsen-view>` composites through the paint-side custom-widget seam, and
 # `svg` is what paints an `<svg>` subtree once blitz-dom has parsed it (#238).
 # Both are named rather than taken through `default`, so the feature list is a
@@ -91,6 +91,7 @@ png = "0.18"
 reqwest = { version = "0.13", default-features = false, features = ["charset", "native-tls", "stream"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha2 = "0.10"
 tokio = { version = "1.42", features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
 # `WebSocket`, the crate TECH.md §8 names. `native-tls` rather than a bundled
 # root store because `reqwest` above already resolves to it: `wss:` then trusts

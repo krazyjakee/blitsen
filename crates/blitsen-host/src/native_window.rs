@@ -8,17 +8,18 @@ use std::time::Instant;
 
 use blitsen_blitz::BlitzDom;
 use blitsen_core::WindowState;
-use blitsen_dom::DomBackend;
+use blitsen_dom::{DomBackend, Rect};
 use blitsen_js::{JsEngine, JsError};
 use blitz::dom::{DocGuard, DocGuardMut, Document as BlitzDocument, NodeId};
 use blitz::shell::BlitzApplication;
 use serde::Serialize;
 use winit::application::ApplicationHandler;
 use winit::cursor::CursorIcon;
-use winit::event::{DeviceEvent, ElementState, StartCause, WindowEvent};
+use winit::dpi::{LogicalPosition, LogicalSize};
+use winit::event::{DeviceEvent, ElementState, Ime, StartCause, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::{Key, ModifiersState, PhysicalKey};
-use winit::window::WindowId;
+use winit::window::{ImeCapabilities, ImeEnableRequest, ImeRequest, ImeRequestData, WindowId};
 
 #[cfg(target_os = "macos")]
 use winit::application::macos::ApplicationHandlerExtMacOS;
@@ -119,6 +120,9 @@ pub struct WindowApplication<Rend: anyrender::WindowRenderer, E: JsEngine + Clon
     pub(crate) document: Rc<RefCell<BlitzDom>>,
     pub(crate) pending_pointer_input: Vec<(WindowId, PendingPointerInput)>,
     pub(crate) pending_keyboard_input: Vec<(WindowId, PendingKeyboardInput)>,
+    /// The editable control each native window has enabled its IME for, and
+    /// the last candidate-window area sent with it.
+    pub(crate) ime_targets: HashMap<WindowId, ImeTarget>,
     pub(crate) pending_drag_input: Vec<(WindowId, PendingDrag)>,
     /// The files the drag currently over this application announced itself with.
     ///
@@ -188,7 +192,14 @@ pub(crate) enum PendingKeyboardInput {
         code: String,
         repeat: bool,
     },
+    Ime(Ime),
     WindowFocus(bool),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct ImeTarget {
+    node: NodeId,
+    area: Rect,
 }
 
 /// Modifier state shared by keyboard and pointer event initializer bags.
@@ -216,6 +227,7 @@ impl From<ModifiersState> for ModifierFlags {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum InputBootstrap {
     Keyboard,
+    Ime,
     Pointer,
     Mouse,
     Drag,
@@ -225,6 +237,7 @@ impl InputBootstrap {
     fn entry_point(self) -> &'static str {
         match self {
             Self::Keyboard => "__blitsenDispatchKeyboardEvent",
+            Self::Ime => "__blitsenDispatchImeEvent",
             Self::Pointer => "__blitsenDispatchPointerEvent",
             Self::Mouse => "__blitsenDispatchMouseEvent",
             Self::Drag => "__blitsenDispatchDragEvent",
@@ -234,6 +247,7 @@ impl InputBootstrap {
     fn script_name(self) -> &'static str {
         match self {
             Self::Keyboard => "blitsen:native-keyboard-event",
+            Self::Ime => "blitsen:native-ime-event",
             Self::Pointer | Self::Mouse => "blitsen:native-pointer-input",
             Self::Drag => "blitsen:native-drag-input",
         }
@@ -250,6 +264,70 @@ pub(crate) struct KeyboardEventInit {
     repeat: bool,
     #[serde(flatten)]
     modifiers: ModifierFlags,
+}
+
+#[derive(Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ImeEventInit {
+    data: String,
+    cursor_start: Option<usize>,
+    cursor_end: Option<usize>,
+    before_bytes: Option<usize>,
+    after_bytes: Option<usize>,
+}
+
+fn ime_call(event: Ime) -> (&'static str, ImeEventInit) {
+    match event {
+        Ime::Enabled => ("enabled", ImeEventInit::default()),
+        Ime::Disabled => ("disabled", ImeEventInit::default()),
+        Ime::Preedit(data, cursor) => {
+            let (cursor_start, cursor_end) = cursor.unzip();
+            (
+                "preedit",
+                ImeEventInit {
+                    data,
+                    cursor_start,
+                    cursor_end,
+                    ..Default::default()
+                },
+            )
+        }
+        Ime::Commit(data) => (
+            "commit",
+            ImeEventInit {
+                data,
+                ..Default::default()
+            },
+        ),
+        Ime::DeleteSurrounding {
+            before_bytes,
+            after_bytes,
+        } => (
+            "deleteSurrounding",
+            ImeEventInit {
+                before_bytes: Some(before_bytes),
+                after_bytes: Some(after_bytes),
+                ..Default::default()
+            },
+        ),
+    }
+}
+
+fn ime_request_data(area: Rect) -> ImeRequestData {
+    ImeRequestData::default().with_cursor_area(
+        LogicalPosition::new(f64::from(area.x), f64::from(area.y)).into(),
+        LogicalSize::new(f64::from(area.width), f64::from(area.height)).into(),
+    )
+}
+
+fn ime_enable_request(area: Rect) -> ImeRequest {
+    ImeRequest::Enable(
+        ImeEnableRequest::new(
+            ImeCapabilities::new().with_cursor_area(),
+            ime_request_data(area),
+        )
+        .expect("cursor-area capability has cursor-area data"),
+    )
 }
 
 /// Window-relative physical pixels as the DOM's `client` and `screen` pairs.
@@ -497,6 +575,7 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Ren
                 crate::dom_bridge::input::focus(*focused);
                 PendingKeyboardInput::WindowFocus(*focused)
             }
+            WindowEvent::Ime(event) => PendingKeyboardInput::Ime(event.clone()),
             _ => return false,
         };
         self.pending_keyboard_input.push((window_id, input));
@@ -511,6 +590,11 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Ren
         self.call_input_bootstrap(InputBootstrap::Keyboard, &(event_type, init))
     }
 
+    fn dispatch_ime_event(&self, event: Ime) -> Result<bool, JsError> {
+        let (kind, init) = ime_call(event);
+        self.call_input_bootstrap(InputBootstrap::Ime, &(kind, init))
+    }
+
     fn drain_keyboard_input(&mut self, window_id: WindowId) {
         let Some(inputs) = take_queued_for(
             self.error.as_ref(),
@@ -519,7 +603,22 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Ren
         ) else {
             return;
         };
-        for input in inputs {
+        for (index, input) in inputs.iter().enumerate() {
+            // Winit guarantees an empty preedit immediately before a commit.
+            // It exists to make editors that treat those as independent native
+            // operations clear their marked range; our commit operation
+            // replaces that range atomically. Hiding this synthetic pair from
+            // JavaScript avoids an observable empty `input` between the last
+            // composition update and its committed value. A standalone empty
+            // preedit (cancellation) is still dispatched normally.
+            if matches!(input, PendingKeyboardInput::Ime(Ime::Preedit(text, None)) if text.is_empty())
+                && matches!(
+                    inputs.get(index + 1),
+                    Some(PendingKeyboardInput::Ime(Ime::Commit(_)))
+                )
+            {
+                continue;
+            }
             let result = match input {
                 PendingKeyboardInput::Key {
                     event_type,
@@ -531,19 +630,20 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Ren
                     &KeyboardEventInit {
                         bubbles: true,
                         cancelable: true,
-                        key,
-                        code,
-                        repeat,
+                        key: key.clone(),
+                        code: code.clone(),
+                        repeat: *repeat,
                         modifiers: self.modifier_flags(),
                     },
                 ),
+                PendingKeyboardInput::Ime(event) => self.dispatch_ime_event(event.clone()),
                 PendingKeyboardInput::WindowFocus(focused) => {
                     let mut engine = self.engine.clone();
                     engine
                         .evaluate_script(
                             &format!(
                                 "globalThis.dispatchEvent(new Event({}))",
-                                if focused { "\"focus\"" } else { "\"blur\"" }
+                                if *focused { "\"focus\"" } else { "\"blur\"" }
                             ),
                             "blitsen:native-window-focus",
                         )
@@ -555,6 +655,49 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Ren
                 return;
             }
         }
+    }
+
+    /// Enables the platform IME only for the focused editable control and
+    /// keeps its candidate window beside the painted caret.
+    fn sync_ime(&mut self, window_id: WindowId) -> Result<(), JsError> {
+        let next = self.document.borrow().focused_form_cursor_area();
+        let current = self.ime_targets.get(&window_id).copied();
+        let Some(view) = self.inner.windows.get(&window_id) else {
+            self.ime_targets.remove(&window_id);
+            return Ok(());
+        };
+
+        if current.map(|target| target.node) != next.map(|(node, _)| node) {
+            if current.is_some() {
+                view.window
+                    .request_ime_update(ImeRequest::Disable)
+                    .map_err(|error| JsError::new(format!("could not disable IME: {error}")))?;
+            }
+            match next {
+                Some((node, area)) => {
+                    view.window
+                        .request_ime_update(ime_enable_request(area))
+                        .map_err(|error| JsError::new(format!("could not enable IME: {error}")))?;
+                    self.ime_targets.insert(window_id, ImeTarget { node, area });
+                }
+                None => {
+                    self.ime_targets.remove(&window_id);
+                }
+            }
+            return Ok(());
+        }
+
+        if let (Some(current), Some((node, area))) = (current, next)
+            && current.area != area
+        {
+            view.window
+                .request_ime_update(ImeRequest::Update(ime_request_data(area)))
+                .map_err(|error| {
+                    JsError::new(format!("could not update IME cursor area: {error}"))
+                })?;
+            self.ime_targets.insert(window_id, ImeTarget { node, area });
+        }
+        Ok(())
     }
 
     fn animation_frames_pending(&self) -> bool {
@@ -716,9 +859,10 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Ren
 
     /// Hands `native:window` the window it acts on, or takes it away.
     ///
-    /// There is deliberately only one: multiple windows wait on the shared
-    /// versus isolated JavaScript context decision, and `create` is declared
-    /// absent until it is settled.
+    /// There is deliberately only one in the current host. Issue #105 chooses
+    /// isolated JavaScript contexts for future windows, so `create` remains
+    /// absent until this session can publish the window belonging to the
+    /// calling context instead of one process-wide slot.
     pub(crate) fn publish_window(&self) {
         crate::dom_bridge::window::publish(
             self.inner
@@ -977,6 +1121,16 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> ApplicationHandler
         let queued_pointer_input = self.queue_pointer_input(window_id, &event);
         let queued_keyboard_input = self.queue_keyboard_input(window_id, &event);
         let queued_drag_input = self.queue_drag_input(window_id, &event);
+        // Blitz has its own editor-side IME handler, but it knows nothing about
+        // this runtime's DOM events. Letting the same event continue there
+        // would mutate the shared editor before `compositionupdate` and then
+        // mutate it a second time when the bridge applies the default action.
+        if matches!(&event, WindowEvent::Ime(_)) {
+            if let Some(view) = self.inner.windows.get(&window_id) {
+                view.window.request_redraw();
+            }
+            return;
+        }
         let viewport_changed = matches!(&event, WindowEvent::ScaleFactorChanged { .. });
         let redraw = matches!(&event, WindowEvent::RedrawRequested);
         let startup_paint = redraw && self.prepare_startup_reveal(window_id);
@@ -1013,6 +1167,12 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> ApplicationHandler
             view.is_visible = false;
         }
         self.inner.window_event(event_loop, window_id, event);
+        if redraw
+            && !self.has_parked_error()
+            && let Err(error) = self.sync_ime(window_id)
+        {
+            self.park_error(error);
+        }
         if startup_paint {
             self.finish_startup_reveal(window_id);
         }
@@ -1190,6 +1350,52 @@ mod tests {
                 }
             ])
         );
+    }
+
+    #[test]
+    fn ime_input_calls_preserve_utf8_cursor_offsets_and_typed_shape() {
+        let (kind, init) = ime_call(Ime::Preedit("中".into(), Some((0, 3))));
+        let script = input_call_script(InputBootstrap::Ime, &(kind, init)).unwrap();
+        let arguments = script
+            .strip_prefix("globalThis.__blitsenDispatchImeEvent(...")
+            .and_then(|script| script.strip_suffix(')'))
+            .expect("the typed IME entry point wraps one argument array");
+
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(arguments).unwrap(),
+            serde_json::json!([
+                "preedit",
+                {
+                    "data": "中",
+                    "cursorStart": 0,
+                    "cursorEnd": 3,
+                    "beforeBytes": null,
+                    "afterBytes": null,
+                }
+            ])
+        );
+    }
+
+    #[test]
+    fn native_ime_enable_request_carries_the_painted_caret_area() {
+        let area = Rect {
+            x: 12.5,
+            y: 24.0,
+            width: 1.5,
+            height: 20.0,
+        };
+        let ImeRequest::Enable(enable) = ime_enable_request(area) else {
+            panic!("an editable control enables IME");
+        };
+        assert!(enable.capabilities().cursor_area());
+        let Some((position, size)) = enable.request_data().cursor_area else {
+            panic!("the enable request carries a candidate-window area");
+        };
+        assert_eq!(
+            position,
+            winit::dpi::Position::Logical(LogicalPosition::new(12.5, 24.0))
+        );
+        assert_eq!(size, winit::dpi::Size::Logical(LogicalSize::new(1.5, 20.0)));
     }
 
     #[test]

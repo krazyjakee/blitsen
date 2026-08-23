@@ -103,7 +103,7 @@ export interface MessageDialogOptions {
 }
 
 /**
- * `blitsen/window`: the window this run opened.
+ * `blitsen/window`: the native window belonging to the calling document.
  *
  * Its size and pixel density are not here — `innerWidth`, `innerHeight`,
  * `devicePixelRatio` and the `resize` event already answer those, and a second
@@ -111,7 +111,9 @@ export interface MessageDialogOptions {
  * commands, and the monitors including the ones the window is not on.
  *
  * Every member needs the window, which exists from the `load` event onwards; a
- * call from a document script running before then throws saying so.
+ * call from a document script running before then throws saying so. `create`
+ * is deliberately absent: future windows have isolated contexts and exchange
+ * application data through explicitly transferred MessagePorts.
  */
 export interface NativeWindow {
   /** Asks the window manager for a new size, in CSS pixels. */
@@ -132,7 +134,7 @@ export interface NativeWindow {
   isMaximized?(): boolean;
   /** Hands an application-drawn title-bar press to the system window mover. */
   startDrag?(): void;
-  /** Closes the application window. */
+  /** Closes this document's native window. */
   close?(): void;
   /** Keeps the window above others. Wayland has no protocol for this and ignores it. */
   setAlwaysOnTop?(alwaysOnTop: boolean): void;

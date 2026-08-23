@@ -1348,6 +1348,13 @@
       "pattern": "(?<![.\\w$])InputEvent\\b"
     },
     {
+      "api": "CompositionEvent",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_EVENTS",
+      "pattern": "(?<![.\\w$])CompositionEvent\\b"
+    },
+    {
       "api": "PointerEvent",
       "kind": "global",
       "status": "implemented",
@@ -4588,7 +4595,7 @@
       "module": "window",
       "member": "create",
       "status": "absent",
-      "reason": "A second window needs the shared-versus-isolated JavaScript context question answered first: whether two windows see one `document` and one module graph or two decides what `create` even returns, and it cannot be settled by implementing it. The window this run already opened is what the rest of this module operates on."
+      "reason": "The architecture is decided: every future window gets an isolated Window, Document, JavaScript heap and evaluated module graph, scheduled with the other windows on one OS UI thread. Application data crosses an explicitly transferred MessagePort; no context receives another window's global. The per-window host state and opaque lifecycle capability needed to uphold that contract are not implemented, so this release exposes no create member. The rest of this module operates on the calling document's native window."
     },
     {
       "api": "window.setTransparent",
@@ -4923,7 +4930,7 @@
     "WEB_MESSAGING": {
       "severity": "warning",
       "message": "BroadcastChannel is not implemented; MessageChannel and Worker are.",
-      "guidance": "There is one document behind an application, so a channel between two of them has nothing to connect; pass a MessagePort to whoever needs one.",
+      "guidance": "Use an explicitly handed-over MessagePort for a worker or any future isolated native-window context; there is no implicit application-wide message bus.",
       "extra": null
     },
     "WEB_URL": {
@@ -5030,13 +5037,6 @@
       "pattern": "\\bfetch\\s*\\(\\s*(?:new\\s+URL\\s*\\(\\s*)?[\"'`](?!https?:\\/\\/)([^\"'`]*)[\"'`]",
       "message": "fetch names a path this application does not ship, and there is no server behind it.",
       "guidance": "Ship the file in the output, or request an absolute http(s) URL."
-    },
-    {
-      "code": "WEB_STORAGE_MEMORY",
-      "severity": "warning",
-      "pattern": "\\blocalStorage\\s*\\.\\s*setItem\\b",
-      "message": "localStorage is in memory only: what it stores is gone when the application exits.",
-      "guidance": "Keep anything that must survive a restart in a file the application owns."
     }
   ],
   "renderer": [

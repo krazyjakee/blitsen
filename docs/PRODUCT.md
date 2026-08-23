@@ -255,13 +255,13 @@ requestAnimationFrame(function update(t) {
 Plus OS capability the browser cannot give, under a clearly-marked namespace:
 
 ```js
-import { openFile } from "native:dialog";
-import { clipboard } from "native:clipboard";
-import { Window } from "native:window";
+import dialog from "blitsen/dialog";
+import clipboard from "blitsen/clipboard";
+import windowApi from "blitsen/window";
 
-const path = await openFile();
-await clipboard.writeText("hello");
-const tools = new Window({ width: 800, height: 600, html: "./tools.html" });
+const path = await dialog.openFile?.();
+await clipboard.writeText?.("hello");
+windowApi.setSize?.(800, 600);
 ```
 
 Plus generic system access through the interfaces that already exist:
@@ -315,10 +315,10 @@ pen, with pressure, multi-touch and pointer capture) · the first `blitsen/*` mo
 | --- | --- |
 | `dialog.*` | Linux and the BSDs only, by design: macOS and Windows require a file dialog on the main thread, which is the thread kept free to paint. Absent there rather than approximated. |
 | `app.requestSingleInstanceLock` | Unix only. The lock is a Unix domain socket that doubles as the channel a second invocation's `argv` arrives on; Windows wants a mutex plus a named pipe, which is a different design. |
-| `window.create` | Absent — a second window is #105, and the run opens one window. |
+| `window.create` | Deliberately absent — the context, communication and lifetime contract is settled by #105, but the per-window host state it requires is not implemented. |
 
 **v2 — makes real apps comfortable** — *partly landed early*
-`localStorage`/`sessionStorage` (in memory, not persisted) · Workers (dedicated, with
+durable `localStorage` and realm-scoped `sessionStorage` · Workers (dedicated, with
 `MessageChannel`, `MessagePort` and `structuredClone`) · clipboard events · drag & drop, where a
 drop reports real filesystem paths in `dataTransfer.paths` rather than browser `File` abstractions,
 have landed. Still open: gamepads · notification activation and management · starting a drag *out*
@@ -334,10 +334,16 @@ Displays stay `window.monitors()` and idle time is an argued absence rather than
 WebGL / WebGPU · WebRTC · anything else earning its size. `<canvas>` 2D was on this list and has
 landed early (#99).
 
-**Where the v1 line was drawn, stated plainly.** Advanced text input and IME (#103) and
-accessibility (#102) are **not v1**. Basic keyboard editing, caret placement, drag selection and
-clipboard editing in text controls have landed; undo/redo, composition and `contenteditable` have
-not. `<canvas>` was the third entry here, and the sharpest one: the element shipped in the document
+**Where the v1 line was drawn, stated plainly.** The complete advanced-text surface (#103) and
+accessibility (#102) are **not v1**. Keyboard and clipboard editing, caret placement, drag
+selection, bounded control-local undo/redo, and a native IME preedit/commit path for `<input>` and
+`<textarea>` have landed; `contenteditable`, surrounding-text IME operations, full form reset and
+human-verified CJK/RTL native input have not. Accessibility's absence is deliberate at the dependency
+boundary too: the runtime does not
+enable Blitz's AccessKit platform adapter. ARIA and semantic
+elements therefore do not reach a screen reader, while keyboard focus and editing continue through
+the ordinary DOM input path. `<canvas>` was the third entry here, and the sharpest one: the element
+shipped in the document
 and nothing painted inside it, so it was a `doctor` **error** rather than a warning, and an
 application that drew was refused at export. It draws now — a full 2D context composited into the
 same frame as the DOM — so the error is gone and what is still refused is a GPU context.
@@ -444,7 +450,7 @@ workspace and a clean `cargo ndk check` without scaffolding.
 | P5 | Platforms, initial | Windows x64, Linux x64, macOS arm64 | Windows is the priority target for size claims. |
 | P5b | Platforms, full matrix | win32 x64/arm64, linux x64/arm64, darwin x64/arm64 | One npm platform package each (TECH.md §11). Two tiers of evidence: `linux-x64`, `darwin-arm64` and `win32-x64` run the whole suite in CI; `linux-arm64`, `darwin-x64` and `win32-arm64` run a smoke tier — the release artifacts built, the package tests against them, a frame through the native harness, a standalone export and the layout corpus — with the product-behaviour suites and the size gate left to the first three (issue #133). |
 | P5c | Platforms, Android | `arm64-v8a` shipping, `x86_64` for emulators | A distinct artifact, not a P5b row: a cross-compiled APK with keystore signing, produced by `blitsen build --android`, not a runtime an install resolves from npm (#148). It is a flag rather than a `--target` value because one APK carries every ABI, and `--target` picks one prebuilt runtime to link. Both defaults ship in one artifact; `armeabi-v7a` builds on request and is unproven. Signed with the Android debug key unless `--android-keystore` names one, and the build says on every run that a debug-signed APK is not distributable. Compiled with `cargo ndk` against the `crates/blitsen-android` cdylib #142 landed, and packaged with the SDK's own `aapt2`, `zipalign` and `apksigner`. `cargo apk` was tried and dropped for two independent reasons: it cannot store assets uncompressed on a release profile, which is #144's one packaging ask, and it cannot package an entry crate that is itself the cdylib, which is the shape #143 proved links. Every entry in the APK is stored, so assets are read in place and the `.so` is mapped rather than extracted at install. `minSdk` is 26 rather than 24, because the audio backend reaches `libaaudio` and the NDK ships it from 26 — a floor found by building, not by reading. **Not an AAB**, so not a Google Play upload — nothing on this path emits one. A Gradle backend is not what that would take, though, and #150 priced it rather than assuming it: an AAB of this workspace's own libraries was built with `aapt2 link --proto-format` and `bundletool`, two of Google's own tools, on the JDK `apksigner` already runs on. What is missing is a path through the CLI, and no split out of that bundle has been installed on a device. The NDK is a prerequisite the CLI detects and never installs: an Android build is a cross-compile, so P9's "no toolchain" does not reach it. Its size budget is its own and is **P1b** — P1 is a `linux-x64` figure and does not transfer. **Evidence: a smoke tier, and a thinner one than P5b's** (#149). CI cross-compiles the entry point for both default ABIs, checks each `.so` is the architecture it claims to be and exports `android_main`, resolves the third-party notices an Android artifact owes — which nothing had ever done for an Android triple — and then packages an APK with `blitsen build --android` itself and reads the archive back: both ABIs present, every entry the build wrote stored, the notices inside it, the certificate it was signed with. It runs the command rather than a re-implementation of it, per #133's line that a target's job builds exactly what the target's artifact is; layout conformance, determinism, the size gate and the product-behaviour suites do not change with the target and stay where they are. CI separately boots the packaged APK on API 32 and API 33 AVDs and reads Android notification permission, channel, delivery, replacement, timeout and close back out of `dumpsys notification` (#254). That emulator matrix is a required check. Android's shipped CPU/softbuffer renderer creates no wgpu device, while CI also type-checks the explicit `blitsen-android --features android-vello-gpu` qualification build. What CI still does *not* do is read a frame back; the existing `bun run --cwd packages/blitsen test:android --apk <path> --package <id>` harness remains available for that next tier. Physical Mali and Adreno GPU measurements remain outside emulator acceptance (#151). |
-| P6 | Render consistency | Byte-identical layout across platforms for the test corpus | The core advantage over WebView-based tools. |
+| P6 | Render consistency | Byte-identical layout across platforms for the test corpus | The core advantage over WebView-based tools. Font inputs are part of that corpus: byte identity requires its pinned/author fonts. Layout that resolves through system fonts is host-dependent and carries no cross-platform golden. |
 | P7 | npm compatibility | Pure-JS packages install and import unmodified | Native Node addons: best-effort. |
 | P8 | No runtime dependency on an installed browser or WebView | Absolute | |
 | P9 | Install | `npm i -D blitsen` fetches only the host platform's runtime | No Rust toolchain, no compile step, no postinstall build. |
@@ -748,7 +754,12 @@ dashboard) is built by someone who is not us.
    the most demanding term left in the tree is Stylo's file-level MPL-2.0. See `LICENSING.md`.
 3. ~~Distribution~~ — **settled**: npm dev dependency with per-platform runtime packages
    (§6, TECH.md §11).
-4. **Do multiple windows share one JS context** or get isolated ones?
+4. ~~Do multiple windows share one JS context?~~ — **settled by #105: isolated contexts on one
+   UI thread.** Each future window owns its `Window`, `Document`, JavaScript heap and evaluated
+   module graph. Cross-window application data crosses an explicitly transferred `MessagePort`;
+   the application session, not the creating context, owns native-window lifetime. The complete
+   contract and the reason `window.create` remains absent are in
+   [TECH.md](TECH.md#multi-window-contexts-isolated-on-one-ui-thread).
 5. **Is TypeScript first-class?** Mostly moot under the export model — the user's existing
    bundler handles TS before Blitsen sees the output. Still open for the no-build-step path.
 6. ~~Where do assets live in the exported binary~~ — **settled: either, embedded by default.**

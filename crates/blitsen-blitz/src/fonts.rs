@@ -16,6 +16,12 @@
 //! Blitz's bullet font is registered here because Blitz only registers it into
 //! a context it built itself — supplying one and not registering it is what
 //! makes every `<ul>` marker vanish.
+//!
+//! The product policy is deliberately visible in the two inputs below:
+//! platform fonts are enumerated, and author fonts are registered into the
+//! same collection by `@font-face`. There is no bundled general-purpose
+//! fallback. The bullet face is scoped to generated list markers and is not a
+//! fallback family for document text.
 
 use parley::FontContext;
 use parley::fontique::{Blob, Collection, CollectionOptions, SourceCache};

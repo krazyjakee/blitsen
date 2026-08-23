@@ -10,7 +10,9 @@ import { describeExecutableBinary, describeNativeBinary, readContainerHeader } f
 import { linkBundle } from "./bundle.mjs";
 import { REWRITTEN_EXTENSIONS } from "./files.mjs";
 import { frameDelay } from "./frame-pacing.mjs";
-import { activationEntryPoint, packageBuild, pngDimensions, signArtifact } from "./packaging.mjs";
+import {
+  activationEntryPoint, defaultApplicationIdentifier, packageBuild, pngDimensions, signArtifact,
+} from "./packaging.mjs";
 import { describeRuntime, hostTarget, requestedHost, resolvePhase2Runtime } from "./runtime.mjs";
 
 export { describeExecutableBinary, describeNativeBinary } from "./binary.mjs";
@@ -214,6 +216,7 @@ try {
       root,
       entrypoint,
       directory: root,
+      storageIdentity: options.storageIdentity,
       width: ${options.width},
       height: ${options.height},
       title: ${JSON.stringify(options.title)},
@@ -458,7 +461,8 @@ function reportCollection(progress, { manifest, assets, unreferenced, carriedAdd
 
 async function linkPhase2({
   buildTarget, targetPlatform, targetArchitecture, onNotice, manifest, staging,
-  linkedRuntime, width, height, title, window, tray, menu, activation, assets, destination,
+  linkedRuntime, width, height, title, window, tray, menu, activation, storageIdentity, assets,
+  destination,
 }) {
   // After the checks above, deliberately: `fetch` is on the same terms as the
   // addon's own resolution (#72) — a build for this host never reaches the
@@ -502,6 +506,7 @@ async function linkPhase2({
   const { path: _linkedPath, ...stamp } = linkedRuntime;
   files.set("blitsen.runtime.json", Buffer.from(
     `${JSON.stringify({ width, height, title, window, tray, menu, activation,
+      storageIdentity,
       layout: assets, runtime: stamp })}\n`));
   // Issue #121: the notices the artifact owes travel inside it. They are copied
   // from the runtime package because a user's machine has no toolchain to
@@ -513,13 +518,14 @@ async function linkPhase2({
 }
 
 async function linkPhase1({
-  nativePath, staging, manifest, width, height, title, window, tray, menu, activation, assets,
-  assetDirectory, linkedRuntime, destination, buildTarget,
+  nativePath, staging, manifest, width, height, title, window, tray, menu, activation,
+  storageIdentity, assets, assetDirectory, linkedRuntime, destination, buildTarget,
 }) {
   await copyFile(nativePath, join(staging, "blitsen.node"));
   const launcher = join(staging, "launcher.mjs");
   await writeFile(launcher, launcherSource(manifest, {
-    width, height, title, window, tray, menu, activation, layout: assets, assetDirectory,
+    width, height, title, window, tray, menu, activation, storageIdentity, layout: assets,
+    assetDirectory,
     runtime: linkedRuntime,
   }));
   // The Bun host is the one thing here that only Bun can build: `Bun.build`
@@ -627,6 +633,10 @@ export async function buildStandalone(
   // to be inside the executable the platform will start (#252).
   const activation = activationEntryPoint(
     { platform: buildPlatform, identifier: bundleId, executable: destination });
+  // Persistence needs an identity even when notifications do not. This is the
+  // same default macOS packaging records, and remains stable if the executable
+  // is moved or renamed after it is built.
+  const storageIdentity = bundleId ?? defaultApplicationIdentifier(title);
   const { plan, carried, unreferenced } = await planApplication(root, include, addons, trayAssets);
   // Bun records the compiled entrypoint's path in the executable, so staging has
   // to be a stable location rather than a temporary one for reproducible output.
@@ -654,12 +664,13 @@ export async function buildStandalone(
       notices = await linkPhase2({
         buildTarget, targetPlatform, targetArchitecture, onNotice, manifest, staging,
         linkedRuntime, width, height, title, window, tray: runtimeTray, menu, activation,
+        storageIdentity,
         assets, destination,
       });
     } else {
       await linkPhase1({
         nativePath, staging, manifest, width, height, title, window, tray: runtimeTray, menu,
-        activation, assets, assetDirectory,
+        activation, storageIdentity, assets, assetDirectory,
         linkedRuntime, destination, buildTarget,
       });
     }

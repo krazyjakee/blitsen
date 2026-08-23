@@ -140,6 +140,7 @@ fn run_cycle(entrypoint: &Path) {
         height: 240,
         title: "surface lifecycle".to_owned(),
         directory: entrypoint.to_string_lossy().into_owned(),
+        storage_identity: "surface-lifecycle-test".to_owned(),
         window: Default::default(),
         tray: None,
         menu: None,
