@@ -53,6 +53,7 @@ describe("release reproducibility", () => {
   test("gates one pinned native runner per executable format before signing", async () => {
     const workflow = await readFile(join(repository, ".github/workflows/release.yml"), "utf8");
     const build = await readFile(join(repository, "scripts/build-release-runtime.sh"), "utf8");
+    const addonBuild = await readFile(join(repository, "crates/blitsen-node/build.rs"), "utf8");
     const selected = [...workflow.matchAll(
       /- target: ([^\n]+)\n(?: {12}[^\n]+\n){3} {12}reproducible: true/g,
     )].map(match => match[1]);
@@ -66,5 +67,6 @@ describe("release reproducibility", () => {
     expect(build).toContain("/pathmap:");
     expect(build).toContain("/Brepro");
     expect(build).toContain("SOURCE_DATE_EPOCH");
+    expect(addonBuild).toContain("rustc-cdylib-link-arg=-Wl,-install_name,@rpath/blitsen.node");
   });
 });

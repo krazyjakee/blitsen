@@ -221,6 +221,10 @@ The source roots differ deliberately. `--remap-path-prefix` maps Rust paths to `
 the native compiler gets the equivalent `-ffile-prefix-map` or MSVC `/pathmap`, because QuickJS-ng's
 C `__FILE__` strings otherwise retain its Cargo output directory after symbols are stripped.
 `SOURCE_DATE_EPOCH` is the commit timestamp for native build scripts that observe the standard.
+The macOS addon also carries the stable install name `@rpath/blitsen.node`; otherwise Apple's
+linker copies the absolute output path into `LC_ID_DYLIB`, changing the load-command size between
+the shipping checkout and the deliberately different second checkout. Node loads the addon by its
+actual file path, so this identity changes no runtime resolution.
 Windows additionally uses MSVC `/Brepro`, alongside the existing static CRT flag, because PE linker
 metadata otherwise owns a build timestamp. No post-build normalisation is allowed: a passing
 comparison is evidence about the files that proceed to signing, while a failing one preserves the
