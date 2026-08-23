@@ -15,9 +15,7 @@ use blitz::shell::BlitzApplication;
 use serde::Serialize;
 use winit::application::ApplicationHandler;
 use winit::cursor::CursorIcon;
-use winit::event::{
-    DeviceEvent, ElementState, MouseButton, MouseScrollDelta, StartCause, WindowEvent,
-};
+use winit::event::{DeviceEvent, ElementState, StartCause, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::{Key, ModifiersState, PhysicalKey};
 use winit::window::WindowId;
@@ -882,38 +880,17 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> ApplicationHandler
         window_id: WindowId,
         event: WindowEvent,
     ) {
-        match &event {
-            WindowEvent::PointerMoved { position, .. } => {
-                let scale = self
-                    .inner
-                    .windows
-                    .get(&window_id)
-                    .map_or(1.0, |view| view.window.scale_factor());
-                let logical = position.to_logical::<f64>(scale);
-                crate::dom_bridge::input::pointer_position(logical.x, logical.y);
-            }
-            WindowEvent::PointerButton { state, button, .. } => {
-                let button = match button.clone().mouse_button() {
-                    Some(MouseButton::Left) => "primary".to_owned(),
-                    Some(MouseButton::Right) => "secondary".to_owned(),
-                    Some(MouseButton::Middle) => "auxiliary".to_owned(),
-                    Some(MouseButton::Back) => "back".to_owned(),
-                    Some(MouseButton::Forward) => "forward".to_owned(),
-                    Some(other) => format!("other-{}", other as u8 + 1),
-                    None => "unknown".to_owned(),
-                };
-                crate::dom_bridge::input::pointer_button(button, *state == ElementState::Pressed);
-            }
-            WindowEvent::MouseWheel { delta, .. } => match delta {
-                MouseScrollDelta::LineDelta(x, y) => {
-                    crate::dom_bridge::input::wheel_lines(f64::from(*x), f64::from(*y));
-                }
-                MouseScrollDelta::PixelDelta(position) => {
-                    crate::dom_bridge::input::wheel_pixels(position.x, position.y);
-                }
-            },
-            _ => {}
-        }
+        // Before anything else this turn does with the event, and whatever else
+        // it does: the native snapshot is what an application polls instead of
+        // listening, so it has to reflect the pointer even on the events this
+        // handler goes on to consume itself.
+        crate::dom_bridge::input::observe(
+            &event,
+            self.inner
+                .windows
+                .get(&window_id)
+                .map_or(1.0, |view| view.window.scale_factor()),
+        );
         if matches!(event, WindowEvent::CloseRequested)
             && self
                 .tray

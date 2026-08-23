@@ -37,11 +37,21 @@
 //! call. That is not only an allocation: CPU usage is a *delta* between two
 //! samples, so a fresh `System` per call would measure nothing and report zero
 //! forever. See [`cpu`].
+//!
+//! [`batteries`] is the one reading here that `sysinfo` does not make — it
+//! carries no battery feature to turn on — so it is a second library, chosen on
+//! the same argument as the first: power is a different source on every
+//! platform and one crate already implements all of them. It is also the one
+//! reading absent on Android, where that crate does not compile and where the
+//! answer belongs to `BatteryManager` over JNI.
 
 use std::cell::RefCell;
 
 use serde::Serialize;
 use sysinfo::{Disks, RefreshKind, System};
+
+#[cfg(not(target_os = "android"))]
+use crate::PlatformError;
 
 thread_local! {
     // Built refreshing nothing: every getter below refreshes what it needs, so
@@ -278,6 +288,116 @@ pub fn host() -> Host {
     }
 }
 
+/// One battery, as the machine's own power meter reads it.
+///
+/// Every field is a share, a count or a duration in seconds. Nothing here is an
+/// energy: the drivers report those in µWh, µJ and mAh depending on the machine,
+/// and a number whose unit depends on the host is not a fact this module can
+/// hand out.
+#[cfg(not(target_os = "android"))]
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Battery {
+    /// Charge as a share of what this battery holds today, 0–1. This is the
+    /// number the desktop shows near the clock, taken from the controller
+    /// rather than divided out of the energy readings, because many drivers
+    /// report it more precisely than the two numbers behind it.
+    pub level: f64,
+    /// `"charging"`, `"discharging"`, `"full"`, `"empty"`, or `"unknown"` where
+    /// the controller will not say — which is a state the platforms really do
+    /// report, and not a failure to read.
+    pub state: &'static str,
+    /// Seconds until full, or `None` when the platform does not estimate one.
+    /// Absent whenever the battery is not charging, and absent on a charging
+    /// battery whose driver reports no rate.
+    pub time_to_full: Option<f64>,
+    /// Seconds until empty, on the same terms as [`Battery::time_to_full`].
+    pub time_to_empty: Option<f64>,
+    /// What it holds today as a share of what it held new. Above 1 on a battery
+    /// whose design figure is conservative, which is a reading rather than an
+    /// error, so it is not clamped.
+    pub health: f64,
+    /// Charge cycles the controller has counted, or `None` where it counts none.
+    pub cycle_count: Option<u32>,
+    /// Manufacturer, or `None` where the platform does not name one.
+    pub vendor: Option<String>,
+    /// Model name, or `None` where the platform does not name one.
+    pub model: Option<String>,
+}
+
+/// Lists the batteries installed in this machine.
+///
+/// An empty list is an answer rather than a refusal: it is what a desktop with
+/// no battery reports, and it is the reading this module could not make before
+/// a real power source was behind it. A machine that cannot be asked at all —
+/// no power service, a platform that refuses the query — is the error case, and
+/// it is an error rather than an empty list precisely so that the two cannot be
+/// confused (#98).
+///
+/// Peripherals are not in it. A wireless mouse or a keyboard publishes its cell
+/// next to the machine's own on Linux, and only the ones the platform scopes to
+/// the system are batteries this machine runs on.
+///
+/// Nothing is cached between calls, unlike the readings above: this is a level
+/// rather than a delta, so there is no previous sample for a second one to be
+/// measured against, and the platform handle is opened and dropped around the
+/// one reading it is needed for.
+#[cfg(not(target_os = "android"))]
+pub fn batteries() -> Result<Vec<Battery>, PlatformError> {
+    use starship_battery::units::{ratio::ratio, time::second};
+
+    let manager = starship_battery::Manager::new().map_err(|error| {
+        PlatformError::new(format!("this system reports no power source: {error}"))
+    })?;
+    let batteries = manager.batteries().map_err(|error| {
+        PlatformError::new(format!("the batteries could not be enumerated: {error}"))
+    })?;
+    batteries
+        .map(|battery| {
+            // One unreadable battery fails the whole list rather than being
+            // skipped: a reading with a battery silently missing from it is the
+            // same shape as a machine that has one fewer, and an application
+            // deciding whether to warn about power cannot tell those apart.
+            let battery = battery.map_err(|error| {
+                PlatformError::new(format!("a battery could not be read: {error}"))
+            })?;
+            Ok(Battery {
+                level: f64::from(battery.state_of_charge().get::<ratio>()),
+                state: battery_state(battery.state()),
+                time_to_full: battery
+                    .time_to_full()
+                    .map(|time| f64::from(time.get::<second>())),
+                time_to_empty: battery
+                    .time_to_empty()
+                    .map(|time| f64::from(time.get::<second>())),
+                health: f64::from(battery.state_of_health().get::<ratio>()),
+                cycle_count: battery.cycle_count(),
+                vendor: battery.vendor().and_then(reported),
+                model: battery.model().and_then(reported),
+            })
+        })
+        .collect()
+}
+
+/// The one vocabulary [`Battery::state`] documents.
+///
+/// Written out rather than derived from the library's own `Display`, which is a
+/// human-facing string it is free to reword: these five words are the API, and
+/// an application branching on them should not have to track a dependency's
+/// formatting. `Unknown` is carried through as itself because it is what a
+/// controller mid-transition really reports, and calling it "discharging" would
+/// be inventing the answer it declined to give.
+#[cfg(not(target_os = "android"))]
+fn battery_state(state: starship_battery::State) -> &'static str {
+    match state {
+        starship_battery::State::Charging => "charging",
+        starship_battery::State::Discharging => "discharging",
+        starship_battery::State::Empty => "empty",
+        starship_battery::State::Full => "full",
+        starship_battery::State::Unknown => "unknown",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -361,5 +481,59 @@ mod tests {
         let host = host();
         assert!(host.boot_time > 0, "{host:?}");
         assert!(!host.distribution_id.is_empty(), "{host:?}");
+    }
+
+    // The vocabulary, on a machine that may have no battery to read: which
+    // states this host can produce is not something a test can arrange, so the
+    // mapping is checked directly and the reading below checks the rest.
+    #[cfg(not(target_os = "android"))]
+    #[test]
+    fn every_battery_state_has_one_word_for_it() {
+        for (state, expected) in [
+            (starship_battery::State::Charging, "charging"),
+            (starship_battery::State::Discharging, "discharging"),
+            (starship_battery::State::Empty, "empty"),
+            (starship_battery::State::Full, "full"),
+            (starship_battery::State::Unknown, "unknown"),
+        ] {
+            assert_eq!(battery_state(state), expected);
+        }
+    }
+
+    // Whether this machine has a battery is not something a test can require —
+    // the same suite runs on a laptop and on a rack — so what is asserted is
+    // that asking succeeded and that every battery answered describes a real
+    // one. A desktop's empty list is a pass, and it is the reading that would
+    // otherwise be indistinguishable from a failure to ask (#98).
+    #[cfg(not(target_os = "android"))]
+    #[test]
+    fn every_battery_reports_a_charge_it_could_hold() {
+        let batteries = batteries().expect("this machine can be asked about power");
+        for battery in &batteries {
+            assert!((0.0..=1.0).contains(&battery.level), "{battery:?}");
+            assert!(battery.health > 0.0, "{battery:?}");
+            assert!(
+                ["charging", "discharging", "empty", "full", "unknown"].contains(&battery.state),
+                "{battery:?}"
+            );
+            // Absent rather than empty, the same rule the processor's names
+            // follow, so `null` never has to be told from `""` (#137).
+            for name in [&battery.vendor, &battery.model] {
+                assert!(name.as_deref() != Some(""), "{battery:?}");
+            }
+            // An estimate is for the direction the battery is actually going.
+            // Both at once would be a controller answering a question it was
+            // not asked, and neither is what a battery holding steady says.
+            assert!(
+                battery.time_to_full.is_none() || battery.time_to_empty.is_none(),
+                "{battery:?}"
+            );
+            for estimate in [battery.time_to_full, battery.time_to_empty]
+                .into_iter()
+                .flatten()
+            {
+                assert!(estimate > 0.0, "{battery:?}");
+            }
+        }
     }
 }

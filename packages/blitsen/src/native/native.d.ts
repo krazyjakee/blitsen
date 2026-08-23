@@ -319,15 +319,32 @@ export interface PressedKey {
 
 /** Pointer state at the instant an input snapshot was taken. */
 export interface NativePointerState {
-  /** Position in CSS pixels, or null before the pointer has entered the window. */
+  /**
+   * Position in CSS pixels, or null when no pointer is in the window — before
+   * one has entered, after the cursor has left, and between taps on a
+   * touchscreen, where a lifted finger is nowhere rather than still where it
+   * was.
+   */
   readonly x: number | null;
   readonly y: number | null;
-  /** Held buttons: primary, secondary, auxiliary, back, forward or other-N. */
+  /**
+   * Held buttons: primary, secondary, auxiliary, back, forward or other-N. A
+   * finger and a pen tip are the primary button, which is what the DOM calls
+   * them too.
+   */
   readonly buttons: readonly string[];
-  /** Raw device movement accumulated since the previous snapshot. */
+  /**
+   * Raw device movement accumulated since the previous snapshot — the mouse
+   * itself rather than the cursor, so it keeps counting past a screen edge.
+   * Only while this window is focused, and only on desktop: Android has no raw
+   * motion to report, and a touch gesture is read from the position instead.
+   */
   readonly movementX: number;
   readonly movementY: number;
-  /** Wheel deltas accumulated since the previous snapshot, preserving their units. */
+  /**
+   * Wheel deltas accumulated since the previous snapshot, preserving their
+   * units. Desktop signals: Android sends none without a mouse attached.
+   */
   readonly wheelLineX: number;
   readonly wheelLineY: number;
   readonly wheelPixelX: number;
@@ -500,6 +517,46 @@ export interface Host {
 }
 
 /**
+ * One battery, as the machine's own power meter reads it.
+ *
+ * Every field is a fraction or a count rather than a unit that would have to be
+ * converted: the drivers report energy in µWh, µJ and mAh depending on the
+ * machine, and a number whose unit depends on the host is not a fact worth
+ * handing out.
+ */
+export interface Battery {
+  /**
+   * Charge as a share of what this battery holds today, 0–1 — the number the
+   * desktop shows near the clock. Taken from the controller rather than divided
+   * out of the energy readings, which many drivers report less precisely.
+   */
+  readonly level: number;
+  /**
+   * `"unknown"` is a state a controller mid-transition really reports, not a
+   * failure to read it.
+   */
+  readonly state: "charging" | "discharging" | "empty" | "full" | "unknown";
+  /**
+   * Seconds until full, or `null` where the platform estimates none — which is
+   * always the case for a battery that is not charging.
+   */
+  readonly timeToFull: number | null;
+  /** Seconds until empty, on the same terms as `timeToFull`. */
+  readonly timeToEmpty: number | null;
+  /**
+   * What it holds today as a share of what it held new. Above 1 where the
+   * design figure is conservative, which is a reading rather than an error.
+   */
+  readonly health: number;
+  /** Charge cycles the controller has counted, or `null` where it counts none. */
+  readonly cycleCount: number | null;
+  /** Manufacturer, or `null` where the platform does not name one. */
+  readonly vendor: string | null;
+  /** Model name, or `null` where the platform does not name one. */
+  readonly model: string | null;
+}
+
+/**
  * `blitsen/os`: what machine this is.
  *
  * None of it has a web spelling. `navigator.hardwareConcurrency` is the closest
@@ -527,6 +584,18 @@ export interface NativeOs {
   host?(): Host;
   /** Reads the locale and time zone this session is configured for. */
   locale?(): Locale;
+  /**
+   * Lists the batteries this machine runs on, which is empty on a machine that
+   * has none — a desktop's real answer rather than a refusal to give one. A
+   * machine that cannot be asked throws instead, so the two never look alike.
+   *
+   * Peripherals are not in it: a wireless mouse publishes its cell alongside the
+   * machine's own on Linux, and only the ones the platform scopes to the system
+   * are batteries this machine runs on.
+   *
+   * Absent on Android, whose reading is `BatteryManager` over JNI.
+   */
+  batteries?(): Battery[];
 }
 
 /**

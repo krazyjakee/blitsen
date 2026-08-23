@@ -11,7 +11,7 @@
 // start from the second.
 import type { NativeNamespace, NativeOs } from "./native.js";
 
-export type { Cpu, CpuCore, Host, Locale, Memory, NativeOs, Volume } from "./native.js";
+export type { Battery, Cpu, CpuCore, Host, Locale, Memory, NativeOs, Volume } from "./native.js";
 
 declare const os: NativeNamespace<NativeOs>;
 export default os;

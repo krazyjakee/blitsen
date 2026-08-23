@@ -31,7 +31,9 @@ pub mod clipboard;
 pub mod dialog;
 // Present everywhere, including Android: `sysinfo` reads the same `/proc` there
 // as on Linux, and the facts it cannot get come back `None` by design rather
-// than by omission. See the module docs.
+// than by omission. The battery is the exception inside it and carries its own
+// `cfg`, because that reading is a different library and does not compile there.
+// See the module docs.
 pub mod os;
 
 use std::fmt;

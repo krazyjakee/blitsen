@@ -577,12 +577,20 @@
   // to measure from it reports a baseline against the counters' own origin,
   // which on Linux is the average since boot. Every call after it measures the
   // interval the caller chose.
+  //
+  // `batteries` is the one member here that is hosted separately: it is the one
+  // Android has no backend for, and an empty list there would claim a phone runs
+  // on mains. Everywhere else an empty list is the machine's own answer — a
+  // desktop has no battery — and a machine that cannot be asked throws instead.
   const nativeOs = {
     cpu: () => JSON.parse(__blitsenNativeOsCpu()),
     memory: () => JSON.parse(__blitsenNativeOsMemory()),
     storage: () => JSON.parse(__blitsenNativeOsStorage()),
     host: () => JSON.parse(__blitsenNativeOsHost()),
     locale: () => JSON.parse(__blitsenNativeOsLocale()),
+    batteries: hosted("__blitsenNativeOsBatteries")
+      ? () => JSON.parse(__blitsenNativeOsBatteries())
+      : undefined,
   };
 
   // Dialogs. Promise-returning rather than blocking: the call arrives on the

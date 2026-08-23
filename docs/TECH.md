@@ -622,7 +622,7 @@ import { app }       from "native:app";
 | `native:notify` | desktop notifications |
 | `native:input` | raw keyboard/mouse state and gamepads |
 | `native:hid` | deliberately raw HID reports for non-keyboard/pointer devices; desktop implementation and separate Android permission path are specified by [S10](../spikes/s10/README.md) |
-| `native:os` | processor, memory, storage volumes and OS identity; displays, battery, locale, idle time |
+| `native:os` | processor, memory, storage volumes, OS identity, batteries and locale. Displays stay `native:window`'s `monitors`, and idle time is absent by decision (#98) |
 
 **The rule: `native:` is additive, never a superset.** Anything the Node surface already names
 keeps its Node name — `process.argv`, `process.execPath`, `process.exit`, `node:os` for CPU /

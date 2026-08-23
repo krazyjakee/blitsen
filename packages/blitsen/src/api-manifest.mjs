@@ -322,7 +322,7 @@ const NATIVE = {
   tray: ["configure", "remove", "onClick", "onAction"],
   input: ["snapshot", "gamepads", "vibrateGamepad", "onDeviceChange"],
   notify: ["show", "permission", "requestPermission", "update", "close", "onEvent"],
-  os: ["cpu", "memory", "storage", "host", "displays", "battery", "locale", "idleTime"],
+  os: ["cpu", "memory", "storage", "host", "displays", "batteries", "locale", "idleTime"],
 };
 
 // Why a declared member is not implemented. Absence is the answer, not an
@@ -369,15 +369,15 @@ const NATIVE_ABSENT = {
   "clipboard.writeMime": "The counterpart of `readMime`, absent for the same reason.",
   "os.displays": "The monitors are `window.monitors()`, which already reports each one's size, "
     + "position and scale factor. A second list here could disagree with that one.",
-  "os.battery": "Nothing behind this module reports power. The processor, the memory and the "
-    + "volumes come from one library that implements all three per platform; the battery is a "
-    + "fourth source on each — UPower's D-Bus service, IOKit, `GetSystemPowerStatus` — and a "
-    + "desktop with no battery has to read as *absent* rather than as an empty reading, which is "
-    + "a distinction only the real source can make.",
-  "os.idleTime": "Seconds since the last input is a different mechanism on every platform, and "
-    + "Wayland has no answer at all for a client that is not focused — the idle-notify protocol "
-    + "reports crossing a threshold the compositor was asked about, not a duration. Reporting "
-    + "zero on the sessions that cannot answer would be indistinguishable from a machine in use.",
+  "os.idleTime": "Seconds since the last input is a different mechanism on every platform — the "
+    + "X11 screensaver extension, `CGEventSourceSecondsSinceLastEventType`, `GetLastInputInfo` — "
+    + "and Wayland has no answer at all for a client that is not focused: the idle-notify "
+    + "protocol reports crossing a threshold the compositor was asked about, not a duration. "
+    + "Reporting zero on the sessions that cannot answer would be indistinguishable from a "
+    + "machine in use. It is also the one reading in this module that describes the person "
+    + "rather than the machine — how long they have been away from the keyboard, available to "
+    + "any application that asks for it — so implementing it where it happens to work would buy "
+    + "that signal on three platforms in exchange for a wrong answer on the fourth.",
 };
 
 // Globals the *engine* supplies rather than the bridge, so their status cannot

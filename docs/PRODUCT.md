@@ -325,7 +325,10 @@ have landed. Still open: gamepads · notification activation and management · s
 of the window, which winit gives no way to do and which the native matrix records as absent rather
 than approximating. Declarative and runtime tray/menu control, desktop notification submission and
 focused native input snapshots have landed; the generated native matrix records the remaining
-members rather than treating those modules as all-or-nothing.
+members rather than treating those modules as all-or-nothing. `blitsen/os` reads the machine's
+batteries as well as its processor, memory, storage, identity and locale — a desktop with none
+answers an empty list, and Android answers nothing because its power service is a different API.
+Displays stay `window.monitors()` and idle time is an argued absence rather than a to-do (#98).
 
 **Later — as demand justifies**
 WebGL / WebGPU · WebRTC · anything else earning its size. `<canvas>` 2D was on this list and has

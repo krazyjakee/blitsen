@@ -36,7 +36,7 @@ polyfill.
 | `blitsen/tray` | `configure`, `remove`, `onClick`, `onAction` |
 | `blitsen/notify` | `show`, `permission`, `requestPermission`, `update`, `close`, `onEvent` |
 | `blitsen/input` | `snapshot` |
-| `blitsen/os` | `cpu`, `memory`, `storage`, `host`, `locale` |
+| `blitsen/os` | `cpu`, `memory`, `storage`, `host`, `batteries`, `locale` |
 
 The declaration files installed with `blitsen` document parameters and result types. The
 [generated native module matrix](COMPATIBILITY.md#native-modules) is available when you need the
@@ -183,6 +183,16 @@ Losing focus clears held keys and buttons. Movement and wheel fields are accumul
 previous snapshot and consumed by reading it. Gamepads, vibration and device-change events remain
 absent; ordinary pointer and keyboard events are unaffected.
 
+The snapshot describes one pointer, in the same CSS pixels a `pointerdown` listener sees. Its
+position is `null` whenever no pointer is in the window — before one arrives, after the cursor
+leaves, and between taps on a touchscreen. Desktop and Android take the same snapshot, but not
+every field is populated on both: Android reports position and a primary button for the finger
+that is down, while raw `movementX`/`movementY` and the wheel fields are mouse signals it does not
+produce. A second finger does not disturb the pointer the first one set; multi-touch is the DOM
+pointer events, which carry every contact with its own `pointerId`. Keys are held by physical
+code, so an Android soft keyboard — which reports characters without the key behind them — appears
+in `keydown` rather than here.
+
 ## Dialogs
 
 Dialog calls are asynchronous and return real filesystem paths:
@@ -246,7 +256,7 @@ to create the directory before writing. `requestSingleInstanceLock` is currently
 
 ## OS readings
 
-`blitsen/os` reads CPU, memory, mounted storage and host identity:
+`blitsen/os` reads CPU, memory, mounted storage, host identity, power and locale:
 
 ```js
 import os from "blitsen/os";
@@ -259,6 +269,30 @@ if (memory) {
 
 Every call samples current state. Discard the first `os.cpu()` usage reading and use later calls to
 measure the interval between samples.
+
+`os.batteries()` lists the batteries the machine runs on. An empty list is the answer a desktop
+gives rather than a refusal to answer, so test the length instead of the member:
+
+```js
+const [battery] = os.batteries?.() ?? [];
+if (battery && battery.state === "discharging" && battery.level < 0.2) reduceFrameRate();
+```
+
+A machine that cannot be asked about power throws, which is what keeps that case distinct from a
+machine that has none. Peripheral batteries — a wireless mouse, a keyboard — are not in the list.
+The member is absent on Android, whose power service is a different API with its own semantics.
+
+`os.locale()` reports the language tag and IANA time zone this session is configured for. Both are
+values to hand straight to a formatter, and they are the same ones `Intl.NumberFormat` and
+`Intl.DateTimeFormat` default to, so there is no second source of truth to keep in step.
+
+Two capabilities are deliberately not on this module. Displays are `window.monitors()`, which
+already reports every monitor's size, position, scale factor and refresh rate; a second list here
+could disagree with that one. Idle time — seconds since the user last touched anything — is absent
+on every platform rather than on the ones that cannot answer: Wayland has no answer at all for an
+unfocused client, and reporting zero there is indistinguishable from a machine in use. It is also
+the one reading that describes the person rather than the machine, so a partial implementation
+would buy that signal on three platforms in exchange for a wrong answer on the fourth.
 
 ## Using the `native:*` spelling
 

@@ -368,7 +368,35 @@ fn install_os<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsError> {
             });
             json_value(&mut engine, &locale)
         }),
+    )?;
+
+    install_battery(engine)
+}
+
+/// The batteries, which are the one reading in this module Android does not get.
+///
+/// A machine that cannot be asked about power throws rather than answering an
+/// empty list, because the empty list already means something else: it is a
+/// desktop with no battery, and that is a fact rather than a failure (#98).
+#[cfg(not(target_os = "android"))]
+fn install_battery<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsError> {
+    engine.define_global_function(
+        "__blitsenNativeOsBatteries",
+        Box::new(move |call| {
+            let mut engine = E::from_value(&call.this);
+            let batteries = os::batteries().map_err(failed)?;
+            json_value(&mut engine, &json!(batteries))
+        }),
     )
+}
+
+// Android has no `starship-battery` backend, so there is no reading to install
+// and `os.batteries` is `undefined` there. Its own power service is a
+// `BatteryManager` over JNI, which is a module-shaped decision rather than this
+// one with the source swapped out.
+#[cfg(target_os = "android")]
+fn install_battery<E: JsEngine + 'static>(_engine: &mut E) -> Result<(), JsError> {
+    Ok(())
 }
 
 #[cfg(not(target_os = "android"))]

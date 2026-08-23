@@ -34,6 +34,9 @@ on Wayland because that protocol does not expose the operation. Cursor grab mode
 runtime throws when a requested mode is unavailable. Declarative and runtime tray control—including
 nested actions, checkboxes, radio groups, accelerators and action/submenu PNGs—notification
 submission/lifecycle events and focused native input snapshots are available on desktop targets.
+`os.batteries` reads the machine's own batteries on every desktop target and answers an empty list
+where there are none; `os.displays` and `os.idleTime` are absent by decision, the monitors being
+`window.monitors()` and idle time having no answer a Wayland client can trust.
 Checkable tray icons and hidden menu items are not exposed because the native backends do not agree
 on them. Linux and
 macOS notifications can be updated and closed through their session ID. The installed Windows
@@ -76,6 +79,13 @@ as granted. Submission, same-session replacement and close are supported. Tap, a
 events are not exposed until #252 adds Android intent activation, so action-bearing submissions
 reject. The standard Web `Notification` global remains absent for the same reason. Android does not
 support Blitsen's app, clipboard, dialog, window or tray native modules in this release.
+
+`blitsen/os` is available, and `os.batteries` is the one member of it that is not: the library
+behind that reading has no Android backend, and the platform's own answer is `BatteryManager` over
+JNI with its own semantics. The input snapshot reports the touch position and a primary button for
+the finger that is down; raw pointer movement and wheel deltas stay zero because Android produces
+neither, and keys held by physical code exclude the soft keyboard, whose input arrives as DOM
+`keydown`.
 
 The output is an APK for direct installation, not an Android App Bundle. It cannot be used to
 create a new Google Play listing that requires AAB upload. See [Build an Android

@@ -1,5 +1,7 @@
 import { strict as assert } from "node:assert";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, rmSync, writeFileSync,
+} from "node:fs";
 import { arch, cpus, homedir, hostname, tmpdir, totalmem } from "node:os";
 import { basename, isAbsolute, join } from "node:path";
 import { loadApiManifest } from "../../src/api-manifest.mjs";
@@ -235,6 +237,82 @@ assert.equal(machine.hostName, hostname(), "the bridge names the host node:os na
 assert(machine.bootTime > 0);
 assert(machine.uptime > 0);
 assert(machine.distributionId.length > 0);
+
+// Power. Whether this machine has a battery is not something the test can
+// arrange — the same file runs on a laptop and on a build server — so the claim
+// is that asking succeeded and that everything it answered describes a real
+// battery. The empty list a desktop gives is the point rather than a skip: it is
+// the reading that had to be told apart from a failure to ask, which is why a
+// machine that cannot be asked throws here instead (#98).
+const batteries = os.batteries();
+assert(Array.isArray(batteries), "the batteries are a list, empty on a machine with none");
+for (const battery of batteries) {
+  assert(battery.level >= 0 && battery.level <= 1, `charge ${battery.level} is not a share`);
+  assert(["charging", "discharging", "empty", "full", "unknown"].includes(battery.state),
+    `${battery.state} is not a battery state`);
+  // Health may exceed 1 where the design figure is conservative, so the check is
+  // that a capacity was read at all rather than that it fits in a range.
+  assert(battery.health > 0, `${battery.health} of its design capacity`);
+  assert(battery.timeToFull === null || battery.timeToEmpty === null,
+    "a battery is either filling or emptying, and the estimate is for the one it is doing");
+  for (const name of [battery.vendor, battery.model])
+    assert(name === null || (typeof name === "string" && name !== ""),
+      `${JSON.stringify(name)}: an unreported name is null, never empty`);
+}
+// Linux publishes the same devices this reads under sysfs, so the count is
+// checkable against the kernel rather than only against itself. `scope` is what
+// keeps a wireless mouse's cell out of the list: a peripheral's battery is not
+// one this machine runs on, and reading the directory the same way the bridge
+// does is what proves that filter is applied rather than assumed.
+if (process.platform === "linux") {
+  const root = "/sys/class/power_supply";
+  const supply = (device, file) => {
+    try { return readFileSync(join(root, device, file), "utf8").trim(); }
+    catch { return null; }
+  };
+  const system = (existsSync(root) ? readdirSync(root) : []).filter(device =>
+    supply(device, "type") === "Battery" && (supply(device, "scope") ?? "System") === "System");
+  assert.equal(batteries.length, system.length,
+    `the bridge reports ${batteries.length} batteries and sysfs has ${system.length}`);
+}
+
+// The locale. `Intl` in this process is the addon's own rather than the host
+// JavaScript engine's — the bridge installs it over whatever was there — so
+// these two are checked against each other because they are *documented to
+// agree* (COMPATIBILITY.md), not because they are independent. Both values are
+// specified as ones an application hands straight to a formatter, and the first
+// two assertions are that claim rather than a restatement of it.
+const locale = os.locale();
+assert.deepEqual(Intl.getCanonicalLocales(locale.language), [locale.language],
+  `${locale.language} is not a canonical BCP-47 tag`);
+assert.doesNotThrow(() => new Intl.DateTimeFormat(locale.language, { timeZone: locale.timeZone }),
+  "the reported locale and zone are values the formatters accept");
+// Compared by what the zone does rather than by its name: the same zone has
+// more than one IANA spelling — `Europe/Kyiv` and `Europe/Kiev` — and what an
+// application sees is the formatted result.
+const resolved = new Intl.DateTimeFormat().resolvedOptions();
+const inZone = zone => new Intl.DateTimeFormat("en-US",
+  { timeZone: zone, dateStyle: "short", timeStyle: "long" }).format(new Date(0));
+assert.equal(inZone(locale.timeZone), inZone(resolved.timeZone),
+  `the bridge is in ${locale.timeZone} and Intl resolved ${resolved.timeZone}`);
+// The independent source, where this machine is configured in a way the test
+// can read without asking the same library twice: `TZ` when it names a zone,
+// and otherwise the `/etc/localtime` symlink. Neither is guaranteed to be
+// there — a copied `/etc/localtime`, a `TZ` holding a POSIX rule — and a
+// machine that has neither is not a failure, so the check is skipped rather
+// than guessed at.
+const zoneName = /^[A-Za-z]+\/[\w+\-/]+$/;
+const configuredZone = () => {
+  if (zoneName.test(process.env.TZ ?? "")) return process.env.TZ;
+  try {
+    return readlinkSync("/etc/localtime").split("/zoneinfo/")[1] ?? null;
+  } catch { return null; }
+};
+const configured = configuredZone();
+if (configured) {
+  assert.equal(inZone(locale.timeZone), inZone(configured),
+    `the bridge is in ${locale.timeZone} and this machine is configured for ${configured}`);
+}
 
 // The window, and the dialogs that are modal to it.
 //
