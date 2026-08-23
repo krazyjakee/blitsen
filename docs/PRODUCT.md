@@ -255,13 +255,13 @@ requestAnimationFrame(function update(t) {
 Plus OS capability the browser cannot give, under a clearly-marked namespace:
 
 ```js
-import { openFile } from "native:dialog";
-import { clipboard } from "native:clipboard";
-import { Window } from "native:window";
+import dialog from "blitsen/dialog";
+import clipboard from "blitsen/clipboard";
+import windowApi from "blitsen/window";
 
-const path = await openFile();
-await clipboard.writeText("hello");
-const tools = new Window({ width: 800, height: 600, html: "./tools.html" });
+const path = await dialog.openFile?.();
+await clipboard.writeText?.("hello");
+windowApi.setSize?.(800, 600);
 ```
 
 Plus generic system access through the interfaces that already exist:
@@ -315,7 +315,7 @@ pen, with pressure, multi-touch and pointer capture) · the first `blitsen/*` mo
 | --- | --- |
 | `dialog.*` | Linux and the BSDs only, by design: macOS and Windows require a file dialog on the main thread, which is the thread kept free to paint. Absent there rather than approximated. |
 | `app.requestSingleInstanceLock` | Unix only. The lock is a Unix domain socket that doubles as the channel a second invocation's `argv` arrives on; Windows wants a mutex plus a named pipe, which is a different design. |
-| `window.create` | Absent — a second window is #105, and the run opens one window. |
+| `window.create` | Deliberately absent — the context, communication and lifetime contract is settled by #105, but the per-window host state it requires is not implemented. |
 
 **v2 — makes real apps comfortable** — *partly landed early*
 `localStorage`/`sessionStorage` (in memory, not persisted) · Workers (dedicated, with
@@ -748,7 +748,12 @@ dashboard) is built by someone who is not us.
    the most demanding term left in the tree is Stylo's file-level MPL-2.0. See `LICENSING.md`.
 3. ~~Distribution~~ — **settled**: npm dev dependency with per-platform runtime packages
    (§6, TECH.md §11).
-4. **Do multiple windows share one JS context** or get isolated ones?
+4. ~~Do multiple windows share one JS context?~~ — **settled by #105: isolated contexts on one
+   UI thread.** Each future window owns its `Window`, `Document`, JavaScript heap and evaluated
+   module graph. Cross-window application data crosses an explicitly transferred `MessagePort`;
+   the application session, not the creating context, owns native-window lifetime. The complete
+   contract and the reason `window.create` remains absent are in
+   [TECH.md](TECH.md#multi-window-contexts-isolated-on-one-ui-thread).
 5. **Is TypeScript first-class?** Mostly moot under the export model — the user's existing
    bundler handles TS before Blitsen sees the output. Still open for the no-build-step path.
 6. ~~Where do assets live in the exported binary~~ — **settled: either, embedded by default.**

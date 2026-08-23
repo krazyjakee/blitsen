@@ -349,10 +349,12 @@ const NATIVE_ABSENT = {
     + "desktop launches the handler with the URL in `argv`, and the single-instance lock hands "
     + "that to the instance already running.",
   "app.registerFileAssociation": "The same `.desktop` entry, with `MimeType` instead of a scheme.",
-  "window.create": "A second window needs the shared-versus-isolated JavaScript context question "
-    + "answered first: whether two windows see one `document` and one module graph or two decides "
-    + "what `create` even returns, and it cannot be settled by implementing it. The window this "
-    + "run already opened is what the rest of this module operates on.",
+  "window.create": "The architecture is decided: every future window gets an isolated Window, "
+    + "Document, JavaScript heap and evaluated module graph, scheduled with the other windows on "
+    + "one OS UI thread. Application data crosses an explicitly transferred MessagePort; no "
+    + "context receives another window's global. The per-window host state and opaque lifecycle "
+    + "capability needed to uphold that contract are not implemented, so this release exposes no "
+    + "create member. The rest of this module operates on the calling document's native window.",
   "window.setTransparent": "Transparency is chosen when a window is created — winit's own setter "
     + "does nothing on X11 after that — so honouring it would mean replacing the window, which is "
     + "`create`. Run `blitsen` against a directory whose window should be transparent and the "
@@ -520,8 +522,8 @@ const DIAGNOSTICS = {
     "Use a dedicated Worker, which this runtime runs on a thread of its own, and keep whatever "
     + "the workers were sharing in the document that started them."],
   WEB_MESSAGING: ["warning", "BroadcastChannel is not implemented; MessageChannel and Worker are.",
-    "There is one document behind an application, so a channel between two of them has nothing "
-    + "to connect; pass a MessagePort to whoever needs one."],
+    "Use an explicitly handed-over MessagePort for a worker or any future isolated native-window "
+    + "context; there is no implicit application-wide message bus."],
   WEB_URL: ["warning", "Object URLs are not implemented; URL and URLSearchParams are.",
     "Pass the Blob itself to whatever was going to fetch the URL, or build a data: URL."],
   WEB_XHR: ["warning", "XMLHttpRequest is not implemented.", "Use fetch with an absolute URL."],

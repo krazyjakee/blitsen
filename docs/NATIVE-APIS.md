@@ -46,7 +46,8 @@ exact per-member runtime manifest.
 
 ## Window lifetime
 
-Window and dialog methods need the native window, which exists from the `load` event onward:
+`blitsen/window` controls the native window belonging to the calling document. Window and dialog
+methods need that window, which exists from the `load` event onward:
 
 ```js
 import windowApi from "blitsen/window";
@@ -58,6 +59,20 @@ addEventListener("load", () => {
 
 Calling these methods from a document script before the window exists throws instead of silently
 doing nothing.
+
+There is deliberately no `window.create` in this release. The multi-window architecture is
+[decided](TECH.md#multi-window-contexts-isolated-on-one-ui-thread), but its required per-window
+host state is not implemented yet. When multiple native windows arrive, each will have an isolated
+`Window`, `Document`, JavaScript heap and evaluated module graph while every window remains on the
+same OS UI thread. A caller will not receive another context's global or DOM. Application data will
+cross by structured-cloned `postMessage` calls on an explicitly transferred `MessagePort`, and a
+separate opaque lifecycle capability will identify the native window.
+
+The application session owns each future window. Closing the context that requested one will not
+implicitly close it; closing the target will dispose only its context, workers and owned ports.
+Creation/startup failure will reject the future creation operation without damaging an existing
+window, while later uncaught errors remain attributed to their own window. Those are requirements
+on an eventual API, not members available for feature detection today.
 
 ## Tray lifecycle
 

@@ -8,7 +8,8 @@ The tier this profile publishes is [PRODUCT.md §7](PRODUCT.md#7-scope-by-tier)'
 architecture surface plus `fetch`, `WebSocket`, images, web fonts, audio playback and the
 `blitsen/{app,window,dialog,clipboard}` modules. Three of its members are partial by design and
 say so where they are documented: `dialog.*` is Linux/BSD only, `app.requestSingleInstanceLock`
-is Unix-only, and `window.create` is absent. What is *not* v1 is stated as plainly: WebGL and
+is Unix-only, and `window.create` is deliberately absent until the decided isolated-context host
+model is implemented. What is *not* v1 is stated as plainly: WebGL and
 WebGPU are absent, accessibility is absent, and text controls provide basic editing and selection
 but not IME or the advanced editing surface — see [What v1 is not](#what-v1-is-not).
 
@@ -410,8 +411,11 @@ process's stderr. The worker keeps running, as a browser's does.
 
 `window.postMessage(message)` also works, and means the same-window one: the message is serialized
 at the call, delivered as a later task, and `targetOrigin` is accepted and ignored, because there
-is one origin behind an application. `SharedWorker`, `ServiceWorker` and `BroadcastChannel` are
-absent — all three are about sharing something between documents, and there is one document.
+is one origin behind an application. The current release still has one document. A future second
+native window will have an [isolated context](TECH.md#multi-window-contexts-isolated-on-one-ui-thread)
+on the same UI thread, and will communicate only through explicitly transferred `MessagePort`
+endpoints — `window.postMessage` will not become a cross-window shortcut. `SharedWorker`,
+`ServiceWorker` and `BroadcastChannel` remain absent; there is no implicit application-wide bus.
 
 ## Audio
 
@@ -1547,7 +1551,7 @@ lib. The capability tiers above are the list, and `blitsen doctor` is the check.
 | `app.onResume` | The counterpart of `onSuspend`, absent for the same reason. |
 | `app.registerProtocol` | Registering `myapp://` on Linux means installing a `.desktop` entry that names the executable, which is what `blitsen build` already writes. A running process editing that entry would fight its own packaging. The activation itself arrives: the desktop launches the handler with the URL in `argv`, and the single-instance lock hands that to the instance already running. |
 | `app.registerFileAssociation` | The same `.desktop` entry, with `MimeType` instead of a scheme. |
-| `window.create` | A second window needs the shared-versus-isolated JavaScript context question answered first: whether two windows see one `document` and one module graph or two decides what `create` even returns, and it cannot be settled by implementing it. The window this run already opened is what the rest of this module operates on. |
+| `window.create` | The architecture is decided: every future window gets an isolated Window, Document, JavaScript heap and evaluated module graph, scheduled with the other windows on one OS UI thread. Application data crosses an explicitly transferred MessagePort; no context receives another window's global. The per-window host state and opaque lifecycle capability needed to uphold that contract are not implemented, so this release exposes no create member. The rest of this module operates on the calling document's native window. |
 | `window.setTransparent` | Transparency is chosen when a window is created — winit's own setter does nothing on X11 after that — so honouring it would mean replacing the window, which is `create`. Run `blitsen` against a directory whose window should be transparent and the attribute belongs on that window, not on a call. |
 | `window.isAlwaysOnTop` | winit sets the window level and cannot read it back, and the window manager may change it without telling the application. Remembering what was last set would be a second source of truth that quietly goes stale. |
 | `window.startFileDrag` | Dropping *into* the window is winit's to report and is implemented; dragging *out* of it is not something winit can start. A drag source is a platform object driven from the thread that owns the window — `IDropSource` with `DoDragDrop`, an `NSDraggingSession`, a `wl_data_device` offer — and the first two run a modal loop that does not return until the drop, on the one thread Blitsen keeps free to paint. That is a design question rather than a missing call, so the module says so instead of answering it. |

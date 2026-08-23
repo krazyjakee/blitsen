@@ -9,8 +9,10 @@
 //!
 //! Thread-local because the window is only safe to drive from the thread that
 //! owns the event loop, which is the thread that published it and the thread
-//! JavaScript runs on. There is exactly one; multiple windows are a separate
-//! decision this does not anticipate.
+//! JavaScript runs on. The current session has exactly one. Issue #105 decides
+//! that future windows keep isolated JavaScript contexts on this same thread;
+//! before `create` can ship, this singleton must become a calling-context to
+//! window mapping rather than exposing another context's window here.
 //!
 //! Nothing here reports the window's size or scale factor. `innerWidth`,
 //! `innerHeight` and `devicePixelRatio` already do, and the `resize` event

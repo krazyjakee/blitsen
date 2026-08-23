@@ -1099,6 +1099,56 @@ Rules that, if broken, cost a rewrite rather than a refactor:
 
 ---
 
+### Multi-window contexts: isolated on one UI thread
+
+This is the architecture decision for #105. The current `WindowSession` still opens one native
+window backed by one `WindowApplication`, JavaScript engine, `Document` and module registry. A
+future second native window does **not** join that realm. It gets its own global `Window`, DOM tree,
+JavaScript heap, timers and evaluated module graph, including independent module-singleton state.
+Immutable application bytes may be cached across contexts; JavaScript values, module namespace
+objects and DOM nodes may not be.
+
+Isolation does not mean a thread per window. Winit's one OS UI event loop continues to own every
+native window, every DOM and every window JavaScript context. The loop selects a window's context
+for its event or frame and runs callbacks to completion before selecting another one. Dedicated
+workers remain the only JavaScript contexts that run on their own threads. Code must therefore
+use messages for isolation, not assume parallel window callbacks or attempt cross-thread DOM use.
+
+Cross-window application communication is asynchronous structured clone over an explicitly
+transferred `MessagePort`. Creating code may make a `MessageChannel`, retain one endpoint and make
+the other available as bootstrap data to the new context; the receiving context adopts that port
+before it can drain messages. Transfer detaches the sender's object, queued messages travel with
+the endpoint, and the receiver starts delivery with `start()` or `onmessage`. There is no direct
+reference to another window's global, `Document` or module exports, and no `WindowProxy`, `opener`
+or shared-global shortcut. `window.postMessage()` keeps its current meaning — a later task in the
+same window. Cross-window `postMessage` is a method of the handed-over port.
+
+The application session owns the native windows and their contexts. The context that requested a
+window may hold a future opaque lifecycle capability, but it does not own the target's JavaScript
+objects and its own teardown does not implicitly close the target. Closing a window disposes only
+that window's DOM, heap, timers, workers and module evaluation state and releases every port the
+context owns. A peer port then becomes disentangled and later sends are discarded, matching the
+current `MessagePort.close()` contract; port closure is not a synthetic message. Any application
+that needs a positive close notification must receive it through the eventual lifecycle surface,
+not infer it from message delivery. Closing the application session disposes every window. Closing
+the last window follows the existing application-lifetime policy, including any tray keepalive.
+
+Failures are context-scoped too. Failure to load or evaluate the new window's entry module must
+fail the future creation operation and tear down only that partially created window. A later
+uncaught exception is reported against the window where it occurred; it is never rethrown into the
+creator and does not implicitly close that window or a sibling. A message that cannot be decoded
+raises `messageerror` only on its receiving port. Only a fatal session, renderer or engine failure
+may end every window.
+
+This decision deliberately does not add an API. Before `blitsen/window.create` can exist, the host
+must replace its session-wide engine, document, parked-error slot and thread-local current-window
+slot with records keyed by the native `WindowId`/messaging `ContextId`; native module calls must be
+routed through the calling context. Any eventual creation surface must expose an opaque lifecycle
+capability and a way to transfer bootstrap ports, never the target global itself. Until those
+requirements are implemented and tested, feature detection truthfully finds no `create` member.
+
+---
+
 ## 17. Open technical questions
 
 1. **Engine acquisition for Phase 2: decided, then reversed, and closed.** The first answer was
@@ -1114,8 +1164,10 @@ Rules that, if broken, cost a rewrite rather than a refactor:
    the engine's module loader. A pre-bundled single graph was rejected because real framework
    output is already split and every router in the audience documents `import()` as the way to code
    split. See [`MODULES.md`](MODULES.md).
-3. **Multi-window JS contexts** — one shared context or one per window? Shared is simpler and
-   matches the single-thread model; isolated is safer and matches the web.
+3. **Multi-window JS contexts: decided — isolated on one UI thread.** The complete context,
+   communication, ownership, close and failure contract is recorded in
+   [Multi-window contexts](#multi-window-contexts-isolated-on-one-ui-thread). `window.create`
+   remains absent until the host can uphold it.
 4. **DOM property access cost: decided — no wrapper-side cache.** Measured on the Phase 1 host
    (Linux x64, release): a `style.top` write costs 3.37 µs, a style read 1.41 µs, `setAttribute`
    1.69 µs, `getAttribute` 0.61 µs, `textContent` 1.04/0.48 µs, `getElementById` 2.03 µs, against

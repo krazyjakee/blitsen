@@ -716,9 +716,10 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Ren
 
     /// Hands `native:window` the window it acts on, or takes it away.
     ///
-    /// There is deliberately only one: multiple windows wait on the shared
-    /// versus isolated JavaScript context decision, and `create` is declared
-    /// absent until it is settled.
+    /// There is deliberately only one in the current host. Issue #105 chooses
+    /// isolated JavaScript contexts for future windows, so `create` remains
+    /// absent until this session can publish the window belonging to the
+    /// calling context instead of one process-wide slot.
     pub(crate) fn publish_window(&self) {
         crate::dom_bridge::window::publish(
             self.inner
