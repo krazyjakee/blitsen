@@ -249,7 +249,7 @@
     try { delete globalThis[key]; } catch {}
   }
   if (!Notification) try { delete globalThis.Notification; } catch {}
-  return testHarness ? null : Object.freeze({
+  return Object.freeze({
     mouse: dispatchMouseEvent,
     pointer: dispatchPointerEvent,
     keyboard: dispatchKeyboardEvent,

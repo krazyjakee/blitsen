@@ -115,9 +115,10 @@ pub struct InstallOptions {
     storage: Option<crate::storage::LocalStorage>,
 }
 
-/// JavaScript callbacks retained by the native host without publishing them on
-/// the application global object. A test harness deliberately keeps its named
-/// injection helpers instead and therefore has no retained hook set.
+/// JavaScript callbacks retained by the host without publishing them on the
+/// application global object. Test harnesses additionally expose their named
+/// synthetic injectors, but still retain this private set so document loading
+/// follows the same ownership path in every mode.
 pub(crate) struct HostHooks<V> {
     pub(crate) mouse: V,
     pub(crate) pointer: V,
@@ -131,7 +132,7 @@ pub(crate) struct HostHooks<V> {
 /// Observable window state plus the private native-to-DOM dispatch boundary.
 pub(crate) struct InstalledDom<V> {
     pub(crate) window_state: Rc<RefCell<WindowState>>,
-    pub(crate) host_hooks: Option<HostHooks<V>>,
+    pub(crate) host_hooks: HostHooks<V>,
 }
 
 impl InstallOptions {
@@ -301,18 +302,14 @@ pub(crate) fn install_with_hooks<E: JsEngine + 'static>(
     let test_harness = engine.boolean(mode.is_test_harness());
     engine.set_global("__blitsenTestHarness", &test_harness)?;
     let hooks = engine.evaluate_script(BOOTSTRAP, "blitsen:dom-bootstrap")?;
-    let host_hooks = if mode.is_test_harness() {
-        None
-    } else {
-        Some(HostHooks {
-            mouse: engine.get_property(&hooks, "mouse")?,
-            pointer: engine.get_property(&hooks, "pointer")?,
-            keyboard: engine.get_property(&hooks, "keyboard")?,
-            ime: engine.get_property(&hooks, "ime")?,
-            locked_pointer_motion: engine.get_property(&hooks, "lockedPointerMotion")?,
-            release_window_modes: engine.get_property(&hooks, "releaseWindowModes")?,
-            drag: engine.get_property(&hooks, "drag")?,
-        })
+    let host_hooks = HostHooks {
+        mouse: engine.get_property(&hooks, "mouse")?,
+        pointer: engine.get_property(&hooks, "pointer")?,
+        keyboard: engine.get_property(&hooks, "keyboard")?,
+        ime: engine.get_property(&hooks, "ime")?,
+        locked_pointer_motion: engine.get_property(&hooks, "lockedPointerMotion")?,
+        release_window_modes: engine.get_property(&hooks, "releaseWindowModes")?,
+        drag: engine.get_property(&hooks, "drag")?,
     };
 
     let document = engine.evaluate_script("globalThis.document", "blitsen:document-value")?;

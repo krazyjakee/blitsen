@@ -591,9 +591,7 @@ pub(crate) fn load_window_document<E: JsEngine + Clone + 'static>(
     Ok(LoadedWindowDocument {
         document,
         window_state: installed.window_state,
-        host_hooks: installed.host_hooks.ok_or_else(|| {
-            JsError::new("an application document did not retain its native host hooks")
-        })?,
+        host_hooks: installed.host_hooks,
     })
 }
 
