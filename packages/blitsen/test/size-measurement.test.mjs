@@ -47,6 +47,10 @@ describe("size evidence", () => {
 
   test("uses one exact application and pinned comparison versions", async () => {
     expect(BARE_APP).toBe(await readFile(join(comparisonFixture, "web/index.html"), "utf8"));
+    const electron = JSON.parse(
+      await readFile(join(comparisonFixture, "electron/package.json"), "utf8"),
+    );
+    expect(electron.author).toBeTruthy();
     const tools = JSON.parse(await readFile(join(comparisonFixture, "package.json"), "utf8"));
     expect(tools.devDependencies).toEqual({
       "@electron/packager": "20.3.0",
