@@ -5,8 +5,8 @@ import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildStandalone } from "../src/export.mjs";
-import { resolvePhase2Runtime } from "../src/runtime.mjs";
 import { buildAddon, repository } from "./build-addon.mjs";
+import { pinnedPhase2Runtime } from "./measurement-runtime.mjs";
 
 export { repository } from "./build-addon.mjs";
 
@@ -124,6 +124,11 @@ export async function measureExport({ runs = 5, windowed = false } = {}) {
     throw new Error("--windowed reads resident memory, which needs /proc");
   }
 
+  // Resolve before building anything. Without this explicit pin an installed
+  // @blitsen platform package can outrank target/release and make a local run
+  // silently weigh the previous published runtime (#89).
+  const measuredRuntime = await pinnedPhase2Runtime();
+
   const directory = await mkdtemp(join(tmpdir(), "blitsen-measure-"));
   try {
     const addon = await buildAddon({ purpose: "measurement target", release: true, into: directory });
@@ -158,7 +163,7 @@ export async function measureExport({ runs = 5, windowed = false } = {}) {
     // Phase 2, a copy of Bun plus an embedded addon on Phase 1. Measured from
     // the linked file rather than assumed, so the breakdown adds up either way.
     const hostRuntimeBytes = result.host === "blitsen"
-      ? (await stat((await resolvePhase2Runtime()).path)).size
+      ? (await stat(measuredRuntime.path)).size
       : (await stat(floorExecutable)).size;
     const nativeAddonBytes = result.host === "blitsen" ? 0 : (await stat(addon)).size;
 
@@ -216,6 +221,7 @@ export async function measureExport({ runs = 5, windowed = false } = {}) {
       // Which host linked it: two hosts produce two different artifacts, and a
       // delta across the swap is a migration rather than a regression.
       host: result.host,
+      runtime: { path: measuredRuntime.path, source: measuredRuntime.source },
       size: {
         installedBytes: result.bytes,
         compressedBytes: await compressedBytes(outfile),

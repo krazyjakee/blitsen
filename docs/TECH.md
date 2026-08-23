@@ -1032,6 +1032,19 @@ Generic system access needs neither: `node:fs`, `node:child_process` and `bun:sq
 understood by the ecosystem, and in Phase 1 they come free from Bun's Node compatibility — Bun
 implements roughly 95% of Node-API, which is also what makes the addon strategy in §2 viable.
 
+### Size features are runtime variants, not application gating
+
+The Phase 2 export appends application bytes to one already-linked executable. Cargo features can
+change that executable when Blitsen builds it; they cannot remove an API after the platform package
+has shipped. Import scanning therefore must never claim per-application size savings. A locally
+compiled bespoke runtime is also outside P9: installation promises no Rust toolchain or link step.
+
+#89 measured the current capability steps and rejected named variants for now. The savings do not
+justify duplicating the six-target build/sign/test matrix or creating combinations with different
+compatibility profiles. One prebuilt full runtime remains the product. A future variant is valid
+only if it is a deliberately named, independently documented compatibility tier with a complete API
+matrix and a measured saving large enough to pay for six additional release artifacts.
+
 ---
 
 ## 14. Testing
@@ -1055,9 +1068,13 @@ executing the same native assertions on Linux, macOS, or Windows.
   harness and is absent from shipped windows.
 - **Frame determinism** — record/replay of an input trace at a fixed timestep, producing a
   deterministic frame hash sequence.
-- **Size regression** — installed and gzip size are recorded against a committed per-platform
-  baseline, and CI fails on growth beyond 2%. The toolchain is pinned in that job so a compiler
-  bump is a deliberate re-baseline rather than a mystery failure.
+- **Size regression and comparison** — installed and gzip size are recorded against a committed
+  per-platform baseline, and CI fails on growth beyond 2%. The toolchain is pinned in that job so a
+  compiler bump is a deliberate re-baseline rather than a mystery failure. Every one of the six
+  desktop targets also uploads a report-only Phase 2 component record and writes it to the job
+  summary; the primary three build the exact same bare HTML under pinned Electron and Tauri
+  fixtures on the same runner. Measurement commands require `BLITSEN_RUNTIME_PATH`, so an installed
+  package cannot silently substitute the previous release for the checkout runtime.
 - **Startup benchmark** — cold start and idle RSS, recorded per commit but not gated: hosted
   runners are too noisy to fail a build on. Headless runs measure documented proxies; the real
   windowed metrics need a desktop session and are opt-in (`bench:windowed`).

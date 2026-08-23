@@ -307,7 +307,8 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             libfontconfig1-dev libxkbcommon-dev libwayland-dev \
             libx11-dev libxcursor-dev libxi-dev libxrandr-dev \
-            libasound2-dev
+            libasound2-dev libwebkit2gtk-4.1-dev libappindicator3-dev \
+            librsvg2-dev patchelf
       - run: bun install --frozen-lockfile
       # Before the measurement, not after it: what an export links is the Phase 2
       # runtime, and `measure` refuses to guess at one. This built after the
@@ -315,6 +316,8 @@ jobs:
       - run: cargo build --release -p blitsen-runtime
       - name: Measure the export
         run: bun run --cwd packages/blitsen measure --runs 5 --out ${{ github.workspace }}/measurements.json
+        env:
+          BLITSEN_RUNTIME_PATH: ${{ github.workspace }}/target/release/${{ runner.os == 'Windows' && 'blitsen-runtime.exe' || 'blitsen-runtime' }}
       - name: Size gate
         run: bun run --cwd packages/blitsen size:gate --measurements ${{ github.workspace }}/measurements.json
       - name: Startup and idle RAM
@@ -324,11 +327,29 @@ jobs:
       # are not regressions. The runtime it reads was built above.
       - name: Phase 2 size breakdown
         run: bun run --cwd packages/blitsen size:phase2 --out ${{ github.workspace }}/phase2-size.json
+        env:
+          BLITSEN_RUNTIME_PATH: ${{ github.workspace }}/target/release/${{ runner.os == 'Windows' && 'blitsen-runtime.exe' || 'blitsen-runtime' }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: phase2-size-${{ matrix.os }}-${{ github.sha }}
           path: ${{ github.workspace }}/phase2-size.json
+      # Same document and same runner as the Phase 2 number above. Electron's
+      # complete packaged directory and Tauri's runnable release executable are
+      # measured rather than copied from either project's marketing page.
+      - name: Install pinned Electron and Tauri comparison tools
+        run: npm ci --prefix packages/blitsen/test/fixtures/size-comparison
+      - name: Measure equivalent bare Electron and Tauri applications
+        run: >-
+          bun run --cwd packages/blitsen size:compare --blitsen
+          ${{ github.workspace }}/phase2-size.json --out
+          ${{ github.workspace }}/desktop-size-comparison.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: desktop-size-comparison-${{ matrix.os }}-${{ github.sha }}
+          path: ${{ github.workspace }}/desktop-size-comparison.json
+          if-no-files-found: ignore
       # The committed time series only grows from local runs: CI cannot push, so
       # it keeps its own per-commit copy here instead.
       - uses: actions/upload-artifact@v4
@@ -443,8 +464,20 @@ jobs:
           if-no-files-found: ignore
       - name: Measure the export (report only)
         run: bun run --cwd packages/blitsen measure --runs 3 --out ${{ github.workspace }}/measurements.json
+        env:
+          BLITSEN_RUNTIME_PATH: ${{ github.workspace }}/target/release/${{ matrix.executable }}
       - name: Size report
         run: bun run --cwd packages/blitsen size:gate --measurements ${{ github.workspace }}/measurements.json
+      - name: Phase 2 size breakdown (report only)
+        run: bun run --cwd packages/blitsen size:phase2 --out ${{ github.workspace }}/phase2-size.json
+        env:
+          BLITSEN_RUNTIME_PATH: ${{ github.workspace }}/target/release/${{ matrix.executable }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: phase2-size-${{ matrix.target }}-${{ github.sha }}
+          path: ${{ github.workspace }}/phase2-size.json
+          if-no-files-found: ignore
       - uses: actions/upload-artifact@v4
         if: always()
         with:
