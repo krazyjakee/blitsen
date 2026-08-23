@@ -487,12 +487,17 @@ jobs:
   #
   # ## What this job still stops short of, and why
   #
-  # It does not boot an emulator, and that is the only thing left. Two questions
-  # about hosted runners are open and neither has been answered by anyone, so
-  # the emulator half is written and not wired: `bun run --cwd packages/blitsen
-  # test:android --apk <path> --package <id>` installs, launches, captures the
-  # framebuffer and asserts against a control frame taken before the install. It
-  # wants an APK and a device; the APK is now upstairs in this job.
+  # It does not boot an emulator, and it stays that way: the emulator tier is the
+  # `android-notifications` job below, which takes this job's APKs as an artifact
+  # rather than growing a device into this one. Two reasons, and only the second
+  # is about cost. An emulator boot is the flakiest thing in this file, and a
+  # cross-compile gate that fails because a hosted AVD did not come up has stopped
+  # being a cross-compile gate. The framebuffer half — `bun run --cwd
+  # packages/blitsen test:android --apk <path> --package <id>`, which asserts a
+  # painted frame against a control taken before the install — is still not wired
+  # to any device, and is left that way deliberately: it and the notification job
+  # meet the same two open questions below, and running one of them first is how
+  # those questions get an answer that is not two failures at once.
   #
   # The two questions, recorded here because they are the decisions and not the
   # plumbing:
@@ -702,9 +707,145 @@ jobs:
           PY
           "$ANDROID_HOME/build-tools/$(ls -1 "$ANDROID_HOME/build-tools" | sort -V | tail -1)/apksigner" \
             verify --print-certs ${{ runner.temp }}/Bare.apk
+      # Issue #254's fixture, packaged by the same command for the same reason: the
+      # emulator job below has to install the artifact a user would get, manifest and
+      # all, or the `POST_NOTIFICATIONS` it asserts on is not the one the packager
+      # writes. It is a second application rather than the bare one because the bare
+      # one calls nothing — this document drives `blitsen/notify` and reports what it
+      # observed back through the notification shade, which `android-notify-app.mjs`
+      # records is the only channel out of an APK.
+      #
+      # A second `blitsen build` and not a second compile: `cargo ndk` has already
+      # built both ABIs above, so this is `aapt2 link`, the archive writer and
+      # `apksigner`. The application ID is given rather than derived, because the
+      # harness has to be told which package to install, clear and grant.
+      - name: Package the notification fixture the emulator job installs
+        env:
+          BLITSEN_NOTICES_PATH: ${{ runner.temp }}/android-notices/NOTICES.txt
+          APP: ${{ runner.temp }}/notify-app
+        run: |
+          set -euo pipefail
+          bun -e 'import { NOTIFY_APP } from "./packages/blitsen/test/android-notify-app.mjs";
+                  await Bun.write(`${process.env.APP}/index.html`, NOTIFY_APP);'
+          bun packages/blitsen/bin/blitsen.mjs build "$APP" \
+            --android --android-package com.blitsen.notifyfixture \
+            --outfile ${{ runner.temp }}/Notify.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-notify-apk-${{ github.sha }}
+          path: ${{ runner.temp }}/Notify.apk
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: android-notices-${{ github.sha }}
           path: ${{ runner.temp }}/android-notices
+          if-no-files-found: ignore
+
+  # Issue #254: the first Blitsen artifact this repository has ever run on an
+  # Android device in CI, and it runs it for the one native API whose behaviour is
+  # a system service rather than a pixel.
+  #
+  # ## Why this is a separate job
+  #
+  # #245 landed Android notifications against a checkout with no emulator, so the
+  # evidence for them was that the JNI signatures type-check and the manifest
+  # contains a permission string. Neither can say what `checkSelfPermission`
+  # returns, whether `blitsen.default` is the channel the shade files a
+  # notification under, or whether `notify` with a reused ID replaces rather than
+  # adds. That needs a device, a device needs a boot, and a boot is the flakiest
+  # thing in this file — so it is quarantined here, where a failure is read as
+  # "the notification tier" and not as "the Android cross-compile broke".
+  #
+  # `needs: android` for the APK rather than for the gate: the artifact this
+  # installs is the one the job above packaged with the CLI, which is the whole
+  # point of asserting against it. Building a second one here would be a second
+  # cross-compile of the engine for a fixture that differs from the first by one
+  # HTML file.
+  #
+  # ## The matrix is the API 33 split and nothing else
+  #
+  # 32 and 33 are not two versions of one test. Below 33, `POST_NOTIFICATIONS` is
+  # not a runtime permission and the host reports `granted` without asking the
+  # platform anything, so what 32 proves is that delivery works with no prompt
+  # anywhere in it. At 33 the whole permission state machine exists, and the
+  # harness runs three launches over one install: deny at the dialog, relaunch to
+  # read the denial back out of the SharedPreferences #245 writes, then a clean
+  # install granted at the dialog. Both use `google_apis`, which is the only
+  # published system image for 32 and the rootable one for 33.
+  #
+  # ## What is recorded, because an emulator failure is only ever read afterwards
+  #
+  # The harness writes a logcat, the raw `dumpsys notification` it asserted
+  # against, the `dumpsys package` permission state, the timeline of shade readings
+  # it polled, and the `uiautomator` hierarchy of any screen it could not find the
+  # dialog on. All of it is uploaded on failure *and* on success, because a run
+  # that passes for the wrong reason is diagnosed from the same files.
+  android-notifications:
+    name: android (notifications, API ${{ matrix.api-level }})
+    needs: android
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        api-level: [32, 33]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile
+      - uses: actions/download-artifact@v4
+        with:
+          name: android-notify-apk-${{ github.sha }}
+          path: ${{ runner.temp }}/apk
+      # Without KVM the emulator interprets, which `android-emulator-runner`'s own
+      # README warns "might not work at all" on newer API levels. The device node
+      # exists on the standard runners; what is missing is a mode the runner's user
+      # can open it with, which is the rule this adds. If a future image drops
+      # `/dev/kvm` entirely this step still succeeds and the boot below is what
+      # reports it — so the emulator's own log is where that answer comes from.
+      - name: Let the runner's user open /dev/kvm
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      # `reactivecircus/android-emulator-runner` rather than `avdmanager` and
+      # `adb wait-for-device` by hand: it owns the AVD creation, the boot wait and
+      # the teardown, and every one of those is a thing this repository would
+      # otherwise get wrong once and then maintain.
+      #
+      # `-gpu lavapipe` is the decision recorded in the job above: #139 measured
+      # `swiftshader_indirect` killing the emulator at wgpu initialisation, and this
+      # fixture initialises wgpu like any other Blitsen document. `-no-window` and
+      # `-no-boot-anim` because nothing here reads pixels, and `disable-animations`
+      # because `uiautomator dump` refuses while a window is still moving and the
+      # permission dialog is a window that moves.
+      - name: Notification coverage on a booted emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ matrix.api-level }}
+          target: google_apis
+          arch: x86_64
+          # No AVD snapshot cache: #243 had to bring this repository's cache usage
+          # back inside its quota, and a per-API-level system image is the largest
+          # entry anything here would add. A cold AVD creation costs a couple of
+          # minutes on a job that is already waiting for a boot.
+          disable-animations: true
+          emulator-options: >-
+            -no-window -gpu lavapipe -noaudio -no-boot-anim -no-snapshot-save
+            -camera-back none -camera-front none
+          script: |
+            adb devices -l
+            adb shell getprop ro.build.fingerprint
+            bun run --cwd packages/blitsen test:android-notify -- \
+              --apk ${{ runner.temp }}/apk/Notify.apk \
+              --package com.blitsen.notifyfixture \
+              --out ${{ runner.temp }}/android-notify
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: android-notify-${{ matrix.api-level }}-${{ github.sha }}
+          path: ${{ runner.temp }}/android-notify
           if-no-files-found: ignore

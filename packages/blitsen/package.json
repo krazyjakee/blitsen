@@ -131,7 +131,8 @@
     "test:licensing": "bun test/run-redistribution.mjs",
     "test:proxy": "bun test/run-proxy.mjs",
     "test:macos-notify": "bun test/run-macos-notify.mjs",
-    "test:android": "bun test/run-android-smoke.mjs"
+    "test:android": "bun test/run-android-smoke.mjs",
+    "test:android-notify": "bun test/run-android-notify.mjs"
   },
   "publishConfig": {
     "access": "public"

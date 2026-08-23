@@ -43,9 +43,11 @@
 // keeps the one whose size arithmetic works out. If neither does, it fails with
 // the numbers rather than guessing — a misread header would turn every frame
 // into noise, which is to say into a pass.
-import { spawnSync } from "node:child_process";
-import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+
+import {
+  adb, argument, artifacts, deviceIsAlive, keep as keepIn, sleep, waitForBoot,
+} from "./android-device.mjs";
 
 /// A frame is not blank if it has at least this many distinct colours, and if
 /// no single colour covers more than this much of it.
@@ -64,59 +66,16 @@ const MAXIMUM_UNIFORMITY = 0.995;
 /// has to exclude "the same screen with a clock on it".
 const MINIMUM_CHANGE = 0.10;
 
-function argument(name, fallback = null) {
-  const at = process.argv.indexOf(`--${name}`);
-  return at < 0 ? fallback : process.argv[at + 1];
-}
-
 const options = {
   apk: argument("apk"),
   package: argument("package"),
   activity: argument("activity", "android.app.NativeActivity"),
-  serial: argument("serial", process.env.ANDROID_SERIAL ?? null),
   out: argument("out", join(process.cwd(), "../../target/android-smoke")),
   // How long the application gets to reach a first frame. Generous, because a
   // software-rendered emulator on a hosted runner is slow and a timeout that
   // fires early is indistinguishable from a real failure.
   settle: Number(argument("settle", "45000")),
 };
-
-/** One `adb` call. Binary-safe: `exec-out` is used for anything that is pixels. */
-function adb(args, { binary = false } = {}) {
-  const prefixed = options.serial ? ["-s", options.serial, ...args] : args;
-  const result = spawnSync("adb", prefixed, {
-    encoding: binary ? "buffer" : "utf8",
-    maxBuffer: 256 * 1024 * 1024,
-  });
-  if (result.error) throw new Error(`adb ${args[0]}: ${result.error.message}`);
-  return {
-    code: result.status ?? 1,
-    stdout: result.stdout ?? (binary ? Buffer.alloc(0) : ""),
-    stderr: binary ? String(result.stderr ?? "") : (result.stderr ?? ""),
-  };
-}
-
-/** `adb` that must succeed, and that says what it was doing when it did not. */
-function adbOrFail(args, what) {
-  const result = adb(args);
-  if (result.code !== 0) {
-    throw new Error(`${what} failed (adb exited ${result.code})\n`
-      + `  ${result.stderr.trim() || result.stdout.trim()}`);
-  }
-  return result.stdout;
-}
-
-const sleep = milliseconds => new Promise(settle => setTimeout(settle, milliseconds));
-
-/// Whether the device is still there at all.
-///
-/// Called after every step that could take it away, because #139's failure mode
-/// is the emulator dying rather than the application misbehaving, and the two
-/// produce completely different next actions.
-function deviceIsAlive() {
-  const state = adb(["get-state"]);
-  return state.code === 0 && state.stdout.trim() === "device";
-}
 
 /// The raw `screencap` header, read rather than assumed. See the note above.
 ///
@@ -179,35 +138,12 @@ export function changed(before, after) {
   return differing / before.pixels.length;
 }
 
-const artifacts = [];
-async function keep(name, contents) {
-  if (contents === null || contents === undefined) return;
-  await mkdir(options.out, { recursive: true });
-  const path = join(options.out, name);
-  await writeFile(path, contents);
-  artifacts.push(path);
-}
+const keep = (name, contents) => keepIn(options.out, name, contents);
 
 async function main() {
-  // ① The device, and that it has finished booting. Polled with a bound rather
-  //    than `adb wait-for-device`, which waits for ever: a job that hangs until
-  //    the runner's own timeout kills it reports nothing, and "there is no
-  //    device" is a different answer from "the device never booted".
-  const booted = Date.now() + options.settle;
-  while (!deviceIsAlive()) {
-    if (Date.now() > booted) {
-      throw new Error(`no device answered adb within ${options.settle} ms`
-        + `${options.serial ? ` for serial ${options.serial}` : ""}. `
-        + "Start an emulator, or pass --serial for the one to use.");
-    }
-    await sleep(1000);
-  }
-  while (adb(["shell", "getprop", "sys.boot_completed"]).stdout.trim() !== "1") {
-    if (Date.now() > booted) throw new Error("the device never reported sys.boot_completed");
-    await sleep(1000);
-  }
-  const fingerprint = adb(["shell", "getprop", "ro.build.fingerprint"]).stdout.trim();
-  console.log(`device: ${fingerprint}`);
+  // ① The device, and that it has finished booting. Bounded rather than
+  //    `adb wait-for-device`, for the reason `android-device.mjs` records.
+  console.log(`device: ${await waitForBoot(options.settle)}`);
 
   // ② The control. Before anything of ours is on the device, so a failure here
   //    is the harness or the emulator and nothing else.
