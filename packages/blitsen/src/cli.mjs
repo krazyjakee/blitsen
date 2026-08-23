@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { access, realpath } from "node:fs/promises";
 import { constants, watch as watchFs } from "node:fs";
 import { extname, join, normalize, resolve } from "node:path";
@@ -8,9 +9,9 @@ import { doctorApplication, formatDiagnostic } from "./doctor.mjs";
 import { buildStandalone } from "./export.mjs";
 import { frameDelay } from "./frame-pacing.mjs";
 import { ANDROID_TARGETS } from "./native-modules.mjs";
-import { signArtifact } from "./packaging.mjs";
-import { describeRuntime, hostTarget, openRuntime, packageVersion, resolveRuntime, TARGETS }
-  from "./runtime.mjs";
+import { developmentBundle, developmentIdentifier, signArtifact } from "./packaging.mjs";
+import { describeRuntime, hostTarget, openRuntime, packageVersion, resolveRuntime,
+  runtimeCacheDir, TARGETS } from "./runtime.mjs";
 
 const HELP = `Usage: blitsen [directory|url] [options]
        blitsen build [directory] [options]
@@ -47,6 +48,10 @@ Options:
   --bundle-id <id>   macOS CFBundleIdentifier (default: com.blitsen.<title>)
   --app-version <v>  Application version recorded in the platform metadata
   --sign <command>   Signing hook, run with the packaged artifact as its argument
+  --dev-bundle       macOS, run only: build a signed development .app around this
+                     interpreter and run inside it, so the development host has a
+                     notification identity of its own. --bundle-id names it;
+                     --sign replaces the ad-hoc signature
   --force            Replace an existing build output
   --json             Emit the doctor report as JSON
   -h, --help         Show help
@@ -95,6 +100,12 @@ const ANDROID_ONLY = ["--android-abi", "--android-debug", ...Object.keys(ANDROID
 // platform, and asking about a platform is not the same as claiming to build for
 // it (#147).
 const DOCTOR_OPTIONS = ["--target"];
+// The two packaging options a run also takes, and only inside a development
+// bundle (#253): which identity that bundle carries, and how it is signed. The
+// pairing is checked after the loop rather than at the flag, because
+// `--dev-bundle` may be typed after either of them — the same reason the
+// Android options are checked there.
+const DEV_BUNDLE_OPTIONS = { "--bundle-id": "bundleId", "--sign": "sign" };
 // TECH.md §11: one binary package per target (src/runtime.mjs). A cross-target
 // build links that target's runtime, fetched on demand (#72), and compiles the
 // launcher for that target's Bun. What it cannot do is sign or notarise for a
@@ -128,7 +139,8 @@ export function parseArgs(args) {
       if (command === "doctor" && !DOCTOR_OPTIONS.includes(argument)) {
         throw new Error(`${argument} is not valid with doctor`);
       }
-      if (BUILD_OPTIONS.includes(argument) && command === "run") {
+      if (BUILD_OPTIONS.includes(argument) && command === "run"
+        && DEV_BUNDLE_OPTIONS[argument] === undefined) {
         throw new Error(`${argument} is only valid with build`
           + `${DOCTOR_OPTIONS.includes(argument) ? " or doctor" : ""}`);
       }
@@ -171,6 +183,10 @@ export function parseArgs(args) {
       if (argument === "--android") options.android = true;
       else if (argument === "--android-debug") options.androidDebug = true;
       else options.acceptErrors = true;
+    } else if (argument === "--dev-bundle") {
+      if (command !== "run") throw new Error("--dev-bundle is only valid with run: a build "
+        + "already produces a bundle, and --bundle-id and --sign describe that one");
+      options.devBundle = true;
     } else if (argument === "--json") {
       if (command !== "doctor") throw new Error("--json is only valid with doctor");
       options.json = true;
@@ -194,7 +210,22 @@ export function parseArgs(args) {
   }
   applyName(options);
   checkAndroidOptions(options);
+  checkDevBundleOptions(options);
   return options;
+}
+
+// A run may name an identity and a signing command, but only for the artifact
+// `--dev-bundle` produces. Without it there is no artifact, so accepting them
+// silently would be the same failure `checkAndroidOptions` guards against: the
+// flag was typed, the run started, and nothing was identified or signed.
+function checkDevBundleOptions(options) {
+  if (options.command !== "run" || options.devBundle) return;
+  for (const [flag, field] of Object.entries(DEV_BUNDLE_OPTIONS)) {
+    if (options[field] !== undefined) {
+      throw new Error(`${flag} needs --dev-bundle when running: a run outside a development `
+        + "bundle produces no artifact to identify or sign");
+    }
+  }
 }
 
 // What `--android` is compatible with, checked once rather than at each flag —
@@ -448,6 +479,59 @@ async function buildAndroidArtifact(options, application, output) {
   return 0;
 }
 
+// The bundle the current process is already running inside. The child is handed
+// the same command line, `--dev-bundle` included, so something has to stop it
+// building a bundle around a bundle; this is what says which side of the
+// re-execution a process is on.
+const DEV_BUNDLE = "BLITSEN_DEV_BUNDLE";
+
+// Issue #253: macOS gates `UNUserNotificationCenter` on an application identity
+// — a bundle identifier and a signature — and a development run is an
+// interpreter executing a script, which has neither. The exported `.app` is the
+// only Blitsen artifact that qualifies, so a developer could not exercise
+// notification submission before shipping.
+//
+// So the development host is given an identity of its own: the same Info.plist
+// writer an export uses, wrapped around a copy of this interpreter, ad-hoc
+// signed, and then re-executed with the command line unchanged so the run
+// continues inside it. Nothing is impersonated — the identifier belongs to
+// Blitsen's development namespace, distinct from the exported application's, and
+// `--bundle-id` lets a developer name their own instead.
+async function runInsideDevelopmentBundle(options, output) {
+  if (process.platform !== "darwin") {
+    throw new Error("--dev-bundle is a macOS option: macOS is the only desktop platform that "
+      + "ties notification permission and delivery to a bundle identifier, and the other two "
+      + "hosts submit notifications from an ordinary executable");
+  }
+  // Only the name is taken from the configuration here, and the build command it
+  // may also carry is deliberately not run: the child reads the same file and
+  // owns every other step.
+  const { config } = await loadConfig();
+  const name = options.name ?? config?.name ?? options.title;
+  const { bundle, executable, identifier, rebuilt } = await developmentBundle({
+    directory: join(runtimeCacheDir(), "development"),
+    name,
+    identifier: options.bundleId ?? developmentIdentifier(name),
+    launcher: process.execPath,
+    version: await packageVersion(),
+    ...options.sign === undefined ? {} : { sign: options.sign },
+  });
+  output.log(`${rebuilt ? "Built" : "Reused"} development bundle ${bundle} (${identifier}). `
+    + "That identity is the development host's, not the application you export: macOS records "
+    + "notification permission per identifier, so the two are granted and revoked separately.");
+  // The same argument vector, under the bundle's own copy of this interpreter.
+  // `process.argv` rather than the parsed options, because what has to be
+  // reproduced is the command line the developer typed.
+  const child = spawn(executable, process.argv.slice(1), {
+    stdio: "inherit",
+    env: { ...process.env, [DEV_BUNDLE]: bundle },
+  });
+  return await new Promise((resolve, reject) => {
+    child.on("error", reject);
+    child.on("exit", code => resolve(code ?? 1));
+  });
+}
+
 export async function main(args, output = console, runtime = null) {
   try {
     let active = runtime;
@@ -459,6 +543,11 @@ export async function main(args, output = console, runtime = null) {
     if (options.version) {
       output.log(await packageVersion());
       return 0;
+    }
+    // Before the configuration is read, so the configured build command runs
+    // once — in the child, which is the process that goes on to open a window.
+    if (options.devBundle && !process.env[DEV_BUNDLE]) {
+      return await runInsideDevelopmentBundle(options, output);
     }
     // An Android build resolves no runtime at all, and that is the shape of the
     // whole decision (#148): there is no `@blitsen/android-*` package to fetch

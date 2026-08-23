@@ -104,6 +104,20 @@ harness = false
 
 # Desktop notifications use the native toast/notification-center APIs on
 # Windows and macOS and the freedesktop notification service on Linux.
+#
+# `preview-macos-un` selects the crate's `UNUserNotificationCenter` backend, and
+# it stays selected for development runs as well as exports (#253). The library
+# does carry the other macOS backend, `mac-notification-sys`, and switching to
+# it for unbundled hosts would be the smaller change — but that path submits
+# through `get_bundle_identifier_or_default`, which resolves to an installed
+# application's identifier, so a development notification would arrive as
+# Terminal's and the permission the user granted would be Terminal's. Real
+# permission, actions, replacement and close are only offered by the modern API
+# in the first place, so trading them for a borrowed identity would cost
+# behaviour twice over. What the development host gets instead is a bundle of
+# its own, and `check_bundle` — the crate's own `NSBundle` reader, re-exported
+# from `mac-usernotifications` — is what tells it whether it has one before a
+# call reaches a framework that aborts the process without it.
 [target.'cfg(not(target_os = "android"))'.dependencies]
 notify-rust = { version = "4.18.0", default-features = false, features = ["preview-macos-un", "z-with-tokio"] }
 # The report descriptor of an opened `blitsen/hid` device (#247). A descriptor

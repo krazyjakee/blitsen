@@ -21,6 +21,40 @@ enum SignalKind {
     Error(String),
 }
 
+/// What a macOS process without an application identity is told (#253).
+///
+/// Apple gates `UNUserNotificationCenter` on a bundle identifier and a
+/// signature, and a development run is an interpreter executing a script, so it
+/// has neither — the API aborts the process rather than answering a caller
+/// without one. The alternative the library still carries, `mac-notification-sys`
+/// with `get_bundle_identifier_or_default`, submits under an installed
+/// application's identifier instead: the notification is then attributed to
+/// Terminal, and the permission the user granted was granted to Terminal. That
+/// is not a fallback, it is impersonation, so what this points at is an identity
+/// the development host owns.
+///
+/// Compiled into the test build on every platform, because this sentence is the
+/// whole of what a developer without a bundle receives and a message only macOS
+/// could compile is a message nothing checks.
+#[cfg(any(target_os = "macos", test))]
+const NO_BUNDLE_IDENTITY: &str = concat!(
+    "macOS notifications need an application bundle identity, and this process has no ",
+    "CFBundleIdentifier for UNUserNotificationCenter to address or hold permission against. ",
+    "Give the development host one of its own with `blitsen run --dev-bundle`, which builds and ",
+    "re-executes into a signed development .app, or run an application exported by ",
+    "`blitsen build --bundle-id <id> --sign <command>`.",
+);
+
+/// The library's own bundle check, ahead of anything that reaches the framework.
+///
+/// Only `permission` and `show` need it: every other entry point addresses a
+/// notification that a `show` already got through, and a process cannot acquire
+/// or lose a bundle identifier while it runs.
+#[cfg(target_os = "macos")]
+fn bundle_identity() -> Result<(), String> {
+    notify_rust::check_bundle().map_err(|_| NO_BUNDLE_IDENTITY.to_owned())
+}
+
 #[derive(Debug)]
 struct Signal {
     public_id: String,
@@ -318,9 +352,15 @@ impl NotifyController {
 
         #[cfg(target_os = "macos")]
         {
+            // From the crate root, not from `notify_rust::macos`: that module is
+            // private (`notify-rust-4.18.0/src/lib.rs`, `mod macos;`) and only
+            // its items are re-exported, so naming it never compiled — this
+            // whole arm has been dead since #97 landed it, which is also why
+            // #253's macOS gate is the first thing to run it.
             use mac_usernotifications::AuthorizationStatus;
-            use notify_rust::macos::{get_notification_settings_blocking, request_auth_blocking};
+            use notify_rust::{get_notification_settings_blocking, request_auth_blocking};
 
+            bundle_identity()?;
             if request {
                 return request_auth_blocking()
                     .map(|granted| json!(if granted { "granted" } else { "denied" }))
@@ -372,6 +412,11 @@ impl NotifyController {
         public_id: String,
         options: NotificationOptions,
     ) -> Result<Value, String> {
+        // Refused before anything is built: without a bundle identity the
+        // framework `show` would reach does not return an error, it aborts the
+        // process.
+        #[cfg(target_os = "macos")]
+        bundle_identity()?;
         #[cfg(not(target_os = "windows"))]
         let handle = {
             #[allow(unused_mut)]
@@ -630,6 +675,24 @@ mod tests {
         assert_eq!(options.app_name.as_deref(), Some("Demo"));
         assert_eq!(options.timeout, Some(1000));
         assert_eq!(options.urgency, "critical");
+    }
+
+    #[test]
+    fn the_unbundled_macos_refusal_names_a_command_and_borrows_no_identity() {
+        // Both halves of #253's acceptance: the limitation is actionable, and
+        // the action is one the reader can type.
+        assert!(NO_BUNDLE_IDENTITY.contains("blitsen run --dev-bundle"));
+        assert!(NO_BUNDLE_IDENTITY.contains("blitsen build --bundle-id <id> --sign <command>"));
+        // And the shortcut it refuses stays refused: submitting under an
+        // installed application's identifier is what the legacy backend's
+        // `get_bundle_identifier_or_default` does, and no message that named one
+        // could be read as anything but an invitation to do it.
+        for borrowed in ["com.apple.", "Terminal", "Script Editor", "iTerm"] {
+            assert!(
+                !NO_BUNDLE_IDENTITY.contains(borrowed),
+                "the macOS notification refusal must not name {borrowed}"
+            );
+        }
     }
 }
 

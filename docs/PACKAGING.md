@@ -83,6 +83,37 @@ exit code fails the build. Blitsen never reads or stores signing credentials.
 Signing is not notarization. Complete the platform's required release process after signing. In
 particular, distribute macOS applications only after notarization when Gatekeeper coverage matters.
 
+## Run with a macOS development identity
+
+macOS grants notification permission to an application identity — a bundle identifier and a
+signature — and refuses a process that has none. An exported `.app` has one. `blitsen run` is an
+interpreter executing a script, so it does not, and `blitsen/notify` rejects there rather than
+submitting under some other application's name.
+
+```sh
+npx blitsen --dev-bundle
+```
+
+This builds a small `.app` around a copy of the interpreter, ad-hoc signs it with `codesign`, and
+re-runs the same command line inside it, so the rest of the development loop — the configured build
+command, file watching, reload — is unchanged. The bundle is cached beside the runtime cache and
+rebuilt when the interpreter, the identifier or the signing command changes.
+
+The identity is the development host's own, `com.blitsen.dev.<name>`, and deliberately not the
+`com.blitsen.<name>` an export defaults to: macOS records notification permission per identifier, so
+allowing your development host must not read as allowing the application you ship, and revoking one
+must not revoke the other. Name your own with `--bundle-id`, and replace the ad-hoc signature with
+`--sign` — for a Developer ID identity, or where the interpreter carries entitlements an ad-hoc
+re-sign would drop:
+
+```sh
+npx blitsen --dev-bundle --bundle-id com.example.pong.dev \
+  --sign 'codesign --force --sign "Developer ID Application: Example"'
+```
+
+The flag exists only on macOS and only for `run`; no other desktop platform ties notification
+delivery to a bundle identifier, and a build already produces a bundle of its own.
+
 ## Build for another desktop target
 
 ```sh

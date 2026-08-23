@@ -203,10 +203,18 @@ await notify.close?.(id);
 `permission()` reads without prompting; `requestPermission()` prompts on macOS and Android 13+
 and otherwise reads the platform result. Linux returns `"granted"` because the freedesktop service
 has no per-app authorization state—an unavailable service still makes `show` reject. macOS
-requires an exported, signed `.app` bundle for authorization and uses its application icon;
+requires a signed `.app` bundle identity for authorization and uses its application icon;
 passing `icon` is rejected. Linux accepts an icon theme name or absolute path. Windows accepts an
 image path. Android accepts an application drawable resource name and otherwise uses a system
 fallback icon.
+
+An exported macOS application has that identity. A development run does not: `blitsen run` is an
+interpreter executing a script, so `permission`, `requestPermission` and `show` reject with a
+message naming `blitsen run --dev-bundle`, which builds a signed development `.app` around the
+interpreter and re-runs the same command inside it. That bundle's identifier is the development
+host's own—`com.blitsen.dev.<name>` unless `--bundle-id` names another—and never an installed
+application's, so a permission granted in development is not one granted to what you ship. See
+[Packaging](PACKAGING.md#run-with-a-macos-development-identity).
 
 IDs start again in each application session. Once a notification is clicked, acted on, dismissed,
 expired or closed, `update` and `close` return `false`. Events are FIFO and are never delivered from
@@ -229,9 +237,10 @@ than displaying inert controls. Android urgency is a builder hint inside the use
 default channel, and `appName` cannot rename a channel Android has already created.
 
 Browser-oriented integrations can use the standard `Notification` global over this same backend on
-Linux, Windows and eligible packaged macOS apps. It deliberately remains absent where its
-lifecycle contract cannot be implemented, including Android until notification intent routing
-lands; see [Web API support](WEB-APIS.md#notifications).
+Linux, Windows and any macOS process that has a bundle identity—an exported application, or a
+development run inside `--dev-bundle`. It deliberately remains absent where its lifecycle contract
+cannot be implemented, including Android until notification intent routing lands; see [Web API
+support](WEB-APIS.md#notifications).
 
 ## Native input snapshots
 

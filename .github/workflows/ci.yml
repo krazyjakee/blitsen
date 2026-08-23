@@ -162,6 +162,14 @@ jobs:
       # Issue #67: the other way to run an application — served by a dev server
       # rather than read off disk. The fixture server runs inside the gate.
       - run: bun run --cwd packages/blitsen test:proxy
+      # Issue #253: whether macOS will talk to a process at all is decided by the
+      # bundle identity that process was launched with, so it can only be gated
+      # by launching them — a development host, the bundle `--dev-bundle` builds
+      # for it, and an exported `.app`. Nothing here waits for a person to accept
+      # a notification; the runner has none.
+      - name: macOS notification identity
+        if: runner.os == 'macOS'
+        run: bun run --cwd packages/blitsen test:macos-notify
 
   # Frame determinism (issue #48). Replays one committed input trace twice, in
   # separate processes, and compares the digest sequences with each other and

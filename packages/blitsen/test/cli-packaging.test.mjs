@@ -4,7 +4,8 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { buildStandalone, describeExecutableBinary, describeNativeBinary } from "../src/export.mjs";
-import { packageBuild, signArgv, signArtifact } from "../src/packaging.mjs";
+import { developmentBundle, developmentIdentifier, packageBuild, signArgv, signArtifact }
+  from "../src/packaging.mjs";
 import { viteBase, addonFixtures, icon, signHook, compiler, engineAddon, engineBuilt, compileAddon, elfHeader, executableStub, exportedName, nativeStub, withStubbedExport, withArtifact } from "./cli-support.mjs";
 
 describe("directory CLI", () => {
@@ -285,6 +286,86 @@ describe("directory CLI", () => {
       expect(icns.subarray(8, 12).toString("ascii")).toBe("ic08");
       expect(icns.readUInt32BE(12)).toBe(png.length + 8);
       expect(Buffer.compare(icns.subarray(16), png)).toBe(0);
+    });
+  });
+
+  // Issue #253. The bundle a development run re-executes into: the identity is
+  // the whole point of it, so what is asserted is that it has one, that it is
+  // Blitsen's own rather than any installed application's, and that it is not
+  // the identity the same application would export under.
+  test("gives the development host a signed bundle with an identity of its own", async () => {
+    await withArtifact(async ({ directory, executable }) => {
+      const home = join(directory, "cache");
+      const made = await developmentBundle({
+        directory: home, name: "Pong Deluxe",
+        identifier: developmentIdentifier("Pong Deluxe"),
+        launcher: executable, version: "1.2.3", sign: signHook,
+      });
+      const bundle = join(home, "pong-deluxe.app");
+      expect(made).toEqual({
+        bundle,
+        executable: join(bundle, "Contents/MacOS/pong-deluxe"),
+        identifier: "com.blitsen.dev.pong-deluxe",
+        rebuilt: true,
+      });
+      // Never the exported application's identifier: notification permission is
+      // recorded per identifier, and a development grant must not read as one
+      // the shipped application was given.
+      expect(made.identifier).not.toBe("com.blitsen.pong-deluxe");
+      expect(developmentIdentifier("Terminal")).toBe("com.blitsen.dev.terminal");
+
+      expect((await readdir(join(bundle, "Contents"))).sort())
+        .toEqual(["Info.plist", "MacOS", "PkgInfo"]);
+      const plist = await readFile(join(bundle, "Contents/Info.plist"), "utf8");
+      expect(plist).toContain("<key>CFBundleIdentifier</key>\n  <string>com.blitsen.dev.pong-deluxe</string>");
+      expect(plist).toContain("<key>CFBundleExecutable</key>\n  <string>pong-deluxe</string>");
+      // The application still names itself; only the file had to be spellable.
+      expect(plist).toContain("<key>CFBundleName</key>\n  <string>Pong Deluxe</string>");
+      // The interpreter is copied, not linked: signing rewrites what it covers,
+      // and the machine's own interpreter is not Blitsen's to rewrite.
+      expect(await readFile(made.executable, "utf8")).toBe(await readFile(executable, "utf8"));
+      if (process.platform !== "win32") {
+        expect((await stat(made.executable)).mode & 0o111).toBeGreaterThan(0);
+      }
+      expect(await readFile(`${bundle}.signed`, "utf8")).toBe(`${bundle}\n`);
+
+      // Reused until something about the identity changes, and rebuilt when it
+      // does — a development run happens far more often than the interpreter
+      // under it moves.
+      await rm(`${bundle}.signed`);
+      const again = await developmentBundle({
+        directory: home, name: "Pong Deluxe",
+        identifier: developmentIdentifier("Pong Deluxe"),
+        launcher: executable, version: "1.2.3", sign: signHook,
+      });
+      expect(again.rebuilt).toBeFalse();
+      expect(await stat(`${bundle}.signed`).catch(() => null)).toBeNull();
+      const renamed = await developmentBundle({
+        directory: home, name: "Pong Deluxe", identifier: "com.example.pong",
+        launcher: executable, version: "1.2.3", sign: signHook,
+      });
+      expect(renamed.rebuilt).toBeTrue();
+      expect(await readFile(join(bundle, "Contents/Info.plist"), "utf8"))
+        .toContain("<string>com.example.pong</string>");
+    });
+  });
+
+  // A stamp written before the signature would hand the next run a bundle macOS
+  // refuses, and say nothing about why.
+  test("leaves no development bundle behind when signing it fails", async () => {
+    await withArtifact(async ({ directory, executable }) => {
+      const home = join(directory, "cache");
+      const build = () => developmentBundle({
+        directory: home, name: "Pong", identifier: "com.example.pong",
+        launcher: executable, version: "1.2.3", sign: "false",
+      });
+      await expect(build()).rejects.toThrow("signing command failed with exit code 1: false");
+      expect(await stat(join(home, "pong.app.launcher")).catch(() => null)).toBeNull();
+      await expect(build()).rejects.toThrow("signing command failed");
+      await expect(developmentBundle({
+        directory: home, name: "Pong", identifier: "com.example.pong",
+        launcher: join(directory, "absent"), version: null, sign: signHook,
+      })).rejects.toThrow("the interpreter to bundle does not exist:");
     });
   });
 

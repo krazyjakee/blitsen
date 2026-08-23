@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
-import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { copyFile, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, join, resolve } from "node:path";
 
 const ICON_FORMATS = { darwin: [".png", ".icns"], linux: [".png", ".svg"], win32: [".png", ".ico"] };
@@ -361,4 +362,68 @@ export async function signArtifact({ command, artifact }) {
     throw new Error(`signing command failed with exit code ${status}: ${command}`);
   }
   return { command, artifact };
+}
+
+// The development host's own macOS identity (#253).
+//
+// `UNUserNotificationCenter` will not talk to a process without a bundle
+// identifier, and `blitsen run` is an interpreter executing a script. Rather
+// than submit under an identifier some installed application owns, the
+// development host is given one under Blitsen's own reverse-DNS namespace —
+// and deliberately not the `com.blitsen.<title>` an export defaults to, because
+// notification permission is granted per identifier: a developer allowing their
+// dev host must not thereby have allowed the application they ship, and
+// revoking one must not revoke the other.
+export const developmentIdentifier = name => `com.blitsen.dev.${slug(name)}`;
+
+// Ad hoc (`-`), because a development identity is not a distribution one:
+// UNUserNotificationCenter asks for a signature rather than for a certificate,
+// and `codesign` is part of macOS, so this needs nothing installed and nothing
+// enrolled. `--force` replaces the signature the copied interpreter carries in.
+// It is a default rather than a rule: `--sign` overrides it, which is the
+// answer for a host binary whose entitlements an ad-hoc re-sign would drop.
+export const DEVELOPMENT_SIGNATURE = "codesign --force --sign -";
+
+/**
+ * Builds and signs the `.app` a development run re-executes into.
+ *
+ * The same `Info.plist` an export gets, around a *copy* of the interpreter this
+ * process is running. A copy rather than a link because signing rewrites the
+ * file it covers, and a link would rewrite the interpreter the rest of the
+ * machine runs; `COPYFILE_FICLONE` makes it a copy-on-write clone where the
+ * filesystem has them, which is where the cache directory usually is.
+ *
+ * The bundle is reused until the interpreter, the identity or the signing
+ * command changes — a stamp beside it rather than inside it, because anything
+ * added under `Contents` after signing invalidates the signature it is meant to
+ * describe. It is written last, so a bundle whose signing failed is rebuilt
+ * rather than handed to the next run as an identity macOS will refuse.
+ */
+export async function developmentBundle({
+  directory, name, identifier, launcher, version = null, sign = DEVELOPMENT_SIGNATURE,
+}) {
+  // The application names itself; the cache has to name a file, whatever it
+  // chose. `Info.plist` still carries the name as written.
+  const file = slug(name);
+  const bundle = join(directory, `${file}.app`);
+  const executable = join(bundle, "Contents", "MacOS", file);
+  const stamp = `${bundle}.launcher`;
+  const source = await stat(launcher).catch(() => {
+    throw new Error(`the interpreter to bundle does not exist: ${launcher}`);
+  });
+  const built = `${identifier}\n${launcher}\n${source.size} ${source.mtimeMs}\n${sign}\n`;
+  if (await readFile(stamp, "utf8").catch(() => null) === built) {
+    return { bundle, executable, identifier, rebuilt: false };
+  }
+
+  await rm(stamp, { force: true });
+  await rm(bundle, { recursive: true, force: true });
+  await mkdir(dirname(executable), { recursive: true });
+  await copyFile(launcher, executable, constants.COPYFILE_FICLONE);
+  await writeFile(join(bundle, "Contents", "Info.plist"),
+    infoPlist({ name, executable: file, identifier, icon: null, version }));
+  await writeFile(join(bundle, "Contents", "PkgInfo"), "APPL????");
+  await signArtifact({ command: sign, artifact: bundle });
+  await writeFile(stamp, built);
+  return { bundle, executable, identifier, rebuilt: true };
 }

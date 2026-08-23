@@ -71,8 +71,9 @@ application as root is not a supported substitute.
   navigation drawer — are views inside the activity's own layout rather than a menu the platform
   owns.
 
-The standard Web `Notification` facade is installed on Linux, on Windows and in eligible packaged
-macOS apps. It is absent in an unbundled macOS development host (#253), and absent on Android until
+The standard Web `Notification` facade is installed on Linux, on Windows, and on any macOS process
+carrying a bundle identity—an exported application, or a development run inside `blitsen run
+--dev-bundle`. It is absent in an unbundled macOS development host, and absent on Android until
 intent activation is wired through #252. The native `blitsen/notify` module is available on every
 desktop target and Android, and exposes its platform limits directly.
 
@@ -82,9 +83,11 @@ Blitsen publishes Intel and Apple silicon runtimes. The published artifacts are 
 an application you export is unsigned unless your build runs an appropriate signing command.
 
 Distribute a macOS application only after signing its `.app` bundle and completing notarization on
-macOS. Modern macOS notifications also require the exported `.app` bundle identity and signature;
-permission requests from an unbundled development executable reject. The current `blitsen/dialog`
-module is absent on macOS.
+macOS. Modern macOS notifications also require a signed `.app` bundle identity, which an export has
+and a development run does not: submission and permission from an unbundled executable reject with
+a message naming `blitsen run --dev-bundle`, which builds a signed development `.app` around the
+interpreter and runs inside it under `com.blitsen.dev.<name>`. No installed application's identifier
+is ever borrowed for either. The current `blitsen/dialog` module is absent on macOS.
 
 `blitsen/hid` opens devices with shared IOHID access, so an application never seizes a device from
 the rest of the system. A sandboxed application must be signed with `com.apple.security.device.usb`;
