@@ -836,13 +836,16 @@ jobs:
           emulator-options: >-
             -no-window -gpu lavapipe -noaudio -no-boot-anim -no-snapshot-save
             -camera-back none -camera-front none
+          # One line per command, and the harness invocation is not wrapped.
+          # The action hands this block to `sh -c`, and a trailing backslash does
+          # not survive that trip: the first run reached the emulator, read its
+          # fingerprint, and then called the harness with a lone `"\\"` for an
+          # argument, which printed the usage text and failed the job while
+          # everything it was meant to test still worked.
           script: |
             adb devices -l
             adb shell getprop ro.build.fingerprint
-            bun run --cwd packages/blitsen test:android-notify -- \
-              --apk ${{ runner.temp }}/apk/Notify.apk \
-              --package com.blitsen.notifyfixture \
-              --out ${{ runner.temp }}/android-notify
+            bun run --cwd packages/blitsen test:android-notify -- --apk ${{ runner.temp }}/apk/Notify.apk --package com.blitsen.notifyfixture --out ${{ runner.temp }}/android-notify
       - uses: actions/upload-artifact@v4
         if: always()
         with:

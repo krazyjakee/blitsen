@@ -140,9 +140,23 @@ if (process.platform === "linux" || process.platform === "win32") {
     assert.equal(Notification.permission, "granted");
   } else {
     // Windows reads the notifier, which is enabled or switched off and never
-    // undetermined; which of the two is a property of the machine.
-    assert(["granted", "denied"].includes(Notification.permission),
-      `Windows notification permission was ${Notification.permission}`);
+    // undetermined; which of the two is a property of the machine. A machine
+    // that registered no AppUserModelID for this process holds no notifier at
+    // all, and #251 refuses that with the prerequisite rather than inventing a
+    // verdict — so the contract is one of those two answers, not one of them
+    // and a crash. A bare `bun` process on a stripped image (a CI runner,
+    // Server Core) is the second case, which is why it is asserted rather than
+    // stepped around.
+    let permission;
+    try {
+      permission = Notification.permission;
+    } catch (error) {
+      assert.match(String(error.message), /AppUserModelID/,
+        `Windows notification permission failed for a reason other than a missing identity: ${error.message}`);
+      permission = null;
+    }
+    assert(permission === null || ["granted", "denied"].includes(permission),
+      `Windows notification permission was ${permission}`);
   }
 }
 
