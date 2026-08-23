@@ -742,16 +742,20 @@ mod native {
         })
     }
 
-    pub(crate) fn append_native_menu<F>(
+    /// `append` is a trait object rather than a generic parameter, and it has to
+    /// stay one. A submenu recurses with a closure that appends to *that*
+    /// submenu, so a generic version instantiates itself at a new closure type
+    /// for every level of nesting and monomorphisation never terminates — which
+    /// rustc reports as a recursion limit rather than as the infinite regress it
+    /// is. Nothing here is hot enough to want the static dispatch back: this
+    /// runs once per menu configuration, not once per frame.
+    pub(crate) fn append_native_menu(
         entries: &[MenuEntry],
         id_prefix: &str,
         next_id: &mut usize,
         bindings: &mut Bindings,
-        mut append: F,
-    ) -> Result<(), String>
-    where
-        F: FnMut(&dyn IsMenuItem) -> Result<(), tray_icon::menu::Error>,
-    {
+        append: &mut dyn FnMut(&dyn IsMenuItem) -> Result<(), tray_icon::menu::Error>,
+    ) -> Result<(), String> {
         for entry in entries {
             let native_id = format!("{id_prefix}-{}", *next_id);
             *next_id += 1;
@@ -772,7 +776,7 @@ mod native {
                     role: _,
                 } => {
                     let submenu = Submenu::with_id(&native_id, label, *enabled);
-                    append_native_menu(menu, id_prefix, next_id, bindings, |item| {
+                    append_native_menu(menu, id_prefix, next_id, bindings, &mut |item| {
                         submenu.append(item)
                     })?;
                     if let Some(icon) = icon {
@@ -863,7 +867,7 @@ mod native {
     ) -> Result<Menu, String> {
         let menu = Menu::new();
         let mut next_id = 0;
-        append_native_menu(entries, id_prefix, &mut next_id, bindings, |item| {
+        append_native_menu(entries, id_prefix, &mut next_id, bindings, &mut |item| {
             menu.append(item)
         })?;
         Ok(menu)
