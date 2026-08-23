@@ -12,6 +12,17 @@ export { repository } from "./build-addon.mjs";
 
 export const platformKey = `${process.platform}-${process.arch}`;
 
+export function measurementStorageEnvironment(platform, directory) {
+  if (platform === "win32") {
+    return {
+      APPDATA: join(directory, "app-data"),
+      LOCALAPPDATA: join(directory, "local-data"),
+    };
+  }
+  if (platform === "darwin") return { HOME: join(directory, "home") };
+  return { XDG_DATA_HOME: join(directory, "data") };
+}
+
 function commandVersion(cmd) {
   const result = Bun.spawnSync({ cmd, stdout: "pipe", stderr: "ignore" });
   return result.exitCode === 0 ? result.stdout.toString().trim() : null;
@@ -151,7 +162,15 @@ export async function measureExport({ runs = 5, windowed = false } = {}) {
       : (await stat(floorExecutable)).size;
     const nativeAddonBytes = result.host === "blitsen" ? 0 : (await stat(addon)).size;
 
-    const checkEnvironment = { BLITSEN_STANDALONE_CHECK: "1", BLITSEN_STANDALONE_CHECK_DELAY: "0", PATH: "" };
+    // Keep benchmark runs hermetic without blanking the absolute platform data
+    // directory durable localStorage now requires. In particular, macOS uses
+    // HOME to locate Library/Application Support and rejects HOME="".
+    const checkEnvironment = {
+      ...measurementStorageEnvironment(process.platform, directory),
+      BLITSEN_STANDALONE_CHECK: "1",
+      BLITSEN_STANDALONE_CHECK_DELAY: "0",
+      PATH: "",
+    };
     const headless = timeSpawns([outfile], { cwd: directory, env: checkEnvironment }, runs);
     const floor = timeSpawns([floorExecutable], { cwd: directory, env: { PATH: "" } }, runs);
 
