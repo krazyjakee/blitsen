@@ -133,6 +133,17 @@ describe("the AndroidManifest.xml this build writes", () => {
       '<uses-permission android:name="android.permission.POST_NOTIFICATIONS" />');
   });
 
+  // Issue #248. USB host is a feature and not a permission: `blitsen/hid` is
+  // granted one device at a time at run time, so the manifest declares only
+  // that the application can use a USB host controller — and declares it
+  // optional, so a device without one still installs everything else.
+  test("declares USB host as an optional feature rather than a permission", () => {
+    const { manifest } = project();
+    expect(manifest).toContain(
+      '<uses-feature android:name="android.hardware.usb.host" android:required="false" />');
+    expect(manifest).not.toContain("android.permission.USB");
+  });
+
   test("claims no dex and no extraction, which is what the archive is written for", () => {
     const { manifest } = project();
     // `hasCode="false"` is true because #142 chose android-activity's

@@ -32,7 +32,9 @@ pub(crate) fn set_android_app(app: AndroidApp) {
         .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(app);
 }
 
-fn android_app() -> Result<AndroidApp, String> {
+/// The Activity handle, which is `android-activity`'s and is shared rather than
+/// duplicated: `blitsen/hid` reaches `UsbManager` through the same one (#248).
+pub(crate) fn android_app() -> Result<AndroidApp, String> {
     ANDROID_APP
         .get()
         .and_then(|slot| {
@@ -43,7 +45,12 @@ fn android_app() -> Result<AndroidApp, String> {
         .ok_or_else(|| "the Android activity is not available".to_owned())
 }
 
-fn with_activity<T>(
+/// Runs `operation` with an attached `Env` and this process's Activity.
+///
+/// Shared with `blitsen/hid` for the same reason the handle above is: there is
+/// one Activity, one JVM and one way to reach them, and a second copy of this
+/// would be a second place for the unsafety argument below to be wrong.
+pub(crate) fn with_activity<T>(
     app: &AndroidApp,
     operation: impl FnOnce(&mut Env<'_>, &JObject<'_>) -> jni::errors::Result<T>,
 ) -> Result<T, String> {
@@ -55,7 +62,7 @@ fn with_activity<T>(
         let activity = unsafe { env.as_cast_raw::<JObject>(&raw_activity)? };
         operation(env, &activity)
     })
-    .map_err(|error| format!("Android notification API failed: {error}"))
+    .map_err(|error| format!("the Android platform call failed: {error}"))
 }
 
 fn sdk_int(app: &AndroidApp) -> Result<i32, String> {

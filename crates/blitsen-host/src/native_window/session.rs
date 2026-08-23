@@ -103,7 +103,6 @@ impl<E: JsEngine + Clone + 'static> WindowSession<E> {
         #[cfg(any(target_os = "windows", target_os = "macos"))]
         crate::dom_bridge::menu::reset();
         crate::dom_bridge::notify::reset();
-        #[cfg(not(target_os = "android"))]
         crate::dom_bridge::hid::reset();
         crate::dom_bridge::input::reset();
         let started_at = Instant::now();
@@ -226,7 +225,6 @@ impl<E: JsEngine + Clone + 'static> WindowSession<E> {
             #[cfg(any(target_os = "windows", target_os = "macos"))]
             app_menu,
             notify,
-            #[cfg(not(target_os = "android"))]
             hid: super::hid::controller(event_loop.create_proxy()),
             quit_requested: false,
         };
@@ -249,15 +247,12 @@ impl<E: JsEngine + Clone + 'static> WindowSession<E> {
         crate::dom_bridge::menu::reset();
         self.application.notify.clear();
         crate::dom_bridge::notify::reset();
-        #[cfg(not(target_os = "android"))]
-        {
-            // A reload replaces the document, so every handle the previous one
-            // opened is orphaned. Dropping the controller closes them; nothing
-            // else would, and a device left claimed across a reload would be a
-            // device the reloaded application cannot open.
-            self.application.hid = super::hid::controller(self.event_loop.create_proxy());
-            crate::dom_bridge::hid::reset();
-        }
+        // A reload replaces the document, so every handle the previous one
+        // opened is orphaned. Dropping the controller closes them; nothing else
+        // would, and a device left claimed across a reload would be a device the
+        // reloaded application cannot open.
+        self.application.hid = super::hid::controller(self.event_loop.create_proxy());
+        crate::dom_bridge::hid::reset();
         crate::dom_bridge::input::reset();
         let window_id = self
             .application
@@ -399,13 +394,10 @@ impl<E: JsEngine + Clone + 'static> WindowSession<E> {
         #[cfg(any(target_os = "windows", target_os = "macos"))]
         self.apply_menu_requests();
         self.apply_notify_requests();
-        #[cfg(not(target_os = "android"))]
-        {
-            self.apply_hid_requests();
-            self.application.hid.poll();
-            if crate::dom_bridge::hid::pending() {
-                self.request_redraw();
-            }
+        self.apply_hid_requests();
+        self.application.hid.poll();
+        if crate::dom_bridge::hid::pending() {
+            self.request_redraw();
         }
         if let Some(error) = self.error.borrow_mut().take() {
             return Err(error);
@@ -454,7 +446,6 @@ impl<E: JsEngine + Clone + 'static> WindowSession<E> {
     /// inside the native call that requested it: winit already has the
     /// application borrowed there, and a device tree walk on that path is a
     /// frame the window did not paint.
-    #[cfg(not(target_os = "android"))]
     fn apply_hid_requests(&mut self) {
         use crate::dom_bridge::hid::{self, RequestKind};
 
@@ -467,9 +458,14 @@ impl<E: JsEngine + Clone + 'static> WindowSession<E> {
             let command_id = request.command_id;
             match request.kind {
                 RequestKind::Devices => hid::complete(command_id, controller.devices()),
-                RequestKind::Open { device_id } => {
-                    hid::complete(command_id, controller.open(&device_id));
-                }
+                // The one command that need not settle on the turn that made
+                // it: Android raises a permission dialog, and `Ok(None)` means
+                // the controller is holding this id until a person answers it.
+                RequestKind::Open { device_id } => match controller.open(&device_id, command_id) {
+                    Ok(None) => {}
+                    Ok(Some(opened)) => hid::complete(command_id, Ok(opened)),
+                    Err(failure) => hid::complete(command_id, Err(failure)),
+                },
                 RequestKind::Close { device_id } => {
                     hid::complete(command_id, controller.close(&device_id));
                 }

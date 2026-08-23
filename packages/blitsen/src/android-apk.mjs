@@ -166,6 +166,15 @@ const escapeXml = text => String(text)
  * way it is. It tells the installer to leave the `.so` inside the APK and map
  * it, which halves the installed footprint of a 35 MB library and is only legal
  * for an entry that is stored and page-aligned.
+ *
+ * The two capability declarations are not symmetrical, and the asymmetry is the
+ * platform's. `POST_NOTIFICATIONS` is a permission, granted to the application
+ * once. USB host is a *feature*: `blitsen/hid` needs no manifest permission at
+ * all, because access is granted one device at a time, at run time, by a person
+ * answering a system dialog (#248). It is declared `required="false"` so that a
+ * device with no USB host controller still installs the application — every
+ * other capability it has works there, and `hid.devices()` simply answers an
+ * empty list, which is the same answer as "nothing is plugged in".
  */
 export function androidManifest({
   applicationId,
@@ -190,6 +199,7 @@ export function androidManifest({
 
     <uses-sdk android:minSdkVersion="${minSdk}" android:targetSdkVersion="${targetSdk}" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-feature android:name="android.hardware.usb.host" android:required="false" />
 
     <application
         android:label="${escapeXml(label)}"

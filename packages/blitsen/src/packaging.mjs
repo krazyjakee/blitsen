@@ -176,6 +176,13 @@ function windowsManifest({ name, version }) {
 // what Blitsen does is write the artifact a distributor installs or signs with,
 // and say what to do with it — `doctor` reports the same sentences before the
 // build, which is the point at which it is still cheap to act on them.
+//
+// Android is the one entry with no artifact behind it (#248), and that is the
+// fact worth reporting rather than an omission: its answer is a runtime dialog
+// per device, so there is nothing for a distributor to install and nothing for
+// a build to write. The sentence exists because a developer who has shipped the
+// Linux rule and the macOS entitlement will otherwise go looking for the third
+// one.
 export const HID_ACCESS = {
   linux: "Access to a hidraw node is granted by a udev rule, not by the application: "
     + "`blitsen build` writes a `<name>.hid.rules` template beside the executable for the "
@@ -187,6 +194,12 @@ export const HID_ACCESS = {
   win32: "Windows opens HID top-level collections through its own HID class driver and reserves "
     + "some system collections, which no packaging step unlocks and no driver replacement should "
     + "try to. An open refused that way rejects with NotAllowedError rather than NotFoundError.",
+  android: "Android grants USB access one device at a time and at run time: the first open() of a "
+    + "device raises a system dialog, the grant lasts only until that device is unplugged, and a "
+    + "dismissed dialog rejects with NotAllowedError and can be asked again. There is no manifest "
+    + "permission to add — `blitsen build` declares the android.hardware.usb.host feature as "
+    + "optional — so nothing here is a packaging step, and a device attached over OTG has to be "
+    + "attached for the application to see it at all.",
 };
 
 /// The rule a Linux distributor completes and installs, as a file.

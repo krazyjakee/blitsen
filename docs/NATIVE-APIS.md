@@ -330,9 +330,17 @@ for the signing command to pass to `codesign --entitlements`. macOS opens device
 access, so Blitsen never takes a device away from the rest of the system. Windows reserves some
 top-level collections for itself, which no packaging step unlocks.
 
-Android is absent: a USB device there is reached through `UsbManager` and an explicit per-device
-permission the user grants, which is a different lifecycle rather than this one over another
-backend.
+Android has the same module over `UsbManager`, and one call behaves differently there: the grant is
+not a packaging step but a system dialog, raised by the first `open()` of a device and answered by
+the person using the application. That `open()` does not settle until they answer — it resolves on
+a grant and rejects with `NotAllowedError` on a dismissal, which an application may ask about
+again — and the grant belongs to that one device and ends when it is unplugged. Enumeration needs
+no permission, but it cannot read a report descriptor either, so `usagePage` and `usage` are `0`
+there: select a device by `vendorId` and `productId`, and read its usages after it is open. A boot
+keyboard or mouse interface is refused before opening, as its desktop counterpart is.
+
+This Android path type-checks and its logic is covered by host tests, but it has not yet been
+exercised against a real device; see `docs/PLATFORM-SUPPORT.md`.
 
 ## Dialogs
 

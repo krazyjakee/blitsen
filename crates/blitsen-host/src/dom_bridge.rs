@@ -20,7 +20,6 @@ use crate::DomRuntime;
 mod audio;
 mod event_source;
 mod fetch;
-#[cfg(not(target_os = "android"))]
 pub(crate) mod hid;
 pub(crate) mod input;
 mod intl;

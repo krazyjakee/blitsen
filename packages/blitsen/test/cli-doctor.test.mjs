@@ -321,8 +321,9 @@ describe("directory CLI", () => {
   // Issue #247. Raw HID is the one capability whose remaining requirement is
   // outside the source file: a udev rule on Linux, an entitlement in the macOS
   // signature. Neither can be inferred from the code, so `doctor` is where the
-  // developer is told — and only where the module actually exists, since an
-  // Android build has a better thing to say about it.
+  // developer is told — and Android, which has the module since #248, is told
+  // the opposite thing: there is nothing to package, because the grant happens
+  // while the application runs.
   test("reports the packaging raw HID needs, per platform", async () => {
     const directory = await mkdtemp(join(tmpdir(), "blitsen-hid-doctor-"));
     try {
@@ -343,11 +344,14 @@ describe("directory CLI", () => {
       expect((await reported("darwin-arm64"))[0].guidance)
         .toContain("com.apple.security.device.usb");
       expect((await reported("win32-x64"))[0].guidance).toContain("HID class driver");
-      // Android has no module to package for, and says so through the absence
-      // finding instead — two findings about one import would be one too many.
-      expect(await reported("android-arm64")).toEqual([]);
+      const android = await reported("android-arm64");
+      expect(android).toHaveLength(1);
+      expect(android[0].guidance).toContain("one device at a time");
+      // No install step to wait for, so the sentence the other three end with
+      // must not be there: nothing is pending before the application ships.
+      expect(android[0].guidance).not.toContain("Until it does");
       expect((await doctorApplication(directory, { target: "android-arm64" }))
-        .diagnostics.map(entry => entry.code)).toContain("NATIVE_MODULE_ABSENT");
+        .diagnostics.map(entry => entry.code)).not.toContain("NATIVE_MODULE_ABSENT");
     } finally {
       await rm(directory, { recursive: true, force: true });
     }

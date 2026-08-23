@@ -43,7 +43,8 @@ target; a Windows toast carries that ID as its own tag, which is what an update 
 close removes from the screen and from notification history. Individual notification-server
 policies still decide how a submitted notification is presented.
 
-`blitsen/hid` is available on every desktop target. On Linux a hidraw node is owned by udev, so a
+`blitsen/hid` is available on every desktop target, and on Android over a different backend (see
+"Android"). On Linux a hidraw node is owned by udev, so a
 packaged application reaches an intended device only once a distribution or installer has added a
 rule granting access; `blitsen build` writes a `<name>.hid.rules` template beside the executable and
 `blitsen doctor` reports the requirement. Blitsen never installs a rule itself and running the
@@ -125,10 +126,22 @@ the focus-scoped `input.snapshot` member and `blitsen/notify`. Notifications use
 as granted. Submission, same-session replacement and close are supported. Tap, action and dismiss
 events are not exposed until #252 adds Android intent activation, so action-bearing submissions
 reject. The standard Web `Notification` global remains absent for the same reason. Android does not
-support Blitsen's app, clipboard, dialog, window, tray, menu or hid native modules in this
-release. Raw
-HID on Android is `UsbManager` and its explicit per-device permission grant rather than desktop
-enumeration, which is a separate implementation this release does not have.
+support Blitsen's app, clipboard, dialog, window, tray or menu native modules in this release.
+
+`blitsen/hid` is present and reaches USB HID devices through `UsbManager`. Enumeration needs no
+permission and lists the HID interfaces of every attached USB device; `open()` raises Android's
+per-device permission dialog and the promise it returned stays unsettled until that dialog is
+answered, resolving on a grant and rejecting with `NotAllowedError` on a dismissal — which can be
+asked again. A grant belongs to one device and Android revokes it when that device is unplugged.
+Two differences from desktop are worth planning for: `usagePage` and `usage` are `0` in the
+enumeration, because a HID report descriptor cannot be read before permission is granted, so filter
+by `vendorId` and `productId` there and read the usages after `open()`; and a boot keyboard or
+mouse interface is refused before it can be opened, exactly as the desktop collections are.
+
+**This path has never been executed.** It type-checks for `aarch64-linux-android` and its logic is
+covered by tests on the host, but no report has been exchanged with a real device: a Blitsen APK
+cannot currently start on the CI emulator (#151), and an emulator has no USB host controller to
+attach a HID device to, so the acceptance evidence needs physical hardware.
 
 `blitsen/os` is available, and `os.batteries` is the one member of it that is not: the library
 behind that reading has no Android backend, and the platform's own answer is `BatteryManager` over

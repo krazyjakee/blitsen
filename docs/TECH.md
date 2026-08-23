@@ -622,7 +622,7 @@ import { app }       from "native:app";
 | `native:menu` | the application menu: macOS main menu, Windows menu bar. Separate from `native:tray` because it must exist without a status item (#249) |
 | `native:notify` | desktop notifications |
 | `native:input` | raw keyboard/mouse state and gamepads |
-| `native:hid` | deliberately raw HID reports for non-keyboard/pointer devices: desktop enumeration, opaque device ids, input/output/feature reports and hot-plug, with the protected Generic Desktop collections refused; the separate Android `UsbManager` permission path specified by [S10](../spikes/s10/README.md) is not implemented |
+| `native:hid` | deliberately raw HID reports for non-keyboard/pointer devices: desktop enumeration, opaque device ids, input/output/feature reports and hot-plug, with the protected Generic Desktop collections refused. The Android half [S10](../spikes/s10/README.md) specified is the same module over `UsbManager`: enumeration without a grant, an `open()` that stays unsettled while the system permission dialog is up, and reports through USB control and interrupt transfers (#248) |
 | `native:os` | processor, memory, storage volumes, OS identity, batteries and locale. Displays stay `native:window`'s `monitors`, and idle time is absent by decision (#98) |
 
 **The rule: `native:` is additive, never a superset.** Anything the Node surface already names

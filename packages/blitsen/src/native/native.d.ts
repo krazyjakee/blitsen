@@ -514,7 +514,13 @@ export interface NativeHidDeviceInfo {
   readonly vendorId: number;
   readonly productId: number;
   readonly releaseNumber: number;
-  /** The first top-level collection, for the common single-collection device. */
+  /**
+   * The first top-level collection, for the common single-collection device.
+   *
+   * Zero on Android until the device is opened: a report descriptor cannot be
+   * read there before its permission has been granted, so select by `vendorId`
+   * and `productId` and read the usages from the opened device's `info`.
+   */
   readonly usagePage: number;
   readonly usage: number;
   /** Every top-level collection reachable through this device. */
