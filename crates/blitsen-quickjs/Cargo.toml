@@ -10,12 +10,12 @@ publish.workspace = true
 
 [dependencies]
 blitsen-js = { path = "../blitsen-js" }
-rquickjs-sys = "0.12.2"
+rquickjs = { version = "0.12.2", features = ["loader"] }
 
 [lints]
 workspace = true
 
-# Android is the one target rquickjs-sys ships no pre-generated bindings for.
+# Android is the one target rquickjs's sys crate ships no pre-generated bindings for.
 # It carries them for sixteen triples and none is `*-linux-android`, so the
 # `include!` in its build script fails outright rather than degrading. The
 # crate's own error message names the answer — generate them instead — and
@@ -29,4 +29,4 @@ workspace = true
 # targets keep the shipped bindings, and nobody building for them needs clang
 # installed. Whether CI provisions it or a developer does is #149 and #148.
 [target.'cfg(target_os = "android")'.dependencies]
-rquickjs-sys = { version = "0.12.2", features = ["bindgen"] }
+rquickjs = { version = "0.12.2", features = ["bindgen", "loader"] }

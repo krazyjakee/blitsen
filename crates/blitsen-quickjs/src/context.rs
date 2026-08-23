@@ -1,323 +1,118 @@
-//! The runtime, the context, and the state reachable from a bare `JSContext`.
-//!
-//! The engine is recoverable from any value a callback was handed, so the two
-//! class ids and the runtime pointer live in the context's opaque slot and are
-//! read back through [`context_state`]. Everything that owns or tears down
-//! QuickJS state is here; [`crate::engine`] is the trait implementation above
-//! it.
+//! Runtime ownership and the scoped rquickjs entry point.
 
-use std::cell::RefCell;
-use std::ffi::{c_char, c_int, c_void};
+use std::cell::Cell;
+use std::ptr::NonNull;
 use std::rc::Rc;
 
-use blitsen_js::{ExternalId, JsError, NativeCall, NativeCallback};
-use rquickjs_sys as q;
+use blitsen_js::JsError;
+use rquickjs::{Coerced, Context, Ctx, Exception, FromJs, Runtime, Value};
 
 use crate::value::QjsValue;
 
-/// Boxed callback plus the engine it belongs to, stored as class opaque data.
-pub(crate) struct CallbackData {
-    pub(crate) callback: RefCell<NativeCallback<QjsValue>>,
-}
-
-/// Per-instance payload attached by [`JsEngine::instantiate`].
-pub(crate) struct InstanceData {
-    pub(crate) external: ExternalId,
-    pub(crate) finalizer: Option<Box<dyn FnOnce(ExternalId) + 'static>>,
-}
-
 pub(crate) struct Inner {
-    pub(crate) runtime: *mut q::JSRuntime,
-    pub(crate) context: *mut q::JSContext,
-    /// Class for objects whose opaque is a [`CallbackData`].
-    pub(crate) callback_class: q::JSClassID,
-    /// Class for objects whose opaque is an [`InstanceData`].
-    pub(crate) instance_class: q::JSClassID,
-    /// True for the handle that created the runtime; borrowed handles from
-    /// `from_value` must not tear it down.
-    pub(crate) owner: bool,
-}
-
-impl Drop for Inner {
-    fn drop(&mut self) {
-        // The context is process-lived, which is the same choice the
-        // JavaScriptCore host made and for the same reason (S0: releasing the
-        // global context asserts during teardown when the host still holds
-        // values). Here the symptom is QuickJS's own
-        // `JS_FreeRuntime: Assertion 'list_empty(&rt->gc_obj_list)' failed`,
-        // observed at exit with the DOM wrapper cache still reachable — the
-        // objects are *supposed* to be alive, because the process is ending
-        // and nothing is going to look at them again. Freeing here would trade
-        // a clean exit for an abort in front of the user; the OS reclaims this
-        // memory either way. In-process restart would need this resolved.
-        let _ = (self.owner, self.runtime, self.context);
-    }
+    pub(crate) runtime: Runtime,
+    pub(crate) context: Context,
+    /// The context currently protected by rquickjs's runtime lock.
+    active: Cell<Option<NonNull<rquickjs::qjs::JSContext>>>,
 }
 
 /// A QuickJS engine implementing Blitsen's host boundary.
+#[derive(Clone)]
 pub struct QuickJs {
     pub(crate) inner: Rc<Inner>,
 }
 
-/// What lives in the context's opaque slot, so `from_value` can find it.
-pub(crate) struct ContextState {
-    pub(crate) callback_class: q::JSClassID,
-    pub(crate) instance_class: q::JSClassID,
-    pub(crate) runtime: *mut q::JSRuntime,
-}
-
-unsafe extern "C" fn finalize_callback(_rt: *mut q::JSRuntime, value: q::JSValue) {
-    // The class id is recoverable from the value itself, which is what lets a
-    // finalizer that has no context still find its own payload.
-    let class_id = unsafe { q::JS_GetClassID(value) };
-    let opaque = unsafe { q::JS_GetOpaque(value, class_id) };
-    if !opaque.is_null() {
-        drop(unsafe { Box::from_raw(opaque.cast::<CallbackData>()) });
-    }
-}
-
-unsafe extern "C" fn finalize_instance(_rt: *mut q::JSRuntime, value: q::JSValue) {
-    let class_id = unsafe { q::JS_GetClassID(value) };
-    let opaque = unsafe { q::JS_GetOpaque(value, class_id) };
-    if opaque.is_null() {
-        return;
-    }
-    let data = unsafe { Box::from_raw(opaque.cast::<InstanceData>()) };
-    // Exactly once, as the trait promises: the box is consumed here and the
-    // opaque slot dies with the object.
-    if let Some(finalizer) = data.finalizer {
-        finalizer(data.external);
-    }
-}
-
-/// The trampoline every native function goes through.
-///
-/// `data[0]` is an object whose opaque is the boxed Rust closure. Keeping the
-/// closure on a JavaScript object rather than in a side table means its
-/// lifetime is the function's lifetime, decided by the collector.
-pub(crate) unsafe extern "C" fn invoke_callback(
-    ctx: *mut q::JSContext,
-    this_val: q::JSValue,
-    argc: c_int,
-    argv: *mut q::JSValue,
-    _magic: c_int,
-    data: *mut q::JSValue,
-) -> q::JSValue {
-    let state = unsafe { context_state(ctx) };
-    let holder = unsafe { *data };
-    let opaque = unsafe { q::JS_GetOpaque(holder, state.callback_class) };
-    if opaque.is_null() {
-        return unsafe { throw(ctx, "native callback is no longer available") };
-    }
-    let entry = unsafe { &*opaque.cast::<CallbackData>() };
-
-    let this = unsafe { QjsValue::own(ctx, q::JS_DupValue(ctx, this_val)) };
-    let external = unsafe { q::JS_GetOpaque(this_val, state.instance_class) };
-    let external = if external.is_null() {
-        None
-    } else {
-        Some(unsafe { &*external.cast::<InstanceData>() }.external)
-    };
-    let mut arguments = Vec::with_capacity(argc as usize);
-    for index in 0..argc as isize {
-        let raw = unsafe { *argv.offset(index) };
-        arguments.push(unsafe { QjsValue::own(ctx, q::JS_DupValue(ctx, raw)) });
-    }
-
-    // A Rust panic must not unwind through QuickJS's C frames.
-    let call = NativeCall {
-        this,
-        arguments,
-        external,
-    };
-    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let mut callback = entry.callback.borrow_mut();
-        (callback)(call)
-    }));
-    match outcome {
-        Ok(Ok(value)) => value.into_raw(), // ownership moves to the caller
-        Ok(Err(error)) => unsafe { throw(ctx, error.message()) },
-        Err(_) => unsafe { throw(ctx, "native callback panicked") },
-    }
-}
-
-pub(crate) unsafe fn context_state<'a>(ctx: *mut q::JSContext) -> &'a ContextState {
-    let opaque = unsafe { q::JS_GetContextOpaque(ctx) };
-    debug_assert!(!opaque.is_null(), "context has no Blitsen state");
-    unsafe { &*opaque.cast::<ContextState>() }
-}
-
-/// Copies a Rust string into QuickJS using the pointer and length from the same
-/// allocation. Unlike a C string, a JavaScript string may contain NUL bytes.
-pub(crate) unsafe fn new_string(ctx: *mut q::JSContext, text: &str) -> q::JSValue {
-    // SAFETY: the caller supplies a live context. `JS_NewStringLen` copies
-    // exactly `text.len()` bytes before returning, so the borrowed pointer does
-    // not escape and does not need a trailing NUL.
-    unsafe { q::JS_NewStringLen(ctx, text.as_ptr().cast::<c_char>(), text.len() as q::size_t) }
-}
-
-pub(crate) unsafe fn throw(ctx: *mut q::JSContext, message: &str) -> q::JSValue {
-    unsafe {
-        let error = q::JS_NewError(ctx);
-        let text = new_string(ctx, message);
-        let key = c"message".as_ptr();
-        q::JS_SetPropertyStr(ctx, error, key, text);
-        q::JS_Throw(ctx, error)
-    }
-}
-
 impl QuickJs {
-    /// Creates a runtime, a context, and the two classes the trait needs.
+    /// Creates an rquickjs runtime and full ECMAScript context.
     pub fn new() -> Result<Self, JsError> {
-        unsafe {
-            let runtime = q::JS_NewRuntime();
-            if runtime.is_null() {
-                return Err(JsError::new("QuickJS could not create a runtime"));
-            }
-            let context = q::JS_NewContext(runtime);
-            if context.is_null() {
-                q::JS_FreeRuntime(runtime);
-                return Err(JsError::new("QuickJS could not create a context"));
-            }
-
-            let mut callback_class: q::JSClassID = 0;
-            q::JS_NewClassID(runtime, &mut callback_class);
-            let callback_def = q::JSClassDef {
-                class_name: c"BlitsenNativeCallback".as_ptr(),
-                finalizer: Some(finalize_callback),
-                gc_mark: None,
-                call: None,
-                exotic: std::ptr::null_mut(),
-            };
-            q::JS_NewClass(runtime, callback_class, &callback_def);
-
-            let mut instance_class: q::JSClassID = 0;
-            q::JS_NewClassID(runtime, &mut instance_class);
-            let instance_def = q::JSClassDef {
-                class_name: c"BlitsenNativeObject".as_ptr(),
-                finalizer: Some(finalize_instance),
-                gc_mark: None,
-                call: None,
-                exotic: std::ptr::null_mut(),
-            };
-            q::JS_NewClass(runtime, instance_class, &instance_def);
-
-            // Leaked on purpose: it must outlive every value that can reach it,
-            // and the context is process-lived exactly as the JSC host's is.
-            let state = Box::into_raw(Box::new(ContextState {
-                callback_class,
-                instance_class,
+        let runtime = Runtime::new().map_err(|error| JsError::new(error.to_string()))?;
+        let context = Context::full(&runtime).map_err(|error| JsError::new(error.to_string()))?;
+        Ok(Self {
+            inner: Rc::new(Inner {
                 runtime,
-            }));
-            q::JS_SetContextOpaque(context, state.cast::<c_void>());
+                context,
+                active: Cell::new(None),
+            }),
+        })
+    }
 
-            Ok(Self {
-                inner: Rc::new(Inner {
-                    runtime,
-                    context,
-                    callback_class,
-                    instance_class,
-                    owner: true,
-                }),
+    /// Runs with the runtime lock, reusing it during a native callback.
+    pub(crate) fn with_ctx<R>(&self, f: impl for<'js> FnOnce(Ctx<'js>) -> R) -> R {
+        if let Some(raw) = self.inner.active.get() {
+            // SAFETY: `active` is set only for the dynamic extent of
+            // `Context::with` (or an rquickjs runtime operation which owns the
+            // same lock). `QuickJs` is !Send, and the HRTB prevents the
+            // manufactured lifetime from escaping this call.
+            return f(unsafe { Ctx::from_raw(raw) });
+        }
+
+        self.inner.context.with(|ctx| {
+            let previous = self.inner.active.replace(Some(ctx.as_raw()));
+            let _reset = ActiveReset(&self.inner.active, previous);
+            f(ctx)
+        })
+    }
+
+    /// Marks jobs and GC as active runtime-lock scopes because both may invoke
+    /// Rust code before their safe rquickjs methods return.
+    pub(crate) fn with_runtime<R>(&self, f: impl FnOnce(&Runtime) -> R) -> R {
+        let previous = self.inner.active.replace(Some(self.inner.context.as_raw()));
+        let _reset = ActiveReset(&self.inner.active, previous);
+        f(&self.inner.runtime)
+    }
+
+    pub(crate) fn wrap<'js>(&self, ctx: &Ctx<'js>, value: Value<'js>) -> QjsValue {
+        QjsValue::new(Rc::clone(&self.inner), ctx, value)
+    }
+
+    pub(crate) fn with_result<R>(
+        &self,
+        f: impl for<'js> FnOnce(&Ctx<'js>) -> rquickjs::Result<R>,
+    ) -> Result<R, JsError> {
+        self.with_ctx(|ctx| f(&ctx).map_err(|error| self.map_error(&ctx, error)))
+    }
+
+    pub(crate) fn map_error<'js>(&self, ctx: &Ctx<'js>, error: rquickjs::Error) -> JsError {
+        if !error.is_exception() {
+            return JsError::new(error.to_string());
+        }
+        let thrown = ctx.catch();
+        let message = Coerced::<String>::from_js(ctx, thrown.clone())
+            .map(|text| text.0)
+            .unwrap_or_else(|_| "unknown error".to_owned());
+        let stack = thrown
+            .as_object()
+            .and_then(|object| {
+                object
+                    .get::<_, Option<Coerced<String>>>("stack")
+                    .ok()
+                    .flatten()
             })
+            .map(|text| text.0)
+            .filter(|text| !text.is_empty());
+        match stack {
+            Some(stack) => JsError::with_stack(message, stack),
+            None => JsError::new(message),
         }
     }
 
-    pub(crate) fn ctx(&self) -> *mut q::JSContext {
-        self.inner.context
-    }
-
-    pub(crate) fn runtime(&self) -> *mut q::JSRuntime {
-        self.inner.runtime
+    pub(crate) fn throw<'js>(ctx: &Ctx<'js>, message: &str) -> rquickjs::Error {
+        Exception::throw_message(ctx, message)
     }
 
     /// Bytes QuickJS has allocated and not yet returned to the allocator.
-    ///
-    /// Exists so that [`collect_garbage`](blitsen_js::JsEngine::collect_garbage)
-    /// can be *measured* rather than asserted: a trim that frees nothing and a
-    /// trim that was never called look identical from outside (issue #146).
     pub fn heap_bytes(&self) -> usize {
-        // SAFETY: the runtime outlives this handle. `JS_ComputeMemoryUsage`
-        // writes every field of the struct before returning, which is what
-        // makes handing it uninitialized memory sound — it is an out parameter,
-        // not an in/out one, and the C API has no other way to fill it.
-        let usage = unsafe {
-            let mut usage = std::mem::MaybeUninit::<q::JSMemoryUsage>::uninit();
-            q::JS_ComputeMemoryUsage(self.runtime(), usage.as_mut_ptr());
-            usage.assume_init()
-        };
-        usage.malloc_size as usize
-    }
-
-    /// Turns an exception pending on the context into a [`JsError`].
-    pub(crate) fn exception(&self) -> JsError {
-        unsafe {
-            let ctx = self.ctx();
-            let value = q::JS_GetException(ctx);
-            let message = self
-                .text(value)
-                .unwrap_or_else(|| "unknown error".to_owned());
-            let stack = q::JS_GetPropertyStr(ctx, value, c"stack".as_ptr());
-            let stack_text = self.text(stack).filter(|text| !text.is_empty());
-            q::JS_FreeValue(ctx, stack);
-            q::JS_FreeValue(ctx, value);
-            match stack_text {
-                Some(stack) => JsError::with_stack(message, stack),
-                None => JsError::new(message),
-            }
-        }
-    }
-
-    /// Reads a value as a Rust string without taking ownership of it.
-    pub(crate) fn text(&self, value: q::JSValue) -> Option<String> {
-        unsafe {
-            let mut len: q::size_t = 0;
-            let raw = q::JS_ToCStringLen2(self.ctx(), &mut len, value, false);
-            if raw.is_null() {
-                return None;
-            }
-            // `JS_ToCStringLen2` returns an explicit byte length because a
-            // JavaScript string can contain NUL. Reading it as `CStr` would
-            // silently truncate the value at the first one.
-            let bytes = std::slice::from_raw_parts(raw.cast::<u8>(), len as usize);
-            let text = String::from_utf8_lossy(bytes).into_owned();
-            q::JS_FreeCString(self.ctx(), raw);
-            Some(text)
-        }
-    }
-
-    /// Wraps a raw result, converting a thrown exception into `Err`.
-    pub(crate) fn checked(&self, raw: q::JSValue) -> Result<QjsValue, JsError> {
-        if unsafe { q::JS_IsException(raw) } {
-            Err(self.exception())
-        } else {
-            Ok(unsafe { QjsValue::own(self.ctx(), raw) })
-        }
-    }
-
-    pub(crate) fn global(&self) -> QjsValue {
-        unsafe { QjsValue::own(self.ctx(), q::JS_GetGlobalObject(self.ctx())) }
+        self.with_runtime(|runtime| runtime.memory_usage().malloc_size as usize)
     }
 }
 
-impl Clone for QuickJs {
-    fn clone(&self) -> Self {
-        Self {
-            inner: Rc::clone(&self.inner),
-        }
-    }
-}
+struct ActiveReset<'a>(
+    &'a Cell<Option<NonNull<rquickjs::qjs::JSContext>>>,
+    Option<NonNull<rquickjs::qjs::JSContext>>,
+);
 
-/// An engine handle that shares the context without owning it.
-pub(crate) unsafe fn borrowed(ctx: *mut q::JSContext) -> QuickJs {
-    let state = unsafe { context_state(ctx) };
-    QuickJs {
-        inner: Rc::new(Inner {
-            runtime: state.runtime,
-            context: ctx,
-            callback_class: state.callback_class,
-            instance_class: state.instance_class,
-            owner: false,
-        }),
+impl Drop for ActiveReset<'_> {
+    fn drop(&mut self) {
+        self.0.set(self.1);
     }
 }

@@ -1,70 +1,97 @@
-//! Value, weak-reference and class handles, and the typed-array tables.
-//!
-//! Split from the engine itself because these are the types the trait names:
-//! everything here is a handle the host may hold, with no engine behaviour of
-//! its own beyond the reference counting `Clone` and `Drop` owe QuickJS.
+//! Persistent values, weak references, and native-class handles.
 
-use blitsen_js::TypedArrayKind;
-use rquickjs_sys as q;
+use std::rc::Rc;
 
-/// An owned QuickJS value handle.
-///
-/// Carries the context because the trait's `from_value` has to rebuild the
-/// engine from nothing else, and because freeing a value needs it anyway.
+use blitsen_js::{ExternalId, TypedArrayKind};
+use rquickjs::class::{JsClass, Readable, Trace, Tracer};
+use rquickjs::{Class, Constructor, Ctx, JsLifetime, Object, Persistent, Value};
+
+use crate::context::Inner;
+
+/// An owned value which keeps both its context and runtime alive.
 pub struct QjsValue {
-    pub(crate) ctx: *mut q::JSContext,
-    pub(crate) raw: q::JSValue,
+    // Drop the persistent value before its final `Inner` reference. rquickjs
+    // requires every persistent to die before the runtime it belongs to.
+    value: Persistent<Value<'static>>,
+    pub(crate) inner: Rc<Inner>,
+}
+
+impl std::fmt::Debug for QjsValue {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("QjsValue(..)")
+    }
 }
 
 impl QjsValue {
-    /// Takes ownership of a value the engine just returned.
-    ///
-    /// # Safety
-    /// `raw` must be an owned reference produced by `ctx`.
-    pub(crate) unsafe fn own(ctx: *mut q::JSContext, raw: q::JSValue) -> Self {
-        Self { ctx, raw }
+    pub(crate) fn new<'js>(inner: Rc<Inner>, ctx: &Ctx<'js>, value: Value<'js>) -> Self {
+        Self {
+            value: Persistent::save(ctx, value),
+            inner,
+        }
     }
 
-    /// Transfers ownership of this value back to QuickJS.
-    pub(crate) fn into_raw(self) -> q::JSValue {
-        let raw = self.raw;
-        std::mem::forget(self);
-        raw
+    pub(crate) fn restore<'js>(&self, ctx: &Ctx<'js>) -> rquickjs::Result<Value<'js>> {
+        self.value.clone().restore(ctx)
     }
 }
 
 impl Clone for QjsValue {
     fn clone(&self) -> Self {
         Self {
-            ctx: self.ctx,
-            raw: unsafe { q::JS_DupValue(self.ctx, self.raw) },
+            value: self.value.clone(),
+            inner: Rc::clone(&self.inner),
         }
     }
 }
 
-impl Drop for QjsValue {
-    fn drop(&mut self) {
-        unsafe { q::JS_FreeValue(self.ctx, self.raw) };
-    }
-}
-
-/// A weak reference, held as the JavaScript `WeakRef` the engine understands.
-///
-/// Implemented in JavaScript rather than in the C API on purpose: QuickJS-ng
-/// ships `WeakRef`, and borrowing the language's own semantics means the
-/// collector decides liveness rather than this file guessing at it.
+/// A JavaScript `WeakRef`, itself held persistently.
 pub struct QjsWeakRef {
     pub(crate) reference: QjsValue,
 }
 
-/// A registered native class.
+/// A registered native class prototype.
 #[derive(Clone)]
 pub struct QjsClass {
-    pub(crate) id: q::JSClassID,
-    pub(crate) constructor: QjsValue,
+    pub(crate) prototype: QjsValue,
 }
 
-/// The JavaScript constructor that builds each kind.
+/// Opaque data finalized by rquickjs's class machinery.
+pub(crate) struct InstanceData {
+    pub(crate) external: ExternalId,
+    pub(crate) finalizer: Option<Box<dyn FnOnce(ExternalId) + 'static>>,
+}
+
+impl Drop for InstanceData {
+    fn drop(&mut self) {
+        if let Some(finalizer) = self.finalizer.take() {
+            // rquickjs class finalizers are C callbacks. Never let user code
+            // unwind through that boundary.
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                finalizer(self.external);
+            }));
+        }
+    }
+}
+
+// SAFETY: `InstanceData` contains no value or reference tied to a JS context;
+// changing the phantom JS lifetime therefore cannot invalidate its contents.
+unsafe impl<'js> JsLifetime<'js> for InstanceData {
+    type Changed<'to> = InstanceData;
+}
+
+impl<'js> Trace<'js> for InstanceData {
+    fn trace<'a>(&self, _tracer: Tracer<'a, 'js>) {}
+}
+
+impl<'js> JsClass<'js> for InstanceData {
+    const NAME: &'static str = "BlitsenNativeObject";
+    type Mutable = Readable;
+
+    fn constructor(_ctx: &Ctx<'js>) -> rquickjs::Result<Option<Constructor<'js>>> {
+        Ok(None)
+    }
+}
+
 pub(crate) const fn typed_array_constructor(kind: TypedArrayKind) -> &'static str {
     match kind {
         TypedArrayKind::Int8 => "Int8Array",
@@ -81,49 +108,32 @@ pub(crate) const fn typed_array_constructor(kind: TypedArrayKind) -> &'static st
     }
 }
 
-pub(crate) const TYPED_ARRAY_KINDS: [(TypedArrayKind, q::JSTypedArrayEnum); 11] = [
-    (
-        TypedArrayKind::Int8,
-        q::JSTypedArrayEnum_JS_TYPED_ARRAY_INT8,
-    ),
-    (
-        TypedArrayKind::Uint8,
-        q::JSTypedArrayEnum_JS_TYPED_ARRAY_UINT8,
-    ),
-    (
-        TypedArrayKind::Uint8Clamped,
-        q::JSTypedArrayEnum_JS_TYPED_ARRAY_UINT8C,
-    ),
-    (
-        TypedArrayKind::Int16,
-        q::JSTypedArrayEnum_JS_TYPED_ARRAY_INT16,
-    ),
-    (
-        TypedArrayKind::Uint16,
-        q::JSTypedArrayEnum_JS_TYPED_ARRAY_UINT16,
-    ),
-    (
-        TypedArrayKind::Int32,
-        q::JSTypedArrayEnum_JS_TYPED_ARRAY_INT32,
-    ),
-    (
-        TypedArrayKind::Uint32,
-        q::JSTypedArrayEnum_JS_TYPED_ARRAY_UINT32,
-    ),
-    (
-        TypedArrayKind::Float32,
-        q::JSTypedArrayEnum_JS_TYPED_ARRAY_FLOAT32,
-    ),
-    (
-        TypedArrayKind::Float64,
-        q::JSTypedArrayEnum_JS_TYPED_ARRAY_FLOAT64,
-    ),
-    (
-        TypedArrayKind::BigInt64,
-        q::JSTypedArrayEnum_JS_TYPED_ARRAY_BIG_INT64,
-    ),
-    (
-        TypedArrayKind::BigUint64,
-        q::JSTypedArrayEnum_JS_TYPED_ARRAY_BIG_UINT64,
-    ),
-];
+pub(crate) fn external_id<'js>(ctx: &Ctx<'js>, value: &Value<'js>) -> Option<ExternalId> {
+    let external = Class::<InstanceData>::from_value(value)
+        .ok()
+        .map(|class| class.borrow().external);
+    if external.is_none() && ctx.has_exception() {
+        // rquickjs's class probe uses QuickJS's checked opaque lookup, which
+        // can raise while reporting "not this Rust class". The public engine
+        // contract makes that a plain `None` for callback receivers and emits
+        // its own diagnostic from `external_id`, so do not leave the probe's
+        // internal exception pending.
+        drop(ctx.catch());
+    }
+    external
+}
+
+pub(crate) fn instance<'js>(
+    prototype: Object<'js>,
+    external: ExternalId,
+    finalizer: Option<Box<dyn FnOnce(ExternalId) + 'static>>,
+) -> rquickjs::Result<Value<'js>> {
+    Class::instance_proto(
+        InstanceData {
+            external,
+            finalizer,
+        },
+        prototype,
+    )
+    .map(Class::into_value)
+}
