@@ -28,6 +28,9 @@ on:
         type: string
         default: latest
 
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
   BUN_VERSION: 1.3.14
@@ -40,6 +43,17 @@ env:
   RUSTC_WRAPPER: sccache
 
 jobs:
+  validate:
+    name: Validate release inputs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Validate npm distribution tag
+        shell: bash
+        env:
+          DIST_TAG: ${{ inputs.tag }}
+        run: bash scripts/release-summary.sh validate-tag "$DIST_TAG"
+
   # One native runner per target. Cross-compilation is deliberately not used
   # here: #84 settled that the engine's artifacts are built and tested natively
   # per OS, and a runtime that was never executed on its own platform is not
@@ -59,6 +73,7 @@ jobs:
   # and DARWIN_X64_RUNNER is how it moves again without a commit.
   build:
     name: ${{ matrix.target }}
+    needs: validate
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
     strategy:
@@ -96,21 +111,21 @@ jobs:
             executable: blitsen-runtime.exe
             reproducible: false
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - id: started
         shell: bash
         run: echo "at=$(date +%s)" >> "$GITHUB_OUTPUT"
 
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: ${{ env.BUN_VERSION }}
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
         with:
           toolchain: ${{ env.RUST_VERSION }}
-      - uses: mozilla-actions/sccache-action@v0.0.11
+      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
         with:
           version: v0.17.0
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: cargo-release-registry
           cache-targets: false
@@ -355,7 +370,7 @@ jobs:
       # whose manifests declare notices they do not carry — and `blitsen build`
       # reads `NOTICES.txt` from beside the installed runtime, so every export a
       # user made would have silently shipped none (#121).
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: runtime-${{ matrix.target }}
           path: |
@@ -396,16 +411,16 @@ jobs:
       contents: write # the tag and the release page, written after a publish
       id-token: write # npm provenance
     steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: ${{ env.BUN_VERSION }}
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: runtime-*
           path: ${{ runner.temp }}/runtimes
@@ -537,7 +552,7 @@ jobs:
           (cd "$assets" && sha256sum -- *.tgz > SHA256SUMS)
 
       - name: Upload GitHub release assets for inspection
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: release-assets-${{ steps.release_version.outputs.version }}
           path: |
@@ -615,16 +630,9 @@ jobs:
       - name: Summarise
         if: always()
         shell: bash
-        run: |
-          {
-            echo "## Release ${{ steps.release_version.outputs.version }}"
-            echo
-            echo "Published: ${{ inputs.publish }} (tag \`${{ inputs.tag }}\`)"
-            if [ -n "${{ env.release_url }}" ]; then
-              echo
-              echo "Tagged \`v${{ steps.release_version.outputs.version }}\` — ${{ env.release_url }}"
-            fi
-            echo
-            echo "Notarisation is **not** part of this workflow. Submit the macOS artifacts"
-            echo "separately with \`notarytool\`; see docs/RELEASING.md."
-          } >> "$GITHUB_STEP_SUMMARY"
+        env:
+          DIST_TAG: ${{ inputs.tag }}
+          PUBLISHED: ${{ inputs.publish }}
+          RELEASE_URL: ${{ env.release_url }}
+          VERSION: ${{ steps.release_version.outputs.version }}
+        run: bash scripts/release-summary.sh summary

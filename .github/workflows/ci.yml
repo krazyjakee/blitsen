@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 # Ten jobs across six runner labels is enough that two runs of the same branch
 # queue behind each other, and the older one is answering a question nobody is
 # asking any more. Superseded runs are cancelled — except on `main`, where every
@@ -25,13 +28,32 @@ env:
   RUSTC_WRAPPER: sccache
 
 jobs:
+  workflows:
+    name: Workflow security
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.3.14
+      - name: Check workflow syntax
+        uses: raven-actions/actionlint@3d39aea434753780c3b3d4a1a31c854b4dbf49d7 # v2.2.0
+        with:
+          version: 1.7.12
+          files: .github/workflows/*.yml, .github/workflows/*.yaml
+          flags: -config-file .github/actionlint.yaml
+      - name: Check workflow security policy
+        run: |
+          bun test scripts/check-workflow-security.test.mjs scripts/release-summary.test.mjs
+          bun scripts/check-workflow-security.mjs
+
   # Fast feedback: no native toolchain, no display.
   javascript:
     name: JavaScript
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: 1.3.14
       - run: bun install --frozen-lockfile
@@ -52,15 +74,15 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
         with:
           toolchain: ${{ env.RUST_VERSION }}
           components: clippy, rustfmt
-      - uses: mozilla-actions/sccache-action@v0.0.11
+      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
         with:
           version: v0.17.0
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: cargo-native
           cache-targets: true
@@ -101,17 +123,17 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: 1.3.14
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
         with:
           toolchain: ${{ env.RUST_VERSION }}
-      - uses: mozilla-actions/sccache-action@v0.0.11
+      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
         with:
           version: v0.17.0
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: cargo-native
           cache-targets: true
@@ -181,17 +203,17 @@ jobs:
     name: Frame determinism (headless)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: 1.3.14
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
         with:
           toolchain: ${{ env.RUST_VERSION }}
-      - uses: mozilla-actions/sccache-action@v0.0.11
+      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
         with:
           version: v0.17.0
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: cargo-native
           cache-targets: true
@@ -206,7 +228,7 @@ jobs:
             libasound2-dev
       - run: bun install --frozen-lockfile
       - run: bun run --cwd packages/blitsen test:determinism
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: failure()
         with:
           name: determinism-divergence-${{ github.sha }}
@@ -214,7 +236,7 @@ jobs:
           if-no-files-found: ignore
       - name: Frame cost
         run: bun run --cwd packages/blitsen frames --out ${{ github.workspace }}/frame-metrics.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
           name: frame-metrics-${{ github.sha }}
@@ -233,14 +255,14 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
         with:
           toolchain: ${{ env.RUST_VERSION }}
-      - uses: mozilla-actions/sccache-action@v0.0.11
+      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
         with:
           version: v0.17.0
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: cargo-native
           cache-targets: true
@@ -256,7 +278,7 @@ jobs:
       # Uncaptured, because the run reports which tier it gated and a silent
       # pass on a runner whose rasterizer differs would read like a full one.
       - run: cargo test -p blitsen-blitz --test conformance -- --nocapture
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: failure()
         with:
           name: conformance-divergence-${{ matrix.os }}-${{ github.sha }}
@@ -280,19 +302,19 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: 1.3.14
       # Pinned rather than floating: a compiler upgrade moves the native addon's
       # size and would trip the size gate as though Blitsen had regressed.
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
         with:
           toolchain: 1.97.1
-      - uses: mozilla-actions/sccache-action@v0.0.11
+      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
         with:
           version: v0.17.0
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           # Metrics uses a different compiler and has no same-run consumer.
           # Keep its small registry cache, not another three target archives.
@@ -329,7 +351,7 @@ jobs:
         run: bun run --cwd packages/blitsen size:phase2 --out ${{ github.workspace }}/phase2-size.json
         env:
           BLITSEN_RUNTIME_PATH: ${{ github.workspace }}/target/release/${{ runner.os == 'Windows' && 'blitsen-runtime.exe' || 'blitsen-runtime' }}
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
           name: phase2-size-${{ matrix.os }}-${{ github.sha }}
@@ -344,7 +366,7 @@ jobs:
           bun run --cwd packages/blitsen size:compare --blitsen
           ${{ github.workspace }}/phase2-size.json --out
           ${{ github.workspace }}/desktop-size-comparison.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
           name: desktop-size-comparison-${{ matrix.os }}-${{ github.sha }}
@@ -352,7 +374,7 @@ jobs:
           if-no-files-found: ignore
       # The committed time series only grows from local runs: CI cannot push, so
       # it keeps its own per-commit copy here instead.
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
           name: metrics-${{ matrix.os }}-${{ github.sha }}
@@ -403,17 +425,17 @@ jobs:
             library: blitsen_node.dll
             executable: blitsen-runtime.exe
     steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: 1.3.14
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
         with:
           toolchain: ${{ env.RUST_VERSION }}
-      - uses: mozilla-actions/sccache-action@v0.0.11
+      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
         with:
           version: v0.17.0
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           # Six full target archives do not fit GitHub's repository cache
           # quota. Preserve Cargo downloads for secondary architectures, plus
@@ -456,7 +478,7 @@ jobs:
         run: bun run --cwd packages/blitsen notices --root blitsen-runtime --out ${{ github.workspace }}/target/release
       - run: bun run --cwd packages/blitsen test:standalone
       - run: cargo test -p blitsen-blitz --test conformance -- --nocapture
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: failure()
         with:
           name: conformance-divergence-${{ matrix.target }}-${{ github.sha }}
@@ -472,13 +494,13 @@ jobs:
         run: bun run --cwd packages/blitsen size:phase2 --out ${{ github.workspace }}/phase2-size.json
         env:
           BLITSEN_RUNTIME_PATH: ${{ github.workspace }}/target/release/${{ matrix.executable }}
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
           name: phase2-size-${{ matrix.target }}-${{ github.sha }}
           path: ${{ github.workspace }}/phase2-size.json
           if-no-files-found: ignore
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
           name: metrics-${{ matrix.target }}-${{ github.sha }}
@@ -529,18 +551,18 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: 1.3.14
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
         with:
           toolchain: ${{ env.RUST_VERSION }}
           targets: aarch64-linux-android, x86_64-linux-android
-      - uses: mozilla-actions/sccache-action@v0.0.11
+      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
         with:
           version: v0.17.0
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           # This job installs cargo-ndk after the cache step. Keep its bin cache
           # separate so another job cannot win the shared immutable cache first
@@ -738,11 +760,11 @@ jobs:
           bun packages/blitsen/bin/blitsen.mjs build "$APP" \
             --android --android-package com.blitsen.notifyfixture \
             --outfile ${{ runner.temp }}/Notify.apk
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: android-notify-apk-${{ github.sha }}
           path: ${{ runner.temp }}/Notify.apk
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
           name: android-notices-${{ github.sha }}
@@ -803,12 +825,12 @@ jobs:
       matrix:
         api-level: [32, 33]
     steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: 1.3.14
       - run: bun install --frozen-lockfile
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: android-notify-apk-${{ github.sha }}
           path: ${{ runner.temp }}/apk
@@ -837,7 +859,7 @@ jobs:
       # `disable-animations` because `uiautomator dump` refuses while a window is
       # still moving and the permission dialog is a window that moves.
       - name: Notification coverage on a booted emulator
-        uses: reactivecircus/android-emulator-runner@v2
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
         with:
           api-level: ${{ matrix.api-level }}
           target: google_apis
@@ -860,7 +882,7 @@ jobs:
             adb devices -l
             adb shell getprop ro.build.fingerprint
             bun run --cwd packages/blitsen test:android-notify -- --apk ${{ runner.temp }}/apk/Notify.apk --package com.blitsen.notifyfixture --out ${{ runner.temp }}/android-notify
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
           name: android-notify-${{ matrix.api-level }}-${{ github.sha }}
