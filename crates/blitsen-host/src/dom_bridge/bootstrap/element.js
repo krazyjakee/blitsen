@@ -47,6 +47,8 @@
   };
 
   class Element extends Node {
+    requestPointerLock(options = {}) { return requestPointerLock(this, options); }
+    requestFullscreen(options = {}) { return requestFullscreen(this, options); }
     get tagName() {
       const name = elementTag(this);
       // Only HTML folds case, which is why `linearGradient` survives here.

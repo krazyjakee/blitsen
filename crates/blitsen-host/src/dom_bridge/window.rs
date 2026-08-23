@@ -54,6 +54,10 @@ thread_local! {
     /// bridge cannot remove the window in-place. The session consumes this at
     /// the end of the same pump turn instead.
     static CLOSE_REQUESTED: Cell<bool> = const { Cell::new(false) };
+    /// Modes entered through the standard DOM APIs, kept separately from the
+    /// native window module so lifecycle loss only undoes modes it owns.
+    static WEB_POINTER_LOCKED: Cell<bool> = const { Cell::new(false) };
+    static WEB_FULLSCREEN: Cell<bool> = const { Cell::new(false) };
 }
 
 /// Publishes the window `native:` calls act on, or `None` once it has gone.
@@ -61,6 +65,94 @@ pub(crate) fn publish(window: Option<Arc<dyn Window>>) {
     CURRENT.with_borrow_mut(|current| *current = window);
     APPLIED_RESIZE.set(None);
     CLOSE_REQUESTED.set(false);
+    if CURRENT.with_borrow(|current| current.is_none()) {
+        WEB_POINTER_LOCKED.set(false);
+        WEB_FULLSCREEN.set(false);
+    }
+}
+
+/// Applies one standard web window-mode command.
+#[cfg(not(target_os = "android"))]
+pub(crate) fn web_mode(action: &str) -> Result<(), JsError> {
+    match action {
+        "lockPointer" => with(|window| {
+            window
+                .set_cursor_grab(CursorGrabMode::Locked)
+                .map_err(|error| JsError::new(format!("could not lock the pointer: {error}")))?;
+            window.set_cursor_visible(false);
+            WEB_POINTER_LOCKED.set(true);
+            Ok(())
+        }),
+        "unlockPointer" => {
+            let released = with(|window| {
+                let result = window
+                    .set_cursor_grab(CursorGrabMode::None)
+                    .map_err(|error| {
+                        JsError::new(format!("could not release the pointer: {error}"))
+                    });
+                window.set_cursor_visible(true);
+                result
+            });
+            // Stop raw routing even if the compositor refused the restoration;
+            // an explicit exit has ended the DOM lock either way.
+            WEB_POINTER_LOCKED.set(false);
+            released
+        }
+        "enterFullscreen" => with(|window| {
+            // The web API has no resolution/refresh-rate selector. Choosing an
+            // exclusive video mode here would therefore be arbitrary and can
+            // reconfigure the display. Use the monitor containing this window,
+            // with winit's primary/default fallback when it cannot identify one.
+            let monitor = window
+                .current_monitor()
+                .or_else(|| window.primary_monitor());
+            window.set_fullscreen(Some(Fullscreen::Borderless(monitor)));
+            WEB_FULLSCREEN.set(true);
+            Ok(())
+        }),
+        "exitFullscreen" => with(|window| {
+            window.set_fullscreen(None);
+            WEB_FULLSCREEN.set(false);
+            Ok(())
+        }),
+        other => Err(JsError::new(format!(
+            "unknown web window mode action: {other}"
+        ))),
+    }
+}
+
+#[cfg(target_os = "android")]
+pub(crate) fn web_mode(_action: &str) -> Result<(), blitsen_js::JsError> {
+    Err(blitsen_js::JsError::new(
+        "pointer lock and the standard fullscreen API are not supported on Android",
+    ))
+}
+
+/// Whether raw device motion should be routed to the locked DOM element.
+pub(crate) fn web_pointer_locked() -> bool {
+    WEB_POINTER_LOCKED.get()
+}
+
+/// Releases modes owned by the web APIs, returning which DOM states changed.
+///
+/// The flags are cleared even if a platform release reports an error: focus or
+/// surface loss is a security boundary and raw movement must stop immediately.
+pub(crate) fn release_web_modes() -> (bool, bool) {
+    let pointer = WEB_POINTER_LOCKED.replace(false);
+    let fullscreen = WEB_FULLSCREEN.replace(false);
+    #[cfg(not(target_os = "android"))]
+    CURRENT.with_borrow(|current| {
+        if let Some(window) = current.as_deref() {
+            if pointer {
+                let _ = window.set_cursor_grab(CursorGrabMode::None);
+                window.set_cursor_visible(true);
+            }
+            if fullscreen {
+                window.set_fullscreen(None);
+            }
+        }
+    });
+    (pointer, fullscreen)
 }
 
 /// Takes the size winit resized the surface to without raising an event.

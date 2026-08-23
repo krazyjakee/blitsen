@@ -218,6 +218,7 @@ impl<E: JsEngine + Clone + 'static> WindowSession<E> {
             started_at,
             document: document.document,
             pending_pointer_input: Vec::new(),
+            pending_locked_pointer_movement: Vec::new(),
             pending_keyboard_input: Vec::new(),
             ime_targets: HashMap::new(),
             pending_drag_input: Vec::new(),
@@ -276,6 +277,10 @@ impl<E: JsEngine + Clone + 'static> WindowSession<E> {
             .copied()
             .next()
             .ok_or_else(|| JsError::new("native window is not ready"))?;
+        // A replaced document cannot own a cursor grab or fullscreen window.
+        // Release the platform immediately; its DOM is about to be discarded,
+        // so there is no old-document event to queue.
+        crate::dom_bridge::window::release_web_modes();
         let viewport = self.application.inner.windows[&window_id]
             .doc
             .inner()
@@ -323,6 +328,7 @@ impl<E: JsEngine + Clone + 'static> WindowSession<E> {
         application.document = document.document;
         application.started_at = Instant::now();
         application.pending_pointer_input.clear();
+        application.pending_locked_pointer_movement.clear();
         application.pending_keyboard_input.clear();
         application.pending_drag_input.clear();
         application.drag_paths = std::rc::Rc::from([]);

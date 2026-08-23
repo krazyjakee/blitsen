@@ -453,7 +453,6 @@ What remains here is what a table cannot express: why a thing sits where it does
 | `Audio`, basic Web Audio | rodio / cpal |
 | Starting a drag out to the desktop | winit, which reports a drag that arrives and cannot start one. Clipboard events and dropping *into* the window are implemented, over arboard and winit. |
 | `navigator.getGamepads` | gilrs |
-| Pointer lock, fullscreen | winit |
 | WebGL / WebGPU | wgpu through the viewport |
 | WebRTC | webrtc-rs |
 
@@ -467,9 +466,19 @@ the application's platform data directory; `sessionStorage` belongs only to the 
 The backing store reads values individually rather than loading an application's whole durable
 dataset at startup, and it adds no database dependency.
 
+Pointer lock and fullscreen are the narrow winit-backed exception where native window state is
+also standard DOM state. JavaScript owns the target element, promise and event state machine; a
+small native adapter owns only cursor grab/visibility and borderless fullscreen. Raw
+`DeviceEvent::PointerMotion` values are queued to the next frame and targeted at the locked
+element. Focus or surface loss releases the native modes immediately and queues the observable DOM
+changes before `blur`. Standard fullscreen selects borderless mode on the window's current monitor
+(primary fallback); exclusive video modes are deliberately not guessed because the Web API has no
+mode selector. Arbitrary-element fullscreen remains unsupported until the renderer has a
+Fullscreen top layer.
+
 ### Where the DOM surface is narrower than its name
 
-Three shapes the tier table cannot show, because the API is present and answers correctly within
+Four shapes the tier table cannot show, because the API is present and answers correctly within
 them.
 
 - **Collections are static.** `children`, `querySelectorAll`, `getElementsByTagName` and
@@ -489,6 +498,10 @@ them.
   bounding rectangle is only their union. A `<br>` and a `display: none` element report none:
   nothing laid them out, and an empty box at the origin would be an invention. There is still no
   fragmentation across columns or pages, because Blitz has neither.
+- **Fullscreen is root-only and borderless.** The native window can cover the monitor containing
+  it, but the renderer cannot yet promote an arbitrary element to the Fullscreen top layer.
+  Exclusive display modes are not selected because the standard API supplies no deterministic
+  resolution or refresh-rate choice.
 
 ### Compatibility policy
 

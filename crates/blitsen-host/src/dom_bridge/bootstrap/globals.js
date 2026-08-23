@@ -93,6 +93,8 @@
     __blitsenDispatchPointerEvent: dispatchPointerEvent,
     __blitsenDispatchKeyboardEvent: dispatchKeyboardEvent,
     __blitsenDispatchImeEvent: dispatchImeEvent,
+    __blitsenDispatchLockedPointerMotion: dispatchLockedPointerMotion,
+    __blitsenReleaseWindowModes: releaseWindowModes,
     __blitsenDispatchDragEvent: dispatchDragEvent,
     __blitsenDispatchLifecycleEvent: dispatchLifecycleEvent,
     __blitsenDisposeContext: () => {

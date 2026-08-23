@@ -42,6 +42,7 @@ mod storage;
 mod web_socket;
 mod web_url;
 pub mod window;
+mod window_modes;
 
 // The DOM runtime the application sees, evaluated into the context before any
 // document script runs. It is a single closure so the objects can share the
@@ -63,6 +64,7 @@ const BOOTSTRAP: &str = concat!(
     include_str!("dom_bridge/bootstrap/canvas_element.js"),
     include_str!("dom_bridge/bootstrap/text_editing.js"),
     include_str!("dom_bridge/bootstrap/document.js"),
+    include_str!("dom_bridge/bootstrap/window_modes.js"),
     include_str!("dom_bridge/bootstrap/range.js"),
     include_str!("dom_bridge/bootstrap/fetch.js"),
     include_str!("dom_bridge/bootstrap/web_socket.js"),
@@ -257,6 +259,7 @@ pub fn install<E: JsEngine + 'static>(
     install_event_source(engine)?;
     install_intl(engine)?;
     storage::install(engine, storage)?;
+    window_modes::install(engine, mode.is_test_harness())?;
     native::install(engine)?;
     let dev_layout_warnings = std::env::var("BLITSEN_DEV_LAYOUT_WARNINGS").is_ok_and(|value| {
         !value.is_empty() && value != "0" && !value.eq_ignore_ascii_case("false")

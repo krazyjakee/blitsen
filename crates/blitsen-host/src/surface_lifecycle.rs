@@ -304,6 +304,11 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Ren
         // Before the renderer goes, because cancelling dispatches into
         // JavaScript and hit-tests the document, and both want the viewport the
         // contacts were made against.
+        let window_id = self.inner.windows.keys().next().copied();
+        if let Some(window_id) = window_id {
+            self.release_web_window_modes(window_id, "surface-loss");
+            self.drain_keyboard_input(window_id);
+        }
         self.cancel_live_contacts();
         self.inner.destroy_surfaces(event_loop);
         self.surface = SurfaceState::Lost;
@@ -316,6 +321,11 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Ren
     /// written to be idempotent.
     pub(crate) fn on_suspended(&mut self, event_loop: &dyn ActiveEventLoop) {
         self.inner.suspended(event_loop);
+        let window_id = self.inner.windows.keys().next().copied();
+        if let Some(window_id) = window_id {
+            self.release_web_window_modes(window_id, "suspend");
+            self.drain_keyboard_input(window_id);
+        }
         self.cancel_live_contacts();
         self.modifiers = ModifiersState::empty();
     }
