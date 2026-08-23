@@ -250,8 +250,10 @@ would claim a decision nobody made.
 Android implements permission, an idempotent `blitsen.default` channel, submission, update, close,
 body taps and action buttons through `android-activity` and `jni`. Android urgency is a builder hint
 inside the user-controlled default channel, and `appName` cannot rename a channel Android has
-already created. Android reports no dismissal: a swipe-away needs a `BroadcastReceiver`, a receiver
-needs a Java class, and a Blitsen APK carries no `classes.dex` at all.
+already created. The APK's only dex subclasses `NativeActivity` to retain warm activation Intents
+and provides a private notification-dismiss receiver. That receiver persists a swipe dismissal
+without opening the Activity; it is delivered on the next eligible frame, or once after a later
+launch if no session was alive.
 
 ### Cold-start activation
 
@@ -261,8 +263,8 @@ that has exited is a launch rather than an event. What arrives is an `activation
 ```js
 notify.onEvent?.(event => {
   if (event.type !== "activation") return;
-  // `action` is null for a body click, `reason` is null where the platform
-  // reports no dismissal. `id` names a notification from the session that
+  // `action` is null for a body click; a persisted dismissal carries
+  // `reason: "dismissed"`. `id` names a notification from the session that
   // showed it, which is a session that has ended.
   resumeFrom(event.id, event.action);
 });

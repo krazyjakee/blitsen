@@ -186,13 +186,20 @@ export async function detectAndroidToolchain({ env = process.env, which = onPath
   // `aapt`: v1 is what Google has been removing, and nothing here needs it now
   // that the archive is written rather than handed to a packager.
   const tools = {};
-  for (const tool of ["aapt2", "zipalign", "apksigner"]) {
+  for (const tool of ["aapt2", "d8", "zipalign", "apksigner"]) {
     tools[tool] = join(buildTools, tool);
     if (!await readable(tools[tool])) {
       throw missing(`build-tools ${version} has no ${tool}, which packaging an APK runs.`,
         `Reinstall build-tools ${version} — \`sdkmanager "build-tools;${version}"\`.`);
     }
   }
+  const javac = which("javac");
+  if (!javac) {
+    throw missing("javac is not on PATH, and the notification activation bridge is Java code.",
+      "Install a JDK. Android packaging already needs its Java runtime for apksigner and its "
+      + "keytool for the default debug signing key.");
+  }
+  tools.javac = javac;
   const platform = join(sdk, "platforms", `android-${TARGET_SDK}`, "android.jar");
   if (!await readable(platform)) {
     throw missing(`the API ${TARGET_SDK} platform is not installed under ${sdk}.`,

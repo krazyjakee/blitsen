@@ -196,9 +196,9 @@ BLITSEN_ANDROID_CRATE=/path/to/blitsen/crates/blitsen-android \
 The build machine needs:
 
 - Rust targets for the requested Android ABIs and `cargo-ndk`
-- Android SDK API 33, an NDK and build-tools containing `aapt2`, `zipalign` and `apksigner`
+- Android SDK API 33, an NDK and build-tools containing `aapt2`, `d8`, `zipalign` and `apksigner`
 - `libclang` for generated QuickJS bindings
-- A JDK for `apksigner` and `keytool`
+- A JDK whose `javac` is on `PATH`, plus `keytool` for the generated debug signing key
 
 Without an ABI option, the APK contains `arm64-v8a` and `x86_64`. Add `--android-debug` for an
 unoptimized native build whose manifest is marked debuggable.

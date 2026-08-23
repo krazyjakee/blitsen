@@ -146,6 +146,79 @@ impl ActivationStore {
         self.write(&queue)
     }
 
+    /// Records the keyed envelope files a platform callback left in `inbox`.
+    ///
+    /// A successfully recorded file is removed. An unreadable file remains for
+    /// a later frame or launch; malformed data is removed after one diagnostic
+    /// because retrying bytes that cannot parse can never recover them.
+    pub(crate) fn record_inbox(&self, inbox: &Path) -> Vec<(String, String)> {
+        let mut failures = Vec::new();
+        let mut entries = match std::fs::read_dir(inbox) {
+            Ok(entries) => entries.filter_map(Result::ok).collect::<Vec<_>>(),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return failures,
+            Err(error) => {
+                failures.push((
+                    String::new(),
+                    format!(
+                        "could not read notification activation inbox {}: {error}",
+                        inbox.display()
+                    ),
+                ));
+                return failures;
+            }
+        };
+        entries.sort_by_key(std::fs::DirEntry::file_name);
+        for entry in entries {
+            let path = entry.path();
+            if path.extension().and_then(std::ffi::OsStr::to_str) != Some("json") {
+                continue;
+            }
+            let bytes = match std::fs::read(&path) {
+                Ok(bytes) => bytes,
+                Err(error) => {
+                    failures.push((
+                        String::new(),
+                        format!(
+                            "could not read notification activation {}: {error}",
+                            path.display()
+                        ),
+                    ));
+                    continue;
+                }
+            };
+            let activation = match serde_json::from_slice::<Activation>(&bytes) {
+                Ok(activation) => activation,
+                Err(error) => {
+                    failures.push((
+                        String::new(),
+                        format!(
+                            "could not parse notification activation {}: {error}",
+                            path.display()
+                        ),
+                    ));
+                    let _ = std::fs::remove_file(path);
+                    continue;
+                }
+            };
+            let id = activation.id.clone();
+            match self.record(activation) {
+                Ok(()) => {
+                    if let Err(error) = std::fs::remove_file(&path) {
+                        failures.push((
+                            id,
+                            format!(
+                                "could not consume notification activation {}: {error}",
+                                path.display()
+                            ),
+                        ));
+                    }
+                }
+                Err(error) => failures.push((id, error)),
+            }
+        }
+        failures
+    }
+
     /// Removes and returns every activation this identity has not yet been given.
     ///
     /// The nonces go into the consumed list in the same write that empties the
@@ -194,6 +267,7 @@ mod tests {
             nonce: nonce.to_owned(),
             identity: "com.example.app".to_owned(),
             id: "n1".to_owned(),
+            session: None,
             action: action.map(str::to_owned),
             dismissed: None,
             platform: "linux".to_owned(),
@@ -330,6 +404,59 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["a1", "a2", "a3"],
             "activations reach JavaScript in the order the platform recorded them"
+        );
+    }
+
+    #[test]
+    fn a_platform_inbox_is_drained_in_order_and_malformed_data_is_quarantined() {
+        let scratch = Scratch::new("inbox");
+        let inbox = scratch.0.join("inbox");
+        std::fs::create_dir_all(&inbox).expect("an inbox");
+        let first = activation("a1", None);
+        let second = Activation {
+            dismissed: Some("dismissed".into()),
+            ..activation("a2", None)
+        };
+        std::fs::write(
+            inbox.join("a1.json"),
+            serde_json::to_vec(&first).expect("the envelope serializes"),
+        )
+        .expect("the first callback is persisted");
+        std::fs::write(inbox.join("broken.json"), b"not json")
+            .expect("the malformed callback is persisted");
+        std::fs::write(
+            inbox.join("a2.json"),
+            serde_json::to_vec(&second).expect("the envelope serializes"),
+        )
+        .expect("the second callback is persisted");
+        std::fs::write(inbox.join("still-writing.tmp"), b"ignored")
+            .expect("an incomplete callback is present");
+
+        let store = store(&scratch.0);
+        let failures = store.record_inbox(&inbox);
+        assert_eq!(failures.len(), 1);
+        assert!(
+            failures[0]
+                .1
+                .contains("could not parse notification activation")
+        );
+        let taken = store.take();
+        assert_eq!(
+            taken
+                .iter()
+                .map(|activation| activation.nonce.as_str())
+                .collect::<Vec<_>>(),
+            vec!["a1", "a2"]
+        );
+        assert_eq!(taken[1].dismissed.as_deref(), Some("dismissed"));
+        assert!(!inbox.join("a1.json").exists());
+        assert!(!inbox.join("a2.json").exists());
+        assert!(!inbox.join("broken.json").exists());
+        assert!(inbox.join("still-writing.tmp").exists());
+        assert!(store.record_inbox(&inbox).is_empty());
+        assert!(
+            store.take().is_empty(),
+            "a drained callback is never replayed"
         );
     }
 

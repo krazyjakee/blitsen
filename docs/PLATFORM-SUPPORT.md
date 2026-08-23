@@ -112,11 +112,12 @@ produce it differs, and only the parts named here exist:
   installs discards a response for a notification the running process did not itself submit, so a
   cold-start response is not surfaced.
 - **Android** — a body tap and each action button are a `PendingIntent` that starts the Activity
-  with the activation envelope in an extra. Dismissal is not reported: it would need a
-  `BroadcastReceiver`, a receiver needs a Java class, and a Blitsen APK declares
-  `android:hasCode="false"` and carries no `classes.dex`. A tap while the Activity is alive is
-  delivered when the Activity is next created, because `NativeActivity` does not forward
-  `onNewIntent`.
+  with the activation envelope in an extra. A minimal `classes.dex` subclasses `NativeActivity`
+  only to retain `onNewIntent`, so foreground/background taps reach the current session without
+  replacing `android-activity` as lifecycle owner. The same dex carries a private
+  `BroadcastReceiver` for the notification delete Intent: a swipe dismissal does not open the
+  Activity, is persisted in the application's files directory, and reaches the current session on
+  its next frame or a later launch. Nonces deduplicate Activity recreation and repeated delivery.
 
 Where a platform, distribution or installer can hand an envelope over itself, the entry point is
 `--notification-activation <envelope>` on the application's own command line; both hosts read it,
@@ -168,11 +169,12 @@ Android output is an APK built from a Blitsen source checkout. It supports `arm6
 by default; `armeabi-v7a` can be requested but has not been run by this project. Android supports
 the focus-scoped `input.snapshot` member and `blitsen/notify`. Notifications use Android's stable
 `blitsen.default` channel; API 33+ requests `POST_NOTIFICATIONS`, while API 26–32 reports permission
-as granted. Submission, same-session replacement, close, body taps and action buttons are
-supported; dismissal is not, because a swipe-away needs a `BroadcastReceiver` and an APK carrying no
-`classes.dex` has no class for one to be. The standard Web `Notification` global appears only where
-that lifecycle contract is present. Android does not support Blitsen's app, clipboard, dialog,
-window, tray or menu native modules in this release.
+as granted. Submission, same-session replacement, close, body taps, action buttons and swipe
+dismissal are implemented through the packaged activation bridge. Its manifest, dex build and
+persisted handoff are covered deterministically; system-shade interaction and stopped-process
+delivery have not yet run on an emulator or device. The standard Web `Notification` global appears
+only where that lifecycle contract is present. Android does not support Blitsen's app, clipboard,
+dialog, window, tray or menu native modules in this release.
 
 Android rasterises native windows on the CPU and presents the finished buffer through
 `ANativeWindow`. This is the shipping default rather than an adapter probe: the API 32/33 CI

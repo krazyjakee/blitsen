@@ -126,7 +126,10 @@ pub(crate) fn install(options: &ActivationOptions, display_name: &str) -> Result
         }
     }
     #[cfg(target_os = "android")]
-    record_intent_activation(&store);
+    {
+        record_intent_activation(&store);
+        record_inbox_activations(&directory, &store);
+    }
     for activation in store.take() {
         crate::dom_bridge::notify::activated(activation);
     }

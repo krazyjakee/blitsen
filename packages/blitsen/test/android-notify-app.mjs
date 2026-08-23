@@ -90,9 +90,10 @@ export const NOTIFY_APP = `<!doctype html><html><head><meta charset="utf-8"><tit
   };
 
   // Lifecycle events, in the order the frame turn delivered them. Nothing here
-  // taps a notification, so close is the only one an unattended run produces: a
-  // body tap and an action are a PendingIntent a person has to press, and a
-  // dismissal Android does not report at all (#252).
+  // taps or swipes a notification, so close is the only one an unattended run
+  // produces. Body/action activation and the private dismissal receiver have
+  // deterministic packaging/store tests; exercising the system shade still
+  // needs an emulator interaction (#252).
   const events = [];
   notify.onEvent(event => {
     events.push(event.type + ":" + event.id + ":" + (event.reason || "none"));
@@ -149,8 +150,9 @@ export const NOTIFY_APP = `<!doctype html><html><head><meta charset="utf-8"><tit
   await settled("e.icon",
     notify.show({ title: "${PREFIX}-icon", body: "icon", icon: "blitsen_absent_drawable" }));
   //    And the one that used to be a failure. An action button is a PendingIntent
-  //    aimed at this Activity (#252), so it is accepted and drawn; only a person
-  //    pressing it produces the event, and an unattended run has nobody to.
+  //    aimed at this Activity (#252), so it is accepted and drawn; the emulator
+  //    run proves it was posted, while the system-shade interaction remains a
+  //    separate activation test.
   await settled("s.actions", notify.show({
     title: "${PREFIX}-actions", body: "actions", actions: [{ id: "open", title: "Open" }],
   }));
