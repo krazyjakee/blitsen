@@ -32,8 +32,8 @@
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Mutex, PoisonError};
 
+use parking_lot::Mutex;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 
 use crate::PlatformError;
@@ -148,11 +148,9 @@ pub struct Completion {
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 /// Dialogs opened whose outcome has not been queued yet.
 static OPEN: AtomicUsize = AtomicUsize::new(0);
+/// Completed work is independent: one dialog thread failing must not poison
+/// the queue for every later dialog.
 static COMPLETED: Mutex<Vec<Completion>> = Mutex::new(Vec::new());
-
-fn locked<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(PoisonError::into_inner)
-}
 
 /// Shows a file dialog of `kind`, returning the id its completion carries.
 pub fn open_file<W>(
@@ -180,7 +178,7 @@ where
 
 /// Drains the dialogs that have closed since the last call.
 pub fn take() -> Vec<Completion> {
-    std::mem::take(&mut *locked(&COMPLETED))
+    std::mem::take(&mut *COMPLETED.lock())
 }
 
 /// Whether any dialog is open or any outcome is waiting to be read.
@@ -189,7 +187,7 @@ pub fn take() -> Vec<Completion> {
 /// the frame loop: the outcome arrives on a thread, and the turn that collects
 /// it only happens while the loop believes it has work.
 pub fn pending() -> bool {
-    OPEN.load(Ordering::Acquire) > 0 || !locked(&COMPLETED).is_empty()
+    OPEN.load(Ordering::Acquire) > 0 || !COMPLETED.lock().is_empty()
 }
 
 /// Runs one dialog on a thread of its own and queues what it answered.
@@ -202,7 +200,7 @@ fn show(dialog: impl FnOnce() -> Outcome + Send + 'static) -> Result<u64, Platfo
             let outcome = dialog();
             // Queued before the count drops, so a caller polling between the two
             // never sees an idle runtime with an unread answer in it.
-            locked(&COMPLETED).push(Completion { id, outcome });
+            COMPLETED.lock().push(Completion { id, outcome });
             OPEN.fetch_sub(1, Ordering::Release);
         })
         .map_err(|error| {

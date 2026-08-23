@@ -160,23 +160,21 @@ pub mod single_instance {
     use std::net::Shutdown;
     use std::os::unix::net::{UnixListener, UnixStream};
     use std::path::{Path, PathBuf};
-    use std::sync::{Mutex, PoisonError};
     use std::time::Duration;
+
+    use parking_lot::Mutex;
 
     use super::{Instance, Invocation, validated_name};
     use crate::PlatformError;
 
-    /// Invocations received but not yet read by the runtime.
+    /// Invocations received but not yet read by the runtime. A malformed peer
+    /// or panicking hand-off thread must not poison later invocations.
     static RECEIVED: Mutex<Vec<Invocation>> = Mutex::new(Vec::new());
     /// Socket paths this process has bound, so [`release`] can unlink them.
     static BOUND: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
 
     /// A peer that connects and then says nothing must not stall the hand-off.
     const READ_TIMEOUT: Duration = Duration::from_secs(5);
-
-    fn locked<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-        mutex.lock().unwrap_or_else(PoisonError::into_inner)
-    }
 
     /// Claims the lock for `name`, handing `invocation` to the owner if another
     /// process already holds it.
@@ -210,12 +208,12 @@ pub mod single_instance {
 
     /// Drains the invocations received since the last call.
     pub fn take() -> Vec<Invocation> {
-        std::mem::take(&mut *locked(&RECEIVED))
+        std::mem::take(&mut *RECEIVED.lock())
     }
 
     /// Whether any invocation is waiting to be read.
     pub fn pending() -> bool {
-        !locked(&RECEIVED).is_empty()
+        !RECEIVED.lock().is_empty()
     }
 
     /// Unlinks every socket this process bound, so a successor can bind them.
@@ -223,7 +221,7 @@ pub mod single_instance {
     /// The listener itself is left open on the now-nameless inode: the caller is
     /// on its way out, and closing it would mean racing the accept thread.
     pub fn release() {
-        for path in std::mem::take(&mut *locked(&BOUND)) {
+        for path in std::mem::take(&mut *BOUND.lock()) {
             remove(&path);
         }
     }
@@ -261,13 +259,13 @@ pub mod single_instance {
     }
 
     fn serve(listener: UnixListener, path: PathBuf) -> Result<Instance, PlatformError> {
-        locked(&BOUND).push(path);
+        BOUND.lock().push(path);
         std::thread::Builder::new()
             .name("blitsen-single-instance".to_owned())
             .spawn(move || {
                 for stream in listener.incoming().flatten() {
                     if let Some(invocation) = receive(stream) {
-                        locked(&RECEIVED).push(invocation);
+                        RECEIVED.lock().push(invocation);
                     }
                 }
             })

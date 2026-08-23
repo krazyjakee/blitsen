@@ -38,12 +38,13 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex, OnceLock, RwLock};
+use std::sync::{Arc, OnceLock, RwLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use android_activity::AndroidApp;
 use jni::objects::{JObject, JString, JValue};
 use jni::{Env, JavaVM, jni_sig, jni_str};
+use parking_lot::Mutex;
 use serde_json::{Value, json};
 use winit::event_loop::EventLoopProxy;
 
@@ -236,7 +237,7 @@ fn request_android_permission(
             Ok(())
         });
         if let Err(error) = result {
-            crate::dom_bridge::net_lock(&signals).push_back(error);
+            signals.lock().push_back(error);
             proxy.wake_up();
         }
     }));
@@ -778,7 +779,7 @@ impl NotifyController {
     }
 
     pub(crate) fn poll(&mut self) {
-        if let Some(error) = crate::dom_bridge::net_lock(&self.permission_errors).pop_front() {
+        if let Some(error) = self.permission_errors.lock().pop_front() {
             if let Some(prompt) = self.permission_prompt.take() {
                 for command_id in prompt.command_ids {
                     crate::dom_bridge::notify::complete(command_id, Err(error.clone()));
@@ -832,6 +833,6 @@ impl NotifyController {
             let _ = cancel(&self.app, record.native_id);
         }
         self.permission_prompt = None;
-        crate::dom_bridge::net_lock(&self.permission_errors).clear();
+        self.permission_errors.lock().clear();
     }
 }

@@ -45,6 +45,12 @@ dirs = "6"
 # reading there is `BatteryManager` over JNI and is not this.
 starship-battery = "0.11"
 
+# The process queues in `app` deliberately survive a panicking hand-off thread.
+# Only Unix builds compile that single-instance implementation; the XDG dialog
+# queue is narrower still, so this keeps the direct dependency off other targets.
+[target.'cfg(all(unix, not(target_os = "android")))'.dependencies]
+parking_lot.workspace = true
+
 # Dialogs exist only where the XDG desktop portal does; see `src/dialog.rs` for
 # why macOS and Windows are absent rather than approximated. `rfd` speaks the
 # portal's D-Bus interface itself, so this needs no GTK headers to build against

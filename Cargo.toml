@@ -29,6 +29,7 @@ publish = false
 # one explicit feature decision instead. `net` and `tracing` are the other two
 # upstream defaults and remain part of the runtime.
 blitz = { git = "https://github.com/DioxusLabs/blitz", rev = "111ed2f7224e49cd3177ef3cb5990efc279d3e73", default-features = false, features = ["net", "tracing"] }
+parking_lot = "0.12.5"
 
 [workspace.lints.rust]
 missing_docs = "warn"

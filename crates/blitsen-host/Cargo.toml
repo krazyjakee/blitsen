@@ -82,6 +82,7 @@ writeable = "0.6"
 # gate there. The crate is pure Rust and links nothing.
 hidreport = { version = "0.6", default-features = false }
 image = { version = "0.25", default-features = false, features = ["png"] }
+parking_lot.workspace = true
 peniko = "0.6"
 png = "0.18"
 # Blitsen's own `fetch`, so the Phase 2 host swap does not change what the

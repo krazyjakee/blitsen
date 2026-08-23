@@ -519,6 +519,7 @@ dependencies = [
  "mac-usernotifications",
  "ndk",
  "notify-rust",
+ "parking_lot",
  "peniko",
  "png",
  "reqwest",
@@ -568,6 +569,7 @@ version = "0.0.0"
 dependencies = [
  "arboard",
  "dirs",
+ "parking_lot",
  "raw-window-handle",
  "rfd",
  "serde",

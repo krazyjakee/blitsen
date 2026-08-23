@@ -1,8 +1,9 @@
 //! Declarative system tray support owned by one native window session.
 
 use std::collections::VecDeque;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
+use parking_lot::Mutex;
 use winit::event_loop::EventLoopProxy;
 
 #[cfg(any(target_os = "windows", target_os = "macos"))]
@@ -214,9 +215,7 @@ impl TrayController {
     }
 
     pub(crate) fn take_signals(&self) -> Vec<MenuSignal> {
-        crate::dom_bridge::net_lock(&self.pending)
-            .drain(..)
-            .collect()
+        self.pending.lock().drain(..).collect()
     }
 }
 

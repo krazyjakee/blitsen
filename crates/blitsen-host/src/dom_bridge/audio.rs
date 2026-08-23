@@ -27,10 +27,11 @@
 
 use std::collections::HashMap;
 use std::io::Cursor;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
 
 use blitsen_js::JsError;
+use parking_lot::Mutex;
 use serde_json::{Value, json};
 use web_audio_api::AudioBuffer;
 use web_audio_api::context::{
@@ -40,7 +41,7 @@ use web_audio_api::node::{
     AudioBufferSourceNode, AudioNode, AudioScheduledSourceNode, GainNode, StereoPannerNode,
 };
 
-use super::net_pool::{lock, runtime as net_runtime};
+use super::net_pool::runtime as net_runtime;
 
 /// How the bridge is rendering.
 ///
@@ -209,9 +210,9 @@ impl AudioHost {
     /// application that cannot make a sound should still run, and a thrown
     /// constructor would take down every page that plays a click on hover.
     fn with_backend<T>(&self, run: impl FnOnce(&Backend) -> T) -> Result<T, JsError> {
-        let mut slot = lock(&self.backend);
+        let mut slot = self.backend.lock();
         if slot.is_none() {
-            *slot = Some(match *lock(&self.mode) {
+            *slot = Some(match *self.mode.lock() {
                 Mode::Offline => Backend::Offline(Some(Box::new(OfflineAudioContext::new(
                     OFFLINE_CHANNELS,
                     OFFLINE_FRAMES,
@@ -279,12 +280,12 @@ impl AudioHost {
         })?;
         let node = node.ok_or_else(|| JsError::new(format!("unknown audio node: {kind}")))?;
         let id = self.id();
-        lock(&self.nodes).insert(id, node);
+        self.nodes.lock().insert(id, node);
         Ok(id)
     }
 
     fn with_node<T>(&self, id: u64, run: impl FnOnce(&Node) -> T) -> Result<T, JsError> {
-        let nodes = lock(&self.nodes);
+        let nodes = self.nodes.lock();
         let node = nodes
             .get(&id)
             .ok_or_else(|| JsError::new("the audio node has been released"))?;
@@ -299,7 +300,7 @@ impl AudioHost {
         wrong_kind: &'static str,
         run: impl FnOnce(&mut AudioBufferSourceNode) -> Result<T, JsError>,
     ) -> Result<T, JsError> {
-        let mut nodes = lock(&self.nodes);
+        let mut nodes = self.nodes.lock();
         match nodes.get_mut(&id) {
             Some(Node::Source(source)) => run(source),
             _ => Err(JsError::new(wrong_kind)),
@@ -312,7 +313,7 @@ impl AudioHost {
     /// the context's, not the registry's: it is not created, cannot be released,
     /// and there is exactly one.
     fn connect(&self, from: u64, to: u64) -> Result<(), JsError> {
-        let nodes = lock(&self.nodes);
+        let nodes = self.nodes.lock();
         let source = nodes
             .get(&from)
             .ok_or_else(|| JsError::new("the audio node has been released"))?;
@@ -348,14 +349,14 @@ impl AudioHost {
         self.pending.fetch_add(1, Ordering::Relaxed);
         net_runtime()?.spawn_blocking(move || {
             let result = decode_bytes(bytes, sample_rate);
-            lock(&shared.decoded).push(Decoded { id, result });
+            shared.decoded.lock().push(Decoded { id, result });
         });
         Ok(id)
     }
 
     /// Drains finished decodes and finished sources.
     pub(super) fn poll(&self) -> Value {
-        let finished = std::mem::take(&mut *lock(&self.shared.decoded));
+        let finished = std::mem::take(&mut *self.shared.decoded.lock());
         let mut delivered = Vec::with_capacity(finished.len());
         for entry in finished {
             self.pending.fetch_sub(1, Ordering::Relaxed);
@@ -363,13 +364,13 @@ impl AudioHost {
                 Ok(buffer) => {
                     let id = self.id();
                     let record = buffer_record(id, &buffer);
-                    lock(&self.buffers).insert(id, buffer);
+                    self.buffers.lock().insert(id, buffer);
                     json!({ "id": entry.id, "buffer": record })
                 }
                 Err(message) => json!({ "id": entry.id, "error": message }),
             });
         }
-        let ended = std::mem::take(&mut *lock(&self.shared.ended));
+        let ended = std::mem::take(&mut *self.shared.ended.lock());
         for _ in &ended {
             // Saturating: a source can only end once, but a disposed host has
             // already zeroed the count and must not wrap under it.
@@ -383,7 +384,7 @@ impl AudioHost {
         // so nothing will reach it after this and holding it would be a leak
         // for an application firing one-shots.
         {
-            let mut nodes = lock(&self.nodes);
+            let mut nodes = self.nodes.lock();
             for node in &ended {
                 nodes.remove(node);
             }
@@ -397,7 +398,8 @@ impl AudioHost {
     }
 
     fn buffer(&self, id: u64) -> Result<AudioBuffer, JsError> {
-        lock(&self.buffers)
+        self.buffers
+            .lock()
             .get(&id)
             .cloned()
             .ok_or_else(|| JsError::new("the audio buffer has been released"))
@@ -408,7 +410,7 @@ impl AudioHost {
     /// Harness only. Rendering consumes the context, which is why it is taken:
     /// a second render would have nothing to render.
     fn render(&self) -> Result<Value, JsError> {
-        let mut slot = lock(&self.backend);
+        let mut slot = self.backend.lock();
         let Some(Backend::Offline(context)) = slot.as_mut() else {
             return Err(JsError::new(
                 "only an offline audio context can be rendered",
@@ -441,13 +443,13 @@ impl AudioHost {
     }
 
     pub(super) fn dispose(&self) {
-        lock(&self.nodes).clear();
-        lock(&self.buffers).clear();
-        lock(&self.shared.decoded).clear();
-        lock(&self.shared.ended).clear();
+        self.nodes.lock().clear();
+        self.buffers.lock().clear();
+        self.shared.decoded.lock().clear();
+        self.shared.ended.lock().clear();
         self.pending.store(0, Ordering::Relaxed);
         self.playing.store(0, Ordering::Relaxed);
-        if let Some(Backend::Live(context)) = lock(&self.backend).take() {
+        if let Some(Backend::Live(context)) = self.backend.lock().take() {
             context.close_sync();
         }
     }
@@ -485,10 +487,10 @@ impl AudioHost {
             // what gets opened, so changing it afterwards would describe
             // something other than what is playing.
             "mode" => {
-                if lock(&self.backend).is_some() {
+                if self.backend.lock().is_some() {
                     return Err(JsError::new("the audio context is already open"));
                 }
-                *lock(&self.mode) = match arguments.text(0)? {
+                *self.mode.lock() = match arguments.text(0)? {
                     "offline" => Mode::Offline,
                     "silent" => Mode::Silent,
                     "device" => Mode::Device,
@@ -504,7 +506,7 @@ impl AudioHost {
         match operation {
             "create" => Ok(Some(json!(self.create(arguments.text(0)?)?))),
             "release" => {
-                lock(&self.nodes).remove(&arguments.id(0)?);
+                self.nodes.lock().remove(&arguments.id(0)?);
                 Ok(Some(Value::Null))
             }
             "connect" => {
@@ -610,7 +612,7 @@ impl AudioHost {
                         // Registered before the start, so a source short enough
                         // to finish immediately cannot end before anything is
                         // listening for it.
-                        source.set_onended(move |_| lock(&shared.ended).push(node));
+                        source.set_onended(move |_| shared.ended.lock().push(node));
                         source.start_at_with_offset(when, offset);
                         self.playing.fetch_add(1, Ordering::Relaxed);
                         Ok(Value::Null)
@@ -639,7 +641,7 @@ impl AudioHost {
                 Ok(Some(buffer_record(arguments.id(0)?, &buffer)))
             }
             "releaseBuffer" => {
-                lock(&self.buffers).remove(&arguments.id(0)?);
+                self.buffers.lock().remove(&arguments.id(0)?);
                 Ok(Some(Value::Null))
             }
             _ => Ok(None),
@@ -670,7 +672,7 @@ impl AudioHost {
                     let result = std::fs::read(&path)
                         .map_err(|error| format!("{}: {error}", path.display()))
                         .and_then(|bytes| decode_bytes(bytes, sample_rate));
-                    lock(&shared.decoded).push(Decoded { id, result });
+                    shared.decoded.lock().push(Decoded { id, result });
                 });
             }
             "http" | "https" => {
@@ -685,7 +687,7 @@ impl AudioHost {
                             Ok(bytes) => decode_bytes(bytes.to_vec(), sample_rate),
                         },
                     };
-                    lock(&shared.decoded).push(Decoded { id, result });
+                    shared.decoded.lock().push(Decoded { id, result });
                 });
             }
             // An exported application's own sounds are addressed by the
@@ -707,7 +709,7 @@ impl AudioHost {
                              or an http or https URL, not {parsed}"
                         )),
                     };
-                    lock(&shared.decoded).push(Decoded { id, result });
+                    shared.decoded.lock().push(Decoded { id, result });
                 });
             }
             other => {
@@ -842,7 +844,7 @@ mod tests {
         }
 
         let buffer_id = 500;
-        lock(&host.buffers).insert(
+        host.buffers.lock().insert(
             buffer_id,
             AudioBuffer::from(vec![vec![0.0f32; 16]], OFFLINE_SAMPLE_RATE),
         );
