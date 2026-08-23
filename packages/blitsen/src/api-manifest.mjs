@@ -583,11 +583,6 @@ const USAGE_RULES = [
     "\\bfetch\\s*\\(\\s*(?:new\\s+URL\\s*\\(\\s*)?[\"'`](?!https?:\\/\\/)([^\"'`]*)[\"'`]",
     "fetch names a path this application does not ship, and there is no server behind it.",
     "Ship the file in the output, or request an absolute http(s) URL."],
-  // Storage exists and works; what it cannot do is outlive the process, and a
-  // write is the only thing that has something to lose by that.
-  ["WEB_STORAGE_MEMORY", "warning", "\\blocalStorage\\s*\\.\\s*setItem\\b",
-    "localStorage is in memory only: what it stores is gone when the application exits.",
-    "Keep anything that must survive a restart in a file the application owns."],
 ];
 
 // Subresources an exported application cannot fetch: there is no server behind

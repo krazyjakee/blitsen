@@ -634,6 +634,12 @@ export async function buildAndroid({
 }) {
   const abis = resolveAbis(requestedAbis);
   const id = applicationId(requestedId, name);
+  // The Activity can report its installed ID, but the engine-neutral runtime
+  // config is also what desktop reads. Keep one identity record across every
+  // artifact shape rather than teaching storage about Android packaging.
+  extra = new Map(extra);
+  extra.set("blitsen.runtime.json", Buffer.from(
+    `${JSON.stringify({ storageIdentity: id })}\n`));
   const code = versionCode(appVersion);
   const toolchain = await detect({ env });
   const entryCrate = await resolveEntryCrate(env);

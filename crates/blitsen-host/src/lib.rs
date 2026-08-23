@@ -31,6 +31,7 @@ pub mod replay;
 pub mod runtime_services;
 mod source_maps;
 pub mod standalone;
+pub mod storage;
 // Surface loss and recreation: what a window that can be taken away needs (#146).
 pub mod surface_lifecycle;
 pub mod worker;
@@ -245,6 +246,8 @@ pub struct OpenDirectoryOptions {
     pub title: String,
     /// Original directory argument, retained for diagnostics.
     pub directory: String,
+    /// Stable identity used to isolate durable Web Storage.
+    pub storage_identity: String,
     /// Native creation-time window behavior.
     pub window: NativeWindowOptions,
     /// Optional system tray icon and menu.

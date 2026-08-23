@@ -455,8 +455,10 @@ service workers, `SharedWorker`, `BroadcastChannel`, `document.write`, quirks mo
 after navigation are all about sharing something between documents, and there is one document. `history` and `location` do exist, but as an
 in-memory session history at a synthetic address — enough for a client-side router, and nothing
 that navigates. `navigator` answers identity (`userAgent`, `platform`, `language`) and no
-capability. `localStorage` and `sessionStorage` hold data for the life of the process and say so
-through a `doctor` warning on every build; durable storage is a separate question.
+capability. `localStorage` is the synchronous standard facade over an atomic keyed-file store in
+the application's platform data directory; `sessionStorage` belongs only to the current realm.
+The backing store reads values individually rather than loading an application's whole durable
+dataset at startup, and it adds no database dependency.
 
 ### Where the DOM surface is narrower than its name
 

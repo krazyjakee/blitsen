@@ -45,6 +45,7 @@ pub fn run<E: JsEngine + Clone + 'static>(
     engine: &mut E,
     services: &RuntimeServices<E>,
     files: &AppFiles,
+    storage: &crate::storage::LocalStorage,
     reported: &Reported<'_>,
 ) -> Result<(), JsError> {
     let Reported {
@@ -61,7 +62,7 @@ pub fn run<E: JsEngine + Clone + 'static>(
         engine,
         files,
         net_provider,
-        LoadOptions::new(width, height, DocumentMode::Application),
+        LoadOptions::new(width, height, DocumentMode::Application).with_storage(storage.clone()),
     )?;
     engine.evaluate_script(
         "globalThis.__blitsenDispatchLifecycleEvent('load')",

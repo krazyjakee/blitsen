@@ -44,9 +44,9 @@ fn create_event_loop() -> EventLoop {
 /// The winit loop this session pumps; see the non-Windows definition.
 #[cfg(target_os = "windows")]
 fn create_event_loop() -> EventLoop {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{MSG, TranslateAcceleratorW};
     use winit::event_loop::ControlFlow;
     use winit::platform::windows::EventLoopBuilderExtWindows;
-    use windows_sys::Win32::UI::WindowsAndMessaging::{MSG, TranslateAcceleratorW};
 
     let mut builder = EventLoop::builder();
     builder.with_msg_hook(|message| {
@@ -84,6 +84,8 @@ pub struct WindowSession<E: JsEngine + Clone> {
     pub files: AppFiles,
     /// What the session was opened with, retained for reload.
     pub options: OpenDirectoryOptions,
+    /// Durable storage shared by every reload of this session.
+    storage: crate::storage::LocalStorage,
 }
 
 impl<E: JsEngine + Clone> Drop for WindowSession<E> {
@@ -112,6 +114,8 @@ impl<E: JsEngine + Clone + 'static> WindowSession<E> {
         super::notify::install(&options.activation, &options.title).map_err(JsError::new)?;
         crate::dom_bridge::hid::reset();
         crate::dom_bridge::input::reset();
+        let storage = crate::storage::LocalStorage::for_application(&options.storage_identity)
+            .map_err(JsError::new)?;
         let started_at = Instant::now();
         let runtime = tokio::runtime::Builder::new_multi_thread()
             // Network and audio work are asynchronous rather than CPU-parallel.
@@ -168,7 +172,8 @@ impl<E: JsEngine + Clone + 'static> WindowSession<E> {
                 options.width,
                 options.height,
                 crate::dom_bridge::DocumentMode::Application,
-            ),
+            )
+            .with_storage(storage.clone()),
         )?;
         // Renderer selection happens before winit creates a surface. On an
         // unsafe target this must never construct wgpu: recovering from device
@@ -243,6 +248,7 @@ impl<E: JsEngine + Clone + 'static> WindowSession<E> {
             error,
             files,
             options,
+            storage,
         })
     }
 
@@ -290,7 +296,8 @@ impl<E: JsEngine + Clone + 'static> WindowSession<E> {
                 logical.height,
                 crate::dom_bridge::DocumentMode::Application,
             )
-            .with_viewport(viewport),
+            .with_viewport(viewport)
+            .with_storage(self.storage.clone()),
         )?;
 
         let view = self

@@ -215,7 +215,8 @@ APK](PACKAGING.md#build-an-android-apk) for prerequisites and signing.
   are the runtime's own, over CLDR and the platform's time-zone database, and are the same on every
   target — the database is the system's on Unix, Android's concatenated `tzdata` there, and bundled
   on Windows.
-- `localStorage` and `sessionStorage` are in-memory and reset when the process exits.
+- `localStorage` persists synchronously under the platform application-data directory;
+  `sessionStorage` resets with its JavaScript realm.
 - The runtime is not a browser sandbox and must not run untrusted third-party pages.
 
 This list calls out release-level constraints, not every missing web API. Use `blitsen doctor` and

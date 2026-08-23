@@ -19,15 +19,36 @@ try {
     outfile,
   }, addon);
   assert.equal(result.assets, 3);
+  const storageEnvironment = process.platform === "win32"
+    ? { APPDATA: join(testDirectory, "app-data"), LOCALAPPDATA: join(testDirectory, "local-data") }
+    : process.platform === "darwin"
+      ? { HOME: join(testDirectory, "home") }
+      : { XDG_DATA_HOME: join(testDirectory, "data") };
   const check = Bun.spawnSync({
     cmd: [outfile],
     cwd: testDirectory,
-    env: { BLITSEN_STANDALONE_CHECK: "1", PATH: "" },
+    env: { ...storageEnvironment, BLITSEN_STANDALONE_CHECK: "1",
+      BLITSEN_STANDALONE_CHECK_SCRIPT:
+        `localStorage.setItem("survives", "yes"); sessionStorage.setItem("realm", "first")`,
+      PATH: "" },
     stdout: "pipe",
     stderr: "pipe",
   });
   assert.equal(check.exitCode, 0, check.stderr.toString());
   assert.match(check.stdout.toString(), /standalone check passed \(3 embedded assets\)/);
+
+  const reopened = Bun.spawnSync({
+    cmd: [outfile],
+    cwd: testDirectory,
+    env: { ...storageEnvironment, BLITSEN_STANDALONE_CHECK: "1",
+      BLITSEN_STANDALONE_CHECK_ASSERT:
+        `if (localStorage.getItem("survives") !== "yes"
+          || sessionStorage.getItem("realm") !== null) throw new Error("storage lifetime")`,
+      PATH: "" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  assert.equal(reopened.exitCode, 0, reopened.stderr.toString());
 
   const sideLoaded = await buildStandalone({
     root: join(repository, "examples/pong"),
@@ -47,7 +68,7 @@ try {
   const sideCheck = Bun.spawnSync({
     cmd: [sideLoaded.outfile],
     cwd: repository,
-    env: { BLITSEN_STANDALONE_CHECK: "1", PATH: "" },
+    env: { ...storageEnvironment, BLITSEN_STANDALONE_CHECK: "1", PATH: "" },
     stdout: "pipe",
     stderr: "pipe",
   });

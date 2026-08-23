@@ -1204,18 +1204,22 @@ one.
 
 ## Storage
 
-`localStorage` and `sessionStorage` exist, hold what is put in them, and **lose it when the
-application exits**. There is no profile directory behind an exported application yet, so both are
-one process's memory: `sessionStorage` is therefore exactly right, and `localStorage` is a session
-store wearing a longer name.
+`localStorage` is durable and synchronous. Each value is an atomic keyed file below Blitsen's
+platform application-data directory; a small index preserves Storage key order without reading
+large values into memory at startup. Interrupted writes retain the old or new complete value, and a
+damaged index is quarantined and rebuilt from valid keyed records. There is no Blitsen quota: the
+platform filesystem is the limit, and a failed write throws synchronously.
 
-It is implemented anyway because the absence is not survivable and the forgetfulness is. Libraries
-read `localStorage` unguarded inside a render — shadcn's theme provider does it in a `useState`
-initialiser — so an absent global takes the application down before first paint, while an empty one
-degrades to the default theme. What must not happen is that the difference goes unnoticed, so
-`doctor` reports every `localStorage.setItem` as `WEB_STORAGE_MEMORY`, on every build, for as long
-as this is true. Keep anything that has to outlive the process in a file the application owns.
-Real persistence is tracked separately.
+Exports use their packaging identity (`--bundle-id`, or the stable `com.blitsen.<name>` default).
+Development directories use their canonical path, and proxy runs use the normalized server origin
+and entrypoint, so unrelated projects do not share state. Moving a development directory therefore
+creates a new namespace; changing a dev-server port does too.
+
+`sessionStorage` remains private to one JavaScript realm and disappears when that realm is replaced
+or the process exits. Blitsen currently opens one window. When multi-window support lands, windows
+with the same application identity will share the local area and receive `storage` events, while
+each top-level window keeps its own session area. Workers do not expose Web Storage; a future worker
+store must use the same serialized backend rather than a per-thread copy.
 
 `indexedDB` stays absent.
 
@@ -1395,7 +1399,6 @@ determinism gate instead.
 | Diagnostic | Severity | Reported as |
 | --- | --- | --- |
 | `WEB_FETCH` | error | fetch names a path this application does not ship, and there is no server behind it. |
-| `WEB_STORAGE_MEMORY` | warning | localStorage is in memory only: what it stores is gone when the application exits. |
 | `WEB_DOM` | warning | This DOM method is not implemented. |
 | `WEB_FORM_CONTROLS` | warning | This form-control API is not implemented. |
 | `WEB_TRANSFER` | warning | This part of DataTransfer is not implemented; a dropped file is a path, not a File. |

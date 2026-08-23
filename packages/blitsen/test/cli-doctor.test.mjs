@@ -39,10 +39,7 @@ describe("directory CLI", () => {
     expect(await main(["doctor", join(fixtures, "unsupported")], output)).toBe(0);
     expect(lines.some(([, line]) => line.includes("WEB_CANVAS") && line.includes("2D context is")))
       .toBeTrue();
-    expect(lines.some(([, line]) =>
-      line.includes("WEB_STORAGE_MEMORY") && line.includes("gone when the application exits")))
-      .toBeTrue();
-    expect(lines.at(-1)[1]).toContain("0 errors, 2 warnings");
+    expect(lines.at(-1)[1]).toContain("0 errors, 1 warnings");
 
     // What still blocks: an entry point that names source rather than output,
     // because nothing in the runtime transpiles it and the window stays blank.
@@ -242,7 +239,7 @@ describe("directory CLI", () => {
         + "localStorage.setItem('theme', 'dark');");
       const codes = (await doctorApplication(directory)).diagnostics.map(entry => entry.code);
       expect(codes.sort()).toEqual(["WEB_COMPONENTS", "WEB_NAVIGATION", "WEB_STORAGE",
-        "WEB_STORAGE_MEMORY", "WEB_WORKER"]);
+        "WEB_WORKER"]);
 
       const manifest = await loadApiManifest();
       await writeFile(join(directory, "app.js"), manifest.apis

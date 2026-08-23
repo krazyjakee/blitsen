@@ -177,6 +177,7 @@ pub(crate) struct WindowScriptOptions<'a> {
     pub(crate) mode: DocumentMode,
     pub(crate) loader: &'a dyn blitsen_core::ScriptLoader,
     pub(crate) reader: Option<crate::app::AppReader>,
+    pub(crate) storage: Option<crate::storage::LocalStorage>,
 }
 
 pub(crate) fn execute_window_scripts_from<E: JsEngine + 'static>(
@@ -192,6 +193,7 @@ pub(crate) fn execute_window_scripts_from<E: JsEngine + 'static>(
         mode,
         loader,
         reader,
+        storage,
     } = options;
     let module_root = Path::new(entrypoint)
         .parent()
@@ -222,11 +224,11 @@ pub(crate) fn execute_window_scripts_from<E: JsEngine + 'static>(
             })()"#
     .replace("__BLITSEN_RELOAD_ROOT__", &module_root);
     engine.evaluate_script(&cleanup, "blitsen:dispose-document-context")?;
-    let window_state = dom_bridge::install(
-        engine,
-        runtime,
-        InstallOptions::new(width, height, 1.0, mode, reader),
-    )?;
+    let mut install = InstallOptions::new(width, height, 1.0, mode, reader);
+    if let Some(storage) = storage {
+        install = install.with_storage(storage);
+    }
+    let window_state = dom_bridge::install(engine, runtime, install)?;
     engine.evaluate_script(
         r#"(() => {
               if (!globalThis.__blitsenRuntimeBaseline) {

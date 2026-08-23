@@ -13,10 +13,9 @@ use std::cell::RefCell;
 
 use blitsen_host::app::AppFiles;
 use blitsen_host::{
-    MenuDefinition, NativeWindowOptions as HostWindowOptions,
-    OpenDirectoryOptions as HostOptions, TrayAction, TrayMenu,
-    TrayMenuItem as HostTrayMenuItem, TrayOptions as HostTrayOptions, WindowSession, WindowType,
-    native_window,
+    MenuDefinition, NativeWindowOptions as HostWindowOptions, OpenDirectoryOptions as HostOptions,
+    TrayAction, TrayMenu, TrayMenuItem as HostTrayMenuItem, TrayOptions as HostTrayOptions,
+    WindowSession, WindowType, native_window,
 };
 use blitsen_js::JsError;
 use napi::{Env, Status};
@@ -49,6 +48,8 @@ pub struct OpenDirectoryOptions {
     pub title: String,
     /// Original directory argument, retained for diagnostics.
     pub directory: String,
+    /// Stable application identity used for durable Web Storage.
+    pub storage_identity: Option<String>,
     /// Native creation-time window behavior.
     pub window: Option<NativeWindowOptions>,
     /// Optional system tray icon and context menu.
@@ -188,8 +189,8 @@ impl TryFrom<OpenDirectoryOptions> for HostOptions {
                 let menu = tray
                     .menu_json
                     .map(|json| {
-                        let entries: Vec<MenuDefinition> = serde_json::from_str(&json)
-                            .map_err(|error| {
+                        let entries: Vec<MenuDefinition> =
+                            serde_json::from_str(&json).map_err(|error| {
                                 JsError::new(format!("invalid tray menu configuration: {error}"))
                             })?;
                         let icons = tray
@@ -226,6 +227,9 @@ impl TryFrom<OpenDirectoryOptions> for HostOptions {
             })
             .transpose()?;
         Ok(Self {
+            storage_identity: options
+                .storage_identity
+                .unwrap_or_else(|| options.root.clone()),
             root: options.root,
             entrypoint: options.entrypoint,
             width: options.width,

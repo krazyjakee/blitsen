@@ -39,7 +39,7 @@ lists individual globals, classes and members.
 | Routing | `location`, `history`, hash changes and popstate within the application |
 | Styling | Stylesheets, rule source, media queries, CSS support checks and resize observers |
 | Audio | `<audio>` and a focused Web Audio subset |
-| Storage | `localStorage` and `sessionStorage`, both in-memory for one process |
+| Storage | synchronous durable `localStorage` and realm-scoped `sessionStorage` |
 | Canvas | `<canvas>` with a full 2D context: paths, text, images, gradients, patterns, compositing, `getImageData` and `toDataURL` |
 | Notifications | Standard `Notification` construction, permission, close, and lifecycle events on Linux, Windows, eligible packaged macOS apps and launched Android packages; see platform limits below |
 

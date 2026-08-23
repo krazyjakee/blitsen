@@ -318,7 +318,7 @@ pen, with pressure, multi-touch and pointer capture) · the first `blitsen/*` mo
 | `window.create` | Deliberately absent — the context, communication and lifetime contract is settled by #105, but the per-window host state it requires is not implemented. |
 
 **v2 — makes real apps comfortable** — *partly landed early*
-`localStorage`/`sessionStorage` (in memory, not persisted) · Workers (dedicated, with
+durable `localStorage` and realm-scoped `sessionStorage` · Workers (dedicated, with
 `MessageChannel`, `MessagePort` and `structuredClone`) · clipboard events · drag & drop, where a
 drop reports real filesystem paths in `dataTransfer.paths` rather than browser `File` abstractions,
 have landed. Still open: gamepads · notification activation and management · starting a drag *out*

@@ -5030,13 +5030,6 @@
       "pattern": "\\bfetch\\s*\\(\\s*(?:new\\s+URL\\s*\\(\\s*)?[\"'`](?!https?:\\/\\/)([^\"'`]*)[\"'`]",
       "message": "fetch names a path this application does not ship, and there is no server behind it.",
       "guidance": "Ship the file in the output, or request an absolute http(s) URL."
-    },
-    {
-      "code": "WEB_STORAGE_MEMORY",
-      "severity": "warning",
-      "pattern": "\\blocalStorage\\s*\\.\\s*setItem\\b",
-      "message": "localStorage is in memory only: what it stores is gone when the application exits.",
-      "guidance": "Keep anything that must survive a restart in a file the application owns."
     }
   ],
   "renderer": [

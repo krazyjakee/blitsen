@@ -38,6 +38,7 @@ pub(crate) mod tray;
 mod canvas;
 mod net_pool;
 mod ops;
+mod storage;
 mod web_socket;
 mod web_url;
 pub mod window;
@@ -114,6 +115,7 @@ pub struct InstallOptions {
     device_pixel_ratio: f64,
     mode: DocumentMode,
     reader: Option<crate::app::AppReader>,
+    storage: Option<crate::storage::LocalStorage>,
 }
 
 impl InstallOptions {
@@ -131,7 +133,14 @@ impl InstallOptions {
             device_pixel_ratio,
             mode,
             reader,
+            storage: None,
         }
+    }
+
+    /// Supplies the durable store for this application realm.
+    pub fn with_storage(mut self, storage: crate::storage::LocalStorage) -> Self {
+        self.storage = Some(storage);
+        self
     }
 }
 
@@ -150,6 +159,7 @@ pub fn install<E: JsEngine + 'static>(
         // shipped. `None` is the bare bridge harness, which has no application
         // behind it — and is why `fetch` still refuses a `file:` URL there.
         reader,
+        storage,
     } = options;
     let class = Rc::new(engine.register_class(NativeClass::new("BlitsenNode"))?);
     let table = Rc::new(WrapperTable::<NodeId, E::WeakRef>::new());
@@ -251,6 +261,7 @@ pub fn install<E: JsEngine + 'static>(
     install_web_socket(engine)?;
     install_event_source(engine)?;
     install_intl(engine)?;
+    storage::install(engine, storage)?;
     native::install(engine)?;
     let dev_layout_warnings = std::env::var("BLITSEN_DEV_LAYOUT_WARNINGS").is_ok_and(|value| {
         !value.is_empty() && value != "0" && !value.eq_ignore_ascii_case("false")

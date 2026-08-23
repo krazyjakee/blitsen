@@ -47,6 +47,9 @@ struct Settings {
     /// The identity the packaging step registered, and the activation envelope
     /// the platform entry point started this process with (#252).
     activation: ActivationOptions,
+    /// Installed identity recorded by an export; development derives one from
+    /// its canonical directory or normalized server URL.
+    storage_identity: Option<String>,
 }
 
 impl Default for Settings {
@@ -61,6 +64,7 @@ impl Default for Settings {
             tray: None,
             menu: None,
             activation: ActivationOptions::default(),
+            storage_identity: None,
         }
     }
 }
@@ -182,6 +186,10 @@ impl Settings {
             if let Some(runtime) = config.get("runtime").and_then(describe_runtime) {
                 settings.runtime = runtime;
             }
+            settings.storage_identity = config
+                .get("storageIdentity")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned);
         }
         let mut arguments = arguments.iter();
         while let Some(argument) = arguments.next() {
@@ -268,6 +276,10 @@ pub fn run_assets(assets: ApkAssets, arguments: &[String]) -> Result<ExitCode, S
 
 fn run(files: AppFiles, arguments: &[String]) -> Result<ExitCode, String> {
     let settings = Settings::read(&files, arguments)?;
+    let storage_identity = settings
+        .storage_identity
+        .clone()
+        .unwrap_or_else(|| files.storage_identity());
     // Before anything can construct a `Worker`, and once for the process: which
     // engine a worker thread runs is a property of this executable.
     blitsen_host::worker::register_launcher(Box::new(engine::Workers));
@@ -284,12 +296,14 @@ fn run(files: AppFiles, arguments: &[String]) -> Result<ExitCode, String> {
     engine::install_module_loader(&mut engine)?;
 
     if blitsen_host::standalone::requested() {
+        let storage = blitsen_host::storage::LocalStorage::for_application(&storage_identity)?;
         // Answering the check is the whole of this run: no window opens, and
         // the process exits as soon as it has said what it found.
         blitsen_host::standalone::run(
             &mut engine,
             &services,
             &files,
+            &storage,
             &blitsen_host::standalone::Reported {
                 width: settings.width,
                 height: settings.height,
@@ -314,6 +328,7 @@ fn run(files: AppFiles, arguments: &[String]) -> Result<ExitCode, String> {
         height: settings.height,
         title: settings.title,
         directory: files.entrypoint_name(),
+        storage_identity,
         window: settings.window,
         tray: settings.tray,
         menu: settings.menu,
