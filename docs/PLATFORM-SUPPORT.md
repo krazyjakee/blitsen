@@ -205,9 +205,12 @@ APK](PACKAGING.md#build-an-android-apk) for prerequisites and signing.
 - WebGL, WebGPU and WebRTC are not implemented. `<canvas>` 2D is, without shadows or
   `ctx.filter`.
 - There is no platform accessibility tree, so screen readers cannot access the application.
-- Text input lacks complete IME/composition, clipboard editing, undo/redo, `contenteditable` and
-  complex-script support.
-- Cross-platform font fallback is incomplete. Verify typography on every target.
+- Text input lacks complete IME/composition, clipboard editing, undo/redo and `contenteditable`.
+  Static Arabic/RTL and other complex text is shaped, but native complex-script input workflows
+  remain part of IME acceptance.
+- Font fallback uses installed system fonts plus application-provided `@font-face` files; no
+  universal fallback is bundled. Ship author fonts for stable coverage and metrics. Platform
+  emoji, colour fonts and ZWJ sequences still need target-specific verification.
 - WebAssembly is absent from the standard shipped JavaScript engine. `Intl` is not: the formatters
   are the runtime's own, over CLDR and the platform's time-zone database, and are the same on every
   target — the database is the system's on Unix, Android's concatenated `tzdata` there, and bundled

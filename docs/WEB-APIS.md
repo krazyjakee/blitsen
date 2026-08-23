@@ -159,7 +159,9 @@ configured for. The details and the deviations are in
 
 HTML and CSS are rendered by Blitz rather than a browser engine. Some valid browser styles render
 differently or are ignored. Current high-impact areas include transitions, fixed/sticky positioning,
-paint effects, form-control styling, font fallback and complex text.
+paint effects, form-control styling, host-dependent font metrics, colour emoji and complex text
+input. Static complex text uses Parley/HarfRust shaping; ship `@font-face` files when coverage and
+metrics must be portable.
 
 **SVG paints** — inline `<svg>`, `<img src="icon.svg">` and CSS `background-image`, as vectors
 rather than as rasterised images. Shapes, paths, `viewBox`, transforms, gradients, dashed strokes,

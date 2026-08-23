@@ -66,6 +66,30 @@ JavaScript comes from the [generated manifest](#capability-tiers) below.
 | CSS | Static block, flex and grid layout; bounded absolute positioning; spacing, borders, backgrounds, colors and system typography |
 | Subresources | `<img>` and CSS `background-image` (PNG, JPEG, GIF, WebP and SVG), and `@font-face` web fonts (WOFF2, WOFF, TTF, OTF), loaded from local files; `<video>` is not. Audio is loaded and decoded by Web Audio rather than as a renderer subresource — see [Audio](#audio). A subresource the export cannot serve — a remote URL, or a local file that is missing — is answered with an empty body, so the document paints without it rather than waiting on it |
 
+## Font fallback and complex text
+
+Blitsen enumerates the platform's system fonts and adds every author font loaded through
+`@font-face` to the same shared collection used by DOM and canvas text. CSS family order is kept;
+Parley selects a covering face per Unicode cluster and supplies script/locale fallback from the
+fonts actually present. HarfRust shapes the selected face, and Unicode bidi determines visual run
+order. The automated renderer coverage includes Arabic joining and RTL order, CJK falling through
+to a second author family, and a single-scalar outline emoji.
+
+There is **no bundled universal fallback font**. Applications that require stable coverage or
+metrics must ship appropriately licensed fonts and name them in `@font-face`; otherwise the
+available glyphs, advances and line breaks are the host's. If no declared or system face covers a
+scalar, the selected face's glyph zero (`.notdef`) is used. Its appearance is font-defined and can
+be a box, another mark or blank—Blitsen does not invent a replacement glyph.
+
+Emoji has the same boundary. An author-provided outline glyph shapes and paints. Platform emoji,
+colour-font formats, variation-selector presentation and multi-codepoint ZWJ sequences depend on
+the installed face and the underlying Parley/Vello support and are not claimed by the current
+tests. Verify those exact sequences on every target where they matter.
+
+P6 byte identity is conditional on font inputs: the conformance corpus and captured framework case
+use committed author fonts. A page that uses system fonts is expected to differ across operating
+systems and is deliberately excluded from byte-exact goldens.
+
 The M3b acceptance app intentionally uses the normal Vite default output, including
 root-relative `/assets/...` references and Vite's module-preload bootstrap. It contains no
 Blitsen imports or runtime branches.
@@ -1283,7 +1307,7 @@ actually draws it rather than where the pitch would prefer.
 | --- | --- | --- |
 | Canvas shadows and `filter` | The four `shadow*` properties and `ctx.filter` are **absent**, so `"shadowBlur" in ctx` is false and a feature test selects a fallback. Both need a blur, and the paint pipeline under this renderer has none — the same reason CSS `filter` is reported ignored | [#99](https://github.com/krazyjakee/blitsen/issues/99) |
 | `OffscreenCanvas`, `ImageBitmap` | `WEB_CANVAS`, a warning. A canvas that is never in the document is the supported way to draw off-screen: `document.createElement("canvas")` draws, reads back and encodes without being connected | [#99](https://github.com/krazyjakee/blitsen/issues/99) |
-| Advanced text input and IME | Text controls support keyboard editing, caret movement, click placement, drag selection and `beforeinput`/`input`; clipboard editing, undo/redo, composition/IME, `contenteditable`, `selectionchange`, target ranges and complex-script coverage remain incomplete | [#103](https://github.com/krazyjakee/blitsen/issues/103) |
+| Advanced text input and IME | Text controls support keyboard editing, caret movement, click placement, drag selection and `beforeinput`/`input`; clipboard editing, undo/redo, composition/IME, `contenteditable`, `selectionchange`, target ranges and native complex-script input workflows remain incomplete. Static complex text is shaped separately—see [Font fallback and complex text](#font-fallback-and-complex-text) | [#103](https://github.com/krazyjakee/blitsen/issues/103) |
 | Accessibility | No accessibility tree is exported to the platform, so a screen reader finds nothing | [#102](https://github.com/krazyjakee/blitsen/issues/102) |
 | WebGL, WebGPU, WebRTC | `WEB_GPU`, a warning. `<blitsen-view>` is the supported way to put GPU output on screen | — |
 

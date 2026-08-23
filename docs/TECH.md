@@ -574,6 +574,16 @@ coming. `@font-face` descriptors — `font-family`, `font-weight`, `font-style` 
 face, not the metadata inside the file, so a family whose files disagree with the CSS about their
 own name still matches.
 
+**Fallback policy: system fonts plus author fonts, no universal bundle.** Parley's collection
+enumerates the host and registers `@font-face` data into the same shared source cache used by DOM
+and canvas text. It chooses a covering face per cluster, then HarfRust shapes it and Unicode bidi
+orders the runs. This already brings the shaping stack the runtime needs; adding a general-purpose
+font would add artifact bytes and a redistribution/licensing policy without making host metrics
+portable. Applications that need portable glyph coverage and line breaks ship their own faces.
+An uncovered scalar stays glyph zero in the selected face, whose `.notdef` may paint or may be
+blank. Outline emoji supplied by an author works; colour emoji formats and ZWJ sequences are not
+claimed without targeted renderer evidence.
+
 **Blitsen is FOUT, never FOIT.** Nothing registers a font as a render-blocking resource, so text
 paints in the fallback face immediately and reshapes when the web font arrives. The alternative
 trades a restyle for a blank window on every cold start.
@@ -1120,7 +1130,12 @@ Rules that, if broken, cost a rewrite rather than a refactor:
 5. **Text input and IME** — a large, easily underestimated surface; where does it live?
 6. **Accessibility** — Blitz's AccessKit story, and whether v0 can defer it. Deferring has a
    real cost for the dashboard/tooling audience.
-7. **Font fallback and shaping** across platforms without pulling in a large font stack.
+7. **Font fallback and shaping: decided.** Enumerate system fonts and register author-provided
+   `@font-face` files into the shared Parley collection; bundle no universal fallback. HarfRust,
+   Unicode script analysis and bidi are already in that pipeline. Portable applications pin their
+   fonts, and P6 byte identity applies only to the pinned-font corpus. Automated fixtures cover
+   Arabic joining/RTL, CJK author-family fallback, outline emoji and explicit `.notdef`; platform
+   colour emoji and particular ZWJ sequences remain claims only after targeted evidence.
 8. **Hot reload state** — accept full restart, or attempt module-level replacement? Largely moot
    in proxy mode, where the user's own HMR handles it.
 9. **Absolute-path assets: decided.** Rewrite at ingest. Server-root subresource URLs in HTML and
