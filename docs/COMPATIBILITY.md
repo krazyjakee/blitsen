@@ -128,7 +128,9 @@ Two things to know:
 - **Uncaught stack frames use source maps.** Blitsen follows the last standard
   `//# sourceMappingURL` (or block-comment equivalent), including inline data
   URLs and external maps served with query strings. A missing or malformed map
-  is ignored, leaving the generated `blitsen://app/…` frame available. Mapping
+  is ignored, leaving the generated `blitsen://app/…` frame available. Regular
+  Source Map v3 files and embedded indexed-map sections are decoded; an indexed
+  section that only refers to another unavailable map remains unmapped. Mapping
   is applied when an uncaught error becomes a runtime diagnostic; reading
   `error.stack` inside application code still returns the engine's own stack.
 

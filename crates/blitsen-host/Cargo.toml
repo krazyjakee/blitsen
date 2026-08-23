@@ -93,6 +93,10 @@ reqwest = { version = "0.13", default-features = false, features = ["charset", "
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
+# Runtime diagnostics consume the mappings a user's bundler emitted. The crate
+# owns Source Map v3 decoding (including indexed maps); Blitsen keeps URL and
+# sourceMappingURL policy because those are application-loader concerns.
+sourcemap = "9.3.2"
 tokio = { version = "1.42", features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
 # `WebSocket`, the crate TECH.md §8 names. `native-tls` rather than a bundled
 # root store because `reqwest` above already resolves to it: `wss:` then trusts

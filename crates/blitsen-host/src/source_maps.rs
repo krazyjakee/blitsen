@@ -1,51 +1,62 @@
-//! The small part of Source Map v3 a runtime diagnostic needs.
+//! Source Map v3 positions used by runtime diagnostics.
 //!
-//! Blitsen never transforms application code. It only needs to consume the
-//! mappings emitted by the user's toolchain, so this deliberately stores the
-//! generated-to-original positions and none of the source text or symbol-name
-//! table a debugger would need.
+//! Blitsen never transforms application code. The mature `sourcemap` crate
+//! owns JSON, VLQ and indexed-map decoding; this module keeps the one policy
+//! that belongs to the application loader: resolving an original source name
+//! against the URL from which its map was loaded.
 
-use serde::Deserialize;
+use sourcemap::DecodedMap;
 use url::Url;
 
 #[derive(Debug)]
 pub(crate) struct SourceMap {
-    lines: Vec<Vec<Mapping>>,
-    sources: Vec<String>,
-}
-
-#[derive(Debug)]
-struct Mapping {
-    generated_column: u32,
-    source: usize,
-    original_line: u32,
-    original_column: u32,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct RawSourceMap {
-    version: u8,
-    #[serde(default)]
-    source_root: Option<String>,
-    sources: Vec<String>,
-    mappings: String,
+    decoded: DecodedMap,
+    map_url: String,
 }
 
 impl SourceMap {
     pub(crate) fn parse(bytes: &[u8], map_url: &str) -> Result<Self, String> {
-        let raw: RawSourceMap =
-            serde_json::from_slice(bytes).map_err(|error| format!("invalid JSON: {error}"))?;
-        if raw.version != 3 {
-            return Err(format!("unsupported source-map version {}", raw.version));
+        // Validate the base here rather than waiting for the first diagnostic.
+        // A malformed optional map remains non-fatal to module loading, but its
+        // cache entry must never become a delayed error on the reporting path.
+        Url::parse(map_url)
+            .map_err(|error| format!("invalid source-map URL {map_url:?}: {error}"))?;
+        let version = serde_json::from_slice::<serde_json::Value>(bytes)
+            .map_err(|error| format!("invalid source-map JSON: {error}"))?
+            .get("version")
+            .and_then(serde_json::Value::as_u64);
+        if version != Some(3) {
+            return Err(format!(
+                "unsupported source-map version {}",
+                version
+                    .map(|version| version.to_string())
+                    .unwrap_or_else(|| "missing".to_owned())
+            ));
         }
-        let sources = raw
-            .sources
-            .iter()
-            .map(|source| source_url(map_url, raw.source_root.as_deref(), source))
-            .collect::<Result<Vec<_>, _>>()?;
-        let lines = decode_mappings(&raw.mappings, sources.len())?;
-        Ok(Self { lines, sources })
+        let decoded = sourcemap::decode_slice(bytes)
+            .map_err(|error| format!("invalid source map: {error}"))?;
+        // Flattening makes section offsets part of each token's generated
+        // coordinates, so the same-line guard in `original_position` applies
+        // equally to regular and indexed maps.
+        let decoded = match decoded {
+            DecodedMap::Index(index) => DecodedMap::Regular(
+                index
+                    .flatten()
+                    .map_err(|error| format!("invalid indexed source map: {error}"))?,
+            ),
+            decoded => decoded,
+        };
+        if let DecodedMap::Regular(map) = &decoded
+            && map
+                .tokens()
+                .any(|token| token.has_source() && token.get_source().is_none())
+        {
+            return Err("mapping source index is out of range".to_owned());
+        }
+        Ok(Self {
+            decoded,
+            map_url: map_url.to_owned(),
+        })
     }
 
     /// Source-map inputs use zero-based positions; diagnostics use one-based
@@ -54,136 +65,34 @@ impl SourceMap {
         &self,
         generated_line: u32,
         generated_column: u32,
-    ) -> Option<(&str, u32, u32)> {
-        let line = self.lines.get(generated_line.checked_sub(1)? as usize)?;
+    ) -> Option<(String, u32, u32)> {
+        let line = generated_line.checked_sub(1)?;
         let column = generated_column.saturating_sub(1);
-        let mapping = line
-            .iter()
-            .rev()
-            .find(|mapping| mapping.generated_column <= column)?;
+        let token = self.decoded.lookup_token(line, column)?;
+        // `lookup_token` is a greatest-lower-bound lookup over the whole map.
+        // A token from the preceding generated line must not make an unmapped
+        // line appear mapped.
+        if token.get_dst_line() != line {
+            return None;
+        }
+        let source = source_url(&self.map_url, token.get_source()?).ok()?;
         Some((
-            &self.sources[mapping.source],
-            mapping.original_line + 1,
-            mapping.original_column + 1,
+            source,
+            token.get_src_line().checked_add(1)?,
+            token.get_src_col().checked_add(1)?,
         ))
     }
 }
 
-fn source_url(map_url: &str, source_root: Option<&str>, source: &str) -> Result<String, String> {
-    let source = match source_root.filter(|root| !root.is_empty()) {
-        Some(root) => format!(
-            "{}/{}",
-            root.trim_end_matches('/'),
-            source.trim_start_matches('/')
-        ),
-        None => source.to_owned(),
-    };
-    if let Ok(url) = Url::parse(&source) {
+fn source_url(map_url: &str, source: &str) -> Result<String, String> {
+    if let Ok(url) = Url::parse(source) {
         return Ok(url.into());
     }
     Url::parse(map_url)
         .map_err(|error| format!("invalid source-map URL {map_url:?}: {error}"))?
-        .join(&source)
+        .join(source)
         .map(Into::into)
         .map_err(|error| format!("invalid source URL {source:?}: {error}"))
-}
-
-fn decode_mappings(encoded: &str, source_count: usize) -> Result<Vec<Vec<Mapping>>, String> {
-    let mut lines = Vec::new();
-    let mut previous_source = 0_i64;
-    let mut previous_original_line = 0_i64;
-    let mut previous_original_column = 0_i64;
-    let mut previous_name = 0_i64;
-
-    for encoded_line in encoded.split(';') {
-        let mut line = Vec::new();
-        let mut generated_column = 0_i64;
-        for segment in encoded_line
-            .split(',')
-            .filter(|segment| !segment.is_empty())
-        {
-            let fields = decode_segment(segment)?;
-            if fields.len() != 1 && fields.len() != 4 && fields.len() != 5 {
-                return Err(format!(
-                    "mapping segment has {} fields instead of 1, 4, or 5",
-                    fields.len()
-                ));
-            }
-            generated_column = checked_delta(generated_column, fields[0], "generated column")?;
-            if fields.len() == 1 {
-                continue;
-            }
-            previous_source = checked_delta(previous_source, fields[1], "source index")?;
-            previous_original_line =
-                checked_delta(previous_original_line, fields[2], "original line")?;
-            previous_original_column =
-                checked_delta(previous_original_column, fields[3], "original column")?;
-            if fields.len() == 5 {
-                previous_name = checked_delta(previous_name, fields[4], "name index")?;
-            }
-            let source = usize::try_from(previous_source)
-                .ok()
-                .filter(|source| *source < source_count)
-                .ok_or_else(|| "mapping source index is out of range".to_owned())?;
-            line.push(Mapping {
-                generated_column: generated_column as u32,
-                source,
-                original_line: previous_original_line as u32,
-                original_column: previous_original_column as u32,
-            });
-        }
-        lines.push(line);
-    }
-    Ok(lines)
-}
-
-fn checked_delta(previous: i64, delta: i64, field: &str) -> Result<i64, String> {
-    let value = previous
-        .checked_add(delta)
-        .filter(|value| (0..=u32::MAX as i64).contains(value))
-        .ok_or_else(|| format!("invalid {field} delta"))?;
-    Ok(value)
-}
-
-fn decode_segment(segment: &str) -> Result<Vec<i64>, String> {
-    let mut fields = Vec::new();
-    let mut value = 0_u64;
-    let mut shift = 0_u32;
-    for byte in segment.bytes() {
-        let digit = base64_digit(byte)
-            .ok_or_else(|| format!("invalid base64-VLQ character {:?}", char::from(byte)))?;
-        value |= u64::from(digit & 31)
-            .checked_shl(shift)
-            .ok_or_else(|| "base64-VLQ value is too large".to_owned())?;
-        if digit & 32 == 0 {
-            let magnitude = value >> 1;
-            let signed =
-                i64::try_from(magnitude).map_err(|_| "base64-VLQ value is too large".to_owned())?;
-            fields.push(if value & 1 == 1 { -signed } else { signed });
-            value = 0;
-            shift = 0;
-        } else {
-            shift = shift
-                .checked_add(5)
-                .filter(|shift| *shift < 64)
-                .ok_or_else(|| "base64-VLQ value is too large".to_owned())?;
-        }
-    }
-    if shift != 0 {
-        return Err("unterminated base64-VLQ value".to_owned());
-    }
-    Ok(fields)
-}
-
-fn base64_digit(byte: u8) -> Option<u8> {
-    match byte {
-        b'A'..=b'Z' => Some(byte - b'A'),
-        b'a'..=b'z' => Some(byte - b'a' + 26),
-        b'0'..=b'9' => Some(byte - b'0' + 52),
-        b'+' => Some(62),
-        b'/' => Some(63),
-        _ => None,
-    }
 }
 
 #[cfg(test)]
@@ -199,12 +108,52 @@ mod tests {
         .unwrap();
         assert_eq!(
             map.original_position(2, 18),
-            Some(("blitsen://app/source/main.ts", 21, 6))
+            Some(("blitsen://app/source/main.ts".to_owned(), 21, 6))
         );
     }
 
     #[test]
-    fn invalid_maps_are_rejected_without_panicking() {
+    fn embedded_indexed_maps_respect_section_offsets_and_source_roots() {
+        let map = SourceMap::parse(
+            br#"{
+                "version": 3,
+                "sections": [
+                    {
+                        "offset": { "line": 0, "column": 0 },
+                        "map": {
+                            "version": 3,
+                            "sourceRoot": "../source",
+                            "sources": ["first.ts"],
+                            "names": [],
+                            "mappings": "AAAA"
+                        }
+                    },
+                    {
+                        "offset": { "line": 2, "column": 4 },
+                        "map": {
+                            "version": 3,
+                            "sources": ["second.ts"],
+                            "names": [],
+                            "mappings": "AAAA"
+                        }
+                    }
+                ]
+            }"#,
+            "blitsen://app/assets/generated.js.map",
+        )
+        .unwrap();
+        assert_eq!(
+            map.original_position(1, 1),
+            Some(("blitsen://app/source/first.ts".to_owned(), 1, 1))
+        );
+        assert_eq!(
+            map.original_position(3, 5),
+            Some(("blitsen://app/assets/second.ts".to_owned(), 1, 1))
+        );
+    }
+
+    #[test]
+    fn invalid_and_unmapped_maps_are_rejected_without_panicking() {
         for map in [
             br#"{"version":2,"sources":[],"mappings":""}"#.as_slice(),
             br#"{"version":3,"sources":["x.ts"],"mappings":"AA?A"}"#.as_slice(),
@@ -212,5 +161,12 @@ mod tests {
         ] {
             assert!(SourceMap::parse(map, "blitsen://app/x.js.map").is_err());
         }
+
+        let map = SourceMap::parse(
+            br#"{"version":3,"sources":["x.ts"],"names":[],"mappings":"AAAA;;"}"#,
+            "blitsen://app/x.js.map",
+        )
+        .unwrap();
+        assert_eq!(map.original_position(2, 1), None);
     }
 }
