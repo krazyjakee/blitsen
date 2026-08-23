@@ -141,10 +141,32 @@ export function executableStub(target = `${process.platform}-${process.arch}`) {
     return header;
   }
   if (platform === "darwin") {
-    const header = Buffer.alloc(64);
+    // Unlike the native-library stub above, a Phase 2 executable is rewritten
+    // by the bundle linker. Give it the two segments and header padding that a
+    // real linker-produced Mach-O executable has, with one byte standing in
+    // for the link-edit data. The payload writer can then exercise its actual
+    // segment insertion path while `file` still identifies this fixture solely
+    // from its container header.
+    const header = Buffer.alloc(0x1001);
     header.writeUInt32LE(0xfeedfacf, 0);
     header.writeUInt32LE(machine, 4);
     header.writeUInt32LE(2, 12); // MH_EXECUTE
+    header.writeUInt32LE(2, 16); // ncmds
+    header.writeUInt32LE(144, 20); // sizeofcmds
+
+    const segment = (offset, name, vmaddr, fileoff, filesize, protection) => {
+      header.writeUInt32LE(0x19, offset); // LC_SEGMENT_64
+      header.writeUInt32LE(72, offset + 4);
+      header.write(name, offset + 8, "ascii");
+      header.writeBigUInt64LE(BigInt(vmaddr), offset + 24);
+      header.writeBigUInt64LE(0x1000n, offset + 32);
+      header.writeBigUInt64LE(BigInt(fileoff), offset + 40);
+      header.writeBigUInt64LE(BigInt(filesize), offset + 48);
+      header.writeUInt32LE(protection, offset + 56);
+      header.writeUInt32LE(protection, offset + 60);
+    };
+    segment(32, "__TEXT", 0x100000000, 0, 0x1000, 5);
+    segment(104, "__LINKEDIT", 0x100001000, 0x1000, 1, 1);
     return header;
   }
   const header = Buffer.alloc(0x100);

@@ -158,25 +158,31 @@ console.log(`packaged bundle: ${PACKAGED_IDENTIFIER} reports ${exported.permissi
 assert.equal(bundled.standard, exported.standard,
   "development and packaged execution must expose the same notification surface");
 
-// And the CLI still writes an eligible bundle for a real application, which is
-// the semantics this issue must leave alone: an `.app` carrying the identifier
-// the build was given.
-//
-// Built without the signing hook, and #256 is why. A Phase 2 export is the
-// runtime with the payload appended past `__LINKEDIT`, which is a layout
-// `codesign` rejects outright — so no macOS export this project has ever
-// produced could be signed, and the first `blitsen build --sign` over a linked
-// export is what found that out. Signing here is therefore blocked on a defect
-// of the bundle format rather than on anything notification-shaped, and the
-// identity this file is about is the Info.plist identifier, which is asserted
-// either way. `assertSigned` returns when #256 changes the layout.
+// A bare export exercises the other artifact the signing hook accepts. It is
+// still one self-contained executable and it must both verify and read the
+// payload when launched.
+const bareExport = join(workspace, "SignedPong");
+const bareBuilt = run([process.execPath, CLI, "build", join(repository, "examples/pong"),
+  "--out", bareExport, "--sign", DEVELOPMENT_SIGNATURE, "--force"]);
+assert.equal(bareBuilt.code, 0,
+  `the signed bare build failed:\n${bareBuilt.stdout}\n${bareBuilt.stderr}`);
+assertSigned(bareExport, "the bare exported executable");
+const bareStarted = run([bareExport], { env: { BLITSEN_STANDALONE_CHECK: "1" } });
+assert.equal(bareStarted.code, 0,
+  `the signed bare export did not read its payload:\n${bareStarted.stdout}\n${bareStarted.stderr}`);
+
+// And the CLI writes an eligible, strictly verifiable bundle for a real
+// application. This is the path that found #256: unlike the probe above it is a
+// Phase 2 executable carrying an application payload, so passing proves the
+// Mach-O section layout reaches the signing hook intact.
 const built = run([process.execPath, CLI, "build", join(repository, "examples/pong"),
-  "--out", join(workspace, "Pong"), "--bundle-id", PACKAGED_IDENTIFIER, "--force"]);
+  "--out", join(workspace, "Pong"), "--bundle-id", PACKAGED_IDENTIFIER,
+  "--sign", DEVELOPMENT_SIGNATURE, "--force"]);
 assert.equal(built.code, 0, `the packaged build failed:\n${built.stdout}\n${built.stderr}`);
 const application = join(workspace, "Pong.app");
 assert.match(await readFile(join(application, "Contents/Info.plist"), "utf8"),
   new RegExp(`<key>CFBundleIdentifier</key>\\n  <string>${PACKAGED_IDENTIFIER}</string>`));
-console.warn("DEFERRED: not signing the export — blocked on #256 (payload appended past __LINKEDIT)");
+assertSigned(application, "the exported application bundle");
 
 await rm(workspace, { recursive: true, force: true });
 console.log("macOS notification identity passed");

@@ -1,16 +1,109 @@
 import { describe, expect, test } from "bun:test";
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { promisify } from "node:util";
 
 import { buildPayload, buildTrailer, linkBundle, readBundle, FORMAT_VERSION } from "../src/bundle.mjs";
+import { injectMachOPayload, machOPayloadOffset } from "../src/macho.mjs";
 import { buildStandalone } from "../src/export.mjs";
 import { compileAddon, compiler, exportedName, withStubbedExport } from "./cli-support.mjs";
 
 const run = promisify(execFile);
 const REPO = new URL("../../../", import.meta.url).pathname;
+
+function machoFixture(cpu) {
+  const page = cpu === 0x0100000c ? 0x4000 : 0x1000;
+  const linkeditAt = page;
+  const linkeditBytes = 64;
+  const inheritedSignatureBytes = 256;
+  const signatureAt = linkeditAt + linkeditBytes;
+  const commands = [];
+  const segment = ({ name, vmaddr, vmsize, fileoff, filesize }) => {
+    const command = Buffer.alloc(72);
+    command.writeUInt32LE(0x19, 0);
+    command.writeUInt32LE(72, 4);
+    command.write(name, 8, 16, "ascii");
+    command.writeBigUInt64LE(BigInt(vmaddr), 24);
+    command.writeBigUInt64LE(BigInt(vmsize), 32);
+    command.writeBigUInt64LE(BigInt(fileoff), 40);
+    command.writeBigUInt64LE(BigInt(filesize), 48);
+    command.writeUInt32LE(7, 56);
+    command.writeUInt32LE(name === "__TEXT" ? 5 : 1, 60);
+    return command;
+  };
+  commands.push(segment({
+    name: "__TEXT", vmaddr: 0x100000000, vmsize: page,
+    fileoff: 0, filesize: page,
+  }));
+  const symtab = Buffer.alloc(24);
+  symtab.writeUInt32LE(0x2, 0);
+  symtab.writeUInt32LE(24, 4);
+  symtab.writeUInt32LE(linkeditAt, 8);
+  symtab.writeUInt32LE(signatureAt - 32, 16);
+  symtab.writeUInt32LE(32, 20);
+  commands.push(symtab);
+  const signature = Buffer.alloc(16);
+  signature.writeUInt32LE(0x1d, 0);
+  signature.writeUInt32LE(16, 4);
+  signature.writeUInt32LE(signatureAt, 8);
+  signature.writeUInt32LE(inheritedSignatureBytes, 12);
+  commands.push(signature);
+  commands.push(segment({
+    name: "__LINKEDIT", vmaddr: 0x100000000 + page, vmsize: page,
+    fileoff: linkeditAt, filesize: linkeditBytes + inheritedSignatureBytes,
+  }));
+  const commandBytes = Buffer.concat(commands);
+  const executable = Buffer.alloc(signatureAt + inheritedSignatureBytes);
+  executable.writeUInt32LE(0xfeedfacf, 0);
+  executable.writeInt32LE(cpu, 4);
+  executable.writeUInt32LE(3, 8);
+  executable.writeUInt32LE(2, 12);
+  executable.writeUInt32LE(commands.length, 16);
+  executable.writeUInt32LE(commandBytes.length, 20);
+  executable.writeUInt32LE(0x200085, 24);
+  commandBytes.copy(executable, 32);
+  executable.fill(0x5a, linkeditAt, signatureAt);
+  executable.fill(0xa5, signatureAt);
+  return { executable, linkeditAt, page };
+}
+
+function machoCommands(executable) {
+  const commands = [];
+  let offset = 32;
+  for (let index = 0; index < executable.readUInt32LE(16); index += 1) {
+    const type = executable.readUInt32LE(offset);
+    const size = executable.readUInt32LE(offset + 4);
+    const name = type === 0x19
+      ? executable.subarray(offset + 8, offset + 24).toString("ascii").replace(/\0.*$/, "")
+      : null;
+    commands.push({ type, size, offset, name });
+    offset += size;
+  }
+  return commands;
+}
+
+function expectAdHocSignature(executable, command) {
+  const signatureAt = executable.readUInt32LE(command.offset + 8);
+  const signatureSize = executable.readUInt32LE(command.offset + 12);
+  expect(signatureAt + signatureSize).toBe(executable.length);
+  expect(executable.readUInt32BE(signatureAt)).toBe(0xfade0cc0);
+  expect(executable.readUInt32BE(signatureAt + 12)).toBe(0);
+  const directory = signatureAt + executable.readUInt32BE(signatureAt + 16);
+  expect(executable.readUInt32BE(directory)).toBe(0xfade0c02);
+  expect(executable.readUInt32BE(directory + 12) & 2).toBe(2);
+  const hashes = directory + executable.readUInt32BE(directory + 16);
+  const slots = executable.readUInt32BE(directory + 28);
+  const codeLimit = executable.readUInt32BE(directory + 32);
+  expect(codeLimit).toBe(signatureAt);
+  for (let slot = 0; slot < slots; slot += 1) {
+    const page = executable.subarray(slot * 4096, Math.min((slot + 1) * 4096, codeLimit));
+    const expected = createHash("sha256").update(page).digest();
+    expect(executable.subarray(hashes + slot * 32, hashes + (slot + 1) * 32)).toEqual(expected);
+  }
+}
 
 // Issue #88: the format has two implementations — this package writes it, and
 // the shipped runtime reads it. Nothing keeps them honest except a test that
@@ -73,6 +166,52 @@ describe("Phase 2 link step", () => {
       expect(bundle.files.size).toBe(3);
     } finally {
       await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("puts a Darwin payload in a real segment before __LINKEDIT and ad-hoc signs it", () => {
+    for (const cpu of [0x01000007, 0x0100000c]) {
+      const { executable, linkeditAt, page } = machoFixture(cpu);
+      const section = Buffer.from("a payload that belongs to __BLITSEN");
+      expect(machOPayloadOffset(executable)).toBe(linkeditAt);
+      const linked = injectMachOPayload(executable, section);
+      const commands = machoCommands(linked);
+      const embedded = commands.find(command => command.name === "__BLITSEN");
+      const linkedit = commands.find(command => command.name === "__LINKEDIT");
+      const symtab = commands.find(command => command.type === 0x2);
+      const signature = commands.find(command => command.type === 0x1d);
+
+      expect(linked.readBigUInt64LE(embedded.offset + 40)).toBe(BigInt(linkeditAt));
+      expect(linked.readBigUInt64LE(embedded.offset + 48)).toBe(BigInt(page));
+      expect(linked.readBigUInt64LE(embedded.offset + 72 + 40)).toBe(BigInt(section.length));
+      expect(linked.readUInt32LE(embedded.offset + 72 + 48)).toBe(linkeditAt);
+      expect(linked.subarray(linkeditAt, linkeditAt + section.length)).toEqual(section);
+      expect(linked.readBigUInt64LE(linkedit.offset + 40)).toBe(BigInt(linkeditAt + page));
+      expect(Number(linked.readBigUInt64LE(linkedit.offset + 40)
+        + linked.readBigUInt64LE(linkedit.offset + 48))).toBe(linked.length);
+      expect(linked.readUInt32LE(symtab.offset + 8)).toBe(linkeditAt + page);
+      expectAdHocSignature(linked, signature);
+    }
+  });
+
+  test("a Mach-O link is read through the same payload and trailer contract", async () => {
+    for (const cpu of [0x01000007, 0x0100000c]) {
+      const directory = await mkdtemp(join(tmpdir(), "blitsen-bundle-macho-"));
+      try {
+        const runtime = join(directory, "runtime");
+        const output = join(directory, "MyApp");
+        await writeFile(runtime, machoFixture(cpu).executable);
+        const report = await linkBundle({ runtime, output, files: application });
+        const bytes = await readFile(output);
+        const bundle = readBundle(bytes);
+        expect(bundle.verified).toBe(true);
+        expect(bundle.digest).toBe(report.digest);
+        expect(bundle.offset).toBe(machoFixture(cpu).linkeditAt);
+        expect(bundle.files.get("index.html").toString()).toContain("waiting");
+        expect(report.totalBytes).toBe(bytes.length);
+      } finally {
+        await rm(directory, { recursive: true, force: true });
+      }
     }
   });
 

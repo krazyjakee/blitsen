@@ -8,7 +8,8 @@
 //! # Layout
 //!
 //! ```text
-//! [ runtime executable ][ payload ][ trailer ][ code signature, if any ]
+//! ELF/PE: [ runtime executable ][ payload ][ trailer ][ code signature, if any ]
+//! Mach-O: [ segments ][ __BLITSEN(payload + trailer) ][ __LINKEDIT(signature last) ]
 //! ```
 //!
 //! The payload opens with a version header, so anything that finds it can tell
@@ -39,13 +40,13 @@
 //!
 //! # Signing
 //!
-//! **Append first, then sign.** Appending to an already-signed binary is the
-//! classic way to break it: a macOS signature covers the file through
-//! `__LINKEDIT`, and Authenticode hashes everything outside the certificate
-//! table, so bytes added afterwards either invalidate the signature or are
-//! silently outside it — which is worse. The export pipeline therefore runs the
-//! signing hook last (TECH.md §10, step ⑤), over an executable that already
-//! carries its bundle.
+//! **Link first, then apply the distribution signature.** ELF and PE keep the
+//! append-only layout. Mach-O cannot: `__LINKEDIT` must be last, so the writers
+//! install a read-only `__BLITSEN,__payload` segment immediately before it,
+//! shift every file offset into `__LINKEDIT`, and replace the inherited runtime
+//! signature with a deterministic ad-hoc SHA-256 signature. That replacement
+//! keeps an ordinary arm64 export runnable; the step ⑤ signing hook may replace
+//! it with the user's identity afterwards.
 //!
 //! That ordering is also why the trailer is *found* rather than assumed to be
 //! the final bytes: a signature legitimately follows it. The reader takes the
@@ -61,16 +62,9 @@
 //! trailer move and this reader has to learn that; the first macOS or Windows
 //! signing run is where that is found out.
 //!
-//! It was, and macOS answered no. `codesign` rejects a Mach-O whose `__LINKEDIT`
-//! is not last, so appending past it produces a file that cannot be signed at
-//! all — signing later does not help, because the objection is to the layout
-//! rather than to the order. Ordering the hook last remains right, and it is
-//! still what keeps an Authenticode signature valid; it was never sufficient on
-//! macOS, and every macOS export this project has produced is unsignable. #256
-//! carries that. This reader is untouched by it so far, and whether it stays
-//! that way depends on which fix lands there: growing `__LINKEDIT` over the
-//! payload leaves these offsets alone, and moving the payload into a section of
-//! its own does not.
+//! The reader locates that Mach-O section from its load command. It retains the
+//! bounded backwards scan for the append-only formats and old bundles, where an
+//! Authenticode certificate can legitimately follow the trailer.
 //!
 //! # Reading
 //!
@@ -85,6 +79,8 @@ use std::path::Path;
 use std::sync::Mutex;
 
 use sha2::{Digest, Sha256};
+
+mod macho;
 
 /// Magic opening the payload.
 const PAYLOAD_MAGIC: &[u8; 8] = b"BLITSEN\0";
@@ -348,20 +344,27 @@ pub fn write_bundle(
     payload.extend_from_slice(&index);
     payload.extend_from_slice(&data);
 
-    let mut executable = std::fs::read(runtime)?;
-    let payload_offset = executable.len() as u64;
+    let executable = std::fs::read(runtime)?;
+    let payload_offset = macho::payload_offset(&executable)?.unwrap_or(executable.len() as u64);
     let digest = Sha256::digest(&payload);
 
-    executable.extend_from_slice(&payload);
-    executable.extend_from_slice(&digest);
-    executable.extend_from_slice(&payload_offset.to_le_bytes());
-    executable.extend_from_slice(&(payload.len() as u64).to_le_bytes());
-    executable.extend_from_slice(&FORMAT_VERSION.to_le_bytes());
-    executable.extend_from_slice(&0_u32.to_le_bytes());
-    executable.extend_from_slice(TRAILER_MAGIC);
+    let mut section = payload.clone();
+    section.extend_from_slice(&digest);
+    section.extend_from_slice(&payload_offset.to_le_bytes());
+    section.extend_from_slice(&(payload.len() as u64).to_le_bytes());
+    section.extend_from_slice(&FORMAT_VERSION.to_le_bytes());
+    section.extend_from_slice(&0_u32.to_le_bytes());
+    section.extend_from_slice(TRAILER_MAGIC);
+    let linked = if let Some(linked) = macho::inject(&executable, &section)? {
+        linked
+    } else {
+        let mut linked = executable;
+        linked.extend_from_slice(&section);
+        linked
+    };
 
     let mut file = File::create(output)?;
-    file.write_all(&executable)?;
+    file.write_all(&linked)?;
     file.flush()?;
     Ok(payload.len() as u64)
 }
@@ -494,6 +497,29 @@ fn find_trailer(file: &mut File, size: u64) -> Result<Option<Trailer>, BundleErr
         digest.copy_from_slice(&bytes[..32]);
         Ok(Some(Trailer { digest, payload }))
     };
+
+    // A Mach-O payload is a named section before __LINKEDIT, so use the load
+    // command instead of making the bounded compatibility scan depend on how
+    // large that executable's symbols and code signature happen to be.
+    if let Some((section_at, section_size)) = macho::payload_section(file)? {
+        if section_size < TRAILER_SIZE as u64 || section_at.saturating_add(section_size) > size {
+            return Err(malformed(
+                "Mach-O __BLITSEN,__payload lies outside the file",
+            ));
+        }
+        let magic_at = section_at + section_size - 8;
+        let mut magic = [0_u8; 8];
+        file.seek(SeekFrom::Start(magic_at))?;
+        file.read_exact(&mut magic)?;
+        if &magic != TRAILER_MAGIC {
+            return Err(malformed(
+                "Mach-O __BLITSEN,__payload has no bundle trailer",
+            ));
+        }
+        return consider(file, magic_at)?
+            .map(Some)
+            .ok_or_else(|| malformed("Mach-O __BLITSEN,__payload has an invalid bundle trailer"));
+    }
 
     let at_end = size - TRAILER_SIZE as u64;
     let mut magic = [0_u8; 8];

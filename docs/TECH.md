@@ -729,17 +729,18 @@ that, and duplicating it would make Blitsen a competitor to Vite instead of a ta
   is implemented for current-platform architecture proofs. Its output carries a full copy of
   the Bun runtime, which is the Phase 1 size cost (PRODUCT.md §9). Redistribution remains gated
   on the automated licensing checks in LICENSING.md.
-- **Phase 2** step ④ links Blitsen's own runtime and appends the bundle as a binary section read
-  at startup, implemented in `blitsen_core::bundle`. The section carries a version header, an
-  index and the file data, followed by a trailer that locates and checksums it; startup reads the
-  index and then reads files from their recorded offsets, never unpacking to disk. **Append first,
-  then sign** — the signing hook in step ⑤ already runs last, which is what keeps a macOS or
-  Authenticode signature valid, and the trailer is *found* rather than assumed to be the final
-  bytes because a signature legitimately follows it. On Mach-O that ordering is not enough and this
-  paragraph overstated it: `__LINKEDIT` has to be the last thing in the file, so a payload appended
-  past it is a layout `codesign` rejects however late the signing runs, and no macOS export has ever
-  been signable. #256 carries the fix and the evidence; the claim holds for Authenticode, which has
-  a defined place for trailing data — though no CI job has run `signtool` over an export either.
+- **Phase 2** step ④ links Blitsen's own runtime and embeds the bundle in the executable, implemented
+  in `blitsen_core::bundle`. The payload carries a version header, an index and the file data,
+  followed by a trailer that locates and checksums it; startup reads the index and then files from
+  their recorded offsets, never unpacking to disk. ELF and PE retain the append-only layout. Mach-O
+  uses a real read-only `__BLITSEN,__payload` segment immediately before `__LINKEDIT`, shifts the
+  link-edit file offsets, and replaces the inherited runtime signature with an ad-hoc SHA-256
+  signature so an ordinary arm64 export still starts. `__LINKEDIT` and its signature remain the
+  final bytes, which lets the step ⑤ hook replace the ad-hoc signature with a distribution identity
+  and pass `codesign --verify --strict`. The hook still runs last on every platform; an Authenticode
+  certificate legitimately follows the PE trailer, so readers find rather than assume the trailer.
+  Windows CI still has no certificate with which to run `signtool` over a real export; that is a
+  known distribution-test gap, not evidence that the Authenticode path has executed.
   This is what an export links into now that the
   platform packages carry the Phase 2 runtime, and it is why an ordinary export is 37 MB rather
   than 145 MB (PRODUCT.md §9).
