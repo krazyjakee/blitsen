@@ -202,6 +202,20 @@ describe("directory CLI", () => {
       .toThrow("fetch are absent from the runtime but not deleted");
     expect(() => buildManifest(source.replace("const globals = {", "const stubbed = {")))
       .toThrow("no longer declares const globals = {");
+
+    // A conditional API is the one claim here that a platform cannot check, so
+    // both halves of it are checked against the bootstrap instead: the API has
+    // to be installed, and the runtime has to be able to withdraw it again.
+    expect(buildManifest(source).apis.find(entry => entry.api === "Notification").condition)
+      .toMatchObject({ platforms: ["darwin"] });
+    expect(() => buildManifest(source
+      .replace("if (!Notification) try { delete globalThis.Notification; } catch {}", "")))
+      .toThrow("Notification is declared conditional and the bootstrap installs it");
+    expect(() => buildManifest(source.replace(
+      "if (!Notification) try { delete globalThis.Notification; } catch {}",
+      "if (!Notification) try { delete globalThis.Notification; } catch {}\n"
+      + "  if (!EventSource) try { delete globalThis.EventSource; } catch {}")))
+      .toThrow("withdraws EventSource");
   });
 
   test("reads class members and instances by structure rather than indentation", async () => {

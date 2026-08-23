@@ -1300,6 +1300,13 @@ doctor` reports from the same manifest, and the native harness asserts every abs
 genuinely `undefined` in a real runtime — so the diagnostics, this document and the runtime
 cannot drift apart. Regenerate with `bun run --cwd packages/blitsen api:sync`.
 
+One row of the surface table cannot be read as a build fact, and the **conditional** table below
+names it: an API listed there is implemented and installed everywhere, except on the platforms it
+names, where the host decides once per run whether the process it is in can carry the API at all.
+Nothing changes for the application — the API is absent when the condition does not hold, so the
+same feature detection selects the same fallback — but two runs of one build can answer
+differently, which is why it is a table rather than a column.
+
 Blitsen makes no claim either way about the JavaScript host's own utilities — `URL`,
 `URLSearchParams`, `TextEncoder`, `crypto`, `structuredClone`, `performance`, `queueMicrotask`,
 `DOMException`, `console` — so they are not listed; the host below the DOM supplies them, which
@@ -1345,6 +1352,10 @@ determinism gate instead.
 | WEB_STYLE | `getComputedStyle`, `matchMedia`, `MediaQueryList`, `MediaQueryListEvent`, `CSS`, `CSSStyleSheet`, `StyleSheetList`, `CSSRule`, `CSSRuleList`, `HTMLStyleElement`, `document.styleSheets`, `HTMLStyleElement.sheet`, `HTMLLinkElement.sheet`, `CSSStyleSheet.cssRules`, `CSSStyleSheet.insertRule`, `CSSStyleSheet.deleteRule`, `CSSStyleSheet.ownerNode`, `CSSStyleSheet.href`, `CSSStyleSheet.title`, `CSSRule.cssText`, `CSSRule.parentStyleSheet` | `CSSStyleRule`, `CSSKeyframesRule`, `CSSKeyframeRule`, `CSSMediaRule`, `document.adoptedStyleSheets`, `CSSStyleSheet.disabled`, `CSSStyleSheet.replaceSync`, `CSSStyleSheet.replace`, `CSSRule.style`, `CSSRule.selectorText`, `CSSRule.type` |
 | WEB_COMPONENTS | `DOMParser` | `customElements`, `ShadowRoot` |
 | WEB_WASM | — | `WebAssembly` |
+
+| Conditional API | Platform | Installed when |
+| --- | --- | --- |
+| `Notification` | darwin | macOS notifications are `UNUserNotificationCenter`, which needs a bundle identity to address and to hold permission against — and answers a process that has none by aborting it rather than by failing the call, so the facade cannot be installed and left to throw. An exported `.app` carries that identity and a development run of the interpreter does not; `blitsen run --dev-bundle` gives the development host one of its own rather than borrowing an installed application's. A process cannot acquire or lose a bundle identifier while it runs, so the question is settled once, as the runtime installs (#253). `blitsen/notify` is present either way and says why a call was refused. |
 
 | Diagnostic | Severity | Reported as |
 | --- | --- | --- |
