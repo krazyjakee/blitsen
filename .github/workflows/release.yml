@@ -46,13 +46,26 @@ jobs:
   validate:
     name: Validate release inputs
     runs-on: ubuntu-latest
+    outputs:
+      release_version: ${{ steps.release_version.outputs.version }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
       - name: Validate npm distribution tag
         shell: bash
         env:
           DIST_TAG: ${{ inputs.tag }}
         run: bash scripts/release-summary.sh validate-tag "$DIST_TAG"
+      - name: Establish the release version
+        id: release_version
+        shell: bash
+        run: |
+          version=$(bun scripts/release-version.mjs manifests \
+            packages/blitsen/package.json packages/platforms/*/package.json)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Building native release $version"
 
   # One native runner per target. Cross-compilation is deliberately not used
   # here: #84 settled that the engine's artifacts are built and tested natively
@@ -76,6 +89,8 @@ jobs:
     needs: validate
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
+    env:
+      BLITSEN_RELEASE_VERSION: ${{ needs.validate.outputs.release_version }}
     strategy:
       fail-fast: false
       matrix:
@@ -161,6 +176,17 @@ jobs:
         run: |
           cp "target/release/${{ matrix.library }}" "packages/platforms/${{ matrix.target }}/blitsen.node"
           cp "target/release/${{ matrix.executable }}" "packages/platforms/${{ matrix.target }}/${{ matrix.executable }}"
+
+      # Run the executable from the actual package staging directory. The main
+      # manifest is authoritative, the selected platform manifest must agree,
+      # and the compiled report must agree with both before signing or packing.
+      - name: Check the staged runtime version
+        shell: bash
+        run: |
+          bun scripts/release-version.mjs runtime \
+            "packages/platforms/${{ matrix.target }}/${{ matrix.executable }}" \
+            packages/blitsen/package.json \
+            "packages/platforms/${{ matrix.target }}/package.json"
 
       # Signing timestamps are intentionally variable, so reproducibility is a
       # property of these unsigned Cargo outputs. Record all six targets' hashes

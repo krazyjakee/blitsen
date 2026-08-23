@@ -437,7 +437,7 @@ fn navigator_state() -> Value {
         .filter(|locale| !locale.is_empty() && locale != "C" && locale != "POSIX")
         .unwrap_or_else(|| "en-US".to_owned());
     json!({
-        "userAgent": format!("Blitsen/{} ({platform})", env!("CARGO_PKG_VERSION")),
+        "userAgent": format!("Blitsen/{} ({platform})", blitsen_core::RELEASE_VERSION),
         "platform": platform,
         "language": language,
     })

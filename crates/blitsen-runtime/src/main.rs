@@ -52,7 +52,7 @@ fn run() -> Result<ExitCode, String> {
 
     match arguments.first().map(String::as_str) {
         Some("--version") => {
-            println!("blitsen-runtime {}", env!("CARGO_PKG_VERSION"));
+            println!("{}", blitsen_core::runtime_identity());
             Ok(ExitCode::SUCCESS)
         }
         Some("--bundle-report") => {

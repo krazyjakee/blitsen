@@ -6,6 +6,19 @@ set -euo pipefail
 
 target=${1:?usage: build-release-runtime.sh <blitsen-target>}
 
+# npm is the native distribution boundary. A release helper invocation always
+# stamps that package version, while an ordinary `cargo build` deliberately
+# remains an unversioned checkout build. Validate all seven manifests here as
+# well as in the workflow so a local release build cannot create a falsely
+# labelled artifact.
+manifest_version=$(bun scripts/release-version.mjs manifests \
+  packages/blitsen/package.json packages/platforms/*/package.json)
+if [[ -n "${BLITSEN_RELEASE_VERSION:-}" && "$BLITSEN_RELEASE_VERSION" != "$manifest_version" ]]; then
+  echo "BLITSEN_RELEASE_VERSION $BLITSEN_RELEASE_VERSION disagrees with npm manifests $manifest_version" >&2
+  exit 1
+fi
+export BLITSEN_RELEASE_VERSION=$manifest_version
+
 # Rust can embed the checkout path through file!/panic diagnostics even after
 # symbols are stripped. Both clean checkouts map to the same logical source
 # root so a runner's temporary path is not part of the artifact. Git Bash gives
