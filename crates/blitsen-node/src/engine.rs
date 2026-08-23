@@ -109,7 +109,11 @@ pub(crate) struct InstanceData {
 impl Drop for InstanceData {
     fn drop(&mut self) {
         if let Some(finalizer) = self.finalizer.take() {
-            finalizer(self.id);
+            // napi-rs drops wrapped values from an extern "C" finalizer. A
+            // user finalizer must never unwind through that boundary.
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                finalizer(self.id);
+            }));
         }
     }
 }
@@ -797,8 +801,20 @@ mod tests {
     use std::path::Path;
 
     use blitsen_core::inline_script_identifier;
+    use blitsen_js::ExternalId;
 
-    use super::{document_file_url, document_url, uses_document_script_scope};
+    use super::{InstanceData, document_file_url, document_url, uses_document_script_scope};
+
+    #[test]
+    fn a_panicking_instance_finalizer_cannot_escape_the_node_api_boundary() {
+        let outcome = std::panic::catch_unwind(|| {
+            drop(InstanceData {
+                id: ExternalId(7),
+                finalizer: Some(Box::new(|_| panic!("intentional finalizer panic"))),
+            });
+        });
+        assert!(outcome.is_ok());
+    }
 
     /// Issue #125: an inline module's `import.meta.url` is the document's URL,
     /// as it is in a browser, so `new URL('./x', import.meta.url)` names a file
