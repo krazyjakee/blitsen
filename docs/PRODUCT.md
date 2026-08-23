@@ -336,12 +336,13 @@ landed early (#99).
 
 **Where the v1 line was drawn, stated plainly.** The complete advanced-text surface (#103) and
 accessibility (#102) are **not v1**. Keyboard and clipboard editing, caret placement, drag
-selection, and a native IME preedit/commit path for `<input>` and `<textarea>` have landed;
-undo/redo, `contenteditable`, surrounding-text IME operations and human-verified CJK/RTL native
-input have not. Accessibility's absence is deliberate at the dependency boundary too: the runtime does not
-enable Blitz's AccessKit platform adapter. ARIA and semantic elements therefore do not reach a
-screen reader, while keyboard focus and editing continue through the ordinary DOM input path.
-`<canvas>` was the third entry here, and the sharpest one: the element shipped in the document
+selection, bounded control-local undo/redo, and a native IME preedit/commit path for `<input>` and
+`<textarea>` have landed; `contenteditable`, surrounding-text IME operations, full form reset and
+human-verified CJK/RTL native input have not. Accessibility's absence is deliberate at the dependency
+boundary too: the runtime does not enable Blitz's AccessKit platform adapter. ARIA and semantic
+elements therefore do not reach a screen reader, while keyboard focus and editing continue through
+the ordinary DOM input path. `<canvas>` was the third entry here, and the sharpest one: the element
+shipped in the document
 and nothing painted inside it, so it was a `doctor` **error** rather than a warning, and an
 application that drew was refused at export. It draws now — a full 2D context composited into the
 same frame as the DOM — so the error is gone and what is still refused is a GPU context.

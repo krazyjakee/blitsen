@@ -209,7 +209,8 @@ APK](PACKAGING.md#build-an-android-apk) for prerequisites and signing.
   editing still work through the DOM input path; that does not make the application accessible.
 - Editable `<input>` and `<textarea>` controls route winit preedit/commit through composition
   events into a painted Parley composing range, with candidate-window placement on desktop.
-  Undo/redo, `contenteditable`, surrounding-text IME deletion and advanced selection events remain
+  Bounded per-control undo/redo includes selection restoration and committed compositions.
+  `contenteditable`, surrounding-text IME deletion, form reset and advanced selection events remain
   absent. Native CJK/RTL input has synthetic coverage only and still needs target-specific human
   verification; static Arabic/RTL and other complex text shaping is a separate tested path.
 - Font fallback uses installed system fonts plus application-provided `@font-face` files; no

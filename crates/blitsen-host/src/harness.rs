@@ -797,4 +797,158 @@ mod tests {
             })
         );
     }
+
+    #[test]
+    fn text_history_restores_unicode_values_selections_and_ime_transactions() {
+        let (mut engine, _) =
+            ime_document(r#"<input id=field value="A🙂B"><textarea id=notes>line</textarea>"#);
+        let result = engine
+            .evaluate_script(
+                r#"
+                const field = document.getElementById("field");
+                const notes = document.getElementById("notes");
+                const historyLog = [];
+                for (const type of ["beforeinput", "input"]) {
+                  notes.addEventListener(type, event => {
+                    if (event.inputType.startsWith("history")) historyLog.push({
+                      type, inputType: event.inputType, data: event.data,
+                      isComposing: event.isComposing, value: notes.value,
+                      start: notes.selectionStart, end: notes.selectionEnd,
+                      direction: notes.selectionDirection,
+                    });
+                  });
+                }
+                const key = (key, options = {}) => __blitsenDispatchKeyboardEvent("keydown",
+                  { key, code: `Key${key.toUpperCase()}`, ...options });
+
+                notes.focus();
+                notes.value = "A🙂B";
+                notes.setSelectionRange(1, 3, "backward");
+                __blitsenDispatchImeEvent("preedit",
+                  { data: "n", cursorStart: 1, cursorEnd: 1 });
+                __blitsenDispatchImeEvent("preedit",
+                  { data: "ni", cursorStart: 2, cursorEnd: 2 });
+                __blitsenDispatchImeEvent("commit", { data: "你" });
+                const committed = { value: notes.value, start: notes.selectionStart,
+                                    end: notes.selectionEnd };
+                key("z", { ctrlKey: true });
+                const undone = { value: notes.value, start: notes.selectionStart,
+                                 end: notes.selectionEnd,
+                                 direction: notes.selectionDirection };
+                key("z", { metaKey: true, shiftKey: true });
+                const redone = { value: notes.value, start: notes.selectionStart,
+                                 end: notes.selectionEnd };
+
+                field.focus();
+                field.setSelectionRange(1, 3, "forward");
+                key("界");
+                key("z", { ctrlKey: true });
+                const inputUndone = { value: field.value, start: field.selectionStart,
+                                     end: field.selectionEnd,
+                                     direction: field.selectionDirection };
+                JSON.stringify({ committed, undone, redone, inputUndone, historyLog });
+                "#,
+                "blitsen:test-text-history-unicode",
+            )
+            .and_then(|value| engine.to_string(&value))
+            .unwrap();
+        let result: serde_json::Value = serde_json::from_str(&result).unwrap();
+
+        assert_eq!(
+            result["committed"],
+            serde_json::json!({"value":"A你B", "start":2, "end":2})
+        );
+        assert_eq!(
+            result["undone"],
+            serde_json::json!({"value":"A🙂B", "start":1, "end":3, "direction":"backward"})
+        );
+        assert_eq!(
+            result["redone"],
+            serde_json::json!({"value":"A你B", "start":2, "end":2})
+        );
+        assert_eq!(
+            result["inputUndone"],
+            serde_json::json!({"value":"A🙂B", "start":1, "end":3, "direction":"forward"})
+        );
+        assert_eq!(
+            result["historyLog"],
+            serde_json::json!([
+                {"type":"beforeinput", "inputType":"historyUndo", "data":null,
+                 "isComposing":false, "value":"A你B", "start":2, "end":2, "direction":"none"},
+                {"type":"input", "inputType":"historyUndo", "data":null,
+                 "isComposing":false, "value":"A🙂B", "start":1, "end":3,
+                 "direction":"backward"},
+                {"type":"beforeinput", "inputType":"historyRedo", "data":null,
+                 "isComposing":false, "value":"A🙂B", "start":1, "end":3,
+                 "direction":"backward"},
+                {"type":"input", "inputType":"historyRedo", "data":null,
+                 "isComposing":false, "value":"A你B", "start":2, "end":2, "direction":"none"},
+            ])
+        );
+    }
+
+    #[test]
+    fn text_history_has_control_local_bounded_and_controlled_value_boundaries() {
+        let (mut engine, _) =
+            ime_document("<input id=field><input id=other><textarea id=bounded></textarea>");
+        let result = engine
+            .evaluate_script(
+                r#"
+                const field = document.getElementById("field");
+                const other = document.getElementById("other");
+                const bounded = document.getElementById("bounded");
+                const key = (key, options = {}) => __blitsenDispatchKeyboardEvent("keydown",
+                  { key, code: `Key${key.toUpperCase()}`, ...options });
+
+                // A controlled component's same-value echo retains history.
+                field.addEventListener("input", event => {
+                  if (event.inputType === "insertText") field.value = field.value;
+                });
+                let cancelHistory = true;
+                field.addEventListener("beforeinput", event => {
+                  if (cancelHistory && event.inputType === "historyUndo") event.preventDefault();
+                });
+                field.focus();
+                key("a");
+                key("b");
+                key("z", { ctrlKey: true });
+                const canceledUndo = field.value;
+                cancelHistory = false;
+                other.focus();
+                field.focus();
+                key("z", { ctrlKey: true });
+                const focusRetained = field.value;
+                key("y", { ctrlKey: true });
+                const ctrlYRedone = field.value;
+                key("z", { ctrlKey: true });
+                key("x");
+                key("y", { ctrlKey: true });
+                const branchClearedRedo = field.value;
+                field.value = "controlled";
+                key("z", { ctrlKey: true });
+                const replacementClearedHistory = field.value;
+
+                bounded.focus();
+                for (let index = 0; index < 105; index++) key("x");
+                for (let index = 0; index < 101; index++) key("z", { ctrlKey: true });
+                JSON.stringify({ canceledUndo, focusRetained, ctrlYRedone, branchClearedRedo,
+                                 replacementClearedHistory, bounded: bounded.value.length });
+                "#,
+                "blitsen:test-text-history-boundaries",
+            )
+            .and_then(|value| engine.to_string(&value))
+            .unwrap();
+        let result: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(
+            result,
+            serde_json::json!({
+                "canceledUndo": "ab",
+                "focusRetained": "a",
+                "ctrlYRedone": "ab",
+                "branchClearedRedo": "ax",
+                "replacementClearedHistory": "controlled",
+                "bounded": 5,
+            })
+        );
+    }
 }

@@ -347,8 +347,11 @@ dispatching their non-bubbling events. Keyboard input targets the active element
 `key`, physical `code`, repeat state, and tracked modifiers. An editable text control also enables
 winit IME: preedit and commit are queued into the same frame-turn boundary as keys, routed through
 composition and composing `InputEvent`s, and applied to Parley's painted composing range. After a
-frame the native candidate-window area is updated from that range or caret. `contenteditable`,
-surrounding-text deletion and native-language acceptance remain outside this slice.
+frame the native candidate-window area is updated from that range or caret. The bridge also owns a
+bounded snapshot history per text control: one accepted edit is one transaction, an IME commit is
+one transaction across all of its preedits, and undo/redo restores the renderer value and selection
+before dispatching its `input`. `contenteditable`, surrounding-text deletion, form reset and
+native-language acceptance remain outside this slice.
 
 `DOMContentLoaded` exists in v0. It fires on `document` after the post-parse script list has
 completed, moving `document.readyState` from `loading` to `interactive`. `load` then fires once on
@@ -1188,7 +1191,7 @@ requirements are implemented and tested, feature detection truthfully finds no `
 5. **Text input and IME: bounded and split by owner.** Winit owns native enable/disable, preedit,
    commit and candidate-window placement. The DOM bootstrap owns composition event ordering and
    focus lifetime. Blitz/Parley owns the value, marked range, caret and paint. This covers editable
-   `<input>` and `<textarea>` only; `contenteditable`, undo/redo, surrounding-text deletion,
+   `<input>` and `<textarea>` only; `contenteditable`, form reset, surrounding-text deletion,
    advanced selection events and human native CJK/RTL verification remain separate acceptance.
 6. **Accessibility: decided — not v1.** Upstream Blitz defaults to an AccessKit platform adapter
    that exports a tree but does not implement requested actions. Shipping that partial adapter

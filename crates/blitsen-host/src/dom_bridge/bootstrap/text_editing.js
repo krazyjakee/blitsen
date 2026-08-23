@@ -26,6 +26,62 @@
   const editableControl = element =>
     element?.hasAttribute("readonly") ? null : textControl(element);
 
+  // History is local to a control and bounded both by transaction count and
+  // by the UTF-16 storage represented by its before/after snapshots. One
+  // accepted key, cut or paste default action is one transaction; typing is
+  // deliberately not time-coalesced, so its boundaries are deterministic.
+  const MAX_HISTORY_TRANSACTIONS = 100;
+  const MAX_HISTORY_CODE_UNITS = 1_000_000;
+  const textHistories = new WeakMap();
+  const textSnapshot = target => ({
+    value: target.value,
+    selection: { ...controlSelection(target) },
+  });
+  const historyState = target => {
+    let state = textHistories.get(target);
+    if (state === undefined) {
+      state = { undo: [], redo: [], units: 0 };
+      textHistories.set(target, state);
+    }
+    return state;
+  };
+  const historyWeight = entry => entry.before.value.length + entry.after.value.length;
+  const discardHistoryStack = (state, name) => {
+    for (const entry of state[name]) state.units -= historyWeight(entry);
+    state[name] = [];
+  };
+  const recordTextTransaction = (target, before, after) => {
+    if (before === null || before.value === after.value) return;
+    const state = historyState(target);
+    discardHistoryStack(state, "redo");
+    const entry = { before, after };
+    const units = historyWeight(entry);
+    if (units > MAX_HISTORY_CODE_UNITS) {
+      discardHistoryStack(state, "undo");
+      return;
+    }
+    while (state.undo.length >= MAX_HISTORY_TRANSACTIONS ||
+           state.units + units > MAX_HISTORY_CODE_UNITS) {
+      state.units -= historyWeight(state.undo.shift());
+    }
+    state.undo.push(entry);
+    state.units += units;
+  };
+  const restoreTextSnapshot = (target, snapshot) => {
+    call("setFormValue", target[handle], snapshot.value);
+    const { start, end, direction } = snapshot.selection;
+    call("setFormSelection", target[handle], start, end, direction);
+  };
+
+  let compositionBefore = null;
+  resetTextHistory = target => {
+    textHistories.delete(target);
+    // A controlled replacement during composition becomes the baseline of
+    // the eventual commit; undo must never cross back into obsolete state.
+    if (compositionTarget === target) compositionBefore = textSnapshot(target);
+  };
+  textCompositionOwns = target => compositionTarget === target;
+
   // One native composition belongs to the control that held focus when its
   // first preedit arrived. Updates keep targeting it until commit, cancellation
   // or a focus move; reading `activeElement` again midway would let an event
@@ -47,6 +103,7 @@
         cursor === null ? "" : cursor[0], cursor === null ? "" : cursor[1]);
     } else if (operation === "commit") {
       call("commitFormComposition", target[handle], data ?? "");
+      recordTextTransaction(target, compositionBefore, textSnapshot(target));
     } else {
       call("clearFormComposition", target[handle]);
     }
@@ -60,6 +117,7 @@
 
   const startComposition = target => {
     compositionTarget = target;
+    compositionBefore = textSnapshot(target);
     target.dispatchEvent(new CompositionEvent("compositionstart", {
       bubbles: true, data: "",
     }));
@@ -71,6 +129,7 @@
     // Clear first so a focus change from a beforeinput listener cannot re-enter
     // cancellation for the same marked range.
     compositionTarget = null;
+    compositionBefore = null;
     compositionInput(target, "clear", null, "deleteCompositionText");
     target.dispatchEvent(new CompositionEvent("compositionend", {
       bubbles: true, data: "",
@@ -108,6 +167,7 @@
         compositionInput(target, "clear", null, "deleteCompositionText");
         if (compositionTarget !== target) return false;
         compositionTarget = null;
+        compositionBefore = null;
         target.dispatchEvent(new CompositionEvent("compositionend", {
           bubbles: true, data: "",
         }));
@@ -126,6 +186,7 @@
       // `input` for the canceled default action.
       if (result === "canceled") call("clearFormComposition", target[handle]);
       compositionTarget = null;
+      compositionBefore = null;
       target.dispatchEvent(new CompositionEvent("compositionend", {
         bubbles: true, data,
       }));
@@ -186,12 +247,46 @@
     const before = new InputEvent("beforeinput",
       { bubbles: true, cancelable: true, inputType: edit.inputType, data });
     if (!target.dispatchEvent(before)) return true;
+    const snapshot = textSnapshot(target);
     const previous = target.value;
     call("editFormValue", target[handle], edit.operation, edit.data ?? "");
-    if (target.value !== previous)
+    if (target.value !== previous) {
+      recordTextTransaction(target, snapshot, textSnapshot(target));
       target.dispatchEvent(new InputEvent("input",
         { bubbles: true, inputType: edit.inputType, data }));
+    }
     return true;
+  };
+
+  const applyHistoryEdit = (target, inputType) => {
+    // The first undo while a preedit is live discards that uncommitted marked
+    // text. A second shortcut reaches the last committed transaction.
+    if (compositionTarget === target) return cancelTextComposition();
+    const state = historyState(target);
+    const source = inputType === "historyUndo" ? state.undo : state.redo;
+    const destination = inputType === "historyUndo" ? state.redo : state.undo;
+    const entry = source[source.length - 1];
+    if (entry === undefined) return true;
+    const before = new InputEvent("beforeinput",
+      { bubbles: true, cancelable: true, inputType, data: null });
+    if (!target.dispatchEvent(before)) return true;
+    // A listener can replace the controlled value, clear history or move
+    // focus. In any of those cases its decision wins over this default action.
+    if (activeElement !== target || editableControl(target) === null ||
+        textHistories.get(target) !== state || source[source.length - 1] !== entry) return true;
+    source.pop();
+    destination.push(entry);
+    restoreTextSnapshot(target, inputType === "historyUndo" ? entry.before : entry.after);
+    target.dispatchEvent(new InputEvent("input",
+      { bubbles: true, inputType, data: null }));
+    return true;
+  };
+
+  const historyInputType = event => {
+    if (event.altKey || !(event.ctrlKey || event.metaKey)) return null;
+    const key = event.key.toLowerCase();
+    if (key === "z") return event.shiftKey ? "historyRedo" : "historyUndo";
+    return key === "y" && !event.shiftKey ? "historyRedo" : null;
   };
 
   // The default action of a keydown that reached a text control. Reports
@@ -200,7 +295,11 @@
   // it, and Home must not jump to the top of it.
   const textEditingKeydown = (event, target) => {
     const kind = textControl(target);
-    if (kind === null || event.altKey || event.metaKey) return false;
+    if (kind === null) return false;
+    const history = historyInputType(event);
+    if (history !== null)
+      return editableControl(target) === null ? false : applyHistoryEdit(target, history);
+    if (event.altKey || event.metaKey) return false;
     const multiline = kind === "textarea";
     // Select-all is a selection change and not an edit: there is no `input`
     // operation behind it and nothing for a `beforeinput` to cancel. Written

@@ -949,7 +949,23 @@ input method has been exercised by a user on every target. Winit surrounding-tex
 requested or implemented, and the renderer gives marked text no dedicated platform underline.
 Manual native CJK and RTL input remains release acceptance.
 
-What is **not** here: undo and redo, `contenteditable`, advanced document selections,
+**Text-control undo and redo are local and bounded.** An accepted key edit, cut or paste is one
+transaction; there is deliberately no timing-dependent typing coalescing. All preedit updates plus
+their commit are one transaction, while a canceled preedit records nothing. Ctrl/Cmd+Z dispatches
+cancelable `beforeinput` and then `input` with `historyUndo`; Ctrl/Cmd+Shift+Z and Ctrl/Cmd+Y use
+`historyRedo`. Both events have `data: null` and `isComposing: false`, and restoring a transaction
+restores its UTF-16 selection and direction as well as its value. The first undo during a live
+preedit cancels only that uncommitted text.
+
+History belongs to one `<input>` or `<textarea>` and survives moving focus away and back. A new
+edit after undo discards that control's redo branch. A programmatic replacement with a different
+`.value` starts a new controlled state and clears both stacks; a controlled component echoing the
+same value from its `input` listener does not. Each control retains at most 100 transactions and
+1,000,000 UTF-16 code units of snapshots. A document reload starts fresh. `HTMLFormElement.reset()`
+remains absent with the rest of full form reset rather than being approximated as a history-only
+operation.
+
+What is **not** here: `contenteditable`, advanced document selections,
 `getTargetRanges()` on a `beforeinput`, the `selectionchange` event, implicit form submission on
 Enter, and the `change` event a text control fires when its value is committed on blur. A framework
 that listens for `input` — React's `onChange` is `input` — is unaffected by that last one.
@@ -1331,7 +1347,7 @@ actually draws it rather than where the pitch would prefer.
 | --- | --- | --- |
 | Canvas shadows and `filter` | The four `shadow*` properties and `ctx.filter` are **absent**, so `"shadowBlur" in ctx` is false and a feature test selects a fallback. Both need a blur, and the paint pipeline under this renderer has none — the same reason CSS `filter` is reported ignored | [#99](https://github.com/krazyjakee/blitsen/issues/99) |
 | `OffscreenCanvas`, `ImageBitmap` | `WEB_CANVAS`, a warning. A canvas that is never in the document is the supported way to draw off-screen: `document.createElement("canvas")` draws, reads back and encodes without being connected | [#99](https://github.com/krazyjakee/blitsen/issues/99) |
-| Advanced text input and IME | Text controls support keyboard and clipboard editing, caret movement, click placement, drag selection, `beforeinput`/`input`, and a winit preedit/commit composition path with painted marked text. Undo/redo, `contenteditable`, `selectionchange`, target ranges, surrounding-text deletion and human-verified native complex-script workflows remain incomplete. Static complex text is shaped separately—see [Font fallback and complex text](#font-fallback-and-complex-text) | [#103](https://github.com/krazyjakee/blitsen/issues/103) |
+| Advanced text input and IME | Text controls support keyboard and clipboard editing, bounded per-control undo/redo with selection restoration, caret movement, click placement, drag selection, `beforeinput`/`input`, and a winit preedit/commit composition path with painted marked text. `contenteditable`, `selectionchange`, target ranges, surrounding-text deletion and human-verified native complex-script workflows remain incomplete. Static complex text is shaped separately—see [Font fallback and complex text](#font-fallback-and-complex-text) | [#103](https://github.com/krazyjakee/blitsen/issues/103) |
 | Accessibility | Deliberately absent: no roles, accessible names, focus state or live regions are exported to the platform, so a screen reader finds nothing. DOM keyboard focus and text editing remain available, but they are not an accessibility tree | [#102](https://github.com/krazyjakee/blitsen/issues/102) |
 | WebGL, WebGPU, WebRTC | `WEB_GPU`, a warning. `<blitsen-view>` is the supported way to put GPU output on screen | — |
 
