@@ -243,6 +243,7 @@ function fakeHost({ initial, request, grantAfter = null }) {
         next += 1;
         posted.set(id, options.title);
         shown.push(options.title);
+        for (const listener of listeners) listener({ type: "show", id, reason: null });
         return id;
       },
       update: async (id, patch) => {
