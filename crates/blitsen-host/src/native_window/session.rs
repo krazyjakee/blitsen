@@ -45,6 +45,12 @@ pub struct WindowSession<E: JsEngine + Clone> {
     pub options: OpenDirectoryOptions,
 }
 
+impl<E: JsEngine + Clone> Drop for WindowSession<E> {
+    fn drop(&mut self) {
+        self.application.notify.clear();
+    }
+}
+
 impl<E: JsEngine + Clone + 'static> WindowSession<E> {
     /// Parses the entrypoint, runs its scripts, and opens a native window.
     pub fn open(
@@ -52,6 +58,9 @@ impl<E: JsEngine + Clone + 'static> WindowSession<E> {
         files: AppFiles,
         options: OpenDirectoryOptions,
     ) -> Result<Self, JsError> {
+        crate::dom_bridge::tray::reset();
+        crate::dom_bridge::notify::reset();
+        crate::dom_bridge::input::reset();
         let started_at = Instant::now();
         let runtime = tokio::runtime::Builder::new_multi_thread()
             // Network and audio work are asynchronous rather than CPU-parallel.
@@ -67,6 +76,7 @@ impl<E: JsEngine + Clone + 'static> WindowSession<E> {
             .tray
             .clone()
             .map(|tray| {
+                let tray = super::tray::TraySpec::try_from(tray)?;
                 super::tray::TrayController::new(
                     tray,
                     &options.title,
@@ -77,6 +87,7 @@ impl<E: JsEngine + Clone + 'static> WindowSession<E> {
             .transpose()
             .map_err(JsError::new)?;
         let (proxy, receiver) = BlitzShellProxy::new(event_loop.create_proxy());
+        let notify = super::notify::NotifyController::new(event_loop.create_proxy());
         let net_provider = files.net_provider().unwrap_or_else(|| {
             Arc::new(blitz::net::Provider::new(Some(Arc::new(proxy.clone()))))
                 as Arc<dyn NetProvider>
@@ -148,6 +159,7 @@ impl<E: JsEngine + Clone + 'static> WindowSession<E> {
             surface: SurfaceState::Initial,
             synthetic_phase: None,
             tray,
+            notify,
             quit_requested: false,
         };
         drop(guard);
@@ -164,6 +176,10 @@ impl<E: JsEngine + Clone + 'static> WindowSession<E> {
     /// Re-parses the entrypoint and replaces the document in the open window.
     pub fn reload(&mut self, engine: &mut E) -> Result<(), JsError> {
         let _guard = self.runtime.enter();
+        crate::dom_bridge::tray::reset();
+        self.application.notify.clear();
+        crate::dom_bridge::notify::reset();
+        crate::dom_bridge::input::reset();
         let window_id = self
             .application
             .inner
@@ -294,12 +310,96 @@ impl<E: JsEngine + Clone + 'static> WindowSession<E> {
         };
         self.event_loop
             .pump_app_events(timeout, &mut self.application);
+        self.application.notify.poll();
+        if crate::dom_bridge::notify::pending() {
+            self.request_redraw();
+        }
+        self.apply_tray_requests();
+        self.apply_notify_requests();
         if let Some(error) = self.error.borrow_mut().take() {
             return Err(error);
+        }
+        if crate::dom_bridge::window::take_close_requested() {
+            self.application.quit_requested = true;
         }
         Ok(!self.application.quit_requested
             && (!self.application.inner.windows.is_empty()
                 || !self.application.inner.pending_windows.is_empty()))
+    }
+
+    fn apply_tray_requests(&mut self) {
+        use crate::dom_bridge::tray::RequestKind;
+
+        let requests = crate::dom_bridge::tray::take_requests();
+        if requests.is_empty() {
+            return;
+        }
+        for request in requests {
+            let result = match request.kind {
+                RequestKind::Configure(spec) => super::tray::TrayController::new(
+                    spec,
+                    &self.options.title,
+                    self.event_loop.create_proxy(),
+                    &self.runtime,
+                )
+                .and_then(|mut tray| {
+                    tray.initialize()?;
+                    self.application.tray = Some(tray);
+                    Ok(())
+                }),
+                RequestKind::Remove => {
+                    self.application.tray = None;
+                    Ok(())
+                }
+            };
+            crate::dom_bridge::tray::complete(request.id, result);
+        }
+        self.request_redraw();
+    }
+
+    fn apply_notify_requests(&mut self) {
+        use crate::dom_bridge::notify::RequestKind;
+
+        let requests = crate::dom_bridge::notify::take_requests();
+        if requests.is_empty() {
+            return;
+        }
+        for request in requests {
+            match request.kind {
+                RequestKind::RequestPermission => self
+                    .application
+                    .notify
+                    .request_permission(request.command_id),
+                RequestKind::Show { public_id, options } => {
+                    let result = self.application.notify.show(public_id.clone(), options);
+                    let error = result.as_ref().err().cloned();
+                    let shown = result.is_ok();
+                    crate::dom_bridge::notify::complete(request.command_id, result);
+                    if shown {
+                        crate::dom_bridge::notify::shown(public_id);
+                    } else if let Some(error) = error {
+                        crate::dom_bridge::notify::failed(public_id, error);
+                    }
+                }
+                RequestKind::Update { public_id, patch } => {
+                    let result = self.application.notify.update(&public_id, patch);
+                    let error = result.as_ref().err().cloned();
+                    crate::dom_bridge::notify::complete(request.command_id, result);
+                    if let Some(error) = error {
+                        crate::dom_bridge::notify::failed(public_id, error);
+                    }
+                }
+                RequestKind::Close { public_id } => {
+                    let result = self.application.notify.close(&public_id);
+                    let error = result.as_ref().err().cloned();
+                    crate::dom_bridge::notify::complete(request.command_id, result);
+                    if let Some(error) = error {
+                        crate::dom_bridge::notify::failed(public_id, error);
+                    }
+                }
+            }
+        }
+        self.request_redraw();
     }
 
     /// Reports whether JavaScript has an animation-frame callback to run.

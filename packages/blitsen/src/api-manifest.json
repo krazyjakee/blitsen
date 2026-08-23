@@ -3789,7 +3789,7 @@
     {
       "api": "Notification",
       "kind": "global",
-      "status": "absent",
+      "status": "implemented",
       "code": "WEB_DEVICE",
       "pattern": "(?<![.\\w$])Notification\\b"
     },
@@ -4406,6 +4406,36 @@
       "status": "implemented"
     },
     {
+      "api": "window.setMinimized",
+      "module": "window",
+      "member": "setMinimized",
+      "status": "implemented"
+    },
+    {
+      "api": "window.setMaximized",
+      "module": "window",
+      "member": "setMaximized",
+      "status": "implemented"
+    },
+    {
+      "api": "window.isMaximized",
+      "module": "window",
+      "member": "isMaximized",
+      "status": "implemented"
+    },
+    {
+      "api": "window.startDrag",
+      "module": "window",
+      "member": "startDrag",
+      "status": "implemented"
+    },
+    {
+      "api": "window.close",
+      "module": "window",
+      "member": "close",
+      "status": "implemented"
+    },
+    {
       "api": "window.setAlwaysOnTop",
       "module": "window",
       "member": "setAlwaysOnTop",
@@ -4547,6 +4577,93 @@
       "member": "writeMime",
       "status": "absent",
       "reason": "The counterpart of `readMime`, absent for the same reason."
+    },
+    {
+      "api": "tray.configure",
+      "module": "tray",
+      "member": "configure",
+      "status": "implemented"
+    },
+    {
+      "api": "tray.remove",
+      "module": "tray",
+      "member": "remove",
+      "status": "implemented"
+    },
+    {
+      "api": "tray.onClick",
+      "module": "tray",
+      "member": "onClick",
+      "status": "implemented"
+    },
+    {
+      "api": "tray.onAction",
+      "module": "tray",
+      "member": "onAction",
+      "status": "implemented"
+    },
+    {
+      "api": "input.snapshot",
+      "module": "input",
+      "member": "snapshot",
+      "status": "implemented"
+    },
+    {
+      "api": "input.gamepads",
+      "module": "input",
+      "member": "gamepads",
+      "status": "absent",
+      "reason": "Gamepads need the standard navigator.getGamepads surface, stable device identity and hot-plug delivery; keyboard and pointer state alone cannot approximate them."
+    },
+    {
+      "api": "input.vibrateGamepad",
+      "module": "input",
+      "member": "vibrateGamepad",
+      "status": "absent",
+      "reason": "Vibration belongs to a discovered gamepad actuator and cannot be implemented before gamepad discovery identifies the device and its supported effects."
+    },
+    {
+      "api": "input.onDeviceChange",
+      "module": "input",
+      "member": "onDeviceChange",
+      "status": "absent",
+      "reason": "Device change is the connection counterpart of gamepad and raw-device discovery, neither of which is installed yet."
+    },
+    {
+      "api": "notify.show",
+      "module": "notify",
+      "member": "show",
+      "status": "implemented"
+    },
+    {
+      "api": "notify.permission",
+      "module": "notify",
+      "member": "permission",
+      "status": "implemented"
+    },
+    {
+      "api": "notify.requestPermission",
+      "module": "notify",
+      "member": "requestPermission",
+      "status": "implemented"
+    },
+    {
+      "api": "notify.update",
+      "module": "notify",
+      "member": "update",
+      "status": "implemented"
+    },
+    {
+      "api": "notify.close",
+      "module": "notify",
+      "member": "close",
+      "status": "implemented"
+    },
+    {
+      "api": "notify.onEvent",
+      "module": "notify",
+      "member": "onEvent",
+      "status": "implemented"
     },
     {
       "api": "os.cpu",

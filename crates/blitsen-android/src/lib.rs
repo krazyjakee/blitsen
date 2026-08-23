@@ -11,7 +11,7 @@
 //! module registry, window session and frame loop. This crate supplies only the
 //! platform-specific inputs that session cannot discover itself:
 //!
-//! - The activity has to be handed to the loop before the loop exists.
+//! - The activity has to be handed to the loop and notification bridge before the loop exists.
 //!   `create_default_event_loop`'s Android branch reads it back out of a
 //!   `OnceLock` and unwraps it, so `blitsen_host::native_window::set_android_app`
 //!   must run before the session opens a window.
@@ -42,9 +42,10 @@ pub mod logcat;
 #[unsafe(no_mangle)]
 pub fn android_main(app: android_activity::AndroidApp) {
     // First, and before anything can build an event loop: the loop's Android
-    // branch reads the activity out of a `OnceLock` and unwraps it. Cloned
-    // because the asset manager is asked for below and `AndroidApp` is a handle,
-    // not the activity itself.
+    // branch reads the activity out of a `OnceLock` and unwraps it. The host
+    // also retains a clone for its `android-activity`/JNI notification bridge.
+    // Cloned because the asset manager is asked for below and `AndroidApp` is a
+    // handle, not the activity itself.
     blitsen_host::native_window::set_android_app(app.clone());
 
     let assets = blitsen_host::apk::ApkAssets::open(

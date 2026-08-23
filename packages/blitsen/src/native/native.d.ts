@@ -124,6 +124,16 @@ export interface NativeWindow {
   setDecorations?(decorations: boolean): void;
   /** Whether the window has a title bar and border. */
   isDecorated?(): boolean;
+  /** Minimizes or restores the window. */
+  setMinimized?(minimized: boolean): void;
+  /** Maximizes or restores the window. */
+  setMaximized?(maximized: boolean): void;
+  /** Whether the window is currently maximized. */
+  isMaximized?(): boolean;
+  /** Hands an application-drawn title-bar press to the system window mover. */
+  startDrag?(): void;
+  /** Closes the application window. */
+  close?(): void;
   /** Keeps the window above others. Wayland has no protocol for this and ignores it. */
   setAlwaysOnTop?(alwaysOnTop: boolean): void;
   /** Sets the cursor to a CSS cursor keyword, such as `"pointer"` or `"grabbing"`. */
@@ -182,6 +192,214 @@ export interface NativeClipboard {
   }): void;
   /** Empties the clipboard. */
   clear?(): void;
+}
+
+/** A built-in tray action handled without entering application JavaScript. */
+export type TrayBuiltinAction = "show" | "hide" | "quit";
+
+interface TrayActionMenuItemBase {
+  /** Explicit discriminator; omitted for compatibility with the original flat menu shape. */
+  type?: "action";
+  /** User-facing menu label. */
+  label: string;
+  /** Whether the item can be activated. Defaults to true. */
+  enabled?: boolean;
+  /** Native keyboard accelerator such as `CmdOrCtrl+Shift+KeyP`. */
+  accelerator?: string;
+  /** PNG file contents displayed beside this action where native menus support icons. */
+  icon?: Uint8Array | Uint8ClampedArray;
+}
+
+/** A tray entry whose activation is delivered to `onAction`. */
+export interface TrayEventMenuItem extends TrayActionMenuItemBase {
+  /** Stable application-defined identifier delivered with the action event. */
+  id: string;
+  action?: never;
+}
+
+/** A tray entry handled directly by the native window session. */
+export interface TrayBuiltinMenuItem extends Omit<TrayActionMenuItemBase, "label"> {
+  action: TrayBuiltinAction;
+  id?: never;
+  /** Override for the platform-neutral default label. */
+  label?: string;
+}
+
+/** A visual separator. The action spelling preserves compatibility with package configuration. */
+export type TraySeparatorMenuItem =
+  | { type: "separator"; action?: never }
+  | { action: "separator"; type?: never };
+
+/** A checkable action with state reported in the action event. */
+export interface TrayCheckboxMenuItem {
+  type: "checkbox";
+  id: string;
+  label: string;
+  enabled?: boolean;
+  /** Initial state. Defaults to false. */
+  checked?: boolean;
+  accelerator?: string;
+  action?: never;
+  group?: never;
+}
+
+/** One choice in a consecutive radio group; exactly one item per group must be checked. */
+export interface TrayRadioMenuItem {
+  type: "radio";
+  id: string;
+  label: string;
+  group: string;
+  enabled?: boolean;
+  checked?: boolean;
+  accelerator?: string;
+  action?: never;
+}
+
+/** A nested menu. IDs remain unique across the complete tree. */
+export interface TraySubmenuItem {
+  type: "submenu";
+  label: string;
+  enabled?: boolean;
+  icon?: Uint8Array | Uint8ClampedArray;
+  menu: readonly TrayMenuItem[];
+  id?: never;
+  action?: never;
+}
+
+export type TrayMenuItem =
+  | TrayEventMenuItem
+  | TrayBuiltinMenuItem
+  | TraySeparatorMenuItem
+  | TrayCheckboxMenuItem
+  | TrayRadioMenuItem
+  | TraySubmenuItem;
+
+/** Runtime state for the application's single system tray icon. */
+export interface RuntimeTrayOptions {
+  /** PNG file contents. Paths are intentionally not resolved relative to an ambiguous caller. */
+  icon: Uint8Array | Uint8ClampedArray;
+  tooltip?: string | null;
+  /** Show and focus the window on a primary click. Defaults to true. */
+  openOnClick?: boolean;
+  /** Hide the window when its close control is used. Defaults to false. */
+  closeToTray?: boolean;
+  menu?: readonly TrayMenuItem[];
+}
+
+export interface TrayClickEvent {
+  readonly type: "click";
+}
+
+export interface TrayActionEvent {
+  readonly type: "action";
+  readonly id: string;
+  /** New state for checkbox/radio actions; absent for ordinary actions. */
+  readonly checked?: boolean;
+}
+
+/** `blitsen/tray`: the tray owned by this native window session. */
+export interface NativeTray {
+  /** Creates or atomically replaces the tray, including one created by package configuration. */
+  configure?(options: RuntimeTrayOptions): Promise<void>;
+  /** Removes the current tray. */
+  remove?(): Promise<void>;
+  /** Listens for primary activation of the tray icon; returns an unsubscribe function. */
+  onClick?(listener: (event: TrayClickEvent) => void): () => void;
+  /** Listens for activation of an application-defined menu item. */
+  onAction?(listener: (event: TrayActionEvent) => void): () => void;
+}
+
+/** One currently held physical key. */
+export interface PressedKey {
+  /** Layout-independent DOM physical code, such as `KeyA` or `ArrowLeft`. */
+  readonly code: string;
+  /** Layout-dependent key value observed when the key was pressed. */
+  readonly key: string;
+}
+
+/** Pointer state at the instant an input snapshot was taken. */
+export interface NativePointerState {
+  /** Position in CSS pixels, or null before the pointer has entered the window. */
+  readonly x: number | null;
+  readonly y: number | null;
+  /** Held buttons: primary, secondary, auxiliary, back, forward or other-N. */
+  readonly buttons: readonly string[];
+  /** Raw device movement accumulated since the previous snapshot. */
+  readonly movementX: number;
+  readonly movementY: number;
+  /** Wheel deltas accumulated since the previous snapshot, preserving their units. */
+  readonly wheelLineX: number;
+  readonly wheelLineY: number;
+  readonly wheelPixelX: number;
+  readonly wheelPixelY: number;
+}
+
+/** An atomic reading of the focus-scoped native input state. */
+export interface NativeInputSnapshot {
+  /** Increases whenever input state changes. */
+  readonly sequence: number;
+  readonly focused: boolean;
+  readonly keys: readonly PressedKey[];
+  readonly pointer: NativePointerState;
+}
+
+/** `blitsen/input`: polling state that complements ordinary DOM input events. */
+export interface NativeInput {
+  /** Reads held state and consumes accumulated movement and wheel deltas. */
+  snapshot?(): NativeInputSnapshot;
+}
+
+export interface NativeNotificationOptions {
+  /** Required title shown by the platform notification centre. */
+  title: string;
+  body?: string;
+  /** Grouping/application name where the platform accepts one. */
+  appName?: string;
+  /** Milliseconds before expiry; zero requests a persistent notification. */
+  timeout?: number;
+  urgency?: "low" | "normal" | "critical";
+  /** Icon name or absolute image path. Rejected on macOS, whose centre uses the app icon. */
+  icon?: string;
+  /** Buttons whose identifiers are returned by `onEvent`. */
+  actions?: readonly NativeNotificationAction[];
+}
+
+export interface NativeNotificationAction {
+  /** Stable application-defined identifier; `"default"` is reserved for body clicks. */
+  id: string;
+  title: string;
+}
+
+/** Fields that can replace an active notification; omitted fields are preserved. */
+export type NativeNotificationUpdate = Partial<NativeNotificationOptions>;
+
+export type NativeNotificationPermission = "default" | "denied" | "granted";
+
+export type NativeNotificationEvent =
+  | Readonly<{ type: "show"; id: string }>
+  | Readonly<{ type: "click"; id: string }>
+  | Readonly<{ type: "action"; id: string; action: string }>
+  | Readonly<{
+      type: "close";
+      id: string;
+      reason: "expired" | "dismissed" | "closed" | "unknown";
+    }>
+  | Readonly<{ type: "error"; id: string; message: string }>;
+
+/** `blitsen/notify`: native notification capabilities beyond the web surface. */
+export interface NativeNotify {
+  /** Submits a notification and returns an identifier valid for this application session. */
+  show?(options: NativeNotificationOptions): Promise<string>;
+  /** Reads the platform authorization state without prompting. */
+  permission?(): Promise<NativeNotificationPermission>;
+  /** Requests authorization where the platform has a prompt, then returns its state. */
+  requestPermission?(): Promise<NativeNotificationPermission>;
+  /** Replaces fields on an active notification; false means the ID is no longer active. */
+  update?(id: string, options: NativeNotificationUpdate): Promise<boolean>;
+  /** Closes an active notification; false means the ID is unknown or no longer active. */
+  close?(id: string): Promise<boolean>;
+  /** Subscribes to FIFO lifecycle events and returns an unsubscribe function. */
+  onEvent?(listener: (event: NativeNotificationEvent) => void): () => void;
 }
 
 /** One logical processor: a hardware thread as the OS schedules onto it. */
@@ -324,19 +542,6 @@ export interface Locale {
   language: string;
   /** IANA time zone name, such as `Europe/London`. */
   timeZone: string;
-}
-
-/**
- * A `native:` module that installs nothing in this version.
- *
- * Not an error and not an empty object: the subpath resolves, and every member
- * reads `undefined` inside the runtime, so `if (tray.create)` is the same
- * feature detection it is on a module that does have members. What it must not
- * do is name methods — a declared `create` that no runtime installs is exactly
- * the drift these definitions are checked against.
- */
-export interface NativeUnimplemented {
-  readonly [member: string]: undefined;
 }
 
 /**

@@ -6,9 +6,9 @@
 // Two axes have to be kept apart, because they fail differently and are fixed
 // differently.
 //
-// *Not implemented anywhere* is the manifest's axis. `blitsen/tray`,
-// `blitsen/notify` and `blitsen/input` are specifier names with no runtime
-// behind them on any platform, and that is derived rather than declared here:
+// *Not implemented anywhere* is the manifest's axis. Every currently exported
+// module now has at least one runtime member on some platform, and that fact is
+// derived rather than declared here:
 // `api-manifest.mjs` reads the bootstrap and a module it finds no members for
 // has none. Nothing below repeats it.
 //
@@ -40,9 +40,8 @@ export const NATIVE_PLATFORMS = ["linux", "darwin", "win32", "android"];
 ///
 /// Not in `TARGETS`, and that is the point rather than an omission: `TARGETS` is
 /// the six platform packages an install resolves, and Android is a cross-compiled
-/// APK that is not one of them (#148). Nothing builds for these yet. Grading for
-/// one links nothing and resolves nothing, so it can be asked today, which is
-/// what makes the answer worth having before the build exists.
+/// APK that is not one of them (#148). Grading names the ABI without resolving
+/// a desktop runtime package; the Android build links the source checkout.
 export const ANDROID_TARGETS = ["android-arm64", "android-x64"];
 
 export const platformOf = target => String(target).split("-")[0];
@@ -66,7 +65,7 @@ const ABSENT = {
   linux: [],
   darwin: ["dialog"],
   win32: ["dialog"],
-  android: ["app", "clipboard", "dialog", "window"],
+  android: ["app", "clipboard", "dialog", "window", "tray"],
 };
 
 // Why, per platform, in the words of the module that made the call. Keyed
@@ -95,6 +94,9 @@ const REASONS = {
     + "and it is the one worth naming because it looks like the survivor — winit enumerates no "
     + "monitors there, so `monitors()` would report a device with no display. Immersive mode and "
     + "orientation are the real capabilities here and are not these under another name.",
+  "android.tray": "Android has no desktop notification area or status-item menu. Its persistent "
+    + "status UI is a notification, which belongs to blitsen/notify and carries its own runtime "
+    + "permission and channel semantics rather than pretending to be a tray icon.",
 };
 
 /// The `native:` modules that do not exist on `target`, each with its reason.

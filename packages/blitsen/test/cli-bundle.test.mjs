@@ -149,12 +149,25 @@ describe("Phase 2 link step", () => {
 
   test("links the small host for an application any engine can run", async () => {
     await withStubbedExport(async ({ directory, outfile, nativePath }) => {
-      const trayIcon = Buffer.from("configured tray PNG");
-      const root = await staticApp(directory, CLASSIC_APP, { "tray.png": trayIcon });
+      const trayIcon = Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgQIAffRr7QAAAABJRU5ErkJggg==",
+        "base64",
+      );
+      const root = await staticApp(directory, CLASSIC_APP, {
+        "tray.png": trayIcon, "open.png": trayIcon, "theme.png": trayIcon,
+      });
       const window = { type: "borderless", resizable: false, alwaysOnTop: true };
       const tray = {
         icon: join(root, "tray.png"), tooltip: "Classic", openOnClick: true,
-        contextMenu: [{ action: "show" }, { action: "separator" }, { action: "quit" }],
+        contextMenu: [
+          { id: "open", label: "Open", iconIndex: 0 },
+          { type: "submenu", label: "Theme", iconIndex: 1, menu: [
+            { type: "radio", id: "light", label: "Light", group: "theme", checked: true },
+            { type: "radio", id: "dark", label: "Dark", group: "theme" },
+          ] },
+          { action: "quit" },
+        ],
+        menuIcons: [join(root, "open.png"), join(root, "theme.png")],
       };
       const built = await buildStandalone(
         { root, width: 800, height: 600, title: "Classic", outfile, window, tray }, nativePath);
@@ -163,11 +176,44 @@ describe("Phase 2 link step", () => {
       const bundle = readBundle(await readFile(built.outfile));
       expect(bundle).not.toBeNull();
       expect(bundle.files.get("blitsen.tray.png")).toEqual(trayIcon);
+      expect(bundle.files.get("blitsen.tray-menu.0.png")).toEqual(trayIcon);
+      expect(bundle.files.get("blitsen.tray-menu.1.png")).toEqual(trayIcon);
       const runtime = JSON.parse(bundle.files.get("blitsen.runtime.json").toString("utf8"));
       expect(runtime.window).toEqual(window);
-      expect(runtime.tray).toEqual({ ...tray, icon: "blitsen.tray.png" });
+      expect(runtime.tray).toEqual({
+        ...tray,
+        icon: "blitsen.tray.png",
+        menuIcons: ["blitsen.tray-menu.0.png", "blitsen.tray-menu.1.png"],
+      });
+      const side = await buildStandalone({
+        root, width: 800, height: 600, title: "Classic", outfile: join(directory, "Side"),
+        window, tray, assets: "side-loaded",
+      }, nativePath);
+      expect(await readFile(join(side.assetDirectory, "blitsen.tray.png"))).toEqual(trayIcon);
+      expect(await readFile(join(side.assetDirectory, "blitsen.tray-menu.0.png"))).toEqual(trayIcon);
+      expect(await readFile(join(side.assetDirectory, "blitsen.tray-menu.1.png"))).toEqual(trayIcon);
     });
   }, 120_000);
+
+  test("rejects missing and non-PNG nested tray assets before linking", async () => {
+    await withStubbedExport(async ({ directory, outfile, nativePath }) => {
+      const png = Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgQIAffRr7QAAAABJRU5ErkJggg==",
+        "base64",
+      );
+      const root = await staticApp(directory, CLASSIC_APP, { "tray.png": png, "bad.png": "not png" });
+      const base = {
+        root, width: 800, height: 600, title: "Tray", outfile,
+        tray: {
+          icon: join(root, "tray.png"), contextMenu: [{ id: "open", label: "Open", iconIndex: 0 }],
+          menuIcons: [join(root, "missing.png")],
+        },
+      };
+      await expect(buildStandalone(base, nativePath)).rejects.toThrow("tray menu icon 1 does not exist");
+      base.tray.menuIcons = [join(root, "bad.png")];
+      await expect(buildStandalone(base, nativePath)).rejects.toThrow("icon is not a PNG file");
+    });
+  });
 
   test("cleans deterministic staging when linking fails after collection", async () => {
     await withStubbedExport(async ({ directory, outfile, nativePath, runtimePath }) => {
@@ -205,15 +251,25 @@ describe("Phase 2 link step", () => {
 
   test.skipIf(!compiler)("links Bun for an application carrying a Node-API addon", async () => {
     await withStubbedExport(async ({ directory, outfile, nativePath }) => {
-      const root = await staticApp(directory, CLASSIC_APP);
+      const png = Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgQIAffRr7QAAAABJRU5ErkJggg==",
+        "base64",
+      );
+      const root = await staticApp(directory, CLASSIC_APP, { "tray.png": png, "item.png": png });
       const addon = compileAddon(directory);
       const events = [];
       const built = await buildStandalone({
         root, width: 800, height: 600, title: "Addon", outfile, addons: [addon],
+        tray: {
+          icon: join(root, "tray.png"),
+          contextMenu: [{ id: "open", label: "Open", iconIndex: 0 }],
+          menuIcons: [join(root, "item.png")],
+        },
         progress: event => events.push(event),
       }, nativePath);
       expect(built.host).toBe("bun");
       expect(built.addons).toEqual(["greet.node"]);
+      expect(built.manifest.map(file => file.path)).toContain("blitsen.tray-menu.0.png");
       expect(events.find(event => event.step === "collect").notes.join("\n"))
         .toContain("95 MB larger");
     });

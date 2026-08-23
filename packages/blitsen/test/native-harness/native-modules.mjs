@@ -6,7 +6,10 @@ import { loadApiManifest } from "../../src/api-manifest.mjs";
 import app from "../../src/native/app.mjs";
 import clipboard from "../../src/native/clipboard.mjs";
 import dialog from "../../src/native/dialog.mjs";
+import input from "../../src/native/input.mjs";
+import notify from "../../src/native/notify.mjs";
 import os from "../../src/native/os.mjs";
+import tray from "../../src/native/tray.mjs";
 import windowModule from "../../src/native/window.mjs";
 
 import { addonPath, native } from "./addon.mjs";
@@ -15,7 +18,7 @@ import { addonPath, native } from "./addon.mjs";
 // does — through the `blitsen/app` and `blitsen/clipboard` proxies — so what is
 // asserted is the installed namespace, not a description of it.
 const nativeManifest = await loadApiManifest();
-const namespaces = { app, clipboard, dialog, os, window: windowModule };
+const namespaces = { app, clipboard, dialog, input, notify, os, tray, window: windowModule };
 // The members whose presence is a platform fact rather than a version fact: the
 // single-instance lock is a Unix socket, and a dialog is the XDG portal.
 const absentOn = new Map([["app.requestSingleInstanceLock", ["win32"]]]);
@@ -49,6 +52,54 @@ for (const [name, namespace] of Object.entries(namespaces)) {
     `the native:${name} namespace enumerates exactly what the runtime installed`);
 }
 assert.throws(() => { app.dataDir = () => "/tmp"; }, /read-only/);
+
+const inputState = input.snapshot();
+assert.equal(typeof inputState.sequence, "number");
+assert.equal(typeof inputState.focused, "boolean");
+assert(Array.isArray(inputState.keys));
+assert(Array.isArray(inputState.pointer.buttons));
+
+// Tray configuration is applied by a window session, which this module-only
+// harness deliberately does not open. Invalid trees still travel through the
+// public normalizer and Rust parser synchronously, so they exercise the full
+// boundary without leaving a pending native request behind.
+assert.throws(() => tray.configure({
+  icon: new Uint8Array(),
+  menu: [
+    { type: "radio", id: "light", label: "Light", group: "theme" },
+    { type: "radio", id: "dark", label: "Dark", group: "theme" },
+  ],
+}), /exactly one checked item/);
+assert.throws(() => tray.configure({
+  icon: new Uint8Array(),
+  menu: [{ id: "open", label: "Open", accelerator: "KeyO+Control" }],
+}), /modifiers must precede one key/);
+assert.throws(() => tray.configure({
+  icon: new Uint8Array(),
+  menu: [{ id: "open", label: "Open", icon: new Uint8Array([1, 2, 3]) }],
+}), /not a valid PNG/);
+
+// Notification validation also crosses the public JavaScript normalizer and
+// Rust parser before a window session is needed to submit the command.
+assert.throws(() => notify.show({
+  title: "Build complete",
+  actions: [{ id: "open", title: "Open" }, { id: "open", title: "Again" }],
+}), /reserved or duplicated/);
+assert.throws(() => notify.show({ title: "Build complete", timeout: -1 }), /non-negative/);
+assert.throws(() => notify.update("n1", { title: "" }), /must not be empty/);
+
+// The standard facade is installed only where the same backend can address
+// close. Windows remains feature-detectably absent until #251; an unbundled
+// macOS harness may also lack the application identity required by Apple.
+if (process.platform === "linux") {
+  assert.equal("Notification" in globalThis, true);
+  assert.equal(Notification.permission, "granted");
+  assert.equal(Notification.maxActions, 8);
+  assert(Notification.prototype instanceof EventTarget);
+  assert.throws(() => new Notification("Build", { tag: "replace-me" }), /NotSupportedError/);
+} else if (process.platform === "win32") {
+  assert.equal("Notification" in globalThis, false);
+}
 
 // Application directories. The application names itself, because the runtime
 // cannot: the executable here is Bun.
@@ -208,6 +259,11 @@ for (const call of [
   () => windowModule.isFullscreen(),
   () => windowModule.setDecorations(false),
   () => windowModule.isDecorated(),
+  () => windowModule.setMinimized(true),
+  () => windowModule.setMaximized(true),
+  () => windowModule.isMaximized(),
+  () => windowModule.startDrag(),
+  () => windowModule.close(),
   () => windowModule.setAlwaysOnTop(true),
   () => windowModule.setCursor("pointer"),
   () => windowModule.setCursorVisible(false),

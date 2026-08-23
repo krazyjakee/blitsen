@@ -4,6 +4,9 @@ import { defineConfig } from "blitsen";
 import app from "blitsen/app";
 import clipboard from "blitsen/clipboard";
 import dialog from "blitsen/dialog";
+import input from "blitsen/input";
+import notify from "blitsen/notify";
+import tray from "blitsen/tray";
 import nativeWindow from "blitsen/window";
 import type { ClipboardImage } from "blitsen/clipboard";
 import type { Monitor } from "blitsen/window";
@@ -31,6 +34,12 @@ if (clipboard.writeImage) {
   clipboard.writeImage({ width: 2, height: 2, data: new Uint8Array(16) });
 }
 if (nativeWindow.setFullscreen) nativeWindow.setFullscreen(true);
+if (nativeWindow.setMaximized && nativeWindow.isMaximized) {
+  nativeWindow.setMaximized(!nativeWindow.isMaximized());
+}
+if (nativeWindow.setMinimized) nativeWindow.setMinimized(true);
+if (nativeWindow.startDrag) nativeWindow.startDrag();
+if (nativeWindow.close) nativeWindow.close();
 if (nativeWindow.setCursorGrab) nativeWindow.setCursorGrab("confined");
 if (nativeWindow.monitors) {
   const screens: Monitor[] = nativeWindow.monitors();
@@ -39,6 +48,62 @@ if (nativeWindow.monitors) {
 if (dialog.openFile) {
   void dialog.openFile({ filters: [{ name: "Text", extensions: ["txt"] }] })
     .then((chosen: string | null) => chosen);
+}
+if (tray.configure) {
+  void tray.configure({
+    icon: new Uint8Array(16),
+    menu: [
+      { id: "open", label: "Open", accelerator: "CmdOrCtrl+KeyO" },
+      { type: "checkbox", id: "launch", label: "Launch at login", checked: true },
+      {
+        type: "submenu",
+        label: "Theme",
+        menu: [
+          { type: "radio", id: "light", label: "Light", group: "theme", checked: true },
+          { type: "radio", id: "dark", label: "Dark", group: "theme" },
+        ],
+      },
+      { type: "separator" },
+      { action: "quit" },
+    ],
+  });
+}
+if (tray.onAction) {
+  const unsubscribe: () => void = tray.onAction(event => {
+    void event.id;
+    void event.checked;
+  });
+  unsubscribe();
+}
+if (input.snapshot) {
+  const state = input.snapshot();
+  void state.sequence;
+  void state.keys[0]?.code;
+  void state.pointer.movementX;
+}
+if (notify.show) void notify.show({ title: "Complete", urgency: "normal" });
+if (notify.permission) void notify.permission();
+if (notify.requestPermission) void notify.requestPermission();
+if (notify.update) void notify.update("n1", { body: "Still working" });
+if (notify.close) void notify.close("n1");
+if (notify.onEvent) {
+  const unsubscribe: () => void = notify.onEvent(event => {
+    void event.id;
+    if (event.type === "action") void event.action;
+    if (event.type === "close") void event.reason;
+    if (event.type === "error") void event.message;
+  });
+  unsubscribe();
+}
+if ("Notification" in globalThis) {
+  void Notification.permission;
+  void Notification.requestPermission();
+  const standardNotification = new Notification("Complete", {
+    body: "The export is ready",
+    requireInteraction: true,
+  });
+  standardNotification.onclick = () => {};
+  standardNotification.close();
 }
 
 // The view element: typed as itself through the tag-name map, not as HTMLElement.
@@ -60,8 +125,13 @@ void defineConfig({
     openOnClick: true,
     closeToTray: true,
     contextMenu: [
-      { label: "Open", action: "show" },
+      { label: "Open", action: "show", icon: "native/open.png", accelerator: "CmdOrCtrl+KeyO" },
       { action: "separator" },
+      { type: "checkbox", id: "launch", label: "Launch at login", checked: true },
+      { type: "submenu", label: "Theme", menu: [
+        { type: "radio", id: "light", label: "Light", group: "theme", checked: true },
+        { type: "radio", id: "dark", label: "Dark", group: "theme" },
+      ] },
       { label: "Quit", action: "quit", enabled: true },
     ],
   },

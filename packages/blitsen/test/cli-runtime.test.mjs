@@ -41,12 +41,22 @@ describe("runtime resolution", () => {
 
     expect(runtime.resolved).toBe(resolved);
     expect(runtime.openDirectory({ root: "/app" })).toBe("opened");
+    expect(runtime.openDirectory({ root: "/app", tray: {
+      icon: "/project/tray.png", contextMenu: [{ id: "open", label: "Open", iconIndex: 0 }],
+      menuIcons: ["/project/open.png"], closeToTray: false,
+    } })).toBe("opened");
     expect(runtime.reloadCSS("app.css")).toBeTrue();
     runtime.reloadDirectory();
     expect(runtime.pumpWindow()).toBeFalse();
     await runtime.waitForNextFrame(12);
     expect(calls).toEqual([
-      ["open", { root: "/app" }], ["css", "app.css"], ["reload"], ["pump"],
+      ["open", { root: "/app" }],
+      ["open", { root: "/app", tray: {
+        icon: "/project/tray.png", tooltip: undefined, openOnClick: undefined,
+        closeToTray: false, menuJson: '[{"id":"open","label":"Open","iconIndex":0}]',
+        menuIcons: ["/project/open.png"],
+      } }],
+      ["css", "app.css"], ["reload"], ["pump"],
     ]);
     expect(waits).toEqual([12]);
   });

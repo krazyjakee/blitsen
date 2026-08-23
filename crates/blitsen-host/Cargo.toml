@@ -102,10 +102,17 @@ blitsen-quickjs = { path = "../blitsen-quickjs" }
 name = "surface_lifecycle"
 harness = false
 
+# Desktop notifications use the native toast/notification-center APIs on
+# Windows and macOS and the freedesktop notification service on Linux.
+[target.'cfg(not(target_os = "android"))'.dependencies]
+notify-rust = { version = "4.18.0", default-features = false, features = ["preview-macos-un", "z-with-tokio"] }
+
 # An APK's `assets/`, read through `AAssetManager` (#144). Android only: the
 # other six targets have no asset manager, and the same provider reads a
 # directory standing in for one, which is what the tests run against.
 [target.'cfg(target_os = "android")'.dependencies]
+android-activity = { version = "0.6.0", features = ["native-activity"] }
+jni = "0.22.4"
 ndk = { version = "0.9", default-features = false }
 
 # Linux's StatusNotifierItem protocol is D-Bus based and needs no GTK or
@@ -117,6 +124,9 @@ ksni = "0.3.6"
 
 [target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
 tray-icon = { version = "0.24.2", default-features = false }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+mac-usernotifications = "0.3.1"
 
 # Vello's Metal compute path can wedge the display GPU on Intel Macs before
 # wgpu can report device loss (#229). Use vello_cpu to rasterize on the CPU and

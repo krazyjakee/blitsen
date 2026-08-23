@@ -2,66 +2,114 @@
 <html>
   <head>
     <meta charset="utf-8">
-    <title>Blitsen Todo</title>
+    <title>Blitsen Tasks</title>
     <link rel="stylesheet" href="./styles.css">
   </head>
   <body>
-    <div class="ambient">
-      <span class="blob violet"></span>
-      <span class="blob cyan"></span>
-      <span class="blob rose"></span>
-    </div>
-
     <main class="app">
-      <header class="head">
-        <div class="brand">
-          <span class="logo"><span class="logo-inner"></span></span>
-          <span class="brand-text">
-            <span class="eyebrow">BLITSEN</span>
-            <h1>Today</h1>
-          </span>
+      <header id="titlebar" class="titlebar">
+        <div id="drag-region" class="drag-region">
+          <span class="app-mark"><span class="app-mark-core"></span></span>
+          <span class="window-title">Blitsen Tasks</span>
+          <span class="window-context">Scale workspace</span>
         </div>
-
-        <div class="gauge">
-          <div class="track"><div id="bar" class="fill"></div></div>
-          <p class="tally">
-            <strong id="remaining">0</strong>
-            <span id="tally-word">tasks left</span>
-            <span class="sep"></span>
-            <span id="finished">0 done</span>
-          </p>
+        <div class="window-controls" aria-label="Window controls">
+          <button id="window-min" class="window-control" type="button" aria-label="Minimize">
+            <span class="minimize-icon"></span>
+          </button>
+          <button id="window-max" class="window-control" type="button" aria-label="Maximize">
+            <span id="maximize-icon" class="maximize-icon"></span>
+          </button>
+          <button id="window-close" class="window-control close-window" type="button" aria-label="Close">
+            <span class="close-icon"></span>
+          </button>
         </div>
       </header>
 
-      <div class="compose">
-        <span id="compose-dot" class="compose-dot"></span>
-        <span class="field">
-          <span id="ghost" class="ghost">What needs doing?</span>
-          <input id="entry" type="text" autocomplete="off">
-        </span>
-        <button id="add" type="button">Add</button>
-      </div>
+      <section class="workspace">
+        <header class="workspace-head">
+          <div>
+            <span class="eyebrow">OPERATIONS / TASKS</span>
+            <h1>Work queue</h1>
+            <p class="subtitle">A stable view over a growing dataset.</p>
+          </div>
+          <div class="scale-badge">
+            <span class="live-dot"></span>
+            <span id="dataset-size">10,000</span>
+            <span>records</span>
+          </div>
+        </header>
 
-      <nav id="filters" class="filters">
-        <span id="thumb" class="thumb"></span>
-        <button type="button" data-filter="all" class="on">All</button>
-        <button type="button" data-filter="active">Active</button>
-        <button type="button" data-filter="done">Done</button>
-      </nav>
+        <section class="metrics" aria-label="Task summary">
+          <div class="metric primary-metric">
+            <span class="metric-label">Remaining</span>
+            <strong id="remaining">0</strong>
+            <span class="metric-note">open tasks</span>
+          </div>
+          <div class="metric">
+            <span class="metric-label">Completed</span>
+            <strong id="finished">0</strong>
+            <span class="metric-note">across the queue</span>
+          </div>
+          <div class="metric progress-metric">
+            <span class="metric-label">Progress</span>
+            <strong id="percent">0%</strong>
+            <div class="track"><div id="bar" class="fill"></div></div>
+          </div>
+        </section>
 
-      <ul id="list" class="list"></ul>
+        <section class="compose" aria-label="Add a task">
+          <span class="compose-mark">+</span>
+          <span class="field">
+            <span id="entry-ghost" class="ghost">Add a task to the front of the queue…</span>
+            <input id="entry" type="text" autocomplete="off" aria-label="New task">
+          </span>
+          <button id="add" class="primary-button" type="button">Add task</button>
+        </section>
 
-      <div id="empty" class="empty">
-        <span class="empty-dot"></span>
-        <span id="empty-text">Nothing here yet.</span>
-      </div>
+        <section class="list-panel">
+          <div class="toolbar">
+            <nav id="filters" class="filters" aria-label="Task filters">
+              <span id="thumb" class="thumb"></span>
+              <button type="button" data-filter="all" class="on">All</button>
+              <button type="button" data-filter="active">Active</button>
+              <button type="button" data-filter="done">Done</button>
+            </nav>
+            <label class="search">
+              <span class="search-icon"></span>
+              <span id="search-ghost" class="search-ghost">Search 10,000 tasks</span>
+              <input id="search" type="text" autocomplete="off" aria-label="Search tasks">
+              <button id="clear-search" class="clear-search" type="button" aria-label="Clear search">×</button>
+            </label>
+          </div>
 
-      <footer class="foot">
-        <span id="hint" class="hint">Enter to add &nbsp;·&nbsp; click a row to complete it</span>
-        <button id="clear" type="button" class="clear">Clear completed</button>
-      </footer>
+          <div class="list-heading">
+            <span id="view-label">All tasks</span>
+            <span id="view-count">10,000 results</span>
+          </div>
+
+          <div id="viewport" class="viewport" tabindex="0">
+            <ul id="list" class="list">
+              <li id="pad-top" class="spacer"></li>
+              <li id="pad-bottom" class="spacer"></li>
+            </ul>
+            <div id="empty" class="empty">
+              <span class="empty-mark">✓</span>
+              <strong id="empty-title">No tasks found</strong>
+              <span id="empty-text">Try another filter or search.</span>
+            </div>
+          </div>
+
+          <footer class="statusbar">
+            <span><strong id="mounted-count">0</strong> rows mounted</span>
+            <span class="status-separator"></span>
+            <span>Virtualized for constant DOM size</span>
+            <button id="clear-completed" type="button">Clear completed</button>
+          </footer>
+        </section>
+      </section>
     </main>
 
-    <script src="./app.js"></script>
+    <script type="module" src="./app.js"></script>
   </body>
 </html>

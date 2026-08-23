@@ -1131,8 +1131,11 @@ without guarding it.
 Everything else `navigator` normally carries is capability rather than identity — `clipboard`,
 `geolocation`, `mediaDevices`, `serviceWorker`, `sendBeacon`, `permissions`, `onLine`,
 `userAgentData` — and all of it stays absent, so a feature test selects a fallback instead of
-calling something that cannot work. `screen`, `Notification` and `caches` are absent for the same
-reason; the native modules cover what an application actually needs there.
+calling something that cannot work. `screen` and `caches` are absent for the same reason. The
+standard `Notification` global is backed by `blitsen/notify` where the platform can also implement
+its lifecycle and `close()` contract: Linux and identified macOS application bundles. It stays
+absent on Windows, Android, and an unbundled macOS development host rather than exposing a
+constructor with missing lifecycle behavior.
 
 The user-agent string names Blitsen (`Blitsen/<version> (Linux x86_64)`) instead of impersonating a
 browser. An application that sniffs it deserves a true answer more than it deserves a code path
@@ -1273,7 +1276,7 @@ determinism gate instead.
 | WEB_DIALOG | — | `alert`, `confirm`, `prompt`, `print` |
 | WEB_NAVIGATION | `stop` | `open`, `close`, `navigation`, `document.write`, `document.writeln`, `document.open`, `document.close`, `location.assign`, `location.replace`, `location.reload`, `location.ancestorOrigins` |
 | WEB_COOKIE | — | `document.cookie`, `cookieStore`, `Headers.getSetCookie` |
-| WEB_DEVICE | `Navigator`, `navigator`, `navigator.userAgent`, `navigator.platform`, `navigator.language` | `screen`, `Notification`, `caches` |
+| WEB_DEVICE | `Navigator`, `navigator`, `navigator.userAgent`, `navigator.platform`, `navigator.language`, `Notification` | `screen`, `caches` |
 | WEB_OBSERVER | `ResizeObserver` | `IntersectionObserver`, `PerformanceObserver` |
 | WEB_STYLE | `getComputedStyle`, `matchMedia`, `MediaQueryList`, `MediaQueryListEvent`, `CSS`, `CSSStyleSheet`, `StyleSheetList`, `CSSRule`, `CSSRuleList`, `HTMLStyleElement`, `document.styleSheets`, `HTMLStyleElement.sheet`, `HTMLLinkElement.sheet`, `CSSStyleSheet.cssRules`, `CSSStyleSheet.insertRule`, `CSSStyleSheet.deleteRule`, `CSSStyleSheet.ownerNode`, `CSSStyleSheet.href`, `CSSStyleSheet.title`, `CSSRule.cssText`, `CSSRule.parentStyleSheet` | `CSSStyleRule`, `CSSKeyframesRule`, `CSSKeyframeRule`, `CSSMediaRule`, `document.adoptedStyleSheets`, `CSSStyleSheet.disabled`, `CSSStyleSheet.replaceSync`, `CSSStyleSheet.replace`, `CSSRule.style`, `CSSRule.selectorText`, `CSSRule.type` |
 | WEB_COMPONENTS | `DOMParser` | `customElements`, `ShadowRoot` |
@@ -1420,9 +1423,12 @@ lib. The capability tiers above are the list, and `blitsen doctor` is the check.
 | Module | Implemented | Absent |
 | --- | --- | --- |
 | `blitsen/app` | `dataDir`, `cacheDir`, `configDir`, `requestSingleInstanceLock`, `relaunch` | `onQuitRequest`, `onSuspend`, `onResume`, `registerProtocol`, `registerFileAssociation` |
-| `blitsen/window` | `setSize`, `setFullscreen`, `isFullscreen`, `setDecorations`, `isDecorated`, `setAlwaysOnTop`, `setCursor`, `setCursorVisible`, `setCursorGrab`, `monitors` | `create`, `setTransparent`, `isAlwaysOnTop` |
+| `blitsen/window` | `setSize`, `setFullscreen`, `isFullscreen`, `setDecorations`, `isDecorated`, `setMinimized`, `setMaximized`, `isMaximized`, `startDrag`, `close`, `setAlwaysOnTop`, `setCursor`, `setCursorVisible`, `setCursorGrab`, `monitors` | `create`, `setTransparent`, `isAlwaysOnTop` |
 | `blitsen/dialog` | `openFile`, `openFiles`, `saveFile`, `openFolder`, `openFolders`, `message` | — |
 | `blitsen/clipboard` | `readText`, `readHtml`, `readImage`, `writeText`, `writeHtml`, `writeImage`, `clear` | `readMime`, `writeMime` |
+| `blitsen/tray` | `configure`, `remove`, `onClick`, `onAction` | — |
+| `blitsen/input` | `snapshot` | `gamepads`, `vibrateGamepad`, `onDeviceChange` |
+| `blitsen/notify` | `show`, `permission`, `requestPermission`, `update`, `close`, `onEvent` | — |
 | `blitsen/os` | `cpu`, `memory`, `storage`, `host`, `locale` | `displays`, `battery`, `idleTime` |
 
 | Absent member | Why |
@@ -1437,6 +1443,9 @@ lib. The capability tiers above are the list, and `blitsen doctor` is the check.
 | `window.isAlwaysOnTop` | winit sets the window level and cannot read it back, and the window manager may change it without telling the application. Remembering what was last set would be a second source of truth that quietly goes stale. |
 | `clipboard.readMime` | `arboard` reads the flavours above and no others. Arbitrary MIME needs a different mechanism on each platform — X11 selection targets, `wl_data_offer`, `NSPasteboardType`, a registered Windows format — and no part of that is shared. |
 | `clipboard.writeMime` | The counterpart of `readMime`, absent for the same reason. |
+| `input.gamepads` | Gamepads need the standard navigator.getGamepads surface, stable device identity and hot-plug delivery; keyboard and pointer state alone cannot approximate them. |
+| `input.vibrateGamepad` | Vibration belongs to a discovered gamepad actuator and cannot be implemented before gamepad discovery identifies the device and its supported effects. |
+| `input.onDeviceChange` | Device change is the connection counterpart of gamepad and raw-device discovery, neither of which is installed yet. |
 | `os.displays` | The monitors are `window.monitors()`, which already reports each one's size, position and scale factor. A second list here could disagree with that one. |
 | `os.battery` | Nothing behind this module reports power. The processor, the memory and the volumes come from one library that implements all three per platform; the battery is a fourth source on each — UPower's D-Bus service, IOKit, `GetSystemPowerStatus` — and a desktop with no battery has to read as *absent* rather than as an empty reading, which is a distinction only the real source can make. |
 | `os.idleTime` | Seconds since the last input is a different mechanism on every platform, and Wayland has no answer at all for a client that is not focused — the idle-notify protocol reports crossing a threshold the compositor was asked about, not a duration. Reporting zero on the sessions that cannot answer would be indistinguishable from a machine in use. |
@@ -1455,3 +1464,4 @@ Where a member exists, it means the same thing everywhere. What differs is under
 | `clipboard.*` | On X11 and Wayland the process that copied is the one that serves the selection, so **what an exported Blitsen application copies disappears when it exits**, unless the desktop runs a clipboard manager that takes a copy. macOS and Windows hand the data to the system and it survives. `writeHtml` also stores the plain text an application that cannot read HTML will paste instead. Images cross as 8-bit RGBA, `{ width, height, data }`, and are carried as PNG on Linux, `CF_DIB` on Windows and an `NSImage` on macOS — a decoded image is not guaranteed to be byte-identical to the one that was copied. A read finds `null` where the clipboard holds nothing in that flavour; a clipboard the session does not offer at all — a headless process — throws instead, because that is an environment refusing rather than an empty clipboard. |
 | `window.*` | Operates on the window the run already opened, and is available from the `load` event onwards — document scripts run before the window exists, and a call before then says so rather than doing nothing. `setAlwaysOnTop` reaches the X11 window manager and Windows and macOS; **Wayland has no protocol for stacking a window above others, so the call is accepted and has no effect there**. `setCursorGrab("locked")` is X11-unsupported and `"confined"` is macOS-unsupported; both throw naming the platform rather than silently degrading. `setSize` asks, it does not assert: the size that arrives is whatever the window manager granted, and it is reported by the `resize` event and `innerWidth`/`innerHeight` like any other resize. |
 | `dialog.*` | Linux and the BSDs only, through the XDG desktop portal, and absent on macOS and Windows rather than approximated: those platforms require a file dialog on the main thread, which is the thread this design deliberately leaves free to keep painting. Every dialog is modal to the application window and needs one, so these are available from the `load` event onwards like `window.*`. Each returns a **Promise**, and the frame loop keeps turning while the dialog is up — `requestAnimationFrame` still fires, the window still paints, and the answer is delivered on a frame turn alongside `fetch` completions rather than part-way through one. Blocking instead would stop the application repainting for as long as the dialog was open, which X11 and Wayland compositors treat as a hung client. A dismissed file dialog answers `null`: the portal cannot distinguish Cancel from choosing nothing. Paths are real filesystem paths, not `File` objects. Where no portal is running, the desktop's `zenity` is used instead. |
+| `notify.*` | IDs live for one application session and stop addressing a notification after its click, action, dismissal, expiry or close event. Linux has no per-application permission state and therefore reports `"granted"`; failure to reach its freedesktop service is a `show` error. Modern macOS reports and requests real authorization, and requires the signed `.app` identity Apple associates it with; it uses that app's icon and rejects a per-notification icon. The installed Windows library reports in-process activation and dismissal but exposes neither an addressable toast handle nor the notifier setting, so permission remains `"default"` and update/close reject there (#251). Android creates a stable default channel, handles API 33 permission, and supports show/update/close; action submissions reject and tap/dismiss events remain unavailable until Android intent routing joins #252. Every completion and lifecycle event enters JavaScript on a frame turn, never from the platform callback thread. Cold-start activation is separate packaging work (#252). |

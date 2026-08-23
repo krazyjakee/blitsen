@@ -258,8 +258,9 @@ describe("directory CLI", () => {
         `import clipboard from "blitsen/clipboard";`,
         `import dialog from "blitsen/dialog";`,
         `import os from "blitsen/os";`,
+        `import notify from "blitsen/notify";`,
         `const later = () => import("blitsen/app");`,
-        `export { clipboard, dialog, os, later };`,
+        `export { clipboard, dialog, os, notify, later };`,
       ].join("\n"));
       // The CLI resolves an application before it grades one, so the directory
       // has to be one; `doctorApplication` on its own does not care.
@@ -270,13 +271,14 @@ describe("directory CLI", () => {
         .diagnostics.filter(entry => entry.code === "NATIVE_MODULE_ABSENT")
         .map(entry => entry.message);
 
-      // Linux has all four, so the same file is silent there. Without this the
+      // Linux has all five, so the same file is silent there. Without this the
       // test could pass against a rule that fires on everything.
       expect(await reported("linux-x64")).toEqual([]);
       expect(await reported("win32-x64")).toEqual(["blitsen/dialog does not exist on win32."]);
       expect(await reported("darwin-arm64")).toEqual(["blitsen/dialog does not exist on darwin."]);
       // Sorted by position in the file, which is why `app` — the dynamic import
-      // on the fourth line — comes last rather than first.
+      // after the direct imports — comes last rather than first. notify is
+      // deliberately absent from the findings: Android implements that module.
       expect(await reported("android-arm64")).toEqual([
         "blitsen/clipboard does not exist on android.",
         "blitsen/dialog does not exist on android.",

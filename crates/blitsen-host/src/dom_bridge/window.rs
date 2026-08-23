@@ -46,12 +46,19 @@ thread_local! {
     static CURRENT: RefCell<Option<Arc<dyn Window>>> = const { RefCell::new(None) };
     /// A resize winit applied outright instead of reporting as an event.
     static APPLIED_RESIZE: Cell<Option<PhysicalSize<u32>>> = const { Cell::new(None) };
+    /// A close requested by application-drawn window chrome.
+    ///
+    /// JavaScript runs while the winit session is already borrowed, so the
+    /// bridge cannot remove the window in-place. The session consumes this at
+    /// the end of the same pump turn instead.
+    static CLOSE_REQUESTED: Cell<bool> = const { Cell::new(false) };
 }
 
 /// Publishes the window `native:` calls act on, or `None` once it has gone.
 pub(crate) fn publish(window: Option<Arc<dyn Window>>) {
     CURRENT.with_borrow_mut(|current| *current = window);
     APPLIED_RESIZE.set(None);
+    CLOSE_REQUESTED.set(false);
 }
 
 /// Takes the size winit resized the surface to without raising an event.
@@ -62,6 +69,12 @@ pub(crate) fn publish(window: Option<Arc<dyn Window>>) {
 /// `resize` event cannot be left describing the size before last.
 pub(crate) fn take_applied_resize() -> Option<PhysicalSize<u32>> {
     APPLIED_RESIZE.take()
+}
+
+/// Takes an application-drawn close request after JavaScript yields back to
+/// the event-loop pump that owns the session.
+pub(crate) fn take_close_requested() -> bool {
+    CLOSE_REQUESTED.take()
 }
 
 /// Runs `operation` against the window, or reports that there is not one yet.
@@ -110,6 +123,8 @@ pub(super) fn with<T>(
 enum Setting {
     Fullscreen(bool),
     Decorations(bool),
+    Minimized(bool),
+    Maximized(bool),
     AlwaysOnTop(bool),
     Cursor(CursorIcon),
     CursorVisible(bool),
@@ -134,6 +149,8 @@ fn setting(property: &str, value: &str) -> Result<Setting, JsError> {
     Ok(match property {
         "fullscreen" => Setting::Fullscreen(boolean(property, value)?),
         "decorations" => Setting::Decorations(boolean(property, value)?),
+        "minimized" => Setting::Minimized(boolean(property, value)?),
+        "maximized" => Setting::Maximized(boolean(property, value)?),
         "alwaysOnTop" => Setting::AlwaysOnTop(boolean(property, value)?),
         "cursorVisible" => Setting::CursorVisible(boolean(property, value)?),
         "cursor" => Setting::Cursor(
@@ -164,6 +181,8 @@ pub(super) fn set(property: &str, value: &str) -> Result<(), JsError> {
                 window.set_fullscreen(on.then_some(Fullscreen::Borderless(None)));
             }
             Setting::Decorations(on) => window.set_decorations(on),
+            Setting::Minimized(on) => window.set_minimized(on),
+            Setting::Maximized(on) => window.set_maximized(on),
             Setting::AlwaysOnTop(on) => window.set_window_level(if on {
                 WindowLevel::AlwaysOnTop
             } else {
@@ -183,15 +202,36 @@ pub(super) fn set(property: &str, value: &str) -> Result<(), JsError> {
 #[cfg(not(target_os = "android"))]
 pub(super) fn get(property: &str) -> Result<bool, JsError> {
     match property {
-        "fullscreen" | "decorations" => {}
+        "fullscreen" | "decorations" | "maximized" => {}
         other => return Err(JsError::new(format!("unknown window property: {other}"))),
     }
     with(|window| {
         Ok(match property {
             "fullscreen" => window.fullscreen().is_some(),
-            _ => window.is_decorated(),
+            "decorations" => window.is_decorated(),
+            _ => window.is_maximized(),
         })
     })
+}
+
+/// Runs an action that is not a persistent window property.
+#[cfg(not(target_os = "android"))]
+pub(super) fn command(command: &str) -> Result<(), JsError> {
+    match command {
+        "startDrag" => with(|window| {
+            window
+                .drag_window()
+                .map_err(|error| JsError::new(format!("could not drag the window: {error}")))
+        }),
+        "close" => {
+            // Resolve the live window first so a call made before `load` still
+            // gets the same useful error as every other member.
+            with(|_| Ok(()))?;
+            CLOSE_REQUESTED.set(true);
+            Ok(())
+        }
+        other => Err(JsError::new(format!("unknown window command: {other}"))),
+    }
 }
 
 /// Asks for a new surface size, in CSS pixels.

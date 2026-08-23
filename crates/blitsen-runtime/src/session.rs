@@ -19,7 +19,7 @@ use blitsen_host::apk::ApkAssets;
 use blitsen_host::app::AppFiles;
 use blitsen_host::modules::ModuleRegistry;
 use blitsen_host::runtime_services::RuntimeServices;
-use blitsen_host::{NativeWindowOptions, TrayMenuItem, TrayOptions};
+use blitsen_host::{NativeWindowOptions, TrayMenu, TrayMenuDefinition, TrayOptions};
 use blitsen_host::{OpenDirectoryOptions, WindowSession, native_window};
 use serde::Deserialize;
 
@@ -109,7 +109,9 @@ impl Settings {
                     #[serde(default)]
                     close_to_tray: bool,
                     #[serde(default)]
-                    context_menu: Vec<TrayMenuItem>,
+                    context_menu: Vec<TrayMenuDefinition>,
+                    #[serde(default)]
+                    menu_icons: Vec<String>,
                 }
                 fn enabled() -> bool {
                     true
@@ -122,12 +124,27 @@ impl Settings {
                         tray.icon
                     )
                 })?;
+                let menu_icons = tray
+                    .menu_icons
+                    .iter()
+                    .map(|path| {
+                        files.source().read(path).ok_or_else(|| {
+                            format!(
+                                "configured tray menu icon is missing from the application: {path}"
+                            )
+                        })
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
                 settings.tray = Some(TrayOptions {
                     icon,
                     tooltip: tray.tooltip,
                     open_on_click: tray.open_on_click,
                     close_to_tray: tray.close_to_tray,
-                    context_menu: tray.context_menu,
+                    context_menu: Vec::new(),
+                    menu: Some(TrayMenu {
+                        entries: tray.context_menu,
+                        icons: menu_icons,
+                    }),
                 });
             }
             if let Some(layout) = config.get("layout").and_then(serde_json::Value::as_str) {

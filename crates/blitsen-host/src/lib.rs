@@ -123,6 +123,47 @@ pub struct TrayMenuItem {
     pub enabled: bool,
 }
 
+/// One rich tray-menu entry before platform-native objects are created.
+///
+/// Runtime JavaScript supplies menu icons by index because their bytes travel
+/// separately from the JSON tree. Packaged applications use the same shape:
+/// the exporter records deterministic asset names, and the host reads those
+/// assets into the indexed byte list before validating the menu.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct TrayMenuDefinition {
+    /// Explicit kind (`action`, `separator`, `checkbox`, `radio`, or `submenu`).
+    #[serde(rename = "type")]
+    pub kind: Option<String>,
+    /// Application-defined identity for action and checkable entries.
+    pub id: Option<String>,
+    /// Built-in `show`, `hide`, `quit`, or legacy `separator` action.
+    pub action: Option<String>,
+    /// User-facing item or submenu text.
+    pub label: Option<String>,
+    /// Whether the item accepts input.
+    pub enabled: Option<bool>,
+    /// Initial checkbox or radio state.
+    pub checked: Option<bool>,
+    /// Radio-group identity.
+    pub group: Option<String>,
+    /// Native keyboard accelerator.
+    pub accelerator: Option<String>,
+    /// Index into [`TrayMenu::icons`].
+    pub icon_index: Option<usize>,
+    /// Child entries for a submenu.
+    pub menu: Option<Vec<Self>>,
+}
+
+/// A rich tray-menu tree and its decoded PNG payloads.
+#[derive(Clone, Debug, Default)]
+pub struct TrayMenu {
+    /// Recursive menu definitions.
+    pub entries: Vec<TrayMenuDefinition>,
+    /// PNG byte payloads addressed by each definition's `icon_index`.
+    pub icons: Vec<Vec<u8>>,
+}
+
 impl Default for TrayMenuItem {
     fn default() -> Self {
         Self {
@@ -146,6 +187,8 @@ pub struct TrayOptions {
     pub close_to_tray: bool,
     /// Ordered context-menu entries.
     pub context_menu: Vec<TrayMenuItem>,
+    /// Rich context-menu tree. When present, this replaces `context_menu`.
+    pub menu: Option<TrayMenu>,
 }
 
 /// What a host needs to open a directory of static output in a native window.

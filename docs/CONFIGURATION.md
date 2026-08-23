@@ -21,8 +21,13 @@ separate configuration file.
       "tooltip": "My App",
       "closeToTray": true,
       "contextMenu": [
-        { "label": "Open", "action": "show" },
-        { "action": "separator" },
+        { "id": "open-report", "label": "Open report", "icon": "native/open.png" },
+        { "type": "checkbox", "id": "launch", "label": "Launch at login", "checked": true },
+        { "type": "submenu", "label": "Theme", "menu": [
+          { "type": "radio", "id": "light", "label": "Light", "group": "theme", "checked": true },
+          { "type": "radio", "id": "dark", "label": "Dark", "group": "theme" }
+        ] },
+        { "type": "separator" },
         { "label": "Quit", "action": "quit" }
       ]
     }
@@ -52,10 +57,22 @@ The same object can set `resizable`, `transparent`, and `alwaysOnTop`. A hidden 
 tray configuration so the application is not launched without a way to reveal it.
 
 `tray.icon` is a PNG path relative to `package.json`. Blitsen carries it into standalone exports.
-`openOnClick` defaults to true. The optional `contextMenu` is an ordered list of `show`, `hide`,
-`quit`, and `separator` actions; action items may override their default label and set `enabled`.
-When `closeToTray` is true, the native close control hides the window and the context menu must
-include a `quit` action.
+`openOnClick` defaults to true. The optional `contextMenu` accepts built-in `show`, `hide`, and
+`quit` actions; application-defined action IDs; separators; checkboxes; consecutive radio groups;
+and nested submenus. Actions can set `enabled`, an `accelerator`, and a PNG `icon`; submenus can
+also have a PNG icon. Checkable-item icons are omitted because the supported native menu backends
+cannot represent them consistently. The legacy `{ "action": "separator" }` spelling remains valid.
+
+IDs must be unique across the complete tree, menus may be at most 16 levels and 512 entries, and
+each consecutive radio group starts with exactly one checked item. `closeToTray` requires a `quit`
+action anywhere in the tree. Custom and checkable selections are delivered through
+`blitsen/tray.onAction()` after application listeners install; built-in actions run in the native
+session directly.
+
+Every tray and menu icon path is relative to the `package.json` that declared the configuration.
+Absolute paths and paths escaping that package are rejected. Blitsen validates the PNGs and carries
+them under deterministic reserved names in embedded and side-loaded exports, including icons whose
+source files are outside the static output directory.
 
 ## How configuration is found
 

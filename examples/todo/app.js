@@ -1,291 +1,368 @@
-// A todo list, animated the way this runtime animates.
-//
-// Two mechanisms carry every movement, and which one a thing uses depends on
-// whether the value is known ahead of time. A state change with a fixed start
-// and end — a row arriving, a tick drawing, a strike crossing a label — is a
-// @keyframes animation switched on by a class. A value that follows the data —
-// the progress fill, the filter thumb — is tweened here, frame by frame,
-// because there is nothing behind a plain declaration that would travel between
-// two cascaded values.
-//
-// One rule shapes the rest: a keyframe animation's end state is not kept once
-// the cascade is resolved again, so anything that has to *stay* is declared in
-// the stylesheet and the animation only covers the journey to it. The classes
-// below are named for that split — `done` is the state, `playing` is the run.
+import nativeWindow from "blitsen/window";
 
-const list = document.getElementById("list");
-const entry = document.getElementById("entry");
-const ghost = document.getElementById("ghost");
-const compose = document.querySelector(".compose");
-const addButton = document.getElementById("add");
-const filters = document.getElementById("filters");
-const thumb = document.getElementById("thumb");
-const bar = document.getElementById("bar");
-const remaining = document.getElementById("remaining");
-const tallyWord = document.getElementById("tally-word");
-const finished = document.getElementById("finished");
-const empty = document.getElementById("empty");
-const emptyText = document.getElementById("empty-text");
-const clear = document.getElementById("clear");
+// This example starts with a real large collection and keeps the DOM bounded.
+// Filtering is O(n) over plain data; scrolling is O(visible rows) and mounts a
+// couple of screenfuls at most, whether the collection has 100 or 100,000 rows.
 
-const ENTER_MS = 460;
-const EXIT_MS = 340;
-const FLIP_MS = 480;
+const INITIAL_TASKS = 10_000;
+const ROW_HEIGHT = 58;
+const OVERSCAN = 6;
+
+const templates = [
+  "Review the overnight deployment report",
+  "Validate the queue consumer checkpoint",
+  "Confirm regional failover capacity",
+  "Triage the latest customer feedback",
+  "Reconcile the weekly usage export",
+  "Update the release readiness notes",
+  "Check slow queries against the budget",
+  "Verify the archive retention policy",
+  "Prepare the operations handoff",
+  "Audit notification delivery latency",
+  "Resolve the workspace access request",
+  "Document the incident follow-up",
+];
+const groups = ["Platform", "Reliability", "Data", "Customer", "Security", "Release"];
+const priorities = ["normal", "normal", "medium", "normal", "high"];
+
+const makeTask = id => {
+  const text = `${templates[(id - 1) % templates.length]} · batch ${Math.ceil(id / templates.length)}`;
+  return {
+    id,
+    text,
+    search: text.toLowerCase(),
+    group: groups[(id - 1) % groups.length],
+    priority: priorities[(id - 1) % priorities.length],
+    done: id % 4 === 0,
+  };
+};
 
 const state = {
   filter: "all",
-  nextId: 1,
-  items: [
-    { id: 0, text: "Read the compatibility profile", done: true },
-    { id: 0, text: "Draw a checkmark without an SVG", done: false },
-    { id: 0, text: "Ship a window, not a browser", done: false },
-  ],
+  query: "",
+  nextId: INITIAL_TASKS + 1,
+  items: Array.from({ length: INITIAL_TASKS }, (_, index) => makeTask(index + 1)),
+  shown: [],
+  doneCount: Math.floor(INITIAL_TASKS / 4),
 };
-for (const item of state.items) item.id = state.nextId++;
+const byId = new Map(state.items.map(item => [item.id, item]));
 
-const nodes = new Map();    // live rows, by item id
-const leaving = new Map();  // rows on their way out, by item id
-const timers = new Map();   // the removal each one is waiting on
-let lastRemaining = null;
+const list = document.getElementById("list");
+const viewport = document.getElementById("viewport");
+const padTop = document.getElementById("pad-top");
+const padBottom = document.getElementById("pad-bottom");
+const entry = document.getElementById("entry");
+const entryGhost = document.getElementById("entry-ghost");
+const search = document.getElementById("search");
+const searchGhost = document.getElementById("search-ghost");
+const clearSearch = document.getElementById("clear-search");
+const addButton = document.getElementById("add");
+const filters = document.getElementById("filters");
+const thumb = document.getElementById("thumb");
+const empty = document.getElementById("empty");
+const emptyTitle = document.getElementById("empty-title");
+const emptyText = document.getElementById("empty-text");
+const remaining = document.getElementById("remaining");
+const finished = document.getElementById("finished");
+const percent = document.getElementById("percent");
+const bar = document.getElementById("bar");
+const datasetSize = document.getElementById("dataset-size");
+const viewLabel = document.getElementById("view-label");
+const viewCount = document.getElementById("view-count");
+const mountedCount = document.getElementById("mounted-count");
+const clearCompleted = document.getElementById("clear-completed");
+const maximizeIcon = document.getElementById("maximize-icon");
 
-/* ── Script-driven tweens ──────────────────────────────────────────────────── */
+const format = value => new Intl.NumberFormat().format(value);
+const rows = new Map();
+let scheduledWindow = 0;
+let animateRow = null;
 
-// One frame callback drives every continuous value. Each spring eases towards a
-// target, so a target that moves mid-flight is followed rather than restarted —
-// which is what a run of quick clicks across the filters looks like.
+/* ── On-demand motion ────────────────────────────────────────────────────── */
+
 const springs = [];
 const spring = (rate, apply) => {
-  const self = { value: null, target: 0, rate, apply };
-  springs.push(self);
-  return self;
+  const value = { current: null, target: 0, rate, apply };
+  springs.push(value);
+  return value;
 };
+const progress = spring(0.16, value => { bar.style.width = `${value}%`; });
+const thumbLeft = spring(0.24, value => { thumb.style.left = `${value}px`; });
+const thumbWidth = spring(0.24, value => { thumb.style.width = `${value}px`; });
+let motionFrame = 0;
 
-const progress = spring(0.12, value => { bar.style.width = `${value}%`; });
-const thumbLeft = spring(0.22, value => { thumb.style.left = `${value}px`; });
-const thumbWidth = spring(0.22, value => { thumb.style.width = `${value}px`; });
-
-const frame = () => {
-  for (const self of springs) {
-    if (self.value === null) self.value = self.target;
-    else self.value += (self.target - self.value) * self.rate;
-    if (Math.abs(self.target - self.value) < 0.05) self.value = self.target;
-    self.apply(self.value);
+const move = () => {
+  let unsettled = false;
+  for (const value of springs) {
+    if (value.current === null) value.current = value.target;
+    else value.current += (value.target - value.current) * value.rate;
+    if (Math.abs(value.target - value.current) < 0.05) value.current = value.target;
+    else unsettled = true;
+    value.apply(value.current);
   }
-  requestAnimationFrame(frame);
+  motionFrame = unsettled ? requestAnimationFrame(move) : 0;
 };
+const animate = () => { if (!motionFrame) motionFrame = requestAnimationFrame(move); };
 
-// Restarting an animation means taking the class off, settling the style, and
-// putting it back; reading a layout box is what settles it.
-const replay = (element, name, ms) => {
-  element.classList.remove(name);
+const replay = (element, className, duration) => {
+  element.classList.remove(className);
   void element.offsetWidth;
-  element.classList.add(name);
-  setTimeout(() => element.classList.remove(name), ms);
+  element.classList.add(className);
+  setTimeout(() => element.classList.remove(className), duration);
 };
 
-/* ── Rows ──────────────────────────────────────────────────────────────────── */
+/* ── Bounded row renderer ────────────────────────────────────────────────── */
 
-const build = item => {
+const buildRow = item => {
   const row = document.createElement("li");
-  row.className = "item entering";
-  row.setAttribute("data-done", String(item.done));
-  if (item.done) row.classList.add("done");
+  row.className = "item";
+  row.setAttribute("data-id", String(item.id));
 
-  const box = document.createElement("span");
-  box.className = "box";
-  box.appendChild(Object.assign(document.createElement("span"), { className: "tick" }));
+  const check = document.createElement("span");
+  check.className = "check";
+  check.appendChild(Object.assign(document.createElement("span"), { className: "tick" }));
 
-  const label = document.createElement("span");
-  label.className = "label";
-  const wrap = document.createElement("span");
-  wrap.className = "wrap";
-  const text = document.createElement("span");
-  text.className = "text";
-  text.textContent = item.text;
-  wrap.appendChild(text);
-  wrap.appendChild(Object.assign(document.createElement("span"), { className: "strike" }));
-  label.appendChild(wrap);
+  const copy = document.createElement("span");
+  copy.className = "task-copy";
+  const title = document.createElement("span");
+  title.className = "task-title";
+  const meta = document.createElement("span");
+  meta.className = "task-meta";
+  copy.append(title, meta);
 
+  const id = document.createElement("span");
+  id.className = "task-id";
+  const priority = document.createElement("span");
+  priority.className = "priority";
   const drop = document.createElement("button");
   drop.type = "button";
   drop.className = "drop";
+  drop.setAttribute("aria-label", "Delete task");
   drop.textContent = "×";
 
-  row.appendChild(box);
-  row.appendChild(label);
-  row.appendChild(drop);
-
-  row.addEventListener("click", event => {
-    if (event.target === drop) discard(item.id);
-    else toggle(item.id);
-  });
-
-  // The entrance class is one-shot: left on, it would replay the arrival every
-  // time the row's style is resolved again.
-  setTimeout(() => row.classList.remove("entering"), ENTER_MS);
+  row.append(check, copy, id, priority, drop);
+  row._title = title;
+  row._meta = meta;
+  row._taskId = id;
+  row._priority = priority;
   return row;
 };
 
-// The row carries its own idea of `done` so the flip animations run on the
-// change rather than on every render.
-const paint = (row, item) => {
-  const was = row.getAttribute("data-done") === "true";
-  if (was === item.done) return;
-  row.setAttribute("data-done", String(item.done));
+const paintRow = (row, item) => {
   row.classList.toggle("done", item.done);
-  if (item.done) {
-    row.classList.remove("undoing");
-    replay(row, "playing", FLIP_MS);
-  } else {
-    row.classList.remove("playing");
-    replay(row, "undoing", EXIT_MS);
+  row._title.textContent = item.text;
+  row._meta.textContent = `${item.group} · queued work`;
+  row._taskId.textContent = `#${String(item.id).padStart(5, "0")}`;
+  row._priority.className = `priority ${item.priority}`;
+  row._priority.textContent = item.priority;
+  if (animateRow === item.id) replay(row, "changed", 280);
+};
+
+const renderWindow = () => {
+  scheduledWindow = 0;
+  const height = viewport.clientHeight || 420;
+  const scrollTop = viewport.scrollTop;
+  const first = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN);
+  const last = Math.min(state.shown.length,
+    first + Math.ceil(height / ROW_HEIGHT) + OVERSCAN * 2);
+  const wanted = new Set();
+
+  for (let index = first; index < last; index += 1) {
+    const item = state.shown[index];
+    wanted.add(item.id);
+    let row = rows.get(item.id);
+    if (!row) {
+      row = buildRow(item);
+      rows.set(item.id, row);
+    }
+    paintRow(row, item);
+    list.insertBefore(row, padBottom);
   }
-};
-
-const leave = (id, row) => {
-  row.classList.remove("entering");
-  row.classList.add("leaving");
-  leaving.set(id, row);
-  timers.set(id, setTimeout(() => {
-    leaving.delete(id);
-    timers.delete(id);
-    if (row.parentNode) row.parentNode.removeChild(row);
-  }, EXIT_MS));
-};
-
-// A row asked for again while it is still leaving is the same row: cancelling
-// the removal keeps its identity rather than stacking a second copy over it.
-const revive = id => {
-  const row = leaving.get(id);
-  if (!row) return null;
-  clearTimeout(timers.get(id));
-  leaving.delete(id);
-  timers.delete(id);
-  row.classList.remove("leaving");
-  replay(row, "entering", ENTER_MS);
-  return row;
-};
-
-/* ── Render ────────────────────────────────────────────────────────────────── */
-
-const visible = () => state.items.filter(item =>
-  state.filter === "all" || (state.filter === "done") === item.done);
-
-const render = () => {
-  const shown = visible();
-  const wanted = new Set(shown.map(item => item.id));
-
-  for (const [id, row] of nodes) {
+  for (const [id, row] of rows) {
     if (wanted.has(id)) continue;
-    nodes.delete(id);
-    leave(id, row);
+    rows.delete(id);
+    row.remove();
   }
 
-  // Placed back to front, so the row each one goes in front of is already
-  // there. A row that is only being reordered is left where it is: moving a
-  // node re-resolves its style, and its arrival would play a second time.
-  let anchor = null;
-  for (let index = shown.length - 1; index >= 0; index--) {
-    const item = shown[index];
-    let row = nodes.get(item.id) ?? revive(item.id) ?? build(item);
-    nodes.set(item.id, row);
-    if (row.parentNode !== list) list.insertBefore(row, anchor);
-    paint(row, item);
-    anchor = row;
-  }
-
-  const left = state.items.filter(item => !item.done).length;
-  const complete = state.items.length - left;
-  remaining.textContent = String(left);
-  tallyWord.textContent = left === 1 ? "task left" : "tasks left";
-  finished.textContent = `${complete} done`;
-  if (lastRemaining !== null && lastRemaining !== left) replay(remaining, "bump", 400);
-  lastRemaining = left;
-
-  progress.target = state.items.length === 0 ? 0 : (complete / state.items.length) * 100;
-  clear.classList.toggle("live", complete > 0);
-
-  const bare = shown.length === 0;
-  empty.classList.toggle("shown", bare);
-  if (bare) {
-    emptyText.textContent = state.filter === "done" ? "Nothing finished yet."
-      : state.filter === "active" ? "All clear. Every task is done."
-      : "Nothing here yet.";
-  }
+  padTop.style.height = `${first * ROW_HEIGHT}px`;
+  padBottom.style.height = `${Math.max(0, (state.shown.length - last) * ROW_HEIGHT)}px`;
+  mountedCount.textContent = String(rows.size);
+  animateRow = null;
 };
 
-/* ── Actions ───────────────────────────────────────────────────────────────── */
+const scheduleWindow = () => {
+  if (!scheduledWindow) scheduledWindow = requestAnimationFrame(renderWindow);
+};
 
-const arm = () => {
-  const typed = entry.value.trim().length > 0;
-  compose.classList.toggle("armed", typed);
-  ghost.classList.toggle("gone", typed);
+/* ── Collection view ─────────────────────────────────────────────────────── */
+
+const measureFilter = () => {
+  const filterBox = filters.getBoundingClientRect();
+  for (const button of filters.querySelectorAll("button")) {
+    const selected = button.getAttribute("data-filter") === state.filter;
+    button.classList.toggle("on", selected);
+    if (!selected) continue;
+    const buttonBox = button.getBoundingClientRect();
+    thumbLeft.target = buttonBox.x - filterBox.x;
+    thumbWidth.target = buttonBox.width;
+  }
+  animate();
+};
+
+const renderSummary = () => {
+  const total = state.items.length;
+  const open = total - state.doneCount;
+  const completion = total === 0 ? 0 : state.doneCount / total * 100;
+  remaining.textContent = format(open);
+  finished.textContent = format(state.doneCount);
+  datasetSize.textContent = format(total);
+  percent.textContent = `${Math.round(completion)}%`;
+  progress.target = completion;
+  viewLabel.textContent = state.query ? `Results for “${state.query}”`
+    : state.filter === "active" ? "Active tasks"
+    : state.filter === "done" ? "Completed tasks" : "All tasks";
+  viewCount.textContent = `${format(state.shown.length)} ${state.shown.length === 1 ? "result" : "results"}`;
+  clearCompleted.disabled = state.doneCount === 0;
+  animate();
+};
+
+const refreshView = ({ keepScroll = false } = {}) => {
+  const query = state.query;
+  state.shown = state.items.filter(item => {
+    if (state.filter === "active" && item.done) return false;
+    if (state.filter === "done" && !item.done) return false;
+    return !query || item.search.includes(query);
+  });
+  if (!keepScroll) viewport.scrollTop = 0;
+  empty.classList.toggle("visible", state.shown.length === 0);
+  if (state.shown.length === 0) {
+    emptyTitle.textContent = state.query ? "No matching tasks"
+      : state.filter === "done" ? "Nothing completed yet" : "Queue is clear";
+    emptyText.textContent = state.query ? "Try a shorter search phrase."
+      : "Choose another filter or add a new task.";
+  }
+  renderSummary();
+  renderWindow();
+};
+
+/* ── Actions ─────────────────────────────────────────────────────────────── */
+
+const syncEntry = () => entryGhost.classList.toggle("hidden", entry.value.length > 0);
+const syncSearch = () => {
+  const typed = search.value.trim();
+  searchGhost.classList.toggle("hidden", typed.length > 0);
+  clearSearch.classList.toggle("visible", typed.length > 0);
+  state.query = typed.toLowerCase();
+  refreshView();
 };
 
 const add = () => {
   const text = entry.value.trim();
   if (!text) return;
-  state.items.push({ id: state.nextId++, text, done: false });
+  const item = {
+    id: state.nextId++, text, search: text.toLowerCase(), group: "Inbox", priority: "normal", done: false,
+  };
+  state.items.unshift(item);
+  byId.set(item.id, item);
   entry.value = "";
-  arm();
-  replay(addButton, "sent", 440);
-  // Adding while looking at what is finished would put the new row somewhere
-  // it cannot be seen, so the view follows the work.
-  if (state.filter === "done") select("all");
-  else render();
+  syncEntry();
+  state.filter = "all";
+  state.query = "";
+  search.value = "";
+  syncSearch();
+  animateRow = item.id;
+  replay(addButton, "sent", 280);
+  measureFilter();
 };
 
 const toggle = id => {
-  const item = state.items.find(candidate => candidate.id === id);
+  const item = byId.get(id);
   if (!item) return;
   item.done = !item.done;
-  render();
+  state.doneCount += item.done ? 1 : -1;
+  animateRow = id;
+  refreshView({ keepScroll: state.filter === "all" && !state.query });
 };
 
 const discard = id => {
-  state.items = state.items.filter(item => item.id !== id);
-  render();
+  const item = byId.get(id);
+  if (!item) return;
+  if (item.done) state.doneCount -= 1;
+  byId.delete(id);
+  state.items = state.items.filter(candidate => candidate.id !== id);
+  refreshView({ keepScroll: true });
 };
 
-function select(name) {
-  state.filter = name;
-  // Where the thumb has to be is measured, not computed: the pills share the
-  // row's width, so their geometry is whatever the flex line resolved to. The
-  // offset is taken as a difference between two rectangles rather than from
-  // `offsetLeft`, which this runtime does not answer.
-  const row = filters.getBoundingClientRect();
-  for (const button of filters.querySelectorAll("button")) {
-    const on = button.getAttribute("data-filter") === name;
-    button.classList.toggle("on", on);
-    if (!on) continue;
-    const box = button.getBoundingClientRect();
-    thumbLeft.target = box.x - row.x;
-    thumbWidth.target = box.width;
-  }
-  render();
-}
-
-entry.addEventListener("input", arm);
+entry.addEventListener("input", syncEntry);
 entry.addEventListener("keydown", event => { if (event.key === "Enter") add(); });
 addButton.addEventListener("click", add);
+search.addEventListener("input", syncSearch);
+clearSearch.addEventListener("click", () => { search.value = ""; syncSearch(); search.focus(); });
 filters.addEventListener("click", event => {
-  const name = event.target.getAttribute("data-filter");
-  if (name) select(name);
+  const filter = event.target.getAttribute("data-filter");
+  if (!filter || filter === state.filter) return;
+  state.filter = filter;
+  measureFilter();
+  refreshView();
 });
-clear.addEventListener("click", () => {
-  state.items = state.items.filter(item => !item.done);
-  render();
+list.addEventListener("click", event => {
+  const row = event.target.closest(".item");
+  if (!row) return;
+  const id = Number(row.getAttribute("data-id"));
+  if (event.target.classList.contains("drop")) discard(id);
+  else toggle(id);
 });
-// The prompt sits over the field rather than inside it, so a click anywhere in
-// the row still lands on the control that takes the typing.
-compose.addEventListener("click", () => entry.focus());
+clearCompleted.addEventListener("click", () => {
+  if (state.doneCount === 0) return;
+  state.items = state.items.filter(item => {
+    if (!item.done) return true;
+    byId.delete(item.id);
+    return false;
+  });
+  state.doneCount = 0;
+  refreshView();
+});
 
-select("all");
-requestAnimationFrame(frame);
+// The native scroller applies wheel/keyboard defaults after dispatch. Rendering
+// on the next frame reads the settled offset and swaps only the bounded window.
+viewport.addEventListener("wheel", scheduleWindow);
+viewport.addEventListener("scroll", scheduleWindow);
+viewport.addEventListener("keydown", scheduleWindow);
 
-// The shell arrives scaled, so the first measurement of the pills is taken
-// through that transform. Re-measuring once it has landed, and again whenever
-// the window changes size, keeps the thumb the width of the pill it is under.
-const remeasure = () => select(state.filter);
-setTimeout(remeasure, 800);
-window.addEventListener("resize", remeasure);
+/* ── Application-drawn window chrome ─────────────────────────────────────── */
+
+const syncMaximize = () => {
+  const maximized = nativeWindow.isMaximized?.() ?? false;
+  maximizeIcon.classList.toggle("restore", maximized);
+  document.getElementById("window-max").setAttribute("aria-label", maximized ? "Restore" : "Maximize");
+};
+
+document.getElementById("drag-region").addEventListener("pointerdown", event => {
+  if (event.button === 0) nativeWindow.startDrag?.();
+});
+document.getElementById("drag-region").addEventListener("dblclick", () => {
+  nativeWindow.setMaximized?.(!(nativeWindow.isMaximized?.() ?? false));
+  syncMaximize();
+});
+document.getElementById("window-min").addEventListener("click", () => nativeWindow.setMinimized?.(true));
+document.getElementById("window-max").addEventListener("click", () => {
+  nativeWindow.setMaximized?.(!(nativeWindow.isMaximized?.() ?? false));
+  syncMaximize();
+});
+document.getElementById("window-close").addEventListener("click", () => nativeWindow.close?.());
+
+window.addEventListener("load", () => {
+  // Runs before the hidden startup surface is revealed, avoiding a decorated
+  // frame flashing ahead of the custom chrome.
+  nativeWindow.setDecorations?.(false);
+  syncMaximize();
+  measureFilter();
+  renderWindow();
+});
+window.addEventListener("resize", () => {
+  syncMaximize();
+  measureFilter();
+  scheduleWindow();
+});
+
+refreshView();

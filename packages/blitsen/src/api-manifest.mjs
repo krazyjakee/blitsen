@@ -295,11 +295,15 @@ const NATIVE = {
   app: ["dataDir", "cacheDir", "configDir", "requestSingleInstanceLock", "relaunch",
     "onQuitRequest", "onSuspend", "onResume", "registerProtocol", "registerFileAssociation"],
   window: ["setSize", "setFullscreen", "isFullscreen", "setDecorations", "isDecorated",
-    "setAlwaysOnTop", "setCursor", "setCursorVisible", "setCursorGrab", "monitors",
+    "setMinimized", "setMaximized", "isMaximized", "startDrag", "close", "setAlwaysOnTop",
+    "setCursor", "setCursorVisible", "setCursorGrab", "monitors",
     "create", "setTransparent", "isAlwaysOnTop"],
   dialog: ["openFile", "openFiles", "saveFile", "openFolder", "openFolders", "message"],
   clipboard: ["readText", "readHtml", "readImage", "writeText", "writeHtml", "writeImage",
     "clear", "readMime", "writeMime"],
+  tray: ["configure", "remove", "onClick", "onAction"],
+  input: ["snapshot", "gamepads", "vibrateGamepad", "onDeviceChange"],
+  notify: ["show", "permission", "requestPermission", "update", "close", "onEvent"],
   os: ["cpu", "memory", "storage", "host", "displays", "battery", "locale", "idleTime"],
 };
 
@@ -307,6 +311,12 @@ const NATIVE = {
 // oversight: the member is `undefined`, so `if (app.onQuitRequest)` selects a
 // fallback, and this is what the documentation says about each one.
 const NATIVE_ABSENT = {
+  "input.gamepads": "Gamepads need the standard navigator.getGamepads surface, stable device "
+    + "identity and hot-plug delivery; keyboard and pointer state alone cannot approximate them.",
+  "input.vibrateGamepad": "Vibration belongs to a discovered gamepad actuator and cannot be "
+    + "implemented before gamepad discovery identifies the device and its supported effects.",
+  "input.onDeviceChange": "Device change is the connection counterpart of gamepad and raw-device "
+    + "discovery, neither of which is installed yet.",
   "app.onQuitRequest": "A close request is a window event, and windows are issue #77's to expose; "
     + "delivering one from here would mean a second, competing event loop.",
   "app.onSuspend": "Linux has no process-level suspend notification to report. The desktop "
@@ -986,11 +996,11 @@ export async function generateApiManifest() {
 // member left undeclared is completion the user does not get.
 //
 // Each `blitsen/<module>` subpath has its own declaration file. The interface
-// it names carries the members; a module with none names `NativeUnimplemented`,
-// which declares none, so the check reads an empty set for it and the two agree.
+// it names carries only the members this version actually installs.
 const TYPE_DEFINITIONS = join(import.meta.dirname, "./native/native.d.ts");
 const MODULE_INTERFACES = { app: "NativeApp", window: "NativeWindow",
-  dialog: "NativeDialog", clipboard: "NativeClipboard", os: "NativeOs" };
+  dialog: "NativeDialog", clipboard: "NativeClipboard", tray: "NativeTray",
+  input: "NativeInput", notify: "NativeNotify", os: "NativeOs" };
 
 /** Reads the members each `Native*` interface declares, by module. */
 export function readDeclaredNativeMembers(definitions) {

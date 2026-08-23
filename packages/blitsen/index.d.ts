@@ -20,14 +20,69 @@ export interface BlitsenWindowConfig {
   alwaysOnTop?: boolean;
 }
 
-export interface BlitsenTrayMenuItem {
-  /** Built-in action, or a visual separator. */
-  action: "show" | "hide" | "quit" | "separator";
-  /** Menu label. Show, Hide and Quit have matching defaults. */
-  label?: string;
+interface BlitsenTrayCommonItem {
   /** Whether the item can be selected. Defaults to true. */
   enabled?: boolean;
 }
+
+interface BlitsenTrayActionPresentation extends BlitsenTrayCommonItem {
+  /** Native keyboard accelerator, such as `CmdOrCtrl+Shift+KeyO`. */
+  accelerator?: string;
+  /** PNG displayed beside the item where native menus support icons. */
+  icon?: string;
+}
+
+export interface BlitsenTrayBuiltinItem extends BlitsenTrayActionPresentation {
+  type?: "action";
+  action: "show" | "hide" | "quit";
+  /** Show, Hide and Quit have matching defaults. */
+  label?: string;
+  id?: never;
+}
+
+export interface BlitsenTrayEventItem extends BlitsenTrayActionPresentation {
+  type?: "action";
+  id: string;
+  label: string;
+  action?: never;
+}
+
+export type BlitsenTraySeparatorItem =
+  | { type: "separator" }
+  /** Legacy separator spelling retained for package configuration compatibility. */
+  | { action: "separator"; label?: string; enabled?: boolean; type?: never };
+
+export interface BlitsenTrayCheckboxItem extends BlitsenTrayCommonItem {
+  type: "checkbox";
+  id: string;
+  label: string;
+  checked?: boolean;
+  accelerator?: string;
+}
+
+export interface BlitsenTrayRadioItem extends BlitsenTrayCommonItem {
+  type: "radio";
+  id: string;
+  label: string;
+  group: string;
+  checked?: boolean;
+  accelerator?: string;
+}
+
+export interface BlitsenTraySubmenuItem extends BlitsenTrayCommonItem {
+  type: "submenu";
+  label: string;
+  icon?: string;
+  menu: BlitsenTrayMenuItem[];
+}
+
+export type BlitsenTrayMenuItem =
+  | BlitsenTrayBuiltinItem
+  | BlitsenTrayEventItem
+  | BlitsenTraySeparatorItem
+  | BlitsenTrayCheckboxItem
+  | BlitsenTrayRadioItem
+  | BlitsenTraySubmenuItem;
 
 export interface BlitsenTrayConfig {
   /** PNG tray icon, relative to this `package.json`. */
@@ -37,7 +92,7 @@ export interface BlitsenTrayConfig {
   openOnClick?: boolean;
   /** Hide the window instead of exiting when its close control is used. */
   closeToTray?: boolean;
-  /** Ordered built-in actions in the tray context menu. */
+  /** Ordered built-in/custom actions, checkable items, separators, and submenus. */
   contextMenu?: BlitsenTrayMenuItem[];
 }
 

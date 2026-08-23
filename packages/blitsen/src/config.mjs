@@ -1,6 +1,62 @@
 import { spawn } from "node:child_process";
-import { readFile } from "node:fs/promises";
-import { delimiter, dirname, join, resolve } from "node:path";
+import { readFile, realpath } from "node:fs/promises";
+import { delimiter, dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { pngDimensions } from "./packaging.mjs";
+
+const trayString = { type: "string", minLength: 1 };
+const trayEnabled = { type: "boolean" };
+const trayActionProperties = {
+  type: { const: "action" }, label: trayString, enabled: trayEnabled,
+  accelerator: trayString, icon: { ...trayString, pattern: "\\.png$" },
+};
+const trayMenuItem = {
+  oneOf: [
+    {
+      type: "object", additionalProperties: false, required: ["action"],
+      properties: {
+        ...trayActionProperties,
+        action: { type: "string", enum: ["show", "hide", "quit"] },
+      },
+    },
+    {
+      type: "object", additionalProperties: false, required: ["id", "label"],
+      properties: { ...trayActionProperties, id: trayString },
+    },
+    {
+      type: "object", additionalProperties: false, required: ["action"],
+      properties: {
+        action: { const: "separator" }, label: trayString, enabled: trayEnabled,
+      },
+    },
+    {
+      type: "object", additionalProperties: false, required: ["type"],
+      properties: { type: { const: "separator" } },
+    },
+    {
+      type: "object", additionalProperties: false, required: ["type", "id", "label"],
+      properties: {
+        type: { const: "checkbox" }, id: trayString, label: trayString,
+        enabled: trayEnabled, checked: { type: "boolean" }, accelerator: trayString,
+      },
+    },
+    {
+      type: "object", additionalProperties: false,
+      required: ["type", "id", "label", "group"],
+      properties: {
+        type: { const: "radio" }, id: trayString, label: trayString, group: trayString,
+        enabled: trayEnabled, checked: { type: "boolean" }, accelerator: trayString,
+      },
+    },
+    {
+      type: "object", additionalProperties: false, required: ["type", "label", "menu"],
+      properties: {
+        type: { const: "submenu" }, label: trayString, enabled: trayEnabled,
+        icon: { ...trayString, pattern: "\\.png$" },
+        menu: { type: "array", items: { $ref: "#/definitions/trayMenuItem" } },
+      },
+    },
+  ],
+};
 
 // One canonical location: the "blitsen" key of package.json. This object is the
 // contract, validated against below and published verbatim as
@@ -14,6 +70,7 @@ export const CONFIG_SCHEMA = {
   type: "object",
   additionalProperties: false,
   required: ["output"],
+  definitions: { trayMenuItem },
   allOf: [
     {
       if: {
@@ -35,7 +92,7 @@ export const CONFIG_SCHEMA = {
             required: ["contextMenu"],
             properties: {
               contextMenu: {
-                contains: { required: ["action"], properties: { action: { const: "quit" } } },
+                description: "closeToTray is checked recursively by Blitsen's semantic validator.",
               },
             },
           },
@@ -113,17 +170,8 @@ export const CONFIG_SCHEMA = {
         },
         contextMenu: {
           type: "array",
-          items: {
-            type: "object",
-            additionalProperties: false,
-            required: ["action"],
-            properties: {
-              action: { type: "string", enum: ["show", "hide", "quit", "separator"] },
-              label: { type: "string", minLength: 1 },
-              enabled: { type: "boolean" },
-            },
-          },
-          description: "Ordered show, hide, quit and separator entries for the tray context menu.",
+          items: { $ref: "#/definitions/trayMenuItem" },
+          description: "Built-in or custom actions, separators, checkboxes, radio groups and nested submenus.",
         },
       },
     },
@@ -149,6 +197,10 @@ export function validateConfig(config, source) {
     if (!(key in config)) fail(`missing required key "${key}"`);
   }
   const checkValue = (label, value, rule) => {
+    // Recursive tray entries are validated by `validateTrayMenu` below. The
+    // published schema retains the complete oneOf tree for editors and generic
+    // JSON Schema validators.
+    if (rule.$ref || rule.oneOf) return;
     if (rule.type === "array") {
       if (!Array.isArray(value)) fail(`${label} must be an array, found ${describeType(value)}`);
       value.forEach((item, index) => checkValue(`${label.slice(0, -1)}[${index}]"`, item, rule.items));
@@ -191,11 +243,174 @@ export function validateConfig(config, source) {
   if (config.window?.type === "hidden" && !config.tray) {
     fail('"window.type" hidden requires a "tray" configuration');
   }
-  if (config.tray?.closeToTray
-    && !config.tray.contextMenu?.some(item => item.action === "quit")) {
+  const hasQuit = config.tray?.contextMenu
+    ? validateTrayMenu(config.tray.contextMenu, fail)
+    : false;
+  if (config.tray?.closeToTray && !hasQuit) {
     fail('"tray.closeToTray" requires a quit action in "tray.contextMenu"');
   }
   return config;
+}
+
+function validateTrayMenu(menu, fail) {
+  const ids = new Set();
+  let count = 0;
+  let hasQuit = false;
+  const modifiers = new Set([
+    "ctrl", "control", "alt", "option", "shift", "cmd", "command", "super", "meta",
+    "cmdorctrl", "commandorcontrol",
+  ]);
+  const nonEmpty = (value, description) => {
+    if (typeof value !== "string" || value.trim().length === 0) fail(`${description} must not be empty`);
+  };
+  const keys = (item, allowed, description) => {
+    for (const key of Object.keys(item)) {
+      if (!allowed.includes(key)) fail(`${description}.${key} is not allowed`);
+    }
+  };
+  const common = (item, description) => {
+    if ("enabled" in item && typeof item.enabled !== "boolean") fail(`${description}.enabled must be a boolean`);
+    if ("accelerator" in item) {
+      nonEmpty(item.accelerator, `${description}.accelerator`);
+      const parts = item.accelerator.split("+").map(part => part.trim().toLowerCase());
+      if (parts.some(part => !part)
+        || modifiers.has(parts.at(-1))
+        || parts.slice(0, -1).some(part => !modifiers.has(part))
+        || new Set(parts.slice(0, -1)).size !== parts.length - 1) {
+        fail(`${description}.accelerator must put unique modifiers before exactly one key`);
+      }
+    }
+    if ("icon" in item) {
+      nonEmpty(item.icon, `${description}.icon`);
+      if (!/\.png$/.test(item.icon)) fail(`${description}.icon must name a PNG file`);
+    }
+  };
+  const level = (items, depth) => {
+    if (!Array.isArray(items)) fail("tray context menus and submenu menus must be arrays");
+    if (depth > 16) fail("tray menus may be nested at most 16 levels");
+    let activeRadio = null;
+    const closedRadios = new Set();
+    const checkedRadios = new Map();
+    for (const [index, item] of items.entries()) {
+      const description = `tray.contextMenu item ${index + 1} at depth ${depth}`;
+      if (++count > 512) fail("tray menus may contain at most 512 entries");
+      if (typeof item !== "object" || item === null || Array.isArray(item)) {
+        fail(`${description} must be an object`);
+      }
+      const type = item.type ?? (item.action === "separator" ? "separator" : "action");
+      const radio = type === "radio" ? item.group : null;
+      if (radio !== activeRadio) {
+        if (activeRadio !== null) closedRadios.add(activeRadio);
+        if (radio !== null && closedRadios.has(radio)) {
+          fail("items in a tray radio group must be consecutive at one menu level");
+        }
+        activeRadio = radio;
+      }
+      if (type === "separator") {
+        const legacy = item.action === "separator" && item.type === undefined;
+        keys(item, legacy ? ["action", "label", "enabled"] : ["type"], description);
+        if (!legacy && item.type !== "separator") fail(`${description} is an ambiguous separator`);
+        if (legacy && "label" in item) nonEmpty(item.label, `${description}.label`);
+        if (legacy && "enabled" in item && typeof item.enabled !== "boolean") {
+          fail(`${description}.enabled must be a boolean`);
+        }
+        continue;
+      }
+      if (type === "submenu") {
+        keys(item, ["type", "label", "enabled", "icon", "menu"], description);
+        nonEmpty(item.label, `${description}.label`);
+        common(item, description);
+        if (!("menu" in item)) fail(`${description}.menu is required`);
+        level(item.menu, depth + 1);
+        continue;
+      }
+      if (type === "checkbox" || type === "radio") {
+        keys(item, ["type", "id", "label", "enabled", "checked", "group", "accelerator"], description);
+        nonEmpty(item.id, `${description}.id`);
+        nonEmpty(item.label, `${description}.label`);
+        if (ids.has(item.id)) fail("tray menu item ids must be unique across the whole menu tree");
+        ids.add(item.id);
+        if ("checked" in item && typeof item.checked !== "boolean") fail(`${description}.checked must be a boolean`);
+        if (type === "checkbox" && "group" in item) fail(`${description}.group is only valid on radio items`);
+        if (type === "radio") {
+          nonEmpty(item.group, `${description}.group`);
+          checkedRadios.set(item.group, (checkedRadios.get(item.group) ?? 0) + Number(item.checked === true));
+        }
+        common(item, description);
+        continue;
+      }
+      if (type !== "action") fail(`${description}.type is unknown: ${JSON.stringify(type)}`);
+      keys(item, ["type", "id", "action", "label", "enabled", "accelerator", "icon"], description);
+      const hasId = "id" in item;
+      const hasAction = "action" in item;
+      if (hasId === hasAction) fail(`${description} needs exactly one of id or action`);
+      if (hasId) {
+        nonEmpty(item.id, `${description}.id`);
+        nonEmpty(item.label, `${description}.label`);
+        if (ids.has(item.id)) fail("tray menu item ids must be unique across the whole menu tree");
+        ids.add(item.id);
+      } else if (!["show", "hide", "quit"].includes(item.action)) {
+        fail(`${description}.action must be show, hide, or quit`);
+      } else if (item.action === "quit") hasQuit = true;
+      if ("label" in item) nonEmpty(item.label, `${description}.label`);
+      common(item, description);
+    }
+    for (const [group, checked] of checkedRadios) {
+      if (checked !== 1) fail(`tray radio group ${JSON.stringify(group)} must have exactly one checked item`);
+    }
+  };
+  level(menu, 1);
+  return hasQuit;
+}
+
+/** Resolves package-relative tray assets and encodes menu icons by index. */
+export async function recordTrayConfiguration(tray, root) {
+  const packageRoot = await realpath(root);
+  const asset = async (declared, description) => {
+    if (isAbsolute(declared)) throw new Error(`${description} must be relative to package.json`);
+    const unresolved = resolve(packageRoot, declared);
+    const lexical = relative(packageRoot, unresolved);
+    if (lexical.startsWith("..") || isAbsolute(lexical)) {
+      throw new Error(`${description} escapes the package containing the configuration: ${declared}`);
+    }
+    const absolute = await realpath(unresolved).catch(() => {
+      throw new Error(`${description} does not exist: ${declared}`);
+    });
+    const escaped = relative(packageRoot, absolute);
+    if (escaped.startsWith("..") || isAbsolute(escaped)) {
+      throw new Error(`${description} escapes the package containing the configuration: ${declared}`);
+    }
+    const bytes = await readFile(absolute).catch(error => {
+      throw new Error(`${description} is not a readable file: ${declared}: ${error.message}`);
+    });
+    pngDimensions(bytes, declared);
+    return absolute;
+  };
+  const menuIcons = [];
+  const encode = async items => {
+    const encodedItems = [];
+    for (const item of items) {
+      if (item.action === "separator" && item.type === undefined) {
+        encodedItems.push({ type: "separator" });
+        continue;
+      }
+      const encoded = { ...item };
+      if (item.icon !== undefined) {
+        encoded.iconIndex = menuIcons.length;
+        menuIcons.push(await asset(item.icon, "a tray menu icon"));
+        delete encoded.icon;
+      }
+      if (item.menu !== undefined) encoded.menu = await encode(item.menu);
+      encodedItems.push(encoded);
+    }
+    return encodedItems;
+  };
+  return {
+    ...tray,
+    icon: await asset(tray.icon, "tray.icon"),
+    contextMenu: await encode(tray.contextMenu ?? []),
+    menuIcons,
+  };
 }
 
 export function defineConfig(config) {

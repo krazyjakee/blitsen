@@ -41,6 +41,7 @@ lists individual globals, classes and members.
 | Audio | `<audio>` and a focused Web Audio subset |
 | Storage | `localStorage` and `sessionStorage`, both in-memory for one process |
 | Canvas | `<canvas>` with a full 2D context: paths, text, images, gradients, patterns, compositing, `getImageData` and `toDataURL` |
+| Notifications | Standard `Notification` construction, permission, close, and lifecycle events on Linux and eligible packaged macOS apps; see platform limits below |
 
 ## Important absences
 
@@ -85,6 +86,21 @@ if (dialog.openFile) {
 
 Do not infer support from TypeScript's browser library. A package can add Blitsen declarations but
 cannot remove unsupported names from `lib.dom.d.ts`; doctor checks the built application instead.
+
+## Notifications
+
+The standard `Notification` global and `blitsen/notify` share one backend, identifier registry, and
+frame-turn event queue. The constructor maps `body`, `icon`, `actions`, and `requireInteraction`;
+`data`, `dir`, `lang`, and `timestamp` remain readable on the object. Tag replacement, image/badge,
+vibration, renotify, silent delivery, and per-action icons throw `NotSupportedError` instead of
+being silently accepted.
+
+The global exists on Linux and in macOS application bundles with the identity required by
+`UNUserNotificationCenter`. It is absent in an unbundled macOS development host, on Windows until
+the installed library can address close (#251), and on Android until notification intent routing
+lands in #252. Test
+`"Notification" in globalThis`; use `blitsen/notify` when the richer native event/action identity
+is required. Cold-start activation remains #252.
 
 ## Internationalisation
 

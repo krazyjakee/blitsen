@@ -3,7 +3,7 @@ import { constants, watch as watchFs } from "node:fs";
 import { extname, join, normalize, resolve } from "node:path";
 import { ANDROID_ABIS, androidNotices, buildAndroid, DEFAULT_ABIS } from "./android.mjs";
 import { ASSET_ROOT } from "./android-assets.mjs";
-import { loadConfig, runBuildCommand } from "./config.mjs";
+import { loadConfig, recordTrayConfiguration, runBuildCommand } from "./config.mjs";
 import { doctorApplication, formatDiagnostic } from "./doctor.mjs";
 import { buildStandalone } from "./export.mjs";
 import { frameDelay } from "./frame-pacing.mjs";
@@ -292,7 +292,7 @@ async function applyConfiguration(options, output) {
   options.name ??= config.name;
   options.window = config.window;
   options.tray = config.tray
-    ? { ...config.tray, icon: resolve(root, config.tray.icon) }
+    ? await recordTrayConfiguration(config.tray, root)
     : undefined;
   applyName(options);
 }

@@ -34,7 +34,19 @@ export async function buildAddon({ purpose, release = false, features = [], into
   });
   if (build.exitCode !== 0) process.exit(build.exitCode);
 
-  const target = join(repository, "target", release ? "release" : "debug");
+  // Cargo may take its target directory from a user or CI config. Asking it is
+  // what keeps the harness from copying a stale checkout-local library after a
+  // successful build somewhere else.
+  const metadata = Bun.spawnSync({
+    cmd: ["cargo", "metadata", "--format-version", "1", "--no-deps"],
+    cwd: repository,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  if (metadata.exitCode !== 0) process.exit(metadata.exitCode);
+  const targetRoot = JSON.parse(metadata.stdout.toString()).target_directory;
+  if (!targetRoot) throw new Error("cargo metadata named no target directory for the native harness");
+  const target = join(targetRoot, release ? "release" : "debug");
   const addon = join(into ?? target, "blitsen.node");
   await copyFile(join(target, libraryName), addon);
   return addon;

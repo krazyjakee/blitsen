@@ -7,10 +7,9 @@
 //! detection selects a fallback (COMPATIBILITY.md, "Capability tiers").
 //!
 //! Android is where that sentence stops being a formality, because the platform
-//! answers "no" to most of it. What survives there is `os`, which reads the same
-//! `/proc` a Linux desktop does. What does not is `app`, `clipboard`, `dialog`
-//! and `window` — each absent for a reason its own module or `cfg` states, and
-//! none of them absent merely because the port has not been written (#147).
+//! answers "no" to most of it. `os`, focused `input` snapshots and notifications
+//! survive there; app, clipboard, dialog, window and tray remain absent for the
+//! reasons their module or platform documentation states.
 
 use blitsen_js::{JsEngine, JsError};
 #[cfg(not(target_os = "android"))]
@@ -24,9 +23,9 @@ use blitsen_platform::clipboard::{self, Image};
 use blitsen_platform::os;
 use serde_json::json;
 
-use super::json_value;
 #[cfg(not(target_os = "android"))]
-use super::{argument, window};
+use super::window;
+use super::{argument, json_value};
 
 #[cfg(not(target_os = "android"))]
 fn failed(error: PlatformError) -> JsError {
@@ -38,8 +37,282 @@ pub(super) fn install<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsErr
     install_app(engine)?;
     install_clipboard(engine)?;
     install_window(engine)?;
+    install_tray(engine)?;
+    install_notify(engine)?;
+    install_input(engine)?;
     install_os(engine)?;
     install_dialog(engine)
+}
+
+fn install_notify<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsError> {
+    use std::collections::HashSet;
+
+    use super::notify::{NotificationAction, NotificationOptions, NotificationPatch};
+
+    fn validate_actions(actions: &[NotificationAction]) -> Result<(), JsError> {
+        if actions.len() > 8 {
+            return Err(JsError::new("notifications may contain at most 8 actions"));
+        }
+        let mut ids = HashSet::new();
+        for action in actions {
+            if action.id.is_empty() || action.title.is_empty() {
+                return Err(JsError::new(
+                    "notification action ids and titles must not be empty",
+                ));
+            }
+            if action.id == "default" || !ids.insert(&action.id) {
+                return Err(JsError::new(format!(
+                    "notification action id {:?} is reserved or duplicated",
+                    action.id
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_options(options: &NotificationOptions) -> Result<(), JsError> {
+        if options.title.is_empty() {
+            return Err(JsError::new("a notification needs a non-empty title"));
+        }
+        if !matches!(options.urgency.as_str(), "low" | "normal" | "critical") {
+            return Err(JsError::new(format!(
+                "{:?} is not a notification urgency: low, normal or critical",
+                options.urgency
+            )));
+        }
+        validate_actions(&options.actions)
+    }
+
+    fn command<E: JsEngine>(engine: &mut E, id: u64) -> Result<E::Value, JsError> {
+        engine.string(&id.to_string())
+    }
+
+    engine.define_global_function(
+        "__blitsenNativeNotifyShow",
+        Box::new(move |call| {
+            let mut engine = E::from_value(&call.this);
+            let options: NotificationOptions =
+                serde_json::from_str(&argument(&mut engine, &call, 0, "notification options")?)
+                    .map_err(|error| {
+                        JsError::new(format!("malformed notification options: {error}"))
+                    })?;
+            validate_options(&options)?;
+            command(&mut engine, super::notify::show(options))
+        }),
+    )?;
+
+    engine.define_global_function(
+        "__blitsenNativeNotifyPermission",
+        Box::new(move |call| {
+            let mut engine = E::from_value(&call.this);
+            let permission = crate::native_window::notify::NotifyController::permission(false)
+                .map_err(JsError::new)?;
+            engine.string(
+                permission
+                    .as_str()
+                    .expect("notification permission is always a string"),
+            )
+        }),
+    )?;
+
+    engine.define_global_function(
+        "__blitsenNativeNotifyRequestPermission",
+        Box::new(move |call| {
+            let mut engine = E::from_value(&call.this);
+            command(&mut engine, super::notify::request_permission())
+        }),
+    )?;
+
+    #[cfg(target_os = "linux")]
+    engine.define_global_function(
+        "__blitsenNativeNotifyStandard",
+        Box::new(move |call| {
+            let mut engine = E::from_value(&call.this);
+            Ok(engine.boolean(true))
+        }),
+    )?;
+    #[cfg(target_os = "macos")]
+    if notify_rust::check_bundle().is_ok() {
+        engine.define_global_function(
+            "__blitsenNativeNotifyStandard",
+            Box::new(move |call| {
+                let mut engine = E::from_value(&call.this);
+                Ok(engine.boolean(true))
+            }),
+        )?;
+    }
+
+    engine.define_global_function(
+        "__blitsenNativeNotifyUpdate",
+        Box::new(move |call| {
+            let mut engine = E::from_value(&call.this);
+            let public_id = argument(&mut engine, &call, 0, "notification id")?;
+            let patch: NotificationPatch =
+                serde_json::from_str(&argument(&mut engine, &call, 1, "notification update")?)
+                    .map_err(|error| {
+                        JsError::new(format!("malformed notification update: {error}"))
+                    })?;
+            if patch.title.as_deref() == Some("") {
+                return Err(JsError::new("a notification title must not be empty"));
+            }
+            if let Some(urgency) = patch.urgency.as_deref()
+                && !matches!(urgency, "low" | "normal" | "critical")
+            {
+                return Err(JsError::new(format!(
+                    "{urgency:?} is not a notification urgency: low, normal or critical"
+                )));
+            }
+            if let Some(actions) = &patch.actions {
+                validate_actions(actions)?;
+            }
+            command(&mut engine, super::notify::update(public_id, patch))
+        }),
+    )?;
+
+    engine.define_global_function(
+        "__blitsenNativeNotifyClose",
+        Box::new(move |call| {
+            let mut engine = E::from_value(&call.this);
+            let public_id = argument(&mut engine, &call, 0, "notification id")?;
+            command(&mut engine, super::notify::close(public_id))
+        }),
+    )?;
+
+    engine.define_global_function(
+        "__blitsenNativeNotifyPending",
+        Box::new(move |call| {
+            let mut engine = E::from_value(&call.this);
+            Ok(engine.boolean(super::notify::pending()))
+        }),
+    )?;
+
+    engine.define_global_function(
+        "__blitsenNativeNotifyTake",
+        Box::new(move |call| {
+            let mut engine = E::from_value(&call.this);
+            json_value(&mut engine, &json!(super::notify::take_messages()))
+        }),
+    )
+}
+
+fn install_input<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsError> {
+    engine.define_global_function(
+        "__blitsenNativeInputSnapshot",
+        Box::new(move |call| {
+            let mut engine = E::from_value(&call.this);
+            json_value(&mut engine, &super::input::snapshot())
+        }),
+    )
+}
+
+#[cfg(not(target_os = "android"))]
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TrayBridgeOptions {
+    tooltip: Option<String>,
+    open_on_click: bool,
+    close_to_tray: bool,
+    menu: Vec<TrayBridgeItem>,
+}
+
+#[cfg(not(target_os = "android"))]
+type TrayBridgeItem = crate::TrayMenuDefinition;
+
+#[cfg(not(target_os = "android"))]
+fn parse_tray_menu(
+    raw: Vec<TrayBridgeItem>,
+    icons: &[Vec<u8>],
+) -> Result<(Vec<crate::native_window::tray::TrayEntry>, bool), JsError> {
+    crate::native_window::tray::parse_menu(raw, icons).map_err(JsError::new)
+}
+
+#[cfg(not(target_os = "android"))]
+fn install_tray<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsError> {
+    use crate::native_window::tray::TraySpec;
+
+    engine.define_global_function(
+        "__blitsenNativeTrayConfigure",
+        Box::new(move |call| {
+            let mut engine = E::from_value(&call.this);
+            let options: TrayBridgeOptions =
+                serde_json::from_str(&argument(&mut engine, &call, 0, "tray options")?)
+                    .map_err(|error| JsError::new(format!("malformed tray options: {error}")))?;
+            let icon = call
+                .arguments
+                .get(1)
+                .ok_or_else(|| JsError::new("missing tray icon bytes"))?;
+            let icon = engine.to_typed_array(icon)?;
+            if !matches!(
+                icon.kind,
+                TypedArrayKind::Uint8 | TypedArrayKind::Uint8Clamped
+            ) {
+                return Err(JsError::new(
+                    "tray icon must be a Uint8Array or Uint8ClampedArray",
+                ));
+            }
+
+            let menu_icons = call
+                .arguments
+                .iter()
+                .skip(2)
+                .map(|value| {
+                    let icon = engine.to_typed_array(value)?;
+                    if !matches!(
+                        icon.kind,
+                        TypedArrayKind::Uint8 | TypedArrayKind::Uint8Clamped
+                    ) {
+                        return Err(JsError::new(
+                            "tray menu icons must be Uint8Array or Uint8ClampedArray values",
+                        ));
+                    }
+                    Ok(icon.bytes)
+                })
+                .collect::<Result<Vec<_>, JsError>>()?;
+            let (menu, has_quit) = parse_tray_menu(options.menu, &menu_icons)?;
+            if options.close_to_tray && !has_quit {
+                return Err(JsError::new(
+                    "closeToTray requires a quit action in the tray menu",
+                ));
+            }
+            let id = super::tray::configure(TraySpec {
+                icon: icon.bytes,
+                tooltip: options.tooltip,
+                open_on_click: options.open_on_click,
+                close_to_tray: options.close_to_tray,
+                menu,
+            });
+            engine.string(&id.to_string())
+        }),
+    )?;
+
+    engine.define_global_function(
+        "__blitsenNativeTrayRemove",
+        Box::new(move |call| {
+            let mut engine = E::from_value(&call.this);
+            engine.string(&super::tray::remove().to_string())
+        }),
+    )?;
+
+    engine.define_global_function(
+        "__blitsenNativeTrayPending",
+        Box::new(move |call| {
+            let mut engine = E::from_value(&call.this);
+            Ok(engine.boolean(super::tray::pending()))
+        }),
+    )?;
+
+    engine.define_global_function(
+        "__blitsenNativeTrayTake",
+        Box::new(move |call| {
+            let mut engine = E::from_value(&call.this);
+            json_value(&mut engine, &json!(super::tray::take_messages()))
+        }),
+    )
+}
+
+#[cfg(target_os = "android")]
+fn install_tray<E: JsEngine + 'static>(_engine: &mut E) -> Result<(), JsError> {
+    Ok(())
 }
 
 // Every one of these answers a whole record at once rather than a field at a
@@ -345,6 +618,16 @@ fn install_window<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsError> 
     )?;
 
     engine.define_global_function(
+        "__blitsenNativeWindowCommand",
+        Box::new(move |call| {
+            let mut engine = E::from_value(&call.this);
+            let command = argument(&mut engine, &call, 0, "window command")?;
+            window::command(&command)?;
+            Ok(call.this)
+        }),
+    )?;
+
+    engine.define_global_function(
         "__blitsenNativeWindowMonitors",
         Box::new(move |call| {
             let mut engine = E::from_value(&call.this);
@@ -524,4 +807,124 @@ fn install_dialog<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsError> 
 )))]
 fn install_dialog<E: JsEngine + 'static>(_engine: &mut E) -> Result<(), JsError> {
     Ok(())
+}
+
+#[cfg(all(test, not(target_os = "android")))]
+mod tray_tests {
+    use super::*;
+    use crate::native_window::tray::{TrayEntry, TrayItemKind, TraySignal};
+
+    fn action(id: &str) -> TrayBridgeItem {
+        TrayBridgeItem {
+            id: Some(id.into()),
+            label: Some(id.into()),
+            ..Default::default()
+        }
+    }
+
+    fn radio(id: &str, group: &str, checked: bool) -> TrayBridgeItem {
+        TrayBridgeItem {
+            kind: Some("radio".into()),
+            id: Some(id.into()),
+            label: Some(id.into()),
+            group: Some(group.into()),
+            checked: Some(checked),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn nested_checkable_menu_keeps_public_identity_and_state() {
+        let raw = vec![
+            action("open"),
+            TrayBridgeItem {
+                kind: Some("submenu".into()),
+                label: Some("Theme".into()),
+                menu: Some(vec![
+                    radio("light", "theme", true),
+                    radio("dark", "theme", false),
+                ]),
+                ..Default::default()
+            },
+            TrayBridgeItem {
+                kind: Some("checkbox".into()),
+                id: Some("launch".into()),
+                label: Some("Launch".into()),
+                checked: Some(true),
+                ..Default::default()
+            },
+        ];
+        let (menu, has_quit) = parse_tray_menu(raw, &[]).expect("the tree is valid");
+        assert!(!has_quit);
+        let TrayEntry::Submenu { menu: theme, .. } = &menu[1] else {
+            panic!("the second entry is the theme submenu")
+        };
+        let TrayEntry::Item(dark) = &theme[1] else {
+            panic!("the second theme entry is an item")
+        };
+        assert_eq!(
+            dark.signal,
+            TraySignal::Action {
+                id: "dark".into(),
+                checked: Some(false),
+            }
+        );
+        assert_eq!(
+            dark.kind,
+            TrayItemKind::Radio {
+                group: "theme".into(),
+                checked: false,
+            }
+        );
+    }
+
+    #[test]
+    fn ids_are_unique_across_submenus() {
+        let raw = vec![
+            action("open"),
+            TrayBridgeItem {
+                kind: Some("submenu".into()),
+                label: Some("More".into()),
+                menu: Some(vec![action("open")]),
+                ..Default::default()
+            },
+        ];
+        assert!(parse_tray_menu(raw, &[]).is_err());
+    }
+
+    #[test]
+    fn radio_groups_are_consecutive_and_have_one_selection() {
+        assert!(
+            parse_tray_menu(
+                vec![
+                    radio("light", "theme", false),
+                    radio("dark", "theme", false)
+                ],
+                &[],
+            )
+            .is_err()
+        );
+        assert!(
+            parse_tray_menu(
+                vec![
+                    radio("light", "theme", true),
+                    action("open"),
+                    radio("dark", "theme", false),
+                ],
+                &[],
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn accelerator_has_modifiers_before_one_key() {
+        let mut valid = action("open");
+        valid.accelerator = Some("CmdOrCtrl+Shift+KeyO".into());
+        assert!(parse_tray_menu(vec![valid], &[]).is_ok());
+
+        let mut invalid = action("open");
+        invalid.accelerator = Some("KeyO+Control".into());
+        assert!(parse_tray_menu(vec![invalid], &[]).is_err());
+    }
 }

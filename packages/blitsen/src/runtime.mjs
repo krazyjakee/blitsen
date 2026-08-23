@@ -448,7 +448,19 @@ export function openRuntime(resolved, {
   return {
     resolved,
     openDirectory(options) {
-      return engine.openDirectory(options);
+      if (!options.tray) return engine.openDirectory(options);
+      const tray = options.tray;
+      return engine.openDirectory({
+        ...options,
+        tray: {
+          icon: tray.icon,
+          tooltip: tray.tooltip,
+          openOnClick: tray.openOnClick,
+          closeToTray: tray.closeToTray,
+          menuJson: JSON.stringify(tray.contextMenu ?? []),
+          menuIcons: tray.menuIcons ?? [],
+        },
+      });
     },
     reloadCSS: engine.reloadCSS ? file => engine.reloadCSS(file) : null,
     reloadDirectory: engine.reloadDirectory ? () => engine.reloadDirectory() : null,

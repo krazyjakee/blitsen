@@ -10,7 +10,7 @@ import { describeExecutableBinary, describeNativeBinary, readContainerHeader } f
 import { linkBundle } from "./bundle.mjs";
 import { REWRITTEN_EXTENSIONS } from "./files.mjs";
 import { frameDelay } from "./frame-pacing.mjs";
-import { packageBuild, signArtifact } from "./packaging.mjs";
+import { packageBuild, pngDimensions, signArtifact } from "./packaging.mjs";
 import { describeRuntime, hostTarget, requestedHost, resolvePhase2Runtime } from "./runtime.mjs";
 
 export { describeExecutableBinary, describeNativeBinary } from "./binary.mjs";
@@ -30,6 +30,7 @@ const BUN_TARGETS = {
 
 const ADDON_EXTENSION = ".node";
 const TRAY_BUNDLE_ICON = "blitsen.tray.png";
+const trayMenuBundleIcon = index => `blitsen.tray-menu.${index}.png`;
 const NAPI_ENTRYPOINT = "napi_register_module_v1";
 // Every other asset in an export is portable bytes; a .node is a host shared
 // library, and is the one thing that can be architecturally wrong. Checked
@@ -157,6 +158,7 @@ globalThis[Symbol.for("blitsen.runtime")] = JSON.parse(${JSON.stringify(JSON.str
 const assets = [
   ${manifest}
 ];
+const startupTray = ${trayOptions};
 const native = createRequire(import.meta.url)(addonPath);
 ${prelude}
 try {
@@ -197,8 +199,15 @@ try {
       height: ${options.height},
       title: ${JSON.stringify(options.title)},
       ...(${windowOptions} === null ? {} : { window: ${windowOptions} }),
-      ...(${trayOptions} === null ? {} : {
-        tray: { ...${trayOptions}, icon: join(root, ${JSON.stringify(TRAY_BUNDLE_ICON)}) },
+      ...(startupTray === null ? {} : {
+        tray: {
+          icon: join(root, ${JSON.stringify(TRAY_BUNDLE_ICON)}),
+          tooltip: startupTray.tooltip,
+          openOnClick: startupTray.openOnClick,
+          closeToTray: startupTray.closeToTray,
+          menuJson: JSON.stringify(startupTray.contextMenu ?? []),
+          menuIcons: (startupTray.menuIcons ?? []).map(path => join(root, path)),
+        },
       }),
     });
     const frameLimit = Number(process.env.BLITSEN_STANDALONE_FRAMES || 0);
@@ -334,7 +343,7 @@ async function prepareStandaloneBuild({ root, outfile, force, assets, target, pl
   };
 }
 
-async function planApplication(root, include, addons, trayIcon) {
+async function planApplication(root, include, addons, trayAssets = []) {
   const plan = await planIngest(root, { include });
   const carried = new Map(plan.files.map(file => [file.relative, file.absolute]));
   for (const [path, source] of await planAddons(root, addons)) {
@@ -344,20 +353,22 @@ async function planApplication(root, include, addons, trayIcon) {
     }
     carried.set(path, source);
   }
-  if (trayIcon) {
-    if (!(await stat(trayIcon).catch(() => null))?.isFile()) {
-      throw new Error(`tray icon does not exist: ${trayIcon}`);
+  for (const { path, source, description } of trayAssets) {
+    if (!(await stat(source).catch(() => null))?.isFile()) {
+      throw new Error(`${description} does not exist: ${source}`);
     }
-    if (carried.has(TRAY_BUNDLE_ICON) && carried.get(TRAY_BUNDLE_ICON) !== trayIcon) {
-      throw new Error(`${TRAY_BUNDLE_ICON} is reserved for the configured tray icon`);
+    pngDimensions(await readFile(source), source);
+    if (carried.has(path) && carried.get(path) !== source) {
+      throw new Error(`${path} is reserved for ${description}`);
     }
-    carried.set(TRAY_BUNDLE_ICON, trayIcon);
+    carried.set(path, source);
   }
+  const traySources = new Set(trayAssets.map(asset => resolve(asset.source)));
   return {
     plan,
     carried,
     unreferenced: plan.unreferenced.filter(path => !carried.has(path)
-      && (!trayIcon || resolve(root, ...path.split("/")) !== resolve(trayIcon))),
+      && !traySources.has(resolve(root, ...path.split("/")))),
   };
 }
 
@@ -567,8 +578,18 @@ export async function buildStandalone(
     linkedRuntime, buildTarget, buildPlatform, nativePath, requested,
     targetPlatform, targetArchitecture, destination, assetDirectory, sideLoaded,
   } = prepared;
-  const runtimeTray = tray ? { ...tray, icon: TRAY_BUNDLE_ICON } : null;
-  const { plan, carried, unreferenced } = await planApplication(root, include, addons, tray?.icon);
+  const trayAssets = tray ? [
+    { path: TRAY_BUNDLE_ICON, source: tray.icon, description: "the configured tray icon" },
+    ...(tray.menuIcons ?? []).map((source, index) => ({
+      path: trayMenuBundleIcon(index), source, description: `configured tray menu icon ${index + 1}`,
+    })),
+  ] : [];
+  const runtimeTray = tray ? {
+    ...tray,
+    icon: TRAY_BUNDLE_ICON,
+    menuIcons: (tray.menuIcons ?? []).map((_, index) => trayMenuBundleIcon(index)),
+  } : null;
+  const { plan, carried, unreferenced } = await planApplication(root, include, addons, trayAssets);
   // Bun records the compiled entrypoint's path in the executable, so staging has
   // to be a stable location rather than a temporary one for reproducible output.
   const staging = join(dirname(destination), `.${basename(destination)}.blitsen-build`);

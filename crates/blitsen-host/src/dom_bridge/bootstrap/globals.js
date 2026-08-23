@@ -63,7 +63,7 @@
     CSS, DOMParser,
     scrollTo, scrollBy, scroll: scrollTo,
     Headers, Request, Response, Blob, AbortController, AbortSignal, fetch, stop, WebSocket,
-    EventSource,
+    EventSource, Notification,
     AudioContext, AudioNode, AudioParam, AudioBuffer, AudioBufferSourceNode, AudioDestinationNode,
     GainNode, StereoPannerNode, Audio, HTMLAudioElement,
     Location, History, URL, URLSearchParams,
@@ -77,7 +77,8 @@
       || liveEventSources.size > 0
       || pendingResizeObservations() > 0 || audioPending()
       || waitingImages() > 0 || waitingLinks() > 0
-      || nativePending() || nativeDialogPending() || call("isAnimating")
+      || nativePending() || nativeDialogPending() || nativeTrayWorkPending()
+      || nativeNotifyWorkPending() || call("isAnimating")
       // A canvas drawn outside a frame callback is owed a paint, and nothing
       // else here would ask for one.
       || canvasPaintPending
@@ -116,6 +117,8 @@
       caretDragControl = null;
       disposePointerState();
       secondInstanceHandler = null;
+      notifyCommands.clear();
+      notifyListeners.clear();
       __blitsenFetchDispose();
       __blitsenSocketDispose();
       __blitsenEventSourceDispose();
@@ -211,7 +214,7 @@
     "webkitAudioContext", "HTMLMediaElement",
     "alert", "confirm", "prompt", "print",
     "open", "close", "navigation",
-    "cookieStore", "screen", "Notification", "caches",
+    "cookieStore", "screen", "caches",
     "IntersectionObserver", "PerformanceObserver",
     "CSSStyleRule", "CSSKeyframesRule", "CSSKeyframeRule", "CSSMediaRule",
     // Custom elements stay absent by decision rather than by omission. Upgrading
@@ -224,3 +227,4 @@
     "customElements", "ShadowRoot"]) {
     try { delete globalThis[key]; } catch {}
   }
+  if (!Notification) try { delete globalThis.Notification; } catch {}

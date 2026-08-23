@@ -620,7 +620,8 @@ import { app }       from "native:app";
 | `native:clipboard` | text, images, arbitrary MIME |
 | `native:tray` | tray icon, context menu, application menu |
 | `native:notify` | desktop notifications |
-| `native:input` | raw keyboard/mouse state, gamepads, potentially raw HID |
+| `native:input` | raw keyboard/mouse state and gamepads |
+| `native:hid` | deliberately raw HID reports for non-keyboard/pointer devices; desktop implementation and separate Android permission path are specified by [S10](../spikes/s10/README.md) |
 | `native:os` | processor, memory, storage volumes and OS identity; displays, battery, locale, idle time |
 
 **The rule: `native:` is additive, never a superset.** Anything the Node surface already names
@@ -630,7 +631,9 @@ memory / platform / arch / username, `node:fs`, `node:child_process`, `node:net`
 is what keeps existing packages working unmodified, and it is why there is no `native:fs` or
 `native:net`: filesystem watching is `node:fs.watch` and raw sockets are `node:net`/`node:dgram`.
 Where a genuine gap remains (memory-mapped buffers, raw HID), it gets a narrowly named module of
-its own rather than a parallel re-spelling of a module Bun already ships.
+its own rather than a parallel re-spelling of a module Bun already ships. Raw HID is the first
+worked example: [S10](../spikes/s10/README.md) assigns it to `native:hid`, explicitly outside
+`native:input`, and records the platform permission and protected-device boundary.
 
 The rule reads against a host that ships Node's modules, which is what Phase 1 did. The shipped
 Phase 2 runtime implements none of them and refuses `node:*` at resolution (COMPATIBILITY.md,

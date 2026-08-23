@@ -320,8 +320,10 @@ pen, with pressure, multi-touch and pointer capture) · the first `blitsen/*` mo
 **v2 — makes real apps comfortable** — *partly landed early*
 `localStorage`/`sessionStorage` (in memory, not persisted) · Workers (dedicated, with
 `MessageChannel`, `MessagePort` and `structuredClone`) have landed. Still open: clipboard events ·
-drag & drop (with real filesystem paths, not browser `File` abstractions) · gamepads · tray/menu ·
-notifications.
+drag & drop (with real filesystem paths, not browser `File` abstractions) · gamepads · notification
+activation and management. Declarative and runtime tray/menu control, desktop notification
+submission and focused native input snapshots have landed; the generated native matrix records the
+remaining members rather than treating those modules as all-or-nothing.
 
 **Later — as demand justifies**
 WebGL / WebGPU · WebRTC · anything else earning its size. `<canvas>` 2D was on this list and has
@@ -394,12 +396,14 @@ every module an application imports that the target does not have, with the reas
 
 | Module | On Android | Why |
 | --- | --- | --- |
-| `os` | **Present, whole** | `sysinfo` reads the same `/proc` there, and it is the only one that survives. The facts a platform will not give already arrive as `null` by design, so nothing had to change. |
+| `os` | **Present, whole** | `sysinfo` reads the same `/proc` there. The facts a platform will not give already arrive as `null` by design, so nothing had to change. |
 | `window` | **Absent** | winit accepts every setter on Android and discards it, then answers the getter as though the request had never been made: `setDecorations(false)`, then `isDecorated()` saying true, on a platform with no decorations. The monitor list is the one worth naming, because it looks like the survivor — winit enumerates no monitors there, so `monitors()` would report a device with no display. Immersive mode and orientation are the real capabilities and are not these under another name (#146). |
 | `clipboard` | **Absent** | `arboard` has no Android backend and does not compile. `ClipboardManager` would not settle it either: Android refuses a read to an unfocused application, and these readers report an empty clipboard as `null`, so the refusal and the empty clipboard would arrive as the same value. A module shaped for that, over JNI. |
 | `app` | **Absent** | The directories are the Activity's `filesDir`/`cacheDir`; the XDG variables Android does not set would resolve to a path nothing can write to. `relaunch` has no executable to spawn inside an APK. Single-instance ownership is the platform's own — a second launch is an `Intent` to the process already running, not a command line to hand over. |
 | `dialog` | **Absent** | No XDG portal. Already absent off the portal platforms, for its own reasons (#141). |
-| `tray`, `notify`, `input` | **Absent, as everywhere** | None of the three is implemented on any platform, so Android changes nothing about them. `notify` is the one with an obvious Android shape — `NotificationManager` over JNI, plus a runtime permission on API 33+ — and it would arrive on every platform at once or not at all. |
+| `input` | **Present, partial** | Focus-scoped keyboard and pointer snapshots are fed by the same winit events as desktop. Gamepads and device discovery remain absent everywhere. |
+| `tray` | **Absent** | Android has no desktop status item or context-menu surface. A persistent Android notification is not a tray icon under another name. |
+| `notify` | **Present, partial** | `android-activity` and `jni` bridge the platform `NotificationManager`: a stable default channel, API 33 permission, submission, session-stable replacement IDs and close are implemented. NativeActivity provides no tap/action/dismiss intent callback, so action submissions reject and lifecycle activation remains in #252 rather than exposing inert controls. |
 
 The two that were load-bearing are `clipboard` and `app`: they are what stood between the
 workspace and a clean `cargo ndk check` without scaffolding.

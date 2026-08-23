@@ -114,6 +114,8 @@
     settleLinks();
     deliverSecondInstances();
     settleDialogs();
+    settleTrays();
+    settleNotifications();
     const callbacks = animationFrames;
     animationFrames = new Map();
     runningAnimationFrames = callbacks;

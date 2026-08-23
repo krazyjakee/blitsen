@@ -1,9 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { cp, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { main } from "../src/cli.mjs";
-import { CONFIG_SCHEMA, defineConfig, loadConfig, runBuildCommand, validateConfig } from "../src/config.mjs";
+import {
+  CONFIG_SCHEMA, defineConfig, loadConfig, recordTrayConfiguration, runBuildCommand, validateConfig,
+} from "../src/config.mjs";
 import { configFixtures, capture } from "./cli-support.mjs";
 
 // macOS's temporary directory is a symlink — `/var` is `/private/var` — and
@@ -59,6 +61,62 @@ describe("directory CLI", () => {
     await expect(loadConfig(misspelled)).rejects.toThrow(
       `invalid blitsen config in ${join(misspelled, "package.json")}: `
       + 'unknown key "outputs" (known keys: build, output, name, addons, window, tray)');
+  });
+
+  test("validates rich tray trees and records package-relative icons", async () => {
+    const config = defineConfig({
+      output: "dist",
+      tray: {
+        icon: "native/tray.png", closeToTray: true,
+        contextMenu: [
+          { id: "open", label: "Open report", icon: "native/open.png", accelerator: "CmdOrCtrl+KeyO" },
+          { type: "checkbox", id: "launch", label: "Launch at login", checked: true },
+          {
+            type: "submenu", label: "Theme", icon: "native/theme.png", menu: [
+              { type: "radio", id: "light", label: "Light", group: "theme", checked: true },
+              { type: "radio", id: "dark", label: "Dark", group: "theme" },
+              { type: "separator" },
+              { action: "quit" },
+            ],
+          },
+        ],
+      },
+    });
+    const root = await temporaryDirectory("blitsen-rich-tray-");
+    const png = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgQIAffRr7QAAAABJRU5ErkJggg==",
+      "base64",
+    );
+    await mkdir(join(root, "native"));
+    await Promise.all(["tray.png", "open.png", "theme.png"]
+      .map(name => writeFile(join(root, "native", name), png)));
+    try {
+      const recorded = await recordTrayConfiguration(config.tray, root);
+      expect(recorded.icon).toBe(join(root, "native/tray.png"));
+      expect(recorded.menuIcons).toEqual([
+        join(root, "native/open.png"), join(root, "native/theme.png"),
+      ]);
+      expect(recorded.contextMenu[0].iconIndex).toBe(0);
+      expect(recorded.contextMenu[2].iconIndex).toBe(1);
+      expect(recorded.contextMenu[2].menu[3]).toEqual({ action: "quit" });
+      await expect(recordTrayConfiguration({ icon: "native/tray.png", contextMenu: [
+        { id: "open", label: "Open", icon: "../outside.png" },
+      ] }, root)).rejects.toThrow("escapes the package");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+
+    expect(() => defineConfig({ output: "dist", tray: { icon: "tray.png", contextMenu: [
+      { id: "same", label: "One" },
+      { type: "submenu", label: "More", menu: [{ id: "same", label: "Two" }] },
+    ] } })).toThrow("ids must be unique");
+    expect(() => defineConfig({ output: "dist", tray: { icon: "tray.png", contextMenu: [
+      { type: "radio", id: "one", label: "One", group: "choice" },
+      { type: "radio", id: "two", label: "Two", group: "choice" },
+    ] } })).toThrow("exactly one checked item");
+    expect(() => defineConfig({ output: "dist", tray: { icon: "tray.png", contextMenu: [
+      { id: "ambiguous", action: "show", label: "Wrong" },
+    ] } })).toThrow("exactly one of id or action");
   });
 
   test("discovers the config in the nearest package.json declaring it", async () => {
@@ -125,6 +183,7 @@ describe("directory CLI", () => {
       expect(built.tray).toEqual({
         icon: join(project, "native/tray.png"), closeToTray: true,
         contextMenu: [{ action: "show" }, { action: "quit" }],
+        menuIcons: [],
       });
     } finally {
       process.chdir(cwd);

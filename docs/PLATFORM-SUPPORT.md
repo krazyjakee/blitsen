@@ -31,7 +31,21 @@ runtime, so a successful install does not imply that such an environment can ope
 
 Linux is currently the only desktop platform with `blitsen/dialog`. `setAlwaysOnTop` has no effect
 on Wayland because that protocol does not expose the operation. Cursor grab modes also vary; the
-runtime throws when a requested mode is unavailable.
+runtime throws when a requested mode is unavailable. Declarative and runtime tray control—including
+nested actions, checkboxes, radio groups, accelerators and action/submenu PNGs—notification
+submission/lifecycle events and focused native input snapshots are available on desktop targets.
+Checkable tray icons and hidden menu items are not exposed because the native backends do not agree
+on them. Linux and
+macOS notifications can be updated and closed through their session ID. The installed Windows
+notification library delivers interaction events but rejects update and close because it does not
+retain an addressable toast handle (#251). Individual notification-server policies still decide
+how a submitted notification is presented.
+
+The standard Web `Notification` facade is installed on Linux and in eligible packaged macOS apps.
+It is absent on Windows until the notification library exposes addressable close (#251), absent in
+an unbundled macOS development host (#253), and absent on Android until intent activation is wired
+through #252. The native `blitsen/notify` module is available on every desktop target and Android,
+and exposes its platform limits directly.
 
 ## macOS requirements
 
@@ -39,7 +53,9 @@ Blitsen publishes Intel and Apple silicon runtimes. The published artifacts are 
 an application you export is unsigned unless your build runs an appropriate signing command.
 
 Distribute a macOS application only after signing its `.app` bundle and completing notarization on
-macOS. The current `blitsen/dialog` module is absent on macOS.
+macOS. Modern macOS notifications also require the exported `.app` bundle identity and signature;
+permission requests from an unbundled development executable reject. The current `blitsen/dialog`
+module is absent on macOS.
 
 ## Windows requirements
 
@@ -53,8 +69,13 @@ than embedding them in the PE file. Keep those files with the executable. The cu
 ## Android
 
 Android output is an APK built from a Blitsen source checkout. It supports `arm64-v8a` and `x86_64`
-by default; `armeabi-v7a` can be requested but has not been run by this project. Android does not
-support Blitsen's app, clipboard, dialog or window native modules in this release.
+by default; `armeabi-v7a` can be requested but has not been run by this project. Android supports
+the focus-scoped `input.snapshot` member and `blitsen/notify`. Notifications use Android's stable
+`blitsen.default` channel; API 33+ requests `POST_NOTIFICATIONS`, while API 26–32 reports permission
+as granted. Submission, same-session replacement and close are supported. Tap, action and dismiss
+events are not exposed until #252 adds Android intent activation, so action-bearing submissions
+reject. The standard Web `Notification` global remains absent for the same reason. Android does not
+support Blitsen's app, clipboard, dialog, window or tray native modules in this release.
 
 The output is an APK for direct installation, not an Android App Bundle. It cannot be used to
 create a new Google Play listing that requires AAB upload. See [Build an Android

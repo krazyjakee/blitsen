@@ -189,6 +189,7 @@ export function androidManifest({
     android:versionName="${escapeXml(versionName)}">
 
     <uses-sdk android:minSdkVersion="${minSdk}" android:targetSdkVersion="${targetSdk}" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
         android:label="${escapeXml(label)}"

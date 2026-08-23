@@ -26,7 +26,9 @@ describe("published types", () => {
 
   test("read each module's members off its own interface", () => {
     const declared = readDeclaredNativeMembers(definitions);
-    expect([...declared.keys()].sort()).toEqual(["app", "clipboard", "dialog", "os", "window"]);
+    expect([...declared.keys()].sort()).toEqual([
+      "app", "clipboard", "dialog", "input", "notify", "os", "tray", "window",
+    ]);
     // Each module's members are its own: the clipboard's do not leak into the
     // app's, which is what the per-subpath declaration files are for.
     expect(declared.get("clipboard").has("readText")).toBeTrue();
@@ -51,13 +53,13 @@ describe("published types", () => {
   });
 
   test("refuse a module that installs members with no interface to declare them", () => {
-    const trayed = {
+    const extended = {
       ...manifest,
-      native: [...manifest.native, { api: "tray.create", module: "tray", member: "create",
+      native: [...manifest.native, { api: "media.play", module: "media", member: "play",
         status: "implemented" }],
     };
-    expect(() => checkTypeDefinitions(trayed, definitions))
-      .toThrow(/blitsen\/tray installs create and has no declared interface/);
+    expect(() => checkTypeDefinitions(extended, definitions))
+      .toThrow(/blitsen\/media installs play and has no declared interface/);
   });
 
   test("say so when the reader can no longer find an interface", () => {

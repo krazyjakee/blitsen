@@ -15,7 +15,9 @@ use blitz::shell::BlitzApplication;
 use serde::Serialize;
 use winit::application::ApplicationHandler;
 use winit::cursor::CursorIcon;
-use winit::event::{DeviceEvent, ElementState, StartCause, WindowEvent};
+use winit::event::{
+    DeviceEvent, ElementState, MouseButton, MouseScrollDelta, StartCause, WindowEvent,
+};
 use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::{Key, ModifiersState, PhysicalKey};
 use winit::window::WindowId;
@@ -26,8 +28,9 @@ use winit::application::macos::ApplicationHandlerExtMacOS;
 use crate::pointer_input::{PendingPointerInput, PointerIds};
 use crate::surface_lifecycle::{SurfaceState, SyntheticPhase};
 
+pub(crate) mod notify;
 mod session;
-mod tray;
+pub(crate) mod tray;
 
 pub use session::WindowSession;
 
@@ -71,7 +74,10 @@ fn native_window_renderer() -> NativeWindowRenderer {
 /// caller is `blitsen-android`, the `cdylib` that exists because Android's entry
 /// point is not a `main`.
 #[cfg(target_os = "android")]
-pub use blitz::shell::set_android_app;
+pub fn set_android_app(app: android_activity::AndroidApp) {
+    notify::set_android_app(app.clone());
+    blitz::shell::set_android_app(app);
+}
 
 /// The winit application behind one window: input translation and dispatch.
 pub struct WindowApplication<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> {
@@ -127,6 +133,7 @@ pub struct WindowApplication<Rend: anyrender::WindowRenderer, E: JsEngine + Clon
     /// A synthetic surface cycle a test asked for, run at the next pump.
     pub(crate) synthetic_phase: Option<SyntheticPhase>,
     pub(crate) tray: Option<tray::TrayController>,
+    pub(crate) notify: notify::NotifyController,
     pub(crate) quit_requested: bool,
 }
 
@@ -271,31 +278,42 @@ pub(crate) fn dom_key_code(key: PhysicalKey) -> String {
 
 impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Rend, E> {
     fn apply_tray_action(&mut self, event_loop: &dyn ActiveEventLoop) {
-        let Some(tray) = &self.tray else {
-            return;
+        let signals = match &self.tray {
+            Some(tray) => {
+                tray.poll();
+                tray.take_signals()
+            }
+            None => return,
         };
-        tray.poll();
-        let Some(action) = tray.take_action() else {
-            return;
-        };
-        match action {
-            crate::TrayAction::Show => {
-                for view in self.inner.windows.values() {
-                    view.window.set_visible(true);
-                    view.window.focus_window();
-                    view.window.request_redraw();
+        for signal in signals {
+            match signal {
+                tray::TraySignal::Command(crate::TrayAction::Show) => {
+                    for view in self.inner.windows.values() {
+                        view.window.set_visible(true);
+                        view.window.focus_window();
+                        view.window.request_redraw();
+                    }
+                }
+                tray::TraySignal::Command(crate::TrayAction::Hide) => {
+                    for view in self.inner.windows.values() {
+                        view.window.set_visible(false);
+                    }
+                }
+                tray::TraySignal::Command(crate::TrayAction::Quit) => {
+                    self.quit_requested = true;
+                    event_loop.exit();
+                }
+                tray::TraySignal::Command(crate::TrayAction::Separator) => {}
+                tray::TraySignal::Click => crate::dom_bridge::tray::clicked(),
+                tray::TraySignal::Action { id, checked } => {
+                    crate::dom_bridge::tray::action(id, checked);
                 }
             }
-            crate::TrayAction::Hide => {
-                for view in self.inner.windows.values() {
-                    view.window.set_visible(false);
-                }
+        }
+        if crate::dom_bridge::tray::pending() {
+            for view in self.inner.windows.values() {
+                view.window.request_redraw();
             }
-            crate::TrayAction::Quit => {
-                self.quit_requested = true;
-                event_loop.exit();
-            }
-            crate::TrayAction::Separator => {}
         }
     }
 
@@ -336,17 +354,22 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Ren
 
     fn queue_keyboard_input(&mut self, window_id: WindowId, event: &WindowEvent) -> bool {
         let input = match event {
-            WindowEvent::KeyboardInput { event, .. } => PendingKeyboardInput::Key {
-                event_type: if event.state == ElementState::Pressed {
-                    "keydown"
-                } else {
-                    "keyup"
-                },
-                key: dom_key_name(&event.logical_key),
-                code: dom_key_code(event.physical_key),
-                repeat: event.repeat,
-            },
-            WindowEvent::Focused(focused) => PendingKeyboardInput::WindowFocus(*focused),
+            WindowEvent::KeyboardInput { event, .. } => {
+                let pressed = event.state == ElementState::Pressed;
+                let key = dom_key_name(&event.logical_key);
+                let code = dom_key_code(event.physical_key);
+                crate::dom_bridge::input::key(code.clone(), key.clone(), pressed);
+                PendingKeyboardInput::Key {
+                    event_type: if pressed { "keydown" } else { "keyup" },
+                    key,
+                    code,
+                    repeat: event.repeat,
+                }
+            }
+            WindowEvent::Focused(focused) => {
+                crate::dom_bridge::input::focus(*focused);
+                PendingKeyboardInput::WindowFocus(*focused)
+            }
             _ => return false,
         };
         self.pending_keyboard_input.push((window_id, input));
@@ -792,6 +815,38 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> ApplicationHandler
         window_id: WindowId,
         event: WindowEvent,
     ) {
+        match &event {
+            WindowEvent::PointerMoved { position, .. } => {
+                let scale = self
+                    .inner
+                    .windows
+                    .get(&window_id)
+                    .map_or(1.0, |view| view.window.scale_factor());
+                let logical = position.to_logical::<f64>(scale);
+                crate::dom_bridge::input::pointer_position(logical.x, logical.y);
+            }
+            WindowEvent::PointerButton { state, button, .. } => {
+                let button = match button.clone().mouse_button() {
+                    Some(MouseButton::Left) => "primary".to_owned(),
+                    Some(MouseButton::Right) => "secondary".to_owned(),
+                    Some(MouseButton::Middle) => "auxiliary".to_owned(),
+                    Some(MouseButton::Back) => "back".to_owned(),
+                    Some(MouseButton::Forward) => "forward".to_owned(),
+                    Some(other) => format!("other-{}", other as u8 + 1),
+                    None => "unknown".to_owned(),
+                };
+                crate::dom_bridge::input::pointer_button(button, *state == ElementState::Pressed);
+            }
+            WindowEvent::MouseWheel { delta, .. } => match delta {
+                MouseScrollDelta::LineDelta(x, y) => {
+                    crate::dom_bridge::input::wheel_lines(f64::from(*x), f64::from(*y));
+                }
+                MouseScrollDelta::PixelDelta(position) => {
+                    crate::dom_bridge::input::wheel_pixels(position.x, position.y);
+                }
+            },
+            _ => {}
+        }
         if matches!(event, WindowEvent::CloseRequested)
             && self
                 .tray
@@ -887,6 +942,9 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> ApplicationHandler
         device_id: Option<winit::event::DeviceId>,
         event: DeviceEvent,
     ) {
+        if let DeviceEvent::PointerMotion { delta: (x, y) } = &event {
+            crate::dom_bridge::input::pointer_movement(*x, *y);
+        }
         self.inner.device_event(event_loop, device_id, event);
     }
 

@@ -30,11 +30,10 @@ path = "src/lib.rs"
 # application code outside this `.so`; `game-activity` would add a Gradle
 # dependency on a support library for an input model built around game pads.
 #
-# One selection, three consumers. `winit-android` and `blitz-shell` both depend
-# on `android-activity` 0.6 without naming a backend, so cargo's feature
-# unification carries this choice into both — which is why the entry point is
-# the only place it appears, exactly as it is the only place in Blitz's own
-# Android examples.
+# One selection shared by the entry point, host, `winit-android` and
+# `blitz-shell`. The host names the same backend because its notification bridge
+# retains the activity handle and uses android-activity's Java-main-thread
+# helper; cargo feature unification still produces one native-activity glue.
 android-activity = { version = "0.6.0", features = ["native-activity"] }
 blitsen-host = { path = "../blitsen-host" }
 blitsen-runtime = { path = "../blitsen-runtime" }

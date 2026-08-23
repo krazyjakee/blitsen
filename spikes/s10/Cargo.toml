@@ -1,0 +1,23 @@
+[package]
+name = "s10-hid"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# Outside the workspace on purpose (`exclude = ["spikes/*"]`): this decision
+# probe must not add HID or its platform libraries to a Blitsen build.
+[dependencies]
+hidapi = { version = "2.6.6", default-features = false, features = ["linux-native-basic-udev"] }
+
+[[bin]]
+name = "s10-hid"
+path = "src/main.rs"
+
+[[bin]]
+name = "floor"
+path = "src/bin/floor.rs"
+
+[profile.release]
+strip = "symbols"
+
+[workspace]

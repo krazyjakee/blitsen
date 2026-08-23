@@ -8,6 +8,213 @@
   "required": [
     "output"
   ],
+  "definitions": {
+    "trayMenuItem": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "action"
+          ],
+          "properties": {
+            "type": {
+              "const": "action"
+            },
+            "label": {
+              "type": "string",
+              "minLength": 1
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "accelerator": {
+              "type": "string",
+              "minLength": 1
+            },
+            "icon": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\.png$"
+            },
+            "action": {
+              "type": "string",
+              "enum": [
+                "show",
+                "hide",
+                "quit"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "label"
+          ],
+          "properties": {
+            "type": {
+              "const": "action"
+            },
+            "label": {
+              "type": "string",
+              "minLength": 1
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "accelerator": {
+              "type": "string",
+              "minLength": 1
+            },
+            "icon": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\.png$"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "action"
+          ],
+          "properties": {
+            "action": {
+              "const": "separator"
+            },
+            "label": {
+              "type": "string",
+              "minLength": 1
+            },
+            "enabled": {
+              "type": "boolean"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "const": "separator"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "id",
+            "label"
+          ],
+          "properties": {
+            "type": {
+              "const": "checkbox"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "label": {
+              "type": "string",
+              "minLength": 1
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "checked": {
+              "type": "boolean"
+            },
+            "accelerator": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "id",
+            "label",
+            "group"
+          ],
+          "properties": {
+            "type": {
+              "const": "radio"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "label": {
+              "type": "string",
+              "minLength": 1
+            },
+            "group": {
+              "type": "string",
+              "minLength": 1
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "checked": {
+              "type": "boolean"
+            },
+            "accelerator": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "label",
+            "menu"
+          ],
+          "properties": {
+            "type": {
+              "const": "submenu"
+            },
+            "label": {
+              "type": "string",
+              "minLength": 1
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "icon": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\.png$"
+            },
+            "menu": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/trayMenuItem"
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
   "allOf": [
     {
       "if": {
@@ -59,16 +266,7 @@
             ],
             "properties": {
               "contextMenu": {
-                "contains": {
-                  "required": [
-                    "action"
-                  ],
-                  "properties": {
-                    "action": {
-                      "const": "quit"
-                    }
-                  }
-                }
+                "description": "closeToTray is checked recursively by Blitsen's semantic validator."
               }
             }
           }
@@ -158,31 +356,9 @@
         "contextMenu": {
           "type": "array",
           "items": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": [
-              "action"
-            ],
-            "properties": {
-              "action": {
-                "type": "string",
-                "enum": [
-                  "show",
-                  "hide",
-                  "quit",
-                  "separator"
-                ]
-              },
-              "label": {
-                "type": "string",
-                "minLength": 1
-              },
-              "enabled": {
-                "type": "boolean"
-              }
-            }
+            "$ref": "#/definitions/trayMenuItem"
           },
-          "description": "Ordered show, hide, quit and separator entries for the tray context menu."
+          "description": "Built-in or custom actions, separators, checkboxes, radio groups and nested submenus."
         }
       }
     }

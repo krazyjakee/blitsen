@@ -128,6 +128,11 @@ describe("the AndroidManifest.xml this build writes", () => {
     expect(manifest).toContain(`android:targetSdkVersion="${TARGET_SDK}"`);
   });
 
+  test("declares the Android 13 notification permission", () => {
+    expect(project().manifest).toContain(
+      '<uses-permission android:name="android.permission.POST_NOTIFICATIONS" />');
+  });
+
   test("claims no dex and no extraction, which is what the archive is written for", () => {
     const { manifest } = project();
     // `hasCode="false"` is true because #142 chose android-activity's

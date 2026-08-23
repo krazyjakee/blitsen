@@ -16,12 +16,18 @@ function slug(text) {
   return cleaned || "app";
 }
 
-function pngSize(bytes, path) {
+export function pngDimensions(bytes, path) {
   if (bytes.length < 24 || PNG_SIGNATURE.some((byte, index) => bytes[index] !== byte)) {
     throw new Error(`icon is not a PNG file: ${path}`);
   }
   const width = bytes.readUInt32BE(16);
   const height = bytes.readUInt32BE(20);
+  if (width === 0 || height === 0) throw new Error(`icon has invalid PNG dimensions: ${path}`);
+  return { width, height };
+}
+
+export function pngSize(bytes, path) {
+  const { width, height } = pngDimensions(bytes, path);
   if (width !== height) throw new Error(`icon must be square, got ${width}x${height}: ${path}`);
   return width;
 }

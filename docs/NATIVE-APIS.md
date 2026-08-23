@@ -30,13 +30,13 @@ polyfill.
 | Import | Available members in this release |
 | --- | --- |
 | `blitsen/app` | `dataDir`, `cacheDir`, `configDir`, `requestSingleInstanceLock`, `relaunch` |
-| `blitsen/window` | `setSize`, `setFullscreen`, `isFullscreen`, `setDecorations`, `isDecorated`, `setAlwaysOnTop`, `setCursor`, `setCursorVisible`, `setCursorGrab`, `monitors` |
+| `blitsen/window` | `setSize`, `setFullscreen`, `isFullscreen`, `setDecorations`, `isDecorated`, `setMinimized`, `setMaximized`, `isMaximized`, `startDrag`, `close`, `setAlwaysOnTop`, `setCursor`, `setCursorVisible`, `setCursorGrab`, `monitors` |
 | `blitsen/dialog` | `openFile`, `openFiles`, `saveFile`, `openFolder`, `openFolders`, `message` |
 | `blitsen/clipboard` | `readText`, `readHtml`, `readImage`, `writeText`, `writeHtml`, `writeImage`, `clear` |
-| `blitsen/os` | `cpu`, `memory`, `storage`, `host` |
-
-`blitsen/tray`, `blitsen/notify` and `blitsen/input` resolve but have no implemented members in this
-release.
+| `blitsen/tray` | `configure`, `remove`, `onClick`, `onAction` |
+| `blitsen/notify` | `show`, `permission`, `requestPermission`, `update`, `close`, `onEvent` |
+| `blitsen/input` | `snapshot` |
+| `blitsen/os` | `cpu`, `memory`, `storage`, `host`, `locale` |
 
 The declaration files installed with `blitsen` document parameters and result types. The
 [generated native module matrix](COMPATIBILITY.md#native-modules) is available when you need the
@@ -56,6 +56,132 @@ addEventListener("load", () => {
 
 Calling these methods from a document script before the window exists throws instead of silently
 doing nothing.
+
+## Tray lifecycle
+
+Package configuration still creates the tray before application JavaScript runs. The runtime API
+operates on that same tray: `configure` creates or atomically replaces it, and `remove` destroys it.
+Runtime icons are PNG file contents rather than paths, so their meaning does not change between a
+development directory and a standalone export.
+
+```js
+import tray from "blitsen/tray";
+
+const icon = new Uint8Array(await (await fetch("/tray.png")).arrayBuffer());
+await tray.configure?.({
+  icon,
+  tooltip: "My App",
+  menu: [
+    { id: "open", label: "Open", accelerator: "CmdOrCtrl+KeyO" },
+    { type: "checkbox", id: "launch", label: "Launch at login", checked: true },
+    {
+      type: "submenu",
+      label: "Theme",
+      menu: [
+        { type: "radio", id: "light", label: "Light", group: "theme", checked: true },
+        { type: "radio", id: "dark", label: "Dark", group: "theme" },
+      ],
+    },
+    { type: "separator" },
+    { action: "quit" },
+  ],
+});
+
+tray.onAction?.(({ id, checked }) => {
+  if (id === "open") console.log("Open selected");
+  if (id === "launch") console.log("Launch at login:", checked);
+});
+```
+
+The built-in `show`, `hide` and `quit` actions run in the native session even when JavaScript is
+not currently painting. Application-defined IDs are delivered in FIFO order at a frame boundary.
+IDs are unique across the full tree. Checkbox events carry their new state; each consecutive radio
+group must start with exactly one checked item, and selecting one reports `checked: true` after the
+native menu has cleared its siblings. Reconfigure with the new tree to persist application state.
+
+Action and submenu icons are PNG bytes. Checkable-item icons and item visibility are deliberately
+not exposed: the installed Windows/macOS menu backend cannot represent them consistently. Native
+accelerators use modifier-first spellings such as `Control+Shift+KeyP`; `CmdOrCtrl` maps to Command
+on macOS and Control elsewhere. Package configuration accepts the same menu tree and invariants,
+using PNG paths relative to its `package.json` where the runtime API uses unambiguous byte arrays.
+Configured custom and checkable actions queue until application listeners are installed.
+Tray support is desktop-only. A native application menu is separate work because it must exist
+without a tray icon (#249).
+
+## Notifications
+
+Notification work is asynchronous and settles on a frame turn. `show` returns a session-scoped ID;
+that same ID appears in lifecycle events and addresses replacement and close where the platform
+backend supports them:
+
+```js
+import notify from "blitsen/notify";
+
+const unsubscribe = notify.onEvent?.(event => {
+  if (event.type === "action" && event.action === "open") openArchive();
+  if (event.type === "close") console.log(event.reason);
+});
+
+const id = await notify.show?.({
+  title: "Export complete",
+  body: "The archive is ready.",
+  urgency: "normal",
+  actions: [{ id: "open", title: "Open archive" }],
+});
+
+await notify.update?.(id, { body: "Copied to Downloads" });
+await notify.close?.(id);
+```
+
+`permission()` reads without prompting; `requestPermission()` prompts on macOS and Android 13+
+and otherwise reads the platform result. Linux returns `"granted"` because the freedesktop service
+has no per-app authorization state—an unavailable service still makes `show` reject. macOS
+requires an exported, signed `.app` bundle for authorization and uses its application icon;
+passing `icon` is rejected. Linux accepts an icon theme name or absolute path. Windows accepts an
+image path. Android accepts an application drawable resource name and otherwise uses a system
+fallback icon.
+
+IDs start again in each application session. Once a notification is clicked, acted on, dismissed,
+expired or closed, `update` and `close` return `false`. Events are FIFO and are never delivered from
+a platform callback thread. At most eight action buttons may be requested; the desktop is still
+free to show fewer.
+
+The `notify-rust` Windows backend delivers click, action, dismissal and error events, but does not
+retain a toast handle for general replacement or close. Calls for an active ID therefore reject on
+Windows instead of pretending they worked (#251). Windows also reports permission as `"default"`
+until that backend exposes the notifier setting. Linux and macOS implement update and close.
+Activation while the process is already running is delivered on desktop; launching a stopped
+application from a notification requires platform registration and packaging work tracked in #252.
+Android implements permission, an idempotent `blitsen.default` channel, submission, update and close
+through `android-activity` and `jni`. Android action buttons and tap/dismiss lifecycle events remain
+unavailable until #252 supplies an intent entry point; requesting actions therefore rejects rather
+than displaying inert controls. Android urgency is a builder hint inside the user-controlled
+default channel, and `appName` cannot rename a channel Android has already created.
+
+Browser-oriented integrations can use the standard `Notification` global over this same backend on
+Linux and eligible packaged macOS apps. It deliberately remains absent where its lifecycle contract
+cannot be implemented, including Android until notification intent routing lands; see [Web API
+support](WEB-APIS.md#notifications).
+
+## Native input snapshots
+
+DOM keyboard, pointer and wheel events remain the normal input path. `input.snapshot()` complements
+them for frame-oriented applications with held physical keys and buttons plus raw mouse movement.
+
+```js
+import input from "blitsen/input";
+
+function frame() {
+  const state = input.snapshot?.();
+  if (state?.keys.some(key => key.code === "ArrowLeft")) moveLeft();
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+```
+
+Losing focus clears held keys and buttons. Movement and wheel fields are accumulated since the
+previous snapshot and consumed by reading it. Gamepads, vibration and device-change events remain
+absent; ordinary pointer and keyboard events are unaffected.
 
 ## Dialogs
 

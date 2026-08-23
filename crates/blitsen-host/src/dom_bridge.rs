@@ -20,8 +20,11 @@ use crate::DomRuntime;
 mod audio;
 mod event_source;
 mod fetch;
+pub(crate) mod input;
 mod intl;
 mod native;
+pub(crate) mod notify;
+pub(crate) mod tray;
 // The thread pool the network runs on. Not a web worker — those are
 // [`crate::worker`], and the two were one name for long enough to be worth
 // spelling out.
