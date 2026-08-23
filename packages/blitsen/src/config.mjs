@@ -333,6 +333,16 @@ function validateApplicationMenu(menu, fail) {
   const nonEmpty = (value, description) => {
     if (typeof value !== "string" || value.trim().length === 0) fail(`${description} must not be empty`);
   };
+  const keys = (item, allowed, description) => {
+    for (const key of Object.keys(item)) {
+      if (!allowed.includes(key)) fail(`${description}.${key} is not allowed`);
+    }
+  };
+  const common = (item, description) => {
+    if ("enabled" in item && typeof item.enabled !== "boolean") {
+      fail(`${description}.enabled must be a boolean`);
+    }
+  };
   const level = (items, depth) => {
     if (!Array.isArray(items)) fail("application menus and their submenus must be arrays");
     if (depth > 16) fail("application menus may be nested at most 16 levels");
@@ -371,7 +381,9 @@ function validateApplicationMenu(menu, fail) {
         }
       }
       if (type === "submenu") {
+        keys(item, ["type", "label", "enabled", "role", "menu"], description);
         nonEmpty(item.label, `${description}.label`);
+        common(item, description);
         if ("role" in item) {
           if (depth !== 1) fail("only a top-level submenu of \"menu.menu\" carries a role");
           if (!menuSubmenuRoles.includes(item.role)) {
@@ -380,23 +392,38 @@ function validateApplicationMenu(menu, fail) {
           if (roles.has(item.role)) fail(`"menu.menu" declares the ${item.role} role twice`);
           roles.add(item.role);
         }
-        level(item.menu ?? [], depth + 1);
+        if (!("menu" in item)) fail(`${description}.menu is required`);
+        level(item.menu, depth + 1);
         continue;
       }
       if (type === "role") {
+        keys(item, ["type", "role"], description);
         if (!menuRoles.includes(item.role)) {
           fail(`${description}.role must be one of ${menuRoles.join(", ")}`);
         }
         continue;
       }
-      if (type === "separator") continue;
+      if (type === "separator") {
+        keys(item, ["type"], description);
+        continue;
+      }
       if (type !== "action" && type !== "checkbox" && type !== "radio") {
         fail(`${description}.type is unknown: ${JSON.stringify(type)}`);
       }
+      keys(item, type === "action"
+        ? ["type", "id", "label", "enabled", "accelerator"]
+        : ["type", "id", "label", "enabled", "checked", "group", "accelerator"], description);
       nonEmpty(item.id, `${description}.id`);
       nonEmpty(item.label, `${description}.label`);
       if (ids.has(item.id)) fail("menu item ids must be unique across the whole menu tree");
       ids.add(item.id);
+      common(item, description);
+      if ("checked" in item && typeof item.checked !== "boolean") {
+        fail(`${description}.checked must be a boolean`);
+      }
+      if (type === "checkbox" && "group" in item) {
+        fail(`${description}.group is only valid on radio items`);
+      }
       if (type === "radio") {
         nonEmpty(item.group, `${description}.group`);
         checkedRadios.set(item.group, (checkedRadios.get(item.group) ?? 0) + Number(item.checked === true));

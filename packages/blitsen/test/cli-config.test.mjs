@@ -141,6 +141,43 @@ describe("directory CLI", () => {
     expect(menu).not.toHaveProperty("tray");
 
     const bar = items => ({ output: "dist", menu: { menu: items } });
+    const nested = item => bar([{ type: "submenu", label: "File", menu: [item] }]);
+    for (const [variant, item] of [
+      ["role", { type: "role", role: "about", bogus: true }],
+      ["separator", { type: "separator", bogus: true }],
+      ["action", { id: "open", label: "Open", bogus: true }],
+      ["checkbox", { type: "checkbox", id: "check", label: "Check", bogus: true }],
+      ["radio", {
+        type: "radio", id: "radio", label: "Radio", group: "choice", checked: true, bogus: true,
+      }],
+      ["submenu", { type: "submenu", label: "More", menu: [], bogus: true }],
+    ]) {
+      expect(() => defineConfig(nested(item)), `${variant} rejects unknown fields`)
+        .toThrow(".bogus is not allowed");
+    }
+    for (const [variant, item] of [
+      ["action", { id: "open", label: "Open", enabled: "yes" }],
+      ["checkbox", { type: "checkbox", id: "check", label: "Check", enabled: "yes" }],
+      ["radio", {
+        type: "radio", id: "radio", label: "Radio", group: "choice", checked: true,
+        enabled: "yes",
+      }],
+      ["submenu", { type: "submenu", label: "More", menu: [], enabled: "yes" }],
+    ]) {
+      expect(() => defineConfig(nested(item)), `${variant} requires boolean enabled`)
+        .toThrow(".enabled must be a boolean");
+    }
+    for (const [variant, item] of [
+      ["checkbox", { type: "checkbox", id: "check", label: "Check", checked: "yes" }],
+      ["radio", {
+        type: "radio", id: "radio", label: "Radio", group: "choice", checked: "yes",
+      }],
+    ]) {
+      expect(() => defineConfig(nested(item)), `${variant} requires boolean checked`)
+        .toThrow(".checked must be a boolean");
+    }
+    expect(() => defineConfig(nested({ type: "submenu", label: "Missing" })))
+      .toThrow(".menu is required");
     expect(() => defineConfig(bar([{ id: "open", label: "Open" }])))
       .toThrow("every top-level entry");
     expect(() => defineConfig(bar([
