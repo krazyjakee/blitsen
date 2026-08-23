@@ -61,6 +61,10 @@ impl QuickJs {
         f(&self.inner.runtime)
     }
 
+    pub(crate) fn is_active(&self) -> bool {
+        self.inner.active.get().is_some()
+    }
+
     pub(crate) fn wrap<'js>(&self, ctx: &Ctx<'js>, value: Value<'js>) -> QjsValue {
         QjsValue::new(Rc::clone(&self.inner), ctx, value)
     }
@@ -101,8 +105,13 @@ impl QuickJs {
     }
 
     /// Bytes QuickJS has allocated and not yet returned to the allocator.
-    pub fn heap_bytes(&self) -> usize {
-        self.with_runtime(|runtime| runtime.memory_usage().malloc_size as usize)
+    pub fn heap_bytes(&self) -> Result<usize, JsError> {
+        if self.is_active() {
+            return Err(JsError::new(
+                "QuickJS memory reporting cannot run inside a native callback",
+            ));
+        }
+        Ok(self.with_runtime(|runtime| runtime.memory_usage().malloc_size as usize))
     }
 }
 

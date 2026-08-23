@@ -301,6 +301,11 @@ impl JsEngine for QuickJs {
     }
 
     fn set_interrupt_flag(&mut self, stop: Arc<AtomicBool>) -> Result<(), JsError> {
+        if self.is_active() {
+            return Err(JsError::new(
+                "QuickJS interrupt configuration cannot run inside a native callback",
+            ));
+        }
         self.inner
             .runtime
             .set_interrupt_handler(Some(Box::new(move || stop.load(Ordering::Relaxed))));
@@ -360,6 +365,11 @@ impl JsEngine for QuickJs {
     }
 
     fn drain_microtasks(&mut self) -> Result<usize, JsError> {
+        if self.is_active() {
+            return Err(JsError::new(
+                "QuickJS jobs cannot be drained inside a native callback",
+            ));
+        }
         let mut ran = 0;
         loop {
             match self.with_runtime(|runtime| runtime.execute_pending_job()) {
@@ -383,17 +393,11 @@ impl JsEngine for QuickJs {
     }
 
     fn collect_garbage(&mut self) -> Result<(), JsError> {
-        self.with_runtime(RuntimeExt::run_gc);
+        // `Ctx::run_gc` uses the context whose runtime lock is already held,
+        // so this operation remains valid when a native callback re-enters the
+        // engine through `from_value`.
+        self.with_ctx(|ctx| ctx.run_gc());
         Ok(())
-    }
-}
-
-// Function item indirection keeps the closure passed to `with_runtime` simple
-// enough for all supported compilers to infer.
-struct RuntimeExt;
-impl RuntimeExt {
-    fn run_gc(runtime: &rquickjs::Runtime) {
-        runtime.run_gc();
     }
 }
 
@@ -513,6 +517,34 @@ mod tests {
             engine.call(&panic, None, &[]).unwrap_err().message(),
             "Error: native callback panicked"
         );
+
+        engine
+            .define_global_function(
+                "runtimeReentry",
+                Box::new(|call| {
+                    let mut engine = QuickJs::from_value(&call.this);
+                    engine.collect_garbage()?;
+                    let jobs = engine.drain_microtasks().unwrap_err();
+                    let interrupt = engine
+                        .set_interrupt_flag(Arc::new(AtomicBool::new(false)))
+                        .unwrap_err();
+                    let memory = engine.heap_bytes().unwrap_err();
+                    engine.string(&format!(
+                        "{}|{}|{}",
+                        jobs.message(),
+                        interrupt.message(),
+                        memory.message()
+                    ))
+                }),
+            )
+            .unwrap();
+        let guarded = engine
+            .evaluate_script("runtimeReentry()", "runtime-reentry.js")
+            .unwrap();
+        assert_eq!(
+            engine.to_string(&guarded).unwrap(),
+            "QuickJS jobs cannot be drained inside a native callback|QuickJS interrupt configuration cannot run inside a native callback|QuickJS memory reporting cannot run inside a native callback"
+        );
     }
 
     #[test]
@@ -609,14 +641,14 @@ mod tests {
     fn collecting_the_heap_early_returns_unreachable_cycles() {
         let mut engine = QuickJs::new().unwrap();
         engine.inner.runtime.set_gc_threshold(usize::MAX);
-        let settled = engine.heap_bytes();
+        let settled = engine.heap_bytes().unwrap();
         engine.evaluate_script(
             "globalThis.junk=[]; for(let i=0;i<20000;i++){const n={s:'x'.repeat(64)};n.self=n;junk.push(n)} junk=null",
             "gc.js",
         ).unwrap();
-        let littered = engine.heap_bytes();
+        let littered = engine.heap_bytes().unwrap();
         engine.collect_garbage().unwrap();
-        assert!(engine.heap_bytes() < littered);
+        assert!(engine.heap_bytes().unwrap() < littered);
         assert!(littered > settled);
     }
 }
