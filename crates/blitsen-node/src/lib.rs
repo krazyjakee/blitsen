@@ -55,6 +55,25 @@ pub struct OpenDirectoryOptions {
     pub tray: Option<NativeTrayOptions>,
     /// Optional application menu, independent of the tray.
     pub menu: Option<NativeAppMenuOptions>,
+    /// Optional notification-activation identity and launch envelope.
+    pub activation: Option<NativeActivationOptions>,
+}
+
+/// JavaScript-facing notification activation options (#252).
+///
+/// Carried by the Phase 1 host as well as Phase 2 because an export that links a
+/// Node-API addon is still an installed application: the identity the packaging
+/// step registered, and the envelope the platform launched it with, are
+/// properties of the artifact rather than of which host it was linked into.
+#[napi(object)]
+#[derive(Clone)]
+pub struct NativeActivationOptions {
+    /// The installed application identity, when the export recorded one.
+    pub identity: Option<String>,
+    /// What the platform's notification service knows the entry point by.
+    pub entry: Option<String>,
+    /// The serialized activation envelope this process was launched with.
+    pub launched_by: Option<String>,
 }
 
 #[napi(object)]
@@ -216,6 +235,19 @@ impl TryFrom<OpenDirectoryOptions> for HostOptions {
             window,
             tray,
             menu,
+            // An identity is only an identity when both halves are present: the
+            // application it names, and what the platform's notification service
+            // knows the entry point by. A launch envelope with neither is
+            // refused by the session, which is where that sentence is written.
+            activation: options.activation.map_or_else(
+                blitsen_host::ActivationOptions::default,
+                |activation| blitsen_host::ActivationOptions {
+                    entry_point: activation.identity.zip(activation.entry).map(
+                        |(identity, entry)| blitsen_host::ActivationEntryPoint { identity, entry },
+                    ),
+                    launched_by: activation.launched_by,
+                },
+            ),
         })
     }
 }

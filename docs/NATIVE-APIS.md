@@ -226,23 +226,50 @@ own tag, so an update replaces that toast in place and a close removes it from t
 notification history alike. Windows permission reads the native notifier setting and is therefore
 `"granted"` or `"denied"` and never `"default"`; there is no prompt to show, because the user,
 the administrator and group policy are what decide it. Windows toasts are delivered under the
-identity Windows already knows rather than under `appName`, which registering an application
-identity of your own would need—that is the packaging work #252 tracks. A machine with no
-registered AppUserModelID at all keeps no notifier and therefore no setting, so both calls reject
-there with a message naming that missing identity instead of reporting `"denied"`, which would
-claim a decision nobody made.
-Activation while the process is already running is delivered on desktop; launching a stopped
-application from a notification requires platform registration and packaging work tracked in #252.
-Android implements permission, an idempotent `blitsen.default` channel, submission, update and close
-through `android-activity` and `jni`. Android action buttons and tap/dismiss lifecycle events remain
-unavailable until #252 supplies an intent entry point; requesting actions therefore rejects rather
-than displaying inert controls. Android urgency is a builder hint inside the user-controlled
-default channel, and `appName` cannot rename a channel Android has already created.
+identity Windows already knows rather than under `appName`. An export built with `--bundle-id`
+registers an identity of its own at startup and files its toasts under that instead; a development
+run borrows Windows PowerShell's, which is what an unregistered process has always used. A machine
+with no registered AppUserModelID at all keeps no notifier and therefore no setting, so both calls
+reject there with a message naming that missing identity instead of reporting `"denied"`, which
+would claim a decision nobody made.
+Android implements permission, an idempotent `blitsen.default` channel, submission, update, close,
+body taps and action buttons through `android-activity` and `jni`. Android urgency is a builder hint
+inside the user-controlled default channel, and `appName` cannot rename a channel Android has
+already created. Android reports no dismissal: a swipe-away needs a `BroadcastReceiver`, a receiver
+needs a Java class, and a Blitsen APK carries no `classes.dex` at all.
+
+### Cold-start activation
+
+A notification outlives the process that showed it, so a click on one belonging to an application
+that has exited is a launch rather than an event. What arrives is an `activation`:
+
+```js
+notify.onEvent?.(event => {
+  if (event.type !== "activation") return;
+  // `action` is null for a body click, `reason` is null where the platform
+  // reports no dismissal. `id` names a notification from the session that
+  // showed it, which is a session that has ended.
+  resumeFrom(event.id, event.action);
+});
+```
+
+It is delivered **once**, on the first frame turn, which is after the document's scripts have run—so
+a listener registered at the top level of a module receives it. A reload does not repeat it, and
+neither does a later launch: the activation is recorded as delivered in the application's own data
+directory, keyed by a nonce the platform entry point minted, and an envelope offered a second time
+is dropped. That is the same guard that keeps an Android `Intent` re-delivered to a recreated
+Activity from arriving twice.
+
+The identity that record is kept under is the one `blitsen build --bundle-id <id>` registered; on
+Android it is the application ID the package was installed as, which the runtime reads from the
+Activity. A development run has neither, and is told so if a platform hands it an activation:
+notifications it shows can only be acted on while it is still running. Which entry points a platform
+actually starts is [Platform support](PLATFORM-SUPPORT.md#notifications).
 
 Browser-oriented integrations can use the standard `Notification` global over this same backend on
-Linux, Windows and any macOS process that has a bundle identity—an exported application, or a
-development run inside `--dev-bundle`. It deliberately remains absent where its lifecycle contract
-cannot be implemented, including Android until notification intent routing lands; see [Web API
+Linux, Windows, any macOS process that has a bundle identity—an exported application, or a
+development run inside `--dev-bundle`—and any Android package the platform launched, where a body
+tap has an application identity to come back to. See [Web API
 support](WEB-APIS.md#notifications).
 
 ## Native input snapshots

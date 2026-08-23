@@ -623,7 +623,25 @@ export type NativeNotificationEvent =
       id: string;
       reason: "expired" | "dismissed" | "closed" | "unknown";
     }>
-  | Readonly<{ type: "error"; id: string; message: string }>;
+  | Readonly<{ type: "error"; id: string; message: string }>
+  /**
+   * The notification click that started this run of the application.
+   *
+   * Delivered once, on the first frame turn, so a listener added at the top
+   * level of a module receives it; a reload or a later launch never repeats it.
+   * `id` names the notification as the session that showed it named it, which is
+   * a session that has ended — correlate it with state the application persisted
+   * itself. `action` is null for a body click, `reason` is null everywhere the
+   * platform does not report dismissals.
+   */
+  | Readonly<{
+      type: "activation";
+      id: string;
+      action: string | null;
+      reason: string | null;
+      platform: string;
+      entry: string;
+    }>;
 
 /** `blitsen/notify`: native notification capabilities beyond the web surface. */
 export interface NativeNotify {

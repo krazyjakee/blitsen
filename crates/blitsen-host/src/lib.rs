@@ -199,6 +199,36 @@ pub struct TrayOptions {
     pub menu: Option<TrayMenu>,
 }
 
+/// The identity a notification activation is addressed to, and the entry point
+/// the platform knows it by (#252).
+///
+/// Recorded by `blitsen build` into the runtime configuration, because the
+/// runtime genuinely cannot work it out: the executable during development is an
+/// interpreter, and a window title is not an identity. Absent means the platform
+/// registered nothing for this process — a development run — and a notification
+/// it shows can only be acted on while it is still running.
+#[derive(Clone, Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActivationEntryPoint {
+    /// The installed application identity: the bundle identifier, the
+    /// AppUserModelID, the Android application ID.
+    pub identity: String,
+    /// What the platform's own notification service calls the entry point: a
+    /// desktop-entry name on Linux, and the identity itself everywhere else,
+    /// where the two are the same string.
+    pub entry: String,
+}
+
+/// How a notification activation reaches this process (#252).
+#[derive(Clone, Debug, Default)]
+pub struct ActivationOptions {
+    /// The registered identity, when an export recorded one.
+    pub entry_point: Option<ActivationEntryPoint>,
+    /// The serialized envelope the platform entry point started this process
+    /// with, when it started it with one.
+    pub launched_by: Option<String>,
+}
+
 /// What a host needs to open a directory of static output in a native window.
 #[derive(Clone, Debug)]
 pub struct OpenDirectoryOptions {
@@ -225,6 +255,9 @@ pub struct OpenDirectoryOptions {
     /// belongs to the process itself, and an application that shows no status
     /// item at all must still be able to install one.
     pub menu: Option<Vec<MenuDefinition>>,
+    /// The notification activation this process was launched by, and the
+    /// identity it is addressed to.
+    pub activation: ActivationOptions,
 }
 
 /// Wraps a DOM backend failure as a JavaScript-visible error.

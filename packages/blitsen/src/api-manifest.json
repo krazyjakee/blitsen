@@ -3905,9 +3905,10 @@
       "pattern": "(?<![.\\w$])Notification\\b",
       "condition": {
         "platforms": [
-          "darwin"
+          "darwin",
+          "android"
         ],
-        "reason": "macOS notifications are `UNUserNotificationCenter`, which needs a bundle identity to address and to hold permission against — and answers a process that has none by aborting it rather than by failing the call, so the facade cannot be installed and left to throw. An exported `.app` carries that identity and a development run of the interpreter does not; `blitsen run --dev-bundle` gives the development host one of its own rather than borrowing an installed application's. A process cannot acquire or lose a bundle identifier while it runs, so the question is settled once, as the runtime installs (#253). `blitsen/notify` is present either way and says why a call was refused."
+        "reason": "macOS notifications are `UNUserNotificationCenter`, which needs a bundle identity to address and to hold permission against — and answers a process that has none by aborting it rather than by failing the call, so the facade cannot be installed and left to throw. An exported `.app` carries that identity and a development run of the interpreter does not; `blitsen run --dev-bundle` gives the development host one of its own rather than borrowing an installed application's. A process cannot acquire or lose a bundle identifier while it runs, so the question is settled once, as the runtime installs (#253). On Android the same question has a different subject: the facade's `click` is a body tap, and a body tap there is a `PendingIntent` addressed to an installed application identity, so a package the platform launched has one and a runtime started against a directory standing in for `assets/` does not — a `Notification` whose `onclick` could never fire would be a promise the constructor must not make (#252). `blitsen/notify` is present either way and says why a call was refused."
       }
     },
     {

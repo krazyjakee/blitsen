@@ -81,16 +81,53 @@ struct Record {
     token: u64,
 }
 
+/// The identity Windows files every Blitsen toast under when nothing registered
+/// one for this executable.
+///
+/// Windows will not display a toast from an identity it does not know.
+/// PowerShell's is present on every installation, which is why it is the
+/// identity the notification libraries offer as their unpackaged default and the
+/// one `notify-rust` already used here. It stays as the development answer: an
+/// interpreter running a script is not an installed application and has nothing
+/// of its own to be known by.
+#[cfg(target_os = "windows")]
+const BORROWED_APP_ID: &str = winrt_toast_reborn::ToastManager::POWERSHELL_AUM_ID;
+
 /// The application identity Windows files every Blitsen toast under.
 ///
-/// Windows will not display a toast from an identity it does not know, and
-/// registering one is the packaging work #252 tracks. PowerShell's is present on
-/// every installation, which is why it is the identity the notification
-/// libraries offer as their unpackaged default and the one `notify-rust` already
-/// used here. Permission, replacement and removal are all scoped to it, so the
-/// three have to agree on which identity they mean.
+/// Permission, replacement and removal are all scoped to it, so all three have
+/// to agree on which identity they mean — which is why this is read rather than
+/// passed: `permission` is an associated function with no session to reach
+/// through, and the notifier is built by a free function.
 #[cfg(target_os = "windows")]
-const APP_ID: &str = winrt_toast_reborn::ToastManager::POWERSHELL_AUM_ID;
+fn app_id() -> &'static str {
+    super::entry_point().map_or(BORROWED_APP_ID, |entry_point| entry_point.entry.as_str())
+}
+
+/// Tells the notification platform that this AppUserModelID exists (#252).
+///
+/// An AppUserModelID Windows has never seen holds no notifier, which is the
+/// state #251's refusal describes: `permission` cannot be read, and a toast has
+/// no identity to be delivered under. Registering one is a key under the running
+/// user's own `SOFTWARE\Classes\AppUserModelId`, and `winrt-toast-reborn` — the
+/// crate already delivering the toasts — writes it, so no registry code is
+/// forked here to do it.
+///
+/// It happens at startup rather than at packaging time because `blitsen build`
+/// cross-compiles: the machine that writes a Windows artifact is routinely a
+/// Linux one, and the hive that has to carry this key belongs to the user who
+/// eventually runs it.
+#[cfg(target_os = "windows")]
+pub(super) fn register_entry_point(display_name: &str) {
+    let Some(entry_point) = super::entry_point() else {
+        return;
+    };
+    // A registration that fails is not a reason to refuse to start: the identity
+    // may already be registered by an installer that did it properly, and if it
+    // is not, `permission` reports the missing identity in the sentence #251
+    // wrote for exactly this.
+    let _ = winrt_toast_reborn::register(&entry_point.entry, display_name, None);
+}
 
 /// The toast group Blitsen's own notifications share.
 ///
@@ -130,10 +167,10 @@ const ELEMENT_NOT_FOUND: windows::core::HRESULT = windows::core::HRESULT::from_w
 const NO_TOAST_IDENTITY: &str = concat!(
     "Windows notifications are delivered under an application identity the notification ",
     "platform knows, and no AppUserModelID is registered for this process, so Windows holds no ",
-    "notifier whose permission could be read. A Start Menu entry is what registers one: the ",
-    "identity Blitsen borrows until it has its own is Windows PowerShell's, which an image ",
-    "stripped of those entries — a CI runner, a Server Core install — does not carry. ",
-    "Registering an identity of the application's own is the packaging work #252 tracks.",
+    "notifier whose permission could be read. An application exported with `blitsen build ",
+    "--bundle-id <id>` registers an identity of its own at startup (#252); a development run has ",
+    "none and borrows Windows PowerShell's, which an image stripped of its Start Menu entries — a ",
+    "CI runner, a Server Core install — does not carry either.",
 );
 
 pub(crate) struct NotifyController {
@@ -178,6 +215,18 @@ fn notification(options: &NotificationOptions) -> Result<Notification, String> {
     }
     if let Some(icon) = &options.icon {
         notification.icon(icon);
+    }
+    // Which installed application this notification belongs to, in the one term
+    // the freedesktop notification specification has for it (#252). A server
+    // resolves the name against the installed desktop entries to attribute the
+    // notification, to file it under the right application in a notification
+    // centre, and — where the server implements it at all — to find the entry
+    // point to start when the application is no longer running. `appname` above
+    // is a display string and answers none of those: it is what the sender calls
+    // itself, not what the system has installed.
+    #[cfg(target_os = "linux")]
+    if let Some(entry_point) = super::entry_point() {
+        notification.hint(notify_rust::Hint::DesktopEntry(entry_point.entry.clone()));
     }
     for action in &options.actions {
         notification.action(&action.id, &action.title);
@@ -314,7 +363,7 @@ fn notifier(
     let (failed_signals, failed_proxy, failed_id) =
         (Arc::clone(signals), proxy.clone(), public_id.to_owned());
 
-    ToastManager::new(APP_ID)
+    ToastManager::new(app_id())
         .on_activated(None, move |activated| {
             // Windows can report an activation it attributes to neither the body
             // nor a button. Calling that a click would end the notification for
@@ -428,7 +477,7 @@ impl NotifyController {
             // identity or it is switched off, whoever switched it off.
             let _ = request;
             let setting =
-                ToastNotificationManager::CreateToastNotifierWithId(&HSTRING::from(APP_ID))
+                ToastNotificationManager::CreateToastNotifierWithId(&HSTRING::from(app_id()))
                     .and_then(|notifier| notifier.Setting())
                     .map_err(|error| {
                         // An identity the platform never registered is not a
@@ -635,7 +684,7 @@ impl NotifyController {
         #[cfg(target_os = "windows")]
         {
             let _ = record;
-            winrt_toast_reborn::ToastManager::new(APP_ID)
+            winrt_toast_reborn::ToastManager::new(app_id())
                 .remove_grouped_tag(GROUP, public_id)
                 .map_err(|error| format!("could not close notification {public_id}: {error}"))?;
         }
@@ -745,7 +794,7 @@ mod tests {
         // What a reader has to be able to tell apart: an application Windows
         // never heard of, and one whose notifications a person switched off.
         assert!(NO_TOAST_IDENTITY.contains("AppUserModelID"));
-        assert!(NO_TOAST_IDENTITY.contains("#252"));
+        assert!(NO_TOAST_IDENTITY.contains("blitsen build --bundle-id <id>"));
         assert!(
             !NO_TOAST_IDENTITY.contains("denied"),
             "an unregistered identity is not a permission anybody denied"
@@ -775,7 +824,7 @@ mod windows_tests {
     /// The tags Blitsen's group currently holds in notification history.
     fn tags() -> Vec<String> {
         ToastNotificationManager::History()
-            .and_then(|history| history.GetHistoryWithId(&HSTRING::from(APP_ID)))
+            .and_then(|history| history.GetHistoryWithId(&HSTRING::from(app_id())))
             .expect("notification history is readable")
             .into_iter()
             .filter(|toast| toast.Group().is_ok_and(|group| group == GROUP))
@@ -846,7 +895,7 @@ mod windows_tests {
     #[test]
     fn a_shown_toast_is_replaced_and_removed_through_its_session_id() {
         let public_id = "n-windows-lifecycle";
-        let manager = ToastManager::new(APP_ID);
+        let manager = ToastManager::new(app_id());
         manager
             .remove_grouped_tag(GROUP, public_id)
             .expect("notification history is writable");

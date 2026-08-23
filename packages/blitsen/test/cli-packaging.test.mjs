@@ -3,9 +3,10 @@ import { copyFile, cp, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } 
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
-import { buildStandalone, describeExecutableBinary, describeNativeBinary } from "../src/export.mjs";
-import { developmentBundle, developmentIdentifier, packageBuild, signArgv, signArtifact }
-  from "../src/packaging.mjs";
+import { buildStandalone, describeExecutableBinary, describeNativeBinary, notificationActivation }
+  from "../src/export.mjs";
+import { activationEntryPoint, developmentBundle, developmentIdentifier, packageBuild, signArgv,
+  signArtifact } from "../src/packaging.mjs";
 import { viteBase, addonFixtures, icon, signHook, compiler, engineAddon, engineBuilt, compileAddon, elfHeader, executableStub, exportedName, nativeStub, withStubbedExport, withArtifact } from "./cli-support.mjs";
 
 describe("directory CLI", () => {
@@ -186,8 +187,17 @@ describe("directory CLI", () => {
       // to a raw path: backslashes are reserved, so a Windows path arrives
       // quoted and escaped. The rules themselves are the next test's subject.
       const exec = /^Exec=(.*)$/m.exec(entry)[1];
-      expect(exec.startsWith('"') ? exec.slice(1, -1).replace(/\\(.)/g, "$1") : exec)
+      // `%u` is the field code a notification activation arrives through (#252):
+      // the entry can be started with one argument, and an ordinary launch
+      // substitutes nothing for it.
+      expect(exec.endsWith(" %u")).toBe(true);
+      const command = exec.slice(0, -" %u".length);
+      expect(command.startsWith('"') ? command.slice(1, -1).replace(/\\(.)/g, "$1") : command)
         .toBe(artifact);
+      // This file is what a notification's `desktop-entry` hint names, so the
+      // entry has to say that the application uses notifications — that is what
+      // lists it in the desktop's notification settings.
+      expect(entry).toContain("X-GNOME-UsesNotifications=true\n");
       expect(entry).toContain(`Icon=${join(directory, `${stem}.png`)}\n`);
       // Linux takes the PNG as it is; only Windows and macOS need a container.
       expect(Buffer.compare(await readFile(join(directory, `${stem}.png`)), await readFile(icon)))
@@ -203,10 +213,47 @@ describe("directory CLI", () => {
       const entry = await readFile(join(directory, "Pong Deluxe.desktop"), "utf8");
       // `\` is an escape character in a desktop entry, so a Windows path is
       // written doubled. The expectation reads the format rather than the host.
-      expect(entry).toContain(`Exec="${executable.replaceAll("\\", "\\\\")}"\n`);
+      expect(entry).toContain(`Exec="${executable.replaceAll("\\", "\\\\")}" %u\n`);
       expect(entry).toContain("Name=Pong & Co\n");
       expect(entry).not.toContain("Icon=");
     }, "Pong Deluxe");
+  });
+
+  // Issue #252. The identity a notification activation is addressed to, and the
+  // name the platform's own notification service knows the entry point by —
+  // which is the identity everywhere except Linux, where the notification hint
+  // names a desktop entry and a desktop entry is named after the executable.
+  test("names the activation entry point each platform's notification service uses", () => {
+    expect(activationEntryPoint({
+      platform: "linux", identifier: "com.example.pong", executable: "/opt/pong/Pong",
+    })).toEqual({ identity: "com.example.pong", entry: "Pong" });
+    expect(activationEntryPoint({
+      platform: "win32", identifier: "com.example.pong", executable: "C:\\Pong\\Pong.exe",
+    })).toEqual({ identity: "com.example.pong", entry: "com.example.pong" });
+    expect(activationEntryPoint({
+      platform: "darwin", identifier: "com.example.pong", executable: "/Applications/Pong",
+    })).toEqual({ identity: "com.example.pong", entry: "com.example.pong" });
+    // An identity nobody chose is one two applications could share, and
+    // notification permission is granted per identity — so the `.app` bundle's
+    // `com.blitsen.<title>` fallback deliberately does not become one here.
+    expect(activationEntryPoint({
+      platform: "darwin", identifier: null, executable: "/Applications/Pong",
+    })).toBeNull();
+  });
+
+  // The other half of the same contract: what a platform entry point hands the
+  // process it starts. Both hosts read it with this function — the Phase 1
+  // launcher inlines it — so a launch that carries no envelope is an ordinary
+  // launch on either.
+  test("reads the activation envelope a platform entry point launched with", () => {
+    const envelope = '{"nonce":"a1","identity":"com.example.pong","id":"n1",'
+      + '"platform":"linux","entry":"Pong"}';
+    expect(notificationActivation(["/opt/pong/Pong", "--notification-activation", envelope]))
+      .toBe(envelope);
+    expect(notificationActivation(["/opt/pong/Pong"])).toBeNull();
+    // A field code the desktop substituted nothing for leaves the flag with no
+    // value behind it, which is not an activation and must not be read as one.
+    expect(notificationActivation(["/opt/pong/Pong", "--notification-activation"])).toBeNull();
   });
 
   // Issue #247. An application that opens a raw HID device needs something the

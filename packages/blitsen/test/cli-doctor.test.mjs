@@ -207,7 +207,7 @@ describe("directory CLI", () => {
     // both halves of it are checked against the bootstrap instead: the API has
     // to be installed, and the runtime has to be able to withdraw it again.
     expect(buildManifest(source).apis.find(entry => entry.api === "Notification").condition)
-      .toMatchObject({ platforms: ["darwin"] });
+      .toMatchObject({ platforms: ["darwin", "android"] });
     expect(() => buildManifest(source
       .replace("if (!Notification) try { delete globalThis.Notification; } catch {}", "")))
       .toThrow("Notification is declared conditional and the bootstrap installs it");

@@ -84,8 +84,10 @@ export const NOTIFY_APP = `<!doctype html><html><head><meta charset="utf-8"><tit
     }
   };
 
-  // Lifecycle events, in the order the frame turn delivered them. Android emits
-  // only close today; tap, action and dismissal are #252.
+  // Lifecycle events, in the order the frame turn delivered them. Nothing here
+  // taps a notification, so close is the only one an unattended run produces: a
+  // body tap and an action are a PendingIntent a person has to press, and a
+  // dismissal Android does not report at all (#252).
   const events = [];
   notify.onEvent(event => {
     events.push(event.type + ":" + event.id + ":" + (event.reason || "none"));
@@ -136,13 +138,15 @@ export const NOTIFY_APP = `<!doctype html><html><head><meta charset="utf-8"><tit
   await settled("c.beta2", notify.close(beta));
   await settled("c.missing", notify.close("no-such-id"));
 
-  // ⑤ The two failures the host raises from inside the JNI call and from in front
-  //    of it. A drawable that no package owns resolves to resource 0, which is the
-  //    error NotificationManager would otherwise throw on at post time; actions are
-  //    refused outright until #252 supplies an intent entry point.
+  // ⑤ The failure the host raises from inside the JNI call: a drawable that no
+  //    package owns resolves to resource 0, which is the error NotificationManager
+  //    would otherwise throw on at post time.
   await settled("e.icon",
     notify.show({ title: "${PREFIX}-icon", body: "icon", icon: "blitsen_absent_drawable" }));
-  await settled("e.actions", notify.show({
+  //    And the one that used to be a failure. An action button is a PendingIntent
+  //    aimed at this Activity (#252), so it is accepted and drawn; only a person
+  //    pressing it produces the event, and an unattended run has nobody to.
+  await settled("s.actions", notify.show({
     title: "${PREFIX}-actions", body: "actions", actions: [{ id: "open", title: "Open" }],
   }));
 

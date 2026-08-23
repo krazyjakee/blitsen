@@ -10,7 +10,7 @@ import { describeExecutableBinary, describeNativeBinary, readContainerHeader } f
 import { linkBundle } from "./bundle.mjs";
 import { REWRITTEN_EXTENSIONS } from "./files.mjs";
 import { frameDelay } from "./frame-pacing.mjs";
-import { packageBuild, pngDimensions, signArtifact } from "./packaging.mjs";
+import { activationEntryPoint, packageBuild, pngDimensions, signArtifact } from "./packaging.mjs";
 import { describeRuntime, hostTarget, requestedHost, resolvePhase2Runtime } from "./runtime.mjs";
 
 export { describeExecutableBinary, describeNativeBinary } from "./binary.mjs";
@@ -114,6 +114,19 @@ export function runtimeRecord(runtime) {
   };
 }
 
+/**
+ * The activation envelope a platform entry point started this process with (#252).
+ *
+ * One option, read the same way by both hosts: the Phase 2 runtime parses it in
+ * `blitsen-runtime`, and the generated Phase 1 launcher inlines this function so
+ * an export that links Bun does not read its command line differently from one
+ * that does not. `null` is the ordinary launch, which carries no envelope.
+ */
+export function notificationActivation(argv) {
+  const index = argv.indexOf("--notification-activation");
+  return index >= 0 && index + 1 < argv.length ? argv[index + 1] : null;
+}
+
 export function launcherSource(assets, options) {
   const embedded = options.layout === "embedded";
   const imports = embedded
@@ -141,6 +154,7 @@ for (const asset of assets) {
   const windowOptions = JSON.stringify(options.window ?? null);
   const trayOptions = JSON.stringify(options.tray ?? null);
   const menuOptions = JSON.stringify(options.menu ?? null);
+  const activationOptions = JSON.stringify(options.activation ?? null);
   return `import addonPath from "./blitsen.node" with { type: "file" };
 import { createRequire } from "node:module";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -149,6 +163,8 @@ import { tmpdir } from "node:os";
 ${imports}
 
 ${frameDelay.toString()}
+
+${notificationActivation.toString()}
 
 // Issue #73: an export names the runtime it was built against, in the binary and at
 // run time. Parsed from one string so the record survives bundling as a contiguous
@@ -161,6 +177,7 @@ const assets = [
 ];
 const startupTray = ${trayOptions};
 const startupMenu = ${menuOptions};
+const startupActivation = ${activationOptions};
 const native = createRequire(import.meta.url)(addonPath);
 ${prelude}
 try {
@@ -214,6 +231,10 @@ try {
       ...(startupMenu === null ? {} : {
         menu: { menuJson: JSON.stringify(startupMenu.menu ?? []) },
       }),
+      activation: {
+        ...(startupActivation ?? {}),
+        launchedBy: notificationActivation(process.argv),
+      },
     });
     const frameLimit = Number(process.env.BLITSEN_STANDALONE_FRAMES || 0);
     const warmupFrames = Number(process.env.BLITSEN_STANDALONE_WARMUP_FRAMES || 0);
@@ -437,7 +458,7 @@ function reportCollection(progress, { manifest, assets, unreferenced, carriedAdd
 
 async function linkPhase2({
   buildTarget, targetPlatform, targetArchitecture, onNotice, manifest, staging,
-  linkedRuntime, width, height, title, window, tray, menu, assets, destination,
+  linkedRuntime, width, height, title, window, tray, menu, activation, assets, destination,
 }) {
   // After the checks above, deliberately: `fetch` is on the same terms as the
   // addon's own resolution (#72) — a build for this host never reaches the
@@ -480,7 +501,8 @@ async function linkPhase2({
   // linking path, which is machine-local.
   const { path: _linkedPath, ...stamp } = linkedRuntime;
   files.set("blitsen.runtime.json", Buffer.from(
-    `${JSON.stringify({ width, height, title, window, tray, menu, layout: assets, runtime: stamp })}\n`));
+    `${JSON.stringify({ width, height, title, window, tray, menu, activation,
+      layout: assets, runtime: stamp })}\n`));
   // Issue #121: the notices the artifact owes travel inside it. They are copied
   // from the runtime package because a user's machine has no toolchain to
   // derive them.
@@ -491,13 +513,14 @@ async function linkPhase2({
 }
 
 async function linkPhase1({
-  nativePath, staging, manifest, width, height, title, window, tray, menu, assets, assetDirectory,
-  linkedRuntime, destination, buildTarget,
+  nativePath, staging, manifest, width, height, title, window, tray, menu, activation, assets,
+  assetDirectory, linkedRuntime, destination, buildTarget,
 }) {
   await copyFile(nativePath, join(staging, "blitsen.node"));
   const launcher = join(staging, "launcher.mjs");
   await writeFile(launcher, launcherSource(manifest, {
-    width, height, title, window, tray, menu, layout: assets, assetDirectory, runtime: linkedRuntime,
+    width, height, title, window, tray, menu, activation, layout: assets, assetDirectory,
+    runtime: linkedRuntime,
   }));
   // The Bun host is the one thing here that only Bun can build: `Bun.build`
   // links the launcher into that target's Bun. The CLI otherwise runs anywhere
@@ -599,6 +622,11 @@ export async function buildStandalone(
     icon: TRAY_BUNDLE_ICON,
     menuIcons: (tray.menuIcons ?? []).map((_, index) => trayMenuBundleIcon(index)),
   } : null;
+  // Recorded before the artifact is linked, because the runtime configuration is
+  // written into it: the identity a notification activation is addressed to has
+  // to be inside the executable the platform will start (#252).
+  const activation = activationEntryPoint(
+    { platform: buildPlatform, identifier: bundleId, executable: destination });
   const { plan, carried, unreferenced } = await planApplication(root, include, addons, trayAssets);
   // Bun records the compiled entrypoint's path in the executable, so staging has
   // to be a stable location rather than a temporary one for reproducible output.
@@ -625,13 +653,13 @@ export async function buildStandalone(
     if (host === "blitsen") {
       notices = await linkPhase2({
         buildTarget, targetPlatform, targetArchitecture, onNotice, manifest, staging,
-        linkedRuntime, width, height, title, window, tray: runtimeTray, menu,
+        linkedRuntime, width, height, title, window, tray: runtimeTray, menu, activation,
         assets, destination,
       });
     } else {
       await linkPhase1({
         nativePath, staging, manifest, width, height, title, window, tray: runtimeTray, menu,
-        assets, assetDirectory,
+        activation, assets, assetDirectory,
         linkedRuntime, destination, buildTarget,
       });
     }

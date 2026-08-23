@@ -128,11 +128,44 @@ function desktopEntry({ name, executable, icon }) {
     "Type=Application",
     "Version=1.0",
     `Name=${name.replace(/\n/g, " ")}`,
-    `Exec=${desktopExec(executable)}`,
+    // `%u` so the entry can be started with a single argument, which is the
+    // shape a notification activation arrives in: `--notification-activation
+    // <envelope>` is what the runtime reads it from (#252). An ordinary launch
+    // substitutes nothing and the field disappears, which is what the Desktop
+    // Entry Specification says an unsatisfied field code does.
+    `Exec=${desktopExec(executable)} %u`,
     ...icon ? [`Icon=${icon}`] : [],
     "Terminal=false",
+    // The entry a notification's `desktop-entry` hint names is this file, and
+    // the hint is the only way the notification service can tell which installed
+    // application a notification belongs to. Declaring it here is what puts the
+    // application in GNOME's notification settings rather than leaving the user
+    // with a switch they cannot find.
+    "X-GNOME-UsesNotifications=true",
     "",
   ].join("\n");
+}
+
+/**
+ * The identity a notification activation for this artifact is addressed to (#252).
+ *
+ * `null` without an explicit `--bundle-id`, and deliberately not the
+ * `com.blitsen.<title>` an `.app` falls back to: notification permission is
+ * granted per identity, and an identity nobody chose is one two unrelated
+ * applications could end up sharing. So an activation identity is opt-in the way
+ * every other platform identity in this file is.
+ *
+ * `entry` is what the platform's own notification service knows the entry point
+ * by, which is the identity everywhere except Linux — there it is the desktop
+ * entry, and a desktop entry is named after the executable rather than after the
+ * application, so the two genuinely differ.
+ */
+export function activationEntryPoint({ platform, identifier, executable }) {
+  if (!identifier) return null;
+  return {
+    identity: identifier,
+    entry: platform === "linux" ? basename(executable) : identifier,
+  };
 }
 
 function assemblyVersion(version) {

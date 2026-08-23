@@ -19,7 +19,7 @@ use blitsen_host::apk::ApkAssets;
 use blitsen_host::app::AppFiles;
 use blitsen_host::modules::ModuleRegistry;
 use blitsen_host::runtime_services::RuntimeServices;
-use blitsen_host::{MenuDefinition, NativeWindowOptions, TrayMenu, TrayOptions};
+use blitsen_host::{ActivationOptions, MenuDefinition, NativeWindowOptions, TrayMenu, TrayOptions};
 use blitsen_host::{OpenDirectoryOptions, WindowSession, native_window};
 use serde::Deserialize;
 
@@ -44,6 +44,9 @@ struct Settings {
     window: NativeWindowOptions,
     tray: Option<TrayOptions>,
     menu: Option<Vec<MenuDefinition>>,
+    /// The identity the packaging step registered, and the activation envelope
+    /// the platform entry point started this process with (#252).
+    activation: ActivationOptions,
 }
 
 impl Default for Settings {
@@ -57,6 +60,7 @@ impl Default for Settings {
             window: NativeWindowOptions::default(),
             tray: None,
             menu: None,
+            activation: ActivationOptions::default(),
         }
     }
 }
@@ -162,6 +166,16 @@ impl Settings {
                     .map_err(|error| format!("invalid application menu configuration: {error}"))?;
                 settings.menu = Some(menu.menu);
             }
+            // The identity a notification activation is addressed to (#252).
+            // Recorded by the export rather than worked out here: an executable
+            // path is not an identity, and the one the platform registered is
+            // whatever `blitsen build` was told.
+            if let Some(activation) = config.get("activation").filter(|value| !value.is_null()) {
+                settings.activation.entry_point =
+                    Some(serde_json::from_value(activation.clone()).map_err(|error| {
+                        format!("invalid notification activation configuration: {error}")
+                    })?);
+            }
             if let Some(layout) = config.get("layout").and_then(serde_json::Value::as_str) {
                 settings.layout = layout.to_owned();
             }
@@ -189,6 +203,14 @@ impl Settings {
                         .map_err(|_| "--height must be a whole number of pixels".to_owned())?;
                 }
                 "--title" => settings.title = value()?,
+                // How a notification activation reaches a process the platform
+                // started for it (#252). The envelope is the platform's, not a
+                // user's: whatever entry point the packaging step registered
+                // hands it over here, and a launch that carries none is an
+                // ordinary launch.
+                "--notification-activation" => {
+                    settings.activation.launched_by = Some(value()?);
+                }
                 other => return Err(format!("unknown option {other}")),
             }
         }
@@ -295,6 +317,7 @@ fn run(files: AppFiles, arguments: &[String]) -> Result<ExitCode, String> {
         window: settings.window,
         tray: settings.tray,
         menu: settings.menu,
+        activation: settings.activation,
     };
     let mut session =
         WindowSession::open(&mut engine, files, options).map_err(|error| error.to_string())?;

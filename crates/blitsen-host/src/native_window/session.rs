@@ -103,6 +103,13 @@ impl<E: JsEngine + Clone + 'static> WindowSession<E> {
         #[cfg(any(target_os = "windows", target_os = "macos"))]
         crate::dom_bridge::menu::reset();
         crate::dom_bridge::notify::reset();
+        // After the reset that empties the queue and before the document's
+        // scripts run, which is the only window in which a launch context can be
+        // both retained and still ahead of the listener that will receive it
+        // (#252). A reload deliberately does not repeat this: the activation
+        // belongs to the launch rather than to the document, and the store has
+        // already recorded it as delivered.
+        super::notify::install(&options.activation, &options.title).map_err(JsError::new)?;
         crate::dom_bridge::hid::reset();
         crate::dom_bridge::input::reset();
         let started_at = Instant::now();

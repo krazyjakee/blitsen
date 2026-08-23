@@ -196,10 +196,11 @@ describe("the permission state the package manager reports", () => {
 /// A stand-in for `notify/android.rs`, answering exactly as that host does.
 ///
 /// Not a model of Android: a model of the *host's* answers, which is what the
-/// fixture is written against. `show` refuses without the permission and refuses
-/// actions the way #245 refuses them; an icon that resolves to no drawable comes
-/// back as the JNI failure the host formats; `update` and `close` of an ID that was
-/// never shown resolve `false` rather than throwing.
+/// fixture is written against. `show` refuses without the permission; an icon that
+/// resolves to no drawable comes back as the JNI failure the host formats; an
+/// action button is accepted, because #252 made one a `PendingIntent` aimed at the
+/// Activity; `update` and `close` of an ID that was never shown resolve `false`
+/// rather than throwing.
 ///
 /// `grantAfter` is the adb grant the denial scenarios perform, counted in permission
 /// reads: the fixture polls until it is granted, so the poll is what advances it.
@@ -231,10 +232,6 @@ function fakeHost({ initial, request, grantAfter = null }) {
         const options = { icon: null, actions: [], timeout: null, ...given };
         if (permission !== "granted") {
           throw new Error("notification permission has not been granted");
-        }
-        if (options.actions.length > 0) {
-          throw new Error("notification actions require Android activation routing, "
-            + "tracked by issue #252");
         }
         if (options.icon !== null) {
           throw new Error("Android notification API failed: JNI call failed: "
@@ -351,11 +348,13 @@ describe("the fixture, driven end to end against the answers the host gives", ()
     expect(titles).toContain(TITLES.alphaUpdated);
     expect(titles).toContain(TITLES.beta);
     expect(titles).toContain(TITLES.ongoing);
+    // A notification carrying an action button is shown like any other now that
+    // the tap has somewhere to go (#252).
+    expect(titles).toContain(`${PREFIX}-actions`);
     // Nothing rejected reached the shade, and neither did the update of an ID that
     // was never shown.
     expect(titles).not.toContain(TITLES.ghost);
     expect(titles).not.toContain(`${PREFIX}-icon`);
-    expect(titles).not.toContain(`${PREFIX}-actions`);
     // Under twenty-five, which is where Android starts dropping a package's oldest.
     expect(titles.length).toBeLessThan(25);
   });
@@ -364,7 +363,7 @@ describe("the fixture, driven end to end against the answers the host gives", ()
 describe("the shade assertions, held to shades that are wrong", () => {
   const shade = changes => {
     const ever = new Set([TITLES.alpha, TITLES.beta, TITLES.expiring, TITLES.ongoing,
-      TITLES.alphaUpdated]);
+      TITLES.alphaUpdated, `${PREFIX}-actions`]);
     const final = new Set([TITLES.alphaUpdated, TITLES.ongoing]);
     return shadeFailures({
       final, ever, dump: `mId='${CHANNEL}'`, channels: [CHANNEL], ...changes(final, ever),
@@ -401,6 +400,11 @@ describe("the shade assertions, held to shades that are wrong", () => {
       .toEqual([expect.stringContaining("updating an ID that was never shown created one")]);
     expect(shade((final, ever) => ({ ever: new Set([...ever, `${PREFIX}-icon`]) })))
       .toEqual([expect.stringContaining("rejected show must leave nothing behind")]);
+    // And the opposite claim, which #252 turned into an assertion of its own: a
+    // notification carrying an action button now has to be delivered.
+    expect(shade((final, ever) => ({
+      ever: new Set([...ever].filter(title => title !== `${PREFIX}-actions`)),
+    }))).toEqual([expect.stringContaining("carrying an action button did not reach the shade")]);
   });
 
   test("a missing channel and a second channel are both caught", () => {

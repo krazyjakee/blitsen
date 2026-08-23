@@ -146,6 +146,23 @@ fn install_notify<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsError> 
             }),
         )?;
     }
+    // Android joins them when the activation contract is present (#252). The
+    // facade's `click` event is a body tap, and a body tap on Android is a
+    // `PendingIntent` addressed to an installed application identity — without
+    // one there is nothing for the tap to come back to, and a `Notification`
+    // whose `onclick` could never fire is a promise the constructor should not
+    // make. The identity is installed by the window session before the document
+    // loads, so this reads a decision already taken rather than one it makes.
+    #[cfg(target_os = "android")]
+    if crate::native_window::notify::entry_point().is_some() {
+        engine.define_global_function(
+            "__blitsenNativeNotifyStandard",
+            Box::new(move |call| {
+                let mut engine = E::from_value(&call.this);
+                Ok(engine.boolean(true))
+            }),
+        )?;
+    }
 
     engine.define_global_function(
         "__blitsenNativeNotifyUpdate",
