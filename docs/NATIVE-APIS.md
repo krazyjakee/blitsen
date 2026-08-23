@@ -227,7 +227,10 @@ notification history alike. Windows permission reads the native notifier setting
 `"granted"` or `"denied"` and never `"default"`; there is no prompt to show, because the user,
 the administrator and group policy are what decide it. Windows toasts are delivered under the
 identity Windows already knows rather than under `appName`, which registering an application
-identity of your own would need—that is the packaging work #252 tracks.
+identity of your own would need—that is the packaging work #252 tracks. A machine with no
+registered AppUserModelID at all keeps no notifier and therefore no setting, so both calls reject
+there with a message naming that missing identity instead of reporting `"denied"`, which would
+claim a decision nobody made.
 Activation while the process is already running is delivered on desktop; launching a stopped
 application from a notification requires platform registration and packaging work tracked in #252.
 Android implements permission, an idempotent `blitsen.default` channel, submission, update and close

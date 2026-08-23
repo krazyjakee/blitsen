@@ -100,6 +100,42 @@ const APP_ID: &str = winrt_toast_reborn::ToastManager::POWERSHELL_AUM_ID;
 #[cfg(target_os = "windows")]
 const GROUP: &str = "blitsen";
 
+/// `ERROR_ELEMENT_NOT_FOUND`, which is how Windows spells an identity it has
+/// never seen when it is asked for that identity's notifier setting.
+///
+/// Written as the Win32 number the `windows` crate's `Win32_Foundation` feature
+/// would name, because compiling that whole feature for one constant costs more
+/// than the constant does. The message cannot be matched on instead: Windows
+/// localises it, and the failing CI line only read "Element not found." because
+/// the runner happened to be English.
+#[cfg(target_os = "windows")]
+const ELEMENT_NOT_FOUND: windows::core::HRESULT = windows::core::HRESULT::from_win32(1168);
+
+/// What a Windows process with no registered application identity is told (#251).
+///
+/// Windows keeps a notifier — and the permission that notifier reports — per
+/// AppUserModelID, and it keeps none for an identity nothing ever registered.
+/// Calling that `"denied"` would report a decision no user, administrator or
+/// policy made, and returning the raw `0x80070490` reports only that something
+/// went wrong; neither tells the reader that what is missing is a prerequisite
+/// of the platform rather than a permission. `blitsen/hid` already separates a
+/// refusal from a broken backend for the same reason, and #253 gave the absent
+/// macOS bundle this same shape: a missing identity, named as one.
+///
+/// Compiled into the test build on every platform, for the reason
+/// `NO_BUNDLE_IDENTITY` is: this sentence is the whole of what a caller in
+/// that environment receives, and a message only Windows could compile is a
+/// message only Windows could check.
+#[cfg(any(target_os = "windows", test))]
+const NO_TOAST_IDENTITY: &str = concat!(
+    "Windows notifications are delivered under an application identity the notification ",
+    "platform knows, and no AppUserModelID is registered for this process, so Windows holds no ",
+    "notifier whose permission could be read. A Start Menu entry is what registers one: the ",
+    "identity Blitsen borrows until it has its own is Windows PowerShell's, which an image ",
+    "stripped of those entries — a CI runner, a Server Core install — does not carry. ",
+    "Registering an identity of the application's own is the packaging work #252 tracks.",
+);
+
 pub(crate) struct NotifyController {
     proxy: EventLoopProxy,
     signals: Arc<Mutex<VecDeque<Signal>>>,
@@ -394,7 +430,16 @@ impl NotifyController {
             let setting =
                 ToastNotificationManager::CreateToastNotifierWithId(&HSTRING::from(APP_ID))
                     .and_then(|notifier| notifier.Setting())
-                    .map_err(|error| format!("could not read notification permission: {error}"))?;
+                    .map_err(|error| {
+                        // An identity the platform never registered is not a
+                        // notifier reporting a state, so it is refused with the
+                        // prerequisite rather than reported as one more failure.
+                        if error.code() == ELEMENT_NOT_FOUND {
+                            NO_TOAST_IDENTITY.to_owned()
+                        } else {
+                            format!("could not read notification permission: {error}")
+                        }
+                    })?;
             Ok(json!(if setting == NotificationSetting::Enabled {
                 "granted"
             } else {
@@ -694,6 +739,18 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn the_unregistered_windows_refusal_names_the_identity_rather_than_a_verdict() {
+        // What a reader has to be able to tell apart: an application Windows
+        // never heard of, and one whose notifications a person switched off.
+        assert!(NO_TOAST_IDENTITY.contains("AppUserModelID"));
+        assert!(NO_TOAST_IDENTITY.contains("#252"));
+        assert!(
+            !NO_TOAST_IDENTITY.contains("denied"),
+            "an unregistered identity is not a permission anybody denied"
+        );
+    }
 }
 
 /// What only a Windows host can answer.
@@ -703,6 +760,11 @@ mod tests {
 /// stand in for, so these talk to the real platform under the same identity,
 /// group and tags [`NotifyController`] uses. They need no event loop, which is
 /// what lets them run under the ordinary `cargo test` the Windows job runs.
+///
+/// That process is also the one Windows knows least about: nothing registers an
+/// AppUserModelID for a test binary, so what CI exercises is the identity-less
+/// half of the contract. Both halves are asserted here, and the half that needs
+/// a registered identity to mean anything skips loudly when there is none.
 #[cfg(all(test, target_os = "windows"))]
 mod windows_tests {
     use super::*;
@@ -758,14 +820,24 @@ mod windows_tests {
     }
 
     #[test]
-    fn permission_reads_the_native_notifier_setting() {
-        let read = NotifyController::permission(false).expect("the notifier setting is readable");
-        assert!(
-            read == json!("granted") || read == json!("denied"),
-            "Windows has no undetermined notification state, but reported {read}"
-        );
+    fn permission_is_the_notifier_setting_or_the_missing_identity() {
+        // Both outcomes are the contract, and which one a machine gives is a
+        // property of the machine: a Windows installation carrying the identity
+        // has a notifier with a setting, and one that never registered it —
+        // the CI runner this runs on — has no notifier at all.
+        let read = NotifyController::permission(false);
+        match &read {
+            Ok(setting) => assert!(
+                *setting == json!("granted") || *setting == json!("denied"),
+                "Windows has no undetermined notification state, but reported {setting}"
+            ),
+            Err(refusal) => assert_eq!(
+                refusal, NO_TOAST_IDENTITY,
+                "an unreadable notifier must name the identity it is missing, not an HRESULT"
+            ),
+        }
         assert_eq!(
-            NotifyController::permission(true).expect("requesting reads the same setting"),
+            NotifyController::permission(true),
             read,
             "requesting must not prompt or change what the notifier reports"
         );
@@ -773,34 +845,57 @@ mod windows_tests {
 
     #[test]
     fn a_shown_toast_is_replaced_and_removed_through_its_session_id() {
-        // A notifier the user or policy has switched off is Windows declining
-        // to deliver, so there is nothing for history to hold and delivery is
-        // not the platform's promise to keep. Removal is asserted either way: an
-        // ID Blitsen closed must leave nothing behind whether or not the toast
-        // was ever displayed.
-        let delivers = NotifyController::permission(false)
-            .expect("the notifier setting is readable")
-            == json!("granted");
         let public_id = "n-windows-lifecycle";
         let manager = ToastManager::new(APP_ID);
         manager
             .remove_grouped_tag(GROUP, public_id)
             .expect("notification history is writable");
 
-        manager
-            .show(&toast(public_id, &options("The archive is ready.")).expect("the toast builds"))
-            .expect("the toast is accepted");
-        if delivers {
-            settles_on(&[public_id]);
+        match NotifyController::permission(false) {
+            // A notifier the user or policy has switched off is Windows
+            // declining to deliver, so there is nothing for history to hold and
+            // delivery is not the platform's promise to keep.
+            Ok(setting) => {
+                let delivers = setting == json!("granted");
+                manager
+                    .show(
+                        &toast(public_id, &options("The archive is ready."))
+                            .expect("the toast builds"),
+                    )
+                    .expect("the toast is accepted");
+                if delivers {
+                    settles_on(&[public_id]);
+                }
+
+                manager
+                    .show(
+                        &toast(public_id, &options("Copied to Downloads."))
+                            .expect("the toast builds"),
+                    )
+                    .expect("the replacement is accepted");
+                if delivers {
+                    settles_on(&[public_id]);
+                }
+            }
+            // Replacement is a property of the notifier that accepted the first
+            // toast, and a machine with no registered identity has no notifier
+            // to accept one, so submitting here would test the platform's
+            // refusal rather than Blitsen's tagging. Said out loud, because a
+            // silent skip is how a test that measured nothing looks from CI.
+            Err(refusal) => {
+                assert_eq!(
+                    refusal, NO_TOAST_IDENTITY,
+                    "a toast that cannot be submitted must say which prerequisite is absent"
+                );
+                eprintln!(
+                    "SKIPPED the replacement half of \
+                     a_shown_toast_is_replaced_and_removed_through_its_session_id: {refusal}"
+                );
+            }
         }
 
-        manager
-            .show(&toast(public_id, &options("Copied to Downloads.")).expect("the toast builds"))
-            .expect("the replacement is accepted");
-        if delivers {
-            settles_on(&[public_id]);
-        }
-
+        // Unconditional: an ID Blitsen closed must leave nothing behind whether
+        // or not a toast for it was ever displayed.
         manager
             .remove_grouped_tag(GROUP, public_id)
             .expect("the toast is removable");

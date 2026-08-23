@@ -111,6 +111,10 @@ Windows notification permission is what the notifier reports, so it is `"granted
 and never `"default"`; `requestPermission()` reads it without prompting, because Windows gives an
 application no prompt to show. Toasts are delivered under an application identity Windows already
 knows rather than under `appName`; registering one of your own is the packaging work #252 tracks.
+Windows keeps that setting per registered AppUserModelID, so a machine that has registered none—an
+image stripped of Start Menu entries, such as a CI runner or a Server Core install—has no notifier
+to read: `permission()` and `requestPermission()` reject there, naming the missing identity, rather
+than reporting a state nobody chose.
 
 ## Android
 
