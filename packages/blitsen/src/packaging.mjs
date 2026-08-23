@@ -169,9 +169,60 @@ function windowsManifest({ name, version }) {
 `;
 }
 
+// Raw HID access is packaging rather than code (#247, S10). Neither a udev rule
+// nor a macOS entitlement can be granted by a process that is already running,
+// and a runtime that tried would be editing the system on the user's behalf. So
+// what Blitsen does is write the artifact a distributor installs or signs with,
+// and say what to do with it — `doctor` reports the same sentences before the
+// build, which is the point at which it is still cheap to act on them.
+export const HID_ACCESS = {
+  linux: "Access to a hidraw node is granted by a udev rule, not by the application: "
+    + "`blitsen build` writes a `<name>.hid.rules` template beside the executable for the "
+    + "distribution or installer to complete and install in /etc/udev/rules.d. Running the "
+    + "application as root is not a substitute and Blitsen will not do it.",
+  darwin: "A sandboxed macOS application needs the `com.apple.security.device.usb` entitlement: "
+    + "`blitsen build` writes `<name>.app.entitlements` beside the bundle, and the --sign command "
+    + "must pass it to `codesign --entitlements` for the capability to reach the signature.",
+  win32: "Windows opens HID top-level collections through its own HID class driver and reserves "
+    + "some system collections, which no packaging step unlocks and no driver replacement should "
+    + "try to. An open refused that way rejects with NotAllowedError rather than NotFoundError.",
+};
+
+/// The rule a Linux distributor completes and installs, as a file.
+function hidUdevRule(name) {
+  return [
+    `# udev rule for ${name}, which uses blitsen/hid.`,
+    "#",
+    "# Replace the vendor and product IDs below with the devices this application",
+    "# opens — one line each — then install this file as",
+    `# /etc/udev/rules.d/70-${slug(name)}.rules and run:`,
+    "#",
+    "#   udevadm control --reload && udevadm trigger",
+    "#",
+    "# TAG+=\"uaccess\" gives the user logged in at the active seat access to the",
+    "# node. That is what a desktop application needs: it does not make the device",
+    "# world-readable and it does not require the application to run as root.",
+    'SUBSYSTEM=="hidraw", ATTRS{idVendor}=="ffff", ATTRS{idProduct}=="ffff", TAG+="uaccess"',
+    "",
+  ].join("\n");
+}
+
+/// The entitlements a sandboxed macOS build must be signed with.
+function hidEntitlements() {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>com.apple.security.device.usb</key>
+  <true/>
+</dict>
+</plist>
+`;
+}
+
 // The paths step ⑤ will write, so a collision is reported the way the linker
 // reports one rather than silently replacing an existing bundle.
-export function packagePlan({ platform, executable, icon }) {
+export function packagePlan({ platform, executable, icon, hid = false }) {
   const supported = Object.keys(ICON_FORMATS);
   if (!supported.includes(platform)) {
     throw new Error(`packaging is not supported on ${platform} (expected ${supported.join(", ")})`);
@@ -186,12 +237,18 @@ export function packagePlan({ platform, executable, icon }) {
       name,
       bundle,
       executable: join(bundle, "Contents", "MacOS", name),
-      artifacts: [bundle],
+      // Beside the bundle rather than inside it: entitlements are an input to
+      // codesign, not a file the signed application carries.
+      artifacts: [bundle, ...hid ? [join(directory, `${name}.app.entitlements`)] : []],
     };
   }
   const artifacts = platform === "win32"
     ? [`${executable}.manifest`, ...resource ? [join(directory, resource)] : []]
-    : [join(directory, `${name}.desktop`), ...resource ? [join(directory, resource)] : []];
+    : [
+      join(directory, `${name}.desktop`),
+      ...resource ? [join(directory, resource)] : [],
+      ...hid ? [join(directory, `${name}.hid.rules`)] : [],
+    ];
   return { platform, name, bundle: null, executable, artifacts };
 }
 
@@ -200,9 +257,9 @@ export function packagePlan({ platform, executable, icon }) {
 // as an external manifest, and the caller is told so.
 export async function packageBuild({
   platform, executable, title, icon = null, identifier = null, version = null,
-  assetDirectory = null, force = false,
+  assetDirectory = null, force = false, hid = false,
 }) {
-  const plan = packagePlan({ platform, executable, icon });
+  const plan = packagePlan({ platform, executable, icon, hid });
   const resource = icon ? await iconResource(platform, icon, plan.name) : null;
   for (const artifact of plan.artifacts) {
     if (!await stat(artifact).catch(() => null)) continue;
@@ -233,6 +290,12 @@ export async function packageBuild({
     await writeFile(join(contents, "PkgInfo"), "APPL????");
     if (resource) await writeFile(join(contents, "Resources", resource.file), resource.bytes);
     written.push(plan.bundle);
+    if (hid) {
+      const entitlements = join(dirname(plan.bundle), `${plan.name}.app.entitlements`);
+      await writeFile(entitlements, hidEntitlements());
+      written.push(entitlements);
+      notes.push(HID_ACCESS.darwin);
+    }
   } else if (platform === "win32") {
     await writeFile(`${executable}.manifest`, windowsManifest({ name: title, version }));
     written.push(`${executable}.manifest`);
@@ -241,6 +304,7 @@ export async function packageBuild({
       await writeFile(target, resource.bytes);
       written.push(target);
     }
+    if (hid) notes.push(HID_ACCESS.win32);
     notes.push("Windows icon and version-info resources are not embedded in the executable; "
       + `the application ${resource ? "manifest and icon ship" : "manifest ships"} beside it.`);
   } else {
@@ -252,6 +316,12 @@ export async function packageBuild({
     const entry = join(dirname(executable), `${plan.name}.desktop`);
     await writeFile(entry, desktopEntry({ name: title, executable, icon: iconPath }));
     written.push(entry, ...iconPath ? [iconPath] : []);
+    if (hid) {
+      const rules = join(dirname(executable), `${plan.name}.hid.rules`);
+      await writeFile(rules, hidUdevRule(title));
+      written.push(rules);
+      notes.push(HID_ACCESS.linux);
+    }
   }
 
   return {

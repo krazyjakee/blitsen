@@ -2,7 +2,8 @@ import { readFile } from "node:fs/promises";
 import { extname } from "node:path";
 import { loadApiManifest } from "./api-manifest.mjs";
 import { HTML_EXTENSIONS, SCANNABLE_EXTENSIONS, walkFiles } from "./files.mjs";
-import { absentNativeModules } from "./native-modules.mjs";
+import { absentNativeModules, platformOf } from "./native-modules.mjs";
+import { HID_ACCESS } from "./packaging.mjs";
 import { hostTarget } from "./runtime.mjs";
 
 // Every rule below comes from the generated manifest, so `doctor` and the
@@ -61,6 +62,30 @@ function nativeModuleRules(target) {
     `${reason} Every member reads as undefined, so feature-detect the ones you use `
       + `— if (${module}.x) selects a fallback — or build for a target that has the module.`,
   ]);
+}
+
+// Raw HID needs access no line of application code can grant itself (#247): a
+// udev rule on Linux, an entitlement in the macOS signature, and on Windows a
+// set of collections the system keeps whatever the packaging says. None of that
+// is a mistake in the source, so this is not an absence and not an error — it
+// is the part of shipping a HID application that happens outside the editor,
+// said at the moment the target is known. Matched on the same quoted specifier
+// `nativeModuleRules` matches, and for the same reason: `blitsen/*` stays
+// external, so the literal survives bundling.
+//
+// Nothing is reported on a platform where the module does not exist at all; the
+// absence finding already covers that and says more.
+function nativeHidRules(target) {
+  const platform = platformOf(target);
+  const requirement = HID_ACCESS[platform];
+  if (!requirement || absentNativeModules(target).some(entry => entry.module === "hid")) return [];
+  return [[
+    "NATIVE_HID_ACCESS",
+    "warning",
+    /["'`]blitsen\/hid["'`]/g,
+    `blitsen/hid opens devices that the ${platform} install has to grant access to.`,
+    `${requirement} Until it does, open() rejects with a NotAllowedError naming the device.`,
+  ]];
 }
 
 function position(source, index) {
@@ -139,7 +164,7 @@ export async function doctorApplication(root, { target = hostTarget() } = {}) {
   const files = await collectScannableFiles(root);
   const shipped = await collectShippedPaths(root);
   const { javascript, css, html } = await compatibility();
-  const scripts = [...javascript, ...nativeModuleRules(target)];
+  const scripts = [...javascript, ...nativeModuleRules(target), ...nativeHidRules(target)];
   const diagnostics = [];
   for (const file of files) {
     const source = await readFile(file.absolute, "utf8");

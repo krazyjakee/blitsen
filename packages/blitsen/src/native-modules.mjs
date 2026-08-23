@@ -65,7 +65,7 @@ const ABSENT = {
   linux: [],
   darwin: ["dialog"],
   win32: ["dialog"],
-  android: ["app", "clipboard", "dialog", "window", "tray"],
+  android: ["app", "clipboard", "dialog", "window", "tray", "hid"],
 };
 
 // Why, per platform, in the words of the module that made the call. Keyed
@@ -94,6 +94,12 @@ const REASONS = {
     + "and it is the one worth naming because it looks like the survivor — winit enumerates no "
     + "monitors there, so `monitors()` would report a device with no display. Immersive mode and "
     + "orientation are the real capabilities here and are not these under another name.",
+  "android.hid": "Desktop discovery does not exist on Android: a USB device is reached through "
+    + "`UsbManager`, and access is an explicit per-device permission the user grants to a "
+    + "dialog the Activity raises, lasting only until the device is unplugged. So `devices()` "
+    + "has nothing to enumerate before that grant, and the module would be a `requestDevice()` "
+    + "with a lifecycle that survives activity recreation rather than this one over another "
+    + "backend. S10 made that a separate implementation, and it does not exist yet.",
   "android.tray": "Android has no desktop notification area or status-item menu. Its persistent "
     + "status UI is a notification, which belongs to blitsen/notify and carries its own runtime "
     + "permission and channel semantics rather than pretending to be a tray icon.",

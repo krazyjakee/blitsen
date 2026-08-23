@@ -532,6 +532,10 @@ export async function main(args, output = console, runtime = null) {
       const result = await active.build({
         ...application,
         ...options,
+        // The scan already answered "does this application open a raw HID
+        // device", so packaging reads it from the report rather than asking for
+        // a configuration key that would only repeat what the imports say.
+        hid: report.diagnostics.some(item => item.code === "NATIVE_HID_ACCESS"),
         outfile: buildOutfile(options),
         progress: event => reportStep(output, event),
         onNotice: message => output.error(message),

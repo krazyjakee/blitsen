@@ -366,6 +366,98 @@ export interface NativeInput {
   snapshot?(): NativeInputSnapshot;
 }
 
+/** One top-level collection a HID device exposes. */
+export interface NativeHidUsage {
+  readonly usagePage: number;
+  readonly usage: number;
+}
+
+/**
+ * A HID device this application may open.
+ *
+ * Generic Desktop keyboard, keypad, mouse and pointer collections never appear
+ * here, and neither does a device that carries one behind the same platform
+ * node. There is no way to ask for one.
+ */
+export interface NativeHidDeviceInfo {
+  /**
+   * Opaque identifier, stable for this process and meaningless outside it.
+   *
+   * Deliberately not a device path or a serial number: it identifies the device
+   * to this run of this application and says nothing about the machine.
+   */
+  readonly id: string;
+  readonly vendorId: number;
+  readonly productId: number;
+  readonly releaseNumber: number;
+  /** The first top-level collection, for the common single-collection device. */
+  readonly usagePage: number;
+  readonly usage: number;
+  /** Every top-level collection reachable through this device. */
+  readonly usages: readonly NativeHidUsage[];
+  readonly productName: string | null;
+  readonly manufacturerName: string | null;
+  /** Reported where the device supplies one. Metadata, never identity. */
+  readonly serialNumber: string | null;
+}
+
+/** One input report, with its report ID separated from the data. */
+export interface NativeHidInputReport {
+  readonly deviceId: string;
+  /** Zero for a device whose descriptor declares no report IDs. */
+  readonly reportId: number;
+  /** The report without its leading report-ID byte. */
+  readonly data: Uint8Array;
+}
+
+/** A device appearing or disappearing while an application is listening. */
+export interface NativeHidDeviceChange {
+  readonly type: "connected" | "disconnected";
+  readonly device: NativeHidDeviceInfo;
+}
+
+/** An opened HID device. Every method settles on a frame turn. */
+export interface NativeHidDevice {
+  readonly id: string;
+  readonly info: NativeHidDeviceInfo;
+  /** False once the device is closed or has disconnected. */
+  readonly opened: boolean;
+  /** The longest report of each kind this device's descriptor declares. */
+  readonly maxInputReportSize: number;
+  readonly maxOutputReportSize: number;
+  readonly maxFeatureReportSize: number;
+  /** Sends an output report; the first byte is the report ID, or zero. */
+  write(data: Uint8Array): Promise<null>;
+  /** Sends a feature report; the first byte is the report ID, or zero. */
+  sendFeatureReport(data: Uint8Array): Promise<null>;
+  /** Reads a feature report, answering it without the report ID asked for. */
+  receiveFeatureReport(reportId: number): Promise<Uint8Array>;
+  /** Listens for input reports; returns an unsubscribe function. */
+  onInputReport(listener: (report: NativeHidInputReport) => void): () => void;
+  /** Listens for the single terminal event a disconnected device produces. */
+  onDisconnect(listener: (event: { readonly deviceId: string }) => void): () => void;
+  /** Closes the device. Produces no disconnect event. */
+  close(): Promise<null>;
+}
+
+/**
+ * `blitsen/hid`: raw HID reports for devices that are not ordinary input.
+ *
+ * Keyboards, pointers and controllers stay with DOM events and the Gamepad API.
+ * `open` rejects with a `DOMException` whose `name` distinguishes permission
+ * denial (`NotAllowedError`), a device that has gone (`NotFoundError`), a
+ * collection Blitsen refuses (`NotSupportedError`) and backend failure
+ * (`OperationError`).
+ */
+export interface NativeHid {
+  /** A snapshot of the devices this application may open. */
+  devices?(): Promise<readonly NativeHidDeviceInfo[]>;
+  /** Opens a device by the identifier `devices()` reported. */
+  open?(deviceId: string): Promise<NativeHidDevice>;
+  /** Listens for devices arriving and leaving; returns an unsubscribe function. */
+  onDeviceChange?(listener: (event: NativeHidDeviceChange) => void): () => void;
+}
+
 export interface NativeNotificationOptions {
   /** Required title shown by the platform notification centre. */
   title: string;

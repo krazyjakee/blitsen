@@ -106,6 +106,15 @@ harness = false
 # Windows and macOS and the freedesktop notification service on Linux.
 [target.'cfg(not(target_os = "android"))'.dependencies]
 notify-rust = { version = "4.18.0", default-features = false, features = ["preview-macos-un", "z-with-tokio"] }
+# The report descriptor of an opened `blitsen/hid` device (#247). A descriptor
+# is a bit-level grammar with global/local item state, delimiters and pushes,
+# and the two things Blitsen needs from it — the longest report of each kind, so
+# a write is bounded by what the device declared, and every top-level collection
+# behind one handle, so a composite device cannot smuggle a keyboard past the
+# filter — both require parsing the whole of it. `default-features = false`
+# leaves out `hut`, the usage-table names: this reads numbers and compares them
+# with the four protected Generic Desktop usages, and never prints one.
+hidreport = { version = "0.6", default-features = false }
 
 # An APK's `assets/`, read through `AAssetManager` (#144). Android only: the
 # other six targets have no asset manager, and the same provider reads a
@@ -120,12 +129,32 @@ ndk = { version = "0.9", default-features = false }
 # implementations; keeping these target-specific avoids irrelevant platform
 # dependencies in every runtime.
 [target.'cfg(target_os = "linux")'.dependencies]
+# `blitsen/hid` (#246, spikes/s10). One crate with three native backends, and
+# each of the three lines named below is a choice rather than a default: the
+# crate's own default (`linux-static-hidraw`) would compile its vendored C
+# library and require a `libudev` development package to build against. Here
+# `linux-native-basic-udev` is the pure-Rust hidraw backend, which locates a
+# node through `basic-udev` and links neither libudev nor libusb. Access to the
+# node it finds is still a udev rule's to grant; that is packaging, and
+# `blitsen doctor` and `blitsen build` say so rather than the runtime trying.
+hidapi = { version = "2.6.6", default-features = false, features = ["linux-native-basic-udev"] }
 ksni = "0.3.6"
 
 [target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
 tray-icon = { version = "0.24.2", default-features = false }
 
+[target.'cfg(target_os = "windows")'.dependencies]
+# `windows-native` reaches the HID class driver through `windows-sys` instead of
+# compiling hidapi's C, so the toolchain requirement stays the one `windows-sys`
+# already imposes.
+hidapi = { version = "2.6.6", default-features = false, features = ["windows-native"] }
+
 [target.'cfg(target_os = "macos")'.dependencies]
+# `macos-shared-device` is the one feature that changes behaviour rather than
+# which backend is built: it opens IOHID with `kIOHIDOptionsTypeNone` instead of
+# seizing the device. Blitsen must not take a device away from the rest of the
+# system merely because an application read one report from it.
+hidapi = { version = "2.6.6", default-features = false, features = ["macos-shared-device"] }
 mac-usernotifications = "0.3.1"
 
 # Vello's Metal compute path can wedge the display GPU on Intel Macs before

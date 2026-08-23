@@ -44,6 +44,12 @@ notification library delivers interaction events but rejects update and close be
 retain an addressable toast handle (#251). Individual notification-server policies still decide
 how a submitted notification is presented.
 
+`blitsen/hid` is available on every desktop target. On Linux a hidraw node is owned by udev, so a
+packaged application reaches an intended device only once a distribution or installer has added a
+rule granting access; `blitsen build` writes a `<name>.hid.rules` template beside the executable and
+`blitsen doctor` reports the requirement. Blitsen never installs a rule itself and running the
+application as root is not a supported substitute.
+
 The standard Web `Notification` facade is installed on Linux and in eligible packaged macOS apps.
 It is absent on Windows until the notification library exposes addressable close (#251), absent in
 an unbundled macOS development host (#253), and absent on Android until intent activation is wired
@@ -60,6 +66,11 @@ macOS. Modern macOS notifications also require the exported `.app` bundle identi
 permission requests from an unbundled development executable reject. The current `blitsen/dialog`
 module is absent on macOS.
 
+`blitsen/hid` opens devices with shared IOHID access, so an application never seizes a device from
+the rest of the system. A sandboxed application must be signed with `com.apple.security.device.usb`;
+`blitsen build` writes a `<name>.app.entitlements` file beside the bundle for the signing command to
+pass to `codesign --entitlements`.
+
 ## Windows requirements
 
 Published runtimes support Windows 10 or newer, and x64 also supports Server 2016 or newer. The
@@ -68,6 +79,10 @@ Microsoft C runtime is statically linked, so users do not need a separate Visual
 Windows packaging writes the application manifest and optional `.ico` beside the executable rather
 than embedding them in the PE file. Keep those files with the executable. The current
 `blitsen/dialog` module and Unix single-instance lock are absent on Windows.
+
+`blitsen/hid` opens HID top-level collections through the Windows HID class driver and needs no
+driver installation. Windows reserves some system collections for itself; an open refused that way
+rejects with `NotAllowedError`, separately from a device that disappeared.
 
 ## Android
 
@@ -78,7 +93,9 @@ the focus-scoped `input.snapshot` member and `blitsen/notify`. Notifications use
 as granted. Submission, same-session replacement and close are supported. Tap, action and dismiss
 events are not exposed until #252 adds Android intent activation, so action-bearing submissions
 reject. The standard Web `Notification` global remains absent for the same reason. Android does not
-support Blitsen's app, clipboard, dialog, window or tray native modules in this release.
+support Blitsen's app, clipboard, dialog, window, tray or hid native modules in this release. Raw
+HID on Android is `UsbManager` and its explicit per-device permission grant rather than desktop
+enumeration, which is a separate implementation this release does not have.
 
 `blitsen/os` is available, and `os.batteries` is the one member of it that is not: the library
 behind that reading has no Android backend, and the platform's own answer is `BatteryManager` over

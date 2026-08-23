@@ -8,6 +8,7 @@ import { loadApiManifest } from "../../src/api-manifest.mjs";
 import app from "../../src/native/app.mjs";
 import clipboard from "../../src/native/clipboard.mjs";
 import dialog from "../../src/native/dialog.mjs";
+import hid from "../../src/native/hid.mjs";
 import input from "../../src/native/input.mjs";
 import notify from "../../src/native/notify.mjs";
 import os from "../../src/native/os.mjs";
@@ -20,7 +21,7 @@ import { addonPath, native } from "./addon.mjs";
 // does — through the `blitsen/app` and `blitsen/clipboard` proxies — so what is
 // asserted is the installed namespace, not a description of it.
 const nativeManifest = await loadApiManifest();
-const namespaces = { app, clipboard, dialog, input, notify, os, tray, window: windowModule };
+const namespaces = { app, clipboard, dialog, hid, input, notify, os, tray, window: windowModule };
 // The members whose presence is a platform fact rather than a version fact: the
 // single-instance lock is a Unix socket, and a dialog is the XDG portal.
 const absentOn = new Map([["app.requestSingleInstanceLock", ["win32"]]]);
@@ -89,6 +90,16 @@ assert.throws(() => notify.show({
 }), /reserved or duplicated/);
 assert.throws(() => notify.show({ title: "Build complete", timeout: -1 }), /non-negative/);
 assert.throws(() => notify.update("n1", { title: "" }), /must not be empty/);
+
+// Raw HID enumeration and every transfer settle on a frame turn, which a
+// module-only harness has no window session to turn — so a `devices()` here
+// would park a request rather than answer one. What does cross the whole
+// boundary synchronously is the listener contract and the watch flag it sets in
+// the host, and the real device tree is enumerated by the Rust hardware smoke.
+assert.throws(() => hid.onDeviceChange("not a function"), /must be a function/);
+const unwatch = hid.onDeviceChange(() => {});
+assert.equal(typeof unwatch, "function");
+unwatch();
 
 // The standard facade is installed only where the same backend can address
 // close. Windows remains feature-detectably absent until #251; an unbundled

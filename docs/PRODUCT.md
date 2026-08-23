@@ -407,6 +407,7 @@ every module an application imports that the target does not have, with the reas
 | `app` | **Absent** | The directories are the Activity's `filesDir`/`cacheDir`; the XDG variables Android does not set would resolve to a path nothing can write to. `relaunch` has no executable to spawn inside an APK. Single-instance ownership is the platform's own — a second launch is an `Intent` to the process already running, not a command line to hand over. |
 | `dialog` | **Absent** | No XDG portal. Already absent off the portal platforms, for its own reasons (#141). |
 | `input` | **Present, partial** | Focus-scoped keyboard and pointer snapshots are fed by the same winit events as desktop. Gamepads and device discovery remain absent everywhere. |
+| `hid` | **Absent** | Desktop discovery has no Android counterpart. A USB device is reached through `UsbManager`, and access is a per-device permission the user grants to a dialog the Activity raises and that lasts until the device is unplugged — so there is nothing for `devices()` to enumerate before the grant, and `requestDevice()` with an activity-recreation-safe lifecycle is a different module rather than this one over another backend (S10). |
 | `tray` | **Absent** | Android has no desktop status item or context-menu surface. A persistent Android notification is not a tray icon under another name. |
 | `notify` | **Present, partial** | `android-activity` and `jni` bridge the platform `NotificationManager`: a stable default channel, API 33 permission, submission, session-stable replacement IDs and close are implemented. NativeActivity provides no tap/action/dismiss intent callback, so action submissions reject and lifecycle activation remains in #252 rather than exposing inert controls. |
 
@@ -431,7 +432,7 @@ workspace and a clean `cargo ndk check` without scaffolding.
 
 | # | Requirement | Target | Notes |
 | --- | --- | --- | --- |
-| P1 | Bare exported app size | **55.8 MB installed, 20.9 MB compressed** — measured on Linux x64, against 131.6 MB for the same app on Phase 1. It was 38.1 MB before `Intl` and SVG added 12.0 MB, Linux tray support added 3.7 MB and `<canvas>` 2D added 1.2 MB; §9 has each trade and what could be given back | S0 disproved the original ≤50 MB target against a design that shipped an engine library alongside; statically linking QuickJS-ng put the shipped total well inside it, and production capabilities have taken it back out — that estimate is withdrawn either way, and this row is a measurement rather than a target. Five targets unmeasured, and no measured Electron or Tauri comparison yet; see §9. Android is not one of the five and never joins this row: an APK is a different artifact, and it is P1b. |
+| P1 | Bare exported app size | **55.8 MB installed, 20.9 MB compressed** — measured on Linux x64, against 131.6 MB for the same app on Phase 1. It was 38.1 MB before `Intl` and SVG added 12.0 MB, Linux tray support added 3.7 MB, `<canvas>` 2D added 1.2 MB and raw HID added 0.3 MB; §9 has each trade and what could be given back | S0 disproved the original ≤50 MB target against a design that shipped an engine library alongside; statically linking QuickJS-ng put the shipped total well inside it, and production capabilities have taken it back out — that estimate is withdrawn either way, and this row is a measurement rather than a target. Five targets unmeasured, and no measured Electron or Tauri comparison yet; see §9. Android is not one of the five and never joins this row: an APK is a different artifact, and it is P1b. |
 | P1b | Bare APK size, per ABI | **35.2 MB installed, 14.7 MB downloaded** — measured `arm64-v8a`, release, on the same bare application P1 uses (#150) | The budget is one ABI's, because a device installs one ABI and runs it. The two-ABI APK `blitsen build --android` defaults to is **74.6 MB**, and the half of it the device cannot use is carried anyway — so `--android-abi arm64-v8a` is the shipping build and the default set is the one a developer can also put on an emulator. Both numbers are stated because they answer different questions: the APK is what a sideload transfers, and 14.7 MB is what Play's own `bundletool get-size` reports a per-ABI split delivering. Android's vendored OpenSSL is measured rather than asserted, at **≥3.6 MB** of the library, and it does not show up as a premium: at equal architecture the whole APK is *smaller* than the desktop executable. Play measures every limit on the compressed download, and this is 3% of the 500 MB base-module ceiling — size is not the argument for an AAB. Breakdown, method and limits in §9. |
 | P2 | Cold start to first frame | < 500 ms on mid-range hardware | Should beat Electron decisively or the pitch weakens. |
 | P3 | Idle RAM, bare app | < 100 MB | |
@@ -624,6 +625,15 @@ encoders are what `toDataURL` hands back. The baseline was re-recorded at **55.8
 The rasteriser is the piece that could be given back — it exists for the readback paths, and an
 application that never reads a canvas back never reaches it — but it is linked either way, because
 the runtime is one prebuilt binary.
+
+**Raw HID is +0.3 MB installed.** Measured as the release runtime with and without the module on
+the same toolchain, which is the only way to read it while the size baseline is recorded against a
+different rustc than this host runs. `hidapi` is compiled with its Rust-native backends on Linux
+and Windows and Apple's own IOHID on macOS, so no vendored C library or libusb is linked on the two
+platforms that can avoid one; `hidreport` is the report-descriptor parser that bounds a write by
+what the device declared and catches a keyboard collection hiding behind a vendor one. The cost is
+paid by every application, because the runtime is one prebuilt binary — it is under a percent of the
+export, and below the gate's 2% threshold, so the baseline is not re-recorded for it.
 
 What can still be traded, if the number later matters more than the coverage: currency *names*
 (`currencyDisplay: "name"`), localised time-zone names (`timeZoneName`, and

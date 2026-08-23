@@ -527,13 +527,16 @@ async function writeSideLoadedAssets({ assets, sideLoaded, manifest, staging }) 
 
 async function finishStandaloneBuild({
   destination, progress, icon, bundleId, appVersion, buildPlatform, title,
-  assets, sideLoaded, force, sign,
+  assets, sideLoaded, force, sign, hid,
 }) {
   // bun build --compile appends .exe on Windows when the requested path has no
   // extension, so the linked artifact is not always the requested path.
   const linked = await stat(destination).catch(() => null) ? destination : `${destination}.exe`;
   progress({ step: "link", detail: linked });
-  const packaged = icon || bundleId || appVersion
+  // `hid` joins the three flags that ask for platform artifacts: an application
+  // that opens a raw HID device needs the udev rule or the entitlement whether
+  // or not it also asked for an icon (#247).
+  const packaged = icon || bundleId || appVersion || hid
     ? await packageBuild({
       platform: buildPlatform,
       executable: linked,
@@ -543,6 +546,7 @@ async function finishStandaloneBuild({
       version: appVersion,
       assetDirectory: assets === "side-loaded" ? sideLoaded : null,
       force,
+      hid,
     })
     : null;
   const executable = packaged?.executable ?? linked;
@@ -568,7 +572,8 @@ export async function buildStandalone(
   {
     root, width, height, title, outfile, force = false, include = [], addons = [],
     assets = "embedded", icon = null, bundleId = null, appVersion = null, sign = null,
-    target = null, platform, window = null, tray = null, progress = () => {}, onNotice,
+    target = null, platform, window = null, tray = null, hid = false,
+    progress = () => {}, onNotice,
   },
   runtime,
 ) {
@@ -627,7 +632,7 @@ export async function buildStandalone(
     await writeSideLoadedAssets({ assets, sideLoaded, manifest, staging });
     const { executable, packaged, signed } = await finishStandaloneBuild({
       destination, progress, icon, bundleId, appVersion, buildPlatform, title,
-      assets, sideLoaded, force, sign,
+      assets, sideLoaded, force, sign, hid,
     });
     return {
       outfile: executable,

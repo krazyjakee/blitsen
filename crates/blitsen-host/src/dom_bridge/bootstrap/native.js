@@ -292,6 +292,169 @@
       : undefined,
   };
 
+  // Raw HID (#247). Deliberately not part of `input` above: keyboards, pointers
+  // and controllers are DOM events and the Gamepad API, and raw reports are a
+  // separate capability with a separate security boundary (S10).
+  //
+  // Which devices exist is the host's answer and nothing here can widen it —
+  // the Generic Desktop keyboard, keypad, mouse and pointer collections are
+  // gone before `devices()` resolves, and the ids that survive name nothing
+  // about the machine. Every call settles on a frame turn, because a report is
+  // read by a native worker that owns the handle and must never re-enter the
+  // application from the thread it blocked on.
+  const hidInstalled = hosted("__blitsenNativeHidDevices");
+  const hidCommands = new Map();
+  const hidOpenDevices = new Map();
+  const hidChangeListeners = new Set();
+  const nativeHidPending = hosted("__blitsenNativeHidPending")
+    ? __blitsenNativeHidPending : () => false;
+  // An open device and a hot-plug listener both keep the loop turning, for the
+  // reason a live socket does: the report is already in the host, and a loop
+  // that idled would never reach the turn that delivers it.
+  const nativeHidWorkPending = () => hidCommands.size > 0 || hidOpenDevices.size > 0
+    || hidChangeListeners.size > 0 || nativeHidPending();
+  const runHidCommand = id => new Promise((resolve, reject) => {
+    hidCommands.set(String(id), { resolve, reject });
+  });
+  const hidListener = (listeners, listener, what) => {
+    if (typeof listener !== "function") throw new TypeError(`${what} listener must be a function`);
+    listeners.add(listener);
+    return () => { listeners.delete(listener); };
+  };
+  const deliverHid = (listeners, event, what) => {
+    for (const listener of listeners) {
+      try { listener(event); }
+      catch (error) { console.error(`Uncaught exception in ${what} listener`, error); }
+    }
+  };
+  const hidDeviceInfo = info => Object.freeze({
+    ...info, usages: Object.freeze(info.usages.map(usage => Object.freeze(usage))),
+  });
+  const settleHid = () => {
+    if (!nativeHidPending()) return;
+    for (const { json, data } of __blitsenNativeHidTake()) {
+      const message = JSON.parse(json);
+      if (message.type === "completion") {
+        const command = hidCommands.get(String(message.commandId));
+        if (!command) continue;
+        hidCommands.delete(String(message.commandId));
+        // The four open outcomes are told apart by the exception name rather
+        // than by its text, so `error.name === "NotAllowedError"` is a udev
+        // rule or an entitlement and nothing else is.
+        if (message.error !== null)
+          command.reject(new DOMException(message.error, message.errorName));
+        else command.resolve(data === null ? message.value : data);
+        continue;
+      }
+      if (message.type === "change") {
+        deliverHid(hidChangeListeners, Object.freeze({
+          type: message.change, device: hidDeviceInfo(message.device),
+        }), "HID device change");
+        continue;
+      }
+      const device = hidOpenDevices.get(message.deviceId);
+      if (!device) continue;
+      if (message.type === "input") {
+        // The report ID is separate and the data excludes it, so nothing here
+        // depends on whether a platform backend retained the leading byte.
+        deliverHid(device.inputListeners, Object.freeze({
+          deviceId: message.deviceId, reportId: message.reportId, data,
+        }), "HID input report");
+        continue;
+      }
+      // The one terminal event. The host has already closed the handle and
+      // will not send another for this device.
+      hidOpenDevices.delete(message.deviceId);
+      device.opened = false;
+      deliverHid(device.disconnectListeners, Object.freeze({ deviceId: message.deviceId }),
+        "HID disconnect");
+    }
+  };
+  // Checked here, at the call, rather than a frame later in a rejection: the
+  // application knows the bound because `open` reported it, so a report past it
+  // is a mistake in this line of code.
+  const hidReport = (data, limit, what) => {
+    if (!(data instanceof Uint8Array) && !(data instanceof Uint8ClampedArray))
+      throw new TypeError(`a HID ${what} must be a Uint8Array or Uint8ClampedArray`);
+    if (data.length === 0) throw new TypeError(`a HID ${what} needs at least the report ID byte`);
+    if (data.length > limit)
+      throw new TypeError(
+        `a HID ${what} of ${data.length} bytes exceeds the ${limit} this device declared`);
+    return data;
+  };
+  const hidDevice = (id, opened) => {
+    const state = {
+      opened: true,
+      maxInputReportSize: Number(opened.maxInputReportSize),
+      maxOutputReportSize: Number(opened.maxOutputReportSize),
+      maxFeatureReportSize: Number(opened.maxFeatureReportSize),
+      inputListeners: new Set(),
+      disconnectListeners: new Set(),
+    };
+    hidOpenDevices.set(id, state);
+    const live = () => {
+      if (!state.opened) throw new DOMException(`HID device ${id} is closed`, "InvalidStateError");
+    };
+    return Object.freeze({
+      id,
+      info: hidDeviceInfo(opened.device),
+      get opened() { return state.opened; },
+      maxInputReportSize: state.maxInputReportSize,
+      maxOutputReportSize: state.maxOutputReportSize,
+      maxFeatureReportSize: state.maxFeatureReportSize,
+      write: data => {
+        live();
+        return runHidCommand(__blitsenNativeHidWrite(
+          id, hidReport(data, state.maxOutputReportSize, "output report")));
+      },
+      sendFeatureReport: data => {
+        live();
+        return runHidCommand(__blitsenNativeHidSendFeatureReport(
+          id, hidReport(data, state.maxFeatureReportSize, "feature report")));
+      },
+      receiveFeatureReport: reportId => {
+        live();
+        const report = Number(reportId);
+        if (!Number.isInteger(report) || report < 0 || report > 0xff)
+          throw new TypeError("a HID report id is a byte");
+        return runHidCommand(__blitsenNativeHidReceiveFeatureReport(id, String(report)));
+      },
+      onInputReport: listener => hidListener(state.inputListeners, listener, "HID input report"),
+      onDisconnect: listener => hidListener(state.disconnectListeners, listener, "HID disconnect"),
+      close: () => {
+        if (!state.opened) return Promise.resolve(null);
+        state.opened = false;
+        hidOpenDevices.delete(id);
+        // A device unplugged in the same turn this was called is already closed
+        // in the host, which answers that a device it does not have open cannot
+        // be closed. The application asked for the state it now has, and could
+        // not have avoided the race, so this resolves rather than rejecting.
+        return runHidCommand(__blitsenNativeHidClose(id)).catch(() => null);
+      },
+    });
+  };
+  const nativeHid = {
+    devices: !hidInstalled ? undefined : () => runHidCommand(__blitsenNativeHidDevices())
+      .then(found => Object.freeze(found.map(hidDeviceInfo))),
+    open: !hidInstalled ? undefined : deviceId => {
+      const id = String(deviceId);
+      if (hidOpenDevices.has(id))
+        throw new DOMException(`HID device ${id} is already open`, "InvalidStateError");
+      return runHidCommand(__blitsenNativeHidOpen(id)).then(opened => hidDevice(id, opened));
+    },
+    // The host polls for hot-plug, so it is told when anything is listening and
+    // told again when the last listener goes: an application that never asks
+    // never makes the runtime walk the device tree.
+    onDeviceChange: !hidInstalled ? undefined : listener => {
+      const remove = hidListener(hidChangeListeners, listener, "HID device change");
+      __blitsenNativeHidWatch(true);
+      return () => {
+        remove();
+        if (hidChangeListeners.size === 0) __blitsenNativeHidWatch(false);
+      };
+    },
+  };
+
   // Desktop notification commands settle at the top of a frame. Platform
   // callbacks only enqueue messages in the host; no notification service or
   // callback thread is allowed to enter application JavaScript directly.
@@ -666,6 +829,7 @@
     window: nativeMembers(nativeWindow),
     tray: nativeMembers(nativeTray),
     input: nativeMembers(nativeInput),
+    hid: nativeMembers(nativeHid),
     notify: nativeMembers(nativeNotify),
     os: nativeMembers(nativeOs),
     dialog: nativeMembers(nativeDialog),

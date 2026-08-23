@@ -27,7 +27,7 @@ describe("published types", () => {
   test("read each module's members off its own interface", () => {
     const declared = readDeclaredNativeMembers(definitions);
     expect([...declared.keys()].sort()).toEqual([
-      "app", "clipboard", "dialog", "input", "notify", "os", "tray", "window",
+      "app", "clipboard", "dialog", "hid", "input", "notify", "os", "tray", "window",
     ]);
     // Each module's members are its own: the clipboard's do not leak into the
     // app's, which is what the per-subpath declaration files are for.

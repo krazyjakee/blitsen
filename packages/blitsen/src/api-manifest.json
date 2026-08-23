@@ -4748,6 +4748,24 @@
       "reason": "Device change is the connection counterpart of gamepad and raw-device discovery, neither of which is installed yet."
     },
     {
+      "api": "hid.devices",
+      "module": "hid",
+      "member": "devices",
+      "status": "implemented"
+    },
+    {
+      "api": "hid.open",
+      "module": "hid",
+      "member": "open",
+      "status": "implemented"
+    },
+    {
+      "api": "hid.onDeviceChange",
+      "module": "hid",
+      "member": "onDeviceChange",
+      "status": "implemented"
+    },
+    {
       "api": "notify.show",
       "module": "notify",
       "member": "show",

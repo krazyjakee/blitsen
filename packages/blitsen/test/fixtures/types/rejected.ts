@@ -5,6 +5,7 @@
 // Each `@ts-expect-error` is its own assertion: TypeScript reports an unused one
 // as an error of its own, so a line that quietly starts compiling still fails.
 import app from "blitsen/app";
+import hid from "blitsen/hid";
 import nativeWindow from "blitsen/window";
 import notify from "blitsen/notify";
 import tray from "blitsen/tray";
@@ -48,6 +49,13 @@ if (notify.show) notify.show({ title: "Bad", urgency: "urgent" });
 if (notify.update) notify.update("n1", { timeout: "soon" });
 // @ts-expect-error
 if (notify.onEvent) notify.onEvent("click");
+
+// A device path is not part of the surface, and never becomes one.
+// @ts-expect-error
+if (hid.devices) hid.devices().then(devices => devices[0].path);
+// A report is bytes, not a number array the bridge would have to copy twice.
+// @ts-expect-error
+if (hid.open) hid.open("d1").then(device => device.write([0x00, 0x01]));
 
 // `<blitsen-view>` is typed as itself, so its method exists...
 const view = document.createElement("blitsen-view");

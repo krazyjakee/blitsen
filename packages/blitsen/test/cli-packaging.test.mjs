@@ -208,6 +208,37 @@ describe("directory CLI", () => {
     }, "Pong Deluxe");
   });
 
+  // Issue #247. An application that opens a raw HID device needs something the
+  // application itself cannot grant, so packaging writes the file a distributor
+  // installs or signs with — and writes nothing at all when HID is not used.
+  test("writes the udev rule and entitlements raw HID access needs", async () => {
+    await withArtifact(async ({ directory, executable }) => {
+      const linux = await packageBuild({ platform: "linux", executable, title: "Pong", hid: true });
+      const rules = join(directory, "Pong.hid.rules");
+      expect(linux.artifacts).toContain(rules);
+      const rule = await readFile(rules, "utf8");
+      expect(rule).toContain('SUBSYSTEM=="hidraw"');
+      expect(rule).toContain('TAG+="uaccess"');
+      // The template is inert until its IDs are replaced, and says so rather
+      // than shipping a rule that matches a device nobody chose.
+      expect(rule).toContain("Replace the vendor and product IDs");
+      expect(linux.notes.join(" ")).toContain("udev rule");
+    });
+    await withArtifact(async ({ directory, executable }) => {
+      const macos = await packageBuild({ platform: "darwin", executable, title: "Pong", hid: true });
+      const entitlements = join(directory, "Pong.app.entitlements");
+      expect(macos.artifacts).toContain(entitlements);
+      expect(await readFile(entitlements, "utf8"))
+        .toContain("<key>com.apple.security.device.usb</key>");
+      expect(macos.notes.join(" ")).toContain("codesign --entitlements");
+    });
+    await withArtifact(async ({ directory, executable }) => {
+      const linux = await packageBuild({ platform: "linux", executable, title: "Pong" });
+      expect(linux.artifacts).not.toContain(join(directory, "Pong.hid.rules"));
+      expect(await stat(join(directory, "Pong.hid.rules")).catch(() => null)).toBeNull();
+    });
+  });
+
   test("produces a macOS .app bundle with an Info.plist, PkgInfo and .icns", async () => {
     await withArtifact(async ({ directory, executable }) => {
       const sideLoaded = join(directory, "Pong.assets");

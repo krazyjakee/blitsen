@@ -60,6 +60,8 @@ impl<E: JsEngine + Clone + 'static> WindowSession<E> {
     ) -> Result<Self, JsError> {
         crate::dom_bridge::tray::reset();
         crate::dom_bridge::notify::reset();
+        #[cfg(not(target_os = "android"))]
+        crate::dom_bridge::hid::reset();
         crate::dom_bridge::input::reset();
         let started_at = Instant::now();
         let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -162,6 +164,8 @@ impl<E: JsEngine + Clone + 'static> WindowSession<E> {
             synthetic_phase: None,
             tray,
             notify,
+            #[cfg(not(target_os = "android"))]
+            hid: super::hid::controller(event_loop.create_proxy()),
             quit_requested: false,
         };
         drop(guard);
@@ -181,6 +185,15 @@ impl<E: JsEngine + Clone + 'static> WindowSession<E> {
         crate::dom_bridge::tray::reset();
         self.application.notify.clear();
         crate::dom_bridge::notify::reset();
+        #[cfg(not(target_os = "android"))]
+        {
+            // A reload replaces the document, so every handle the previous one
+            // opened is orphaned. Dropping the controller closes them; nothing
+            // else would, and a device left claimed across a reload would be a
+            // device the reloaded application cannot open.
+            self.application.hid = super::hid::controller(self.event_loop.create_proxy());
+            crate::dom_bridge::hid::reset();
+        }
         crate::dom_bridge::input::reset();
         let window_id = self
             .application
@@ -320,6 +333,14 @@ impl<E: JsEngine + Clone + 'static> WindowSession<E> {
         }
         self.apply_tray_requests();
         self.apply_notify_requests();
+        #[cfg(not(target_os = "android"))]
+        {
+            self.apply_hid_requests();
+            self.application.hid.poll();
+            if crate::dom_bridge::hid::pending() {
+                self.request_redraw();
+            }
+        }
         if let Some(error) = self.error.borrow_mut().take() {
             return Err(error);
         }
@@ -357,6 +378,60 @@ impl<E: JsEngine + Clone + 'static> WindowSession<E> {
                 }
             };
             crate::dom_bridge::tray::complete(request.id, result);
+        }
+        self.request_redraw();
+    }
+
+    /// Runs the HID commands JavaScript queued during the last frame turn.
+    ///
+    /// Enumeration and open both talk to the platform, so neither can happen
+    /// inside the native call that requested it: winit already has the
+    /// application borrowed there, and a device tree walk on that path is a
+    /// frame the window did not paint.
+    #[cfg(not(target_os = "android"))]
+    fn apply_hid_requests(&mut self) {
+        use crate::dom_bridge::hid::{self, RequestKind};
+
+        let requests = hid::take_requests();
+        if requests.is_empty() {
+            return;
+        }
+        let controller = &mut self.application.hid;
+        for request in requests {
+            let command_id = request.command_id;
+            match request.kind {
+                RequestKind::Devices => hid::complete(command_id, controller.devices()),
+                RequestKind::Open { device_id } => {
+                    hid::complete(command_id, controller.open(&device_id));
+                }
+                RequestKind::Close { device_id } => {
+                    hid::complete(command_id, controller.close(&device_id));
+                }
+                // The transfers settle on the device's own worker, so a failure
+                // to *queue* one is the only thing answered here.
+                RequestKind::Write { device_id, data } => {
+                    if let Err(failure) = controller.write(&device_id, command_id, data) {
+                        hid::complete(command_id, Err(failure));
+                    }
+                }
+                RequestKind::SendFeatureReport { device_id, data } => {
+                    if let Err(failure) =
+                        controller.send_feature_report(&device_id, command_id, data)
+                    {
+                        hid::complete(command_id, Err(failure));
+                    }
+                }
+                RequestKind::ReceiveFeatureReport {
+                    device_id,
+                    report_id,
+                } => {
+                    if let Err(failure) =
+                        controller.receive_feature_report(&device_id, command_id, report_id)
+                    {
+                        hid::complete(command_id, Err(failure));
+                    }
+                }
+            }
         }
         self.request_redraw();
     }

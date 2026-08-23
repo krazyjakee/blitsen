@@ -4,6 +4,7 @@ import { defineConfig } from "blitsen";
 import app from "blitsen/app";
 import clipboard from "blitsen/clipboard";
 import dialog from "blitsen/dialog";
+import hid from "blitsen/hid";
 import input from "blitsen/input";
 import notify from "blitsen/notify";
 import tray from "blitsen/tray";
@@ -80,6 +81,33 @@ if (input.snapshot) {
   void state.sequence;
   void state.keys[0]?.code;
   void state.pointer.movementX;
+}
+if (hid.devices) {
+  void hid.devices().then(async devices => {
+    const found = devices[0];
+    if (!found || !hid.open) return;
+    void found.usages[0]?.usagePage;
+    void found.serialNumber;
+    const device = await hid.open(found.id);
+    const stop: () => void = device.onInputReport(report => {
+      void report.reportId;
+      void report.data.byteLength;
+    });
+    await device.write(new Uint8Array([0x00, 0x01]));
+    await device.sendFeatureReport(new Uint8Array([0x03, 0x01]));
+    const feature: Uint8Array = await device.receiveFeatureReport(3);
+    void feature;
+    void device.maxOutputReportSize;
+    device.onDisconnect(event => { void event.deviceId; });
+    stop();
+    await device.close();
+  });
+}
+if (hid.onDeviceChange) {
+  const unsubscribe: () => void = hid.onDeviceChange(event => {
+    if (event.type === "connected") void event.device.productName;
+  });
+  unsubscribe();
 }
 if (notify.show) void notify.show({ title: "Complete", urgency: "normal" });
 if (notify.permission) void notify.permission();

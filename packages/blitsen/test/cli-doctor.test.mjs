@@ -304,6 +304,41 @@ describe("directory CLI", () => {
     }
   });
 
+  // Issue #247. Raw HID is the one capability whose remaining requirement is
+  // outside the source file: a udev rule on Linux, an entitlement in the macOS
+  // signature. Neither can be inferred from the code, so `doctor` is where the
+  // developer is told — and only where the module actually exists, since an
+  // Android build has a better thing to say about it.
+  test("reports the packaging raw HID needs, per platform", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "blitsen-hid-doctor-"));
+    try {
+      await writeFile(join(directory, "app.js"), [
+        `import hid from "blitsen/hid";`,
+        `export { hid };`,
+      ].join("\n"));
+      await writeFile(join(directory, "index.html"),
+        `<!doctype html><script type="module" src="./app.js"></script>`);
+      const reported = async target => (await doctorApplication(directory, { target }))
+        .diagnostics.filter(entry => entry.code === "NATIVE_HID_ACCESS");
+
+      const linux = await reported("linux-x64");
+      expect(linux).toHaveLength(1);
+      expect(linux[0].severity).toBe("warning");
+      expect(linux[0].guidance).toContain("udev rule");
+      expect(linux[0].guidance).toContain("not a substitute");
+      expect((await reported("darwin-arm64"))[0].guidance)
+        .toContain("com.apple.security.device.usb");
+      expect((await reported("win32-x64"))[0].guidance).toContain("HID class driver");
+      // Android has no module to package for, and says so through the absence
+      // finding instead — two findings about one import would be one too many.
+      expect(await reported("android-arm64")).toEqual([]);
+      expect((await doctorApplication(directory, { target: "android-arm64" }))
+        .diagnostics.map(entry => entry.code)).toContain("NATIVE_MODULE_ABSENT");
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   // Grading for a platform is not claiming to build for one: Android has no
   // runtime package to resolve and `blitsen build` still refuses it (#148).
   test("grades for a target it cannot build for, and refuses to build for it", () => {

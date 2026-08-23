@@ -36,6 +36,7 @@ polyfill.
 | `blitsen/tray` | `configure`, `remove`, `onClick`, `onAction` |
 | `blitsen/notify` | `show`, `permission`, `requestPermission`, `update`, `close`, `onEvent` |
 | `blitsen/input` | `snapshot` |
+| `blitsen/hid` | `devices`, `open`, `onDeviceChange` |
 | `blitsen/os` | `cpu`, `memory`, `storage`, `host`, `batteries`, `locale` |
 
 The declaration files installed with `blitsen` document parameters and result types. The
@@ -192,6 +193,65 @@ produce. A second finger does not disturb the pointer the first one set; multi-t
 pointer events, which carry every contact with its own `pointerId`. Keys are held by physical
 code, so an Android soft keyboard — which reports characters without the key behind them — appears
 in `keydown` rather than here.
+
+## Raw HID devices
+
+`blitsen/hid` exchanges raw input, output and feature reports with devices that are not ordinary
+input: instrument panels, DIY controllers, label printers, keyboard firmware configuration
+interfaces. Keyboards, pointers and game controllers are not this module's — they are DOM events
+and the standard Gamepad API.
+
+```js
+import hid from "blitsen/hid";
+
+const found = (await hid.devices?.() ?? []).find(device => device.vendorId === 0x16c0);
+if (found) {
+  const device = await hid.open(found.id);
+  device.onInputReport(report => {
+    console.log(report.reportId, report.data);
+  });
+  // The first byte is the report ID, or zero for a device with none.
+  await device.write(new Uint8Array([0x02, 0x01]));
+  const settings = await device.receiveFeatureReport(0x03);
+  console.log(settings.byteLength, device.maxFeatureReportSize);
+  await device.close();
+}
+```
+
+Enumeration is not permission to open anything. Blitsen refuses the Generic Desktop keyboard,
+keypad, mouse and pointer collections, and it refuses the whole physical device when any of its
+collections is one of those — on Linux a single hidraw node carries every collection, so opening a
+keyboard's vendor interface would hand over its keystrokes as well. There is no way to opt out.
+A device's report descriptor is re-checked once it is open, so a composite device whose enumeration
+did not mention a keyboard is still rejected before a report is read.
+
+A device's `id` is opaque and stable only for the process that issued it. It is not a device path
+and not a serial number; `serialNumber` is reported as metadata where the device supplies one, and
+is never the identity Blitsen opens by. `open()` rejects with a `DOMException` whose `name`
+separates the outcomes an application has to handle differently: `NotAllowedError` for permission,
+`NotFoundError` for a device that has gone, `NotSupportedError` for a collection Blitsen refuses,
+and `OperationError` for a backend failure.
+
+Reports are read on a native worker that owns the handle, and reach the application only at the top
+of a frame, in order. An input report carries its report ID separately and its data without that
+leading byte, so nothing depends on whether the platform retained it. `maxInputReportSize`,
+`maxOutputReportSize` and `maxFeatureReportSize` come from the device's own report descriptor;
+`write` and `sendFeatureReport` refuse a longer report before anything is sent. A device that
+disconnects closes its handle and emits exactly one `onDisconnect` event; `close()` emits none.
+`onDeviceChange` reports devices arriving and leaving, and is polled — no listener means no scan.
+
+Access is a packaging question on every platform, and `blitsen doctor` reports it for the target
+being built. Linux hidraw nodes belong to udev: `blitsen build` writes a `<name>.hid.rules`
+template beside the executable for the distribution to complete and install, and Blitsen will
+neither install one at run time nor suggest running as root. A sandboxed macOS application needs
+`com.apple.security.device.usb`; `blitsen build` writes `<name>.app.entitlements` beside the bundle
+for the signing command to pass to `codesign --entitlements`. macOS opens devices with shared
+access, so Blitsen never takes a device away from the rest of the system. Windows reserves some
+top-level collections for itself, which no packaging step unlocks.
+
+Android is absent: a USB device there is reached through `UsbManager` and an explicit per-device
+permission the user grants, which is a different lifecycle rather than this one over another
+backend.
 
 ## Dialogs
 
