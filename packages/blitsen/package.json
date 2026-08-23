@@ -109,6 +109,7 @@
     "frames": "bun test/run-frame-metrics.mjs",
     "frames:audit": "bun test/run-frame-metrics.mjs --alloc-audit",
     "measure": "bun test/measure-export.mjs",
+    "size:compare": "bun test/run-size-comparison.mjs",
     "size:baseline": "bun test/run-size-gate.mjs --update",
     "size:gate": "bun test/run-size-gate.mjs",
     "size:phase2": "bun test/run-phase2-size.mjs",

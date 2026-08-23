@@ -1,0 +1,10 @@
+{
+  "name": "blitsen-size-comparison",
+  "version": "0.0.0",
+  "private": true,
+  "devDependencies": {
+    "@electron/packager": "20.3.0",
+    "@tauri-apps/cli": "2.11.4",
+    "electron": "43.4.1"
+  }
+}

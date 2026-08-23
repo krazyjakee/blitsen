@@ -19,7 +19,8 @@ import { promisify } from "node:util";
 import { BARE_APP } from "./bare-app.mjs";
 import { buildAddon, repository } from "./build-addon.mjs";
 import { buildStandalone } from "../src/export.mjs";
-import { resolvePhase2Runtime } from "../src/runtime.mjs";
+import { pinnedPhase2Runtime } from "./measurement-runtime.mjs";
+import { phase2SizeSummary } from "./size-reports.mjs";
 
 const run = promisify(execFile);
 const outIndex = process.argv.indexOf("--out");
@@ -96,9 +97,8 @@ async function componentBreakdown(runtimePath) {
 // library that is not there is exactly the failure it exists to prevent. A
 // runtime that answers anything but `static` is a build this repository no
 // longer produces, so it is reported rather than measured around.
-async function engineLibrary() {
-  const runtime = await resolvePhase2Runtime();
-  const { stdout } = await run(runtime.path, ["--engine-report"]);
+async function engineLibrary(runtimePath) {
+  const { stdout } = await run(runtimePath, ["--engine-report"]);
   const report = JSON.parse(stdout);
   if (!report.loaded) return { loaded: false, error: report.error };
   return {
@@ -112,20 +112,24 @@ async function engineLibrary() {
 
 const directory = await bareApp();
 try {
+  const runtime = await pinnedPhase2Runtime();
   const addon = await buildAddon({ purpose: "Phase 2 size", release: true });
-  const runtime = await resolvePhase2Runtime();
   const phase1 = await exportWith("bun", directory, addon);
   const phase2 = await exportWith("blitsen", directory, addon);
   assert.ok(phase2.bytes < phase1.bytes, "the Phase 2 export is not smaller");
 
   const minimised = join(repository, "target/release-min/blitsen-runtime");
   const breakdown = await componentBreakdown(runtime.path);
-  const engine = await engineLibrary();
+  const engine = await engineLibrary(runtime.path);
   const payload = phase2.bytes - breakdown.bytes;
 
   const measurements = {
+    recordedAt: new Date().toISOString(),
+    commit: Bun.spawnSync({ cmd: ["git", "rev-parse", "--short", "HEAD"], cwd: repository,
+      stdout: "pipe", stderr: "ignore" }).stdout.toString().trim() || null,
     platform: `${process.platform}-${process.arch}`,
     application: "bare",
+    runtime: { path: runtime.path, source: runtime.source },
     phase1: { bytes: phase1.bytes, gzip: phase1.gzip, assets: phase1.assets },
     phase2: { bytes: phase2.bytes, gzip: phase2.gzip, assets: phase2.assets },
     ratio: Number((phase1.bytes / phase2.bytes).toFixed(2)),
@@ -187,6 +191,10 @@ try {
   if (outFile) {
     await writeFile(outFile, `${JSON.stringify(measurements, null, 2)}\n`);
     console.log(`  written to               ${outFile}`);
+  }
+  const summary = phase2SizeSummary(measurements);
+  if (process.env.GITHUB_STEP_SUMMARY) {
+    await writeFile(process.env.GITHUB_STEP_SUMMARY, `${summary}\n\n`, { flag: "a" });
   }
 } finally {
   await rm(directory, { recursive: true, force: true });

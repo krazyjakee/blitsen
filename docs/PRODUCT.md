@@ -68,7 +68,7 @@ That distinction drives every scoping decision:
 | --- | --- | --- | --- | --- |
 | Renderer you control & ship | ✗ | ✓ | ✗ | ✓ |
 | Consistent across OS versions | ✗ | ✓ | ✗ | ✓ |
-| Bare app size | n/a | ~150–250 MB | ~5–15 MB | **55.8 MB, measured on Linux x64** (§9) |
+| Bare app size | n/a | **327.4 MB** | **11.9 MB** | **57.8 MB** (§9) |
 | Full OS access | ✗ | ✓ | ✓ | ✓ |
 | npm ecosystem | ✓ | ✓ | ✓ | ✓ |
 | Adopt without restructuring the project | n/a | partial | partial | compatible apps: one dev dependency |
@@ -442,7 +442,7 @@ workspace and a clean `cargo ndk check` without scaffolding.
 
 | # | Requirement | Target | Notes |
 | --- | --- | --- | --- |
-| P1 | Bare exported app size | **55.8 MB installed, 20.9 MB compressed** — measured on Linux x64, against 131.6 MB for the same app on Phase 1. It was 38.1 MB before `Intl` and SVG added 12.0 MB, Linux tray support added 3.7 MB, `<canvas>` 2D added 1.2 MB and raw HID added 0.3 MB; §9 has each trade and what could be given back | S0 disproved the original ≤50 MB target against a design that shipped an engine library alongside; statically linking QuickJS-ng put the shipped total well inside it, and production capabilities have taken it back out — that estimate is withdrawn either way, and this row is a measurement rather than a target. Five targets unmeasured, and no measured Electron or Tauri comparison yet; see §9. Android is not one of the five and never joins this row: an APK is a different artifact, and it is P1b. |
+| P1 | Bare exported app size | **57.8 MB installed, 21.6 MB compressed** — measured on Linux x64 with rustc 1.97.1 after #102 and the durable-storage/native-IME integration. It replaces the stale 55.8/20.9 MB row. CI records the current Phase 2 bare export on all six targets; §9 names the artifacts and remote-only values. | S0's ≤50 MB estimate is withdrawn: the current full runtime is 10.1% above its 52.48 MB floor. On the same Linux host and exact bare HTML, Electron 43.4.1 is 327.4 MB and Tauri 2.11.5 is 11.9 MB; Tauri excludes the system WebView it relies on, while the other two ship their renderer. Android remains P1b, not a seventh value in this row. |
 | P1b | Bare APK size, per ABI | **35.2 MB installed, 14.7 MB downloaded** — historical GPU-renderer measurement for `arm64-v8a`, release, on the same bare application P1 uses (#150); the #151 CPU default awaits an NDK remeasurement | The budget is one ABI's, because a device installs one ABI and runs it. The two-ABI APK `blitsen build --android` defaults to is **74.6 MB**, and the half of it the device cannot use is carried anyway — so `--android-abi arm64-v8a` is the shipping build and the default set is the one a developer can also put on an emulator. Both numbers are stated because they answer different questions: the APK is what a sideload transfers, and 14.7 MB is what Play's own `bundletool get-size` reports a per-ABI split delivering. Android's vendored OpenSSL is measured rather than asserted, at **≥3.6 MB** of the library, and it does not show up as a premium: at equal architecture the whole APK is *smaller* than the desktop executable. Play measures every limit on the compressed download, and this is 3% of the 500 MB base-module ceiling — size is not the argument for an AAB. Breakdown, method and limits in §9. |
 | P2 | Cold start to first frame | < 500 ms on mid-range hardware | Should beat Electron decisively or the pitch weakens. |
 | P3 | Idle RAM, bare app | < 100 MB | |
@@ -487,6 +487,23 @@ Bare app on the shipping host (Linux x64, 2026-08-13, `bun run --cwd packages/bl
   ─────────────────────────────────────────
   shipped total                 38,090,586 B  the executable, and that is all
 
+Current full-surface checkpoint (Linux x64, rustc 1.97.1, #102/storage/IME integrated)
+  Blitsen runtime export        57,767,261 B  measured from the explicitly pinned checkout runtime
+  gzip -9                       21,613,383 B
+  runtime executable            57,766,528 B  the application payload is 733 B
+  S0 floor delta                +5,286,357 B  +10.1%; the old estimate stays withdrawn
+  previous c6e43ca baseline     57,638,189 B  before #102 and the later integration changes
+  #102 isolated adapter delta       -8,640 B  -390 B gzip on its own baseline; not inferred from
+                                              the two different full-tree checkpoints
+
+Same-host bare comparison (2026-08-23; exact same 968d9e… HTML, 800×600 release window)
+  Electron 43.4.1              327,377,884 B  complete Packager output, 74 regular files
+    filewise gzip -9           124,665,326 B  compression proxy, not an installer
+  Tauri 2.11.5                  11,856,712 B  one executable; system WebView excluded
+    gzip -9                      2,690,593 B
+  Blitsen checkpoint            57,767,261 B  renderer + QuickJS-ng included
+    gzip -9                     21,613,383 B
+
 Adopted since the measurement above
   strip = "symbols" on release  13,078,232 B  off both artifacts; it is in [profile.release], so a
                                               checkout's own build weighs what a released one does
@@ -530,6 +547,31 @@ by the linker and the per-ABI download.
 **Neither LTO lever is adopted.** Both cost build time, and `opt-level = "z"` buys its 16 MB with
 size-first codegen through Blitz's layout and paint — which is P4's budget, and has not been
 measured. Adopt either against a frame-time reading, not against this table.
+
+**Phase 3 feature gating is rejected as a per-application product feature.** An exported app is a
+copy of one prebuilt runtime with its assets appended. Cargo can remove code only while that runtime
+is compiled; scanning an application's imports cannot remove bytes from an executable that already
+exists. Pretending otherwise would report savings no user receives.
+
+The measured capability costs do not justify multiplying the six platform packages into named
+runtime variants either. These figures are evidence from isolated feature steps or the latest full
+surface and are therefore not additive:
+
+| Capability step | Linux x64 installed delta | Decision |
+| --- | ---: | --- |
+| `Intl` data and SVG together | +12.0 MB | Retained in the published compatibility profile. |
+| native Linux tray support | +3.7 MB | Retained; no GTK/AppIndicator runtime dependency. |
+| `<canvas>` 2D | +1.2 MB | Retained; readback and encoders are part of the claimed API. |
+| raw HID, isolated build | +0.28 MB | Retained; below one percent. |
+| latest tray/notify/menu/HID tranche as a whole | +1.79 MB (+3.2%) | Accepted and re-baselined at c6e43ca; this supersedes, rather than sums with, older toolchain deltas. |
+
+A “small”, “web-only” or per-module runtime would create a second compatibility profile, six more
+artifacts to build, sign and test, and unresolved combinations between modules for savings smaller
+than the capabilities they withdraw. Local compilation is rejected too: it breaks P9's
+no-toolchain install and makes build results depend on a user's Rust/linker environment. Revisit
+only as one deliberately named compatibility tier with its own complete API matrix and
+measurements large enough to justify another six-artifact release surface — never as automatic
+per-app gating.
 
 **The engine line is zero because the engine is inside the executable.** That is the whole of the
 QuickJS-ng decision ([`spikes/s8`](../spikes/s8/README.md)): MIT rather than LGPL, so it can be
@@ -659,21 +701,55 @@ is a feature that could go rather than a saving to be found in the build.
 Worth reading beside the JavaScriptCore comparison above: a self-contained JSC was measured folding
 in **36 MB** of ICU for the same class of capability, and this is 12 MB for it.
 
-**Still outstanding for P1.** Only Linux x64 is measured — the other five targets build and test in
-CI (TECH.md §11) but have no committed size baseline, so the gate reports on them and gates nothing
-(TECH.md §14) — and no Electron or Tauri build has been measured on the same machine with the same
-application, so the comparison remains a claim rather than a number. Both are what the remaining P1
-work is.
+**Per-target evidence.** CI run 32671156437 built the checkout runtime on every release target and
+measured the same bare application. Installed bytes include the executable and its linked payload;
+gzip is the same level-9 compression proxy used by the size gate, not an installer estimate.
+
+| Release target | Phase 2 installed | gzip -9 |
+| --- | ---: | ---: |
+| Linux x64 | 57,767,261 B | 21,613,383 B |
+| Linux arm64 | 52,218,492 B | 20,321,073 B |
+| macOS arm64 | 43,069,876 B | 16,883,770 B |
+| macOS x64 | 40,836,060 B | 16,395,515 B |
+| Windows x64 | 50,466,013 B | 18,338,780 B |
+| Windows arm64 | 44,173,065 B | 17,132,283 B |
+
+The three primary runners also built pinned Electron and Tauri fixtures from the exact same
+968d9e… HTML. Electron is its complete Packager directory; Tauri is its runnable executable and
+therefore excludes the operating system WebView; Blitsen includes both its renderer and QuickJS-ng.
+
+| Primary runner | Blitsen installed / gzip | Electron installed / gzip | Tauri installed / gzip |
+| --- | ---: | ---: | ---: |
+| Linux x64 | 57,767,261 / 21,613,383 B | 327,377,884 / 124,665,326 B | 11,856,712 / 2,690,593 B |
+| macOS arm64 | 43,069,876 / 16,883,770 B | 307,530,493 / 119,882,734 B | 10,667,696 / 2,576,385 B |
+| Windows x64 | 50,466,013 / 18,338,780 B | 374,142,186 / 149,068,154 B | 8,289,280 / 2,404,649 B |
+
+Every row remains available as the run's `phase2-size-<target>` or
+`desktop-size-comparison-<runner>` JSON artifact, so the published figures can be audited without
+reconstructing them from a job log.
+
+From a checkout, both size commands require an explicit runtime so a published package in a Bun/npm
+cache cannot silently become the thing measured:
+
+```sh
+cargo build --release -p blitsen-runtime
+BLITSEN_RUNTIME_PATH="$PWD/target/release/blitsen-runtime" \
+  bun run --cwd packages/blitsen size:phase2 --out phase2-size.json
+npm ci --prefix packages/blitsen/test/fixtures/size-comparison
+bun run --cwd packages/blitsen size:compare --blitsen phase2-size.json \
+  --out desktop-size-comparison.json
+```
 
 The S0 floor already exceeded the old 25–50 MB installed estimate before production services or
 application code, and that estimate, along with the derived 20–40 MB Phase 3 estimate, stays
 withdrawn. Installed and compressed sizes are always reported separately.
 
 What the numbers above do settle is that the phase reversal was worth making: the same bare
-application exports 2.89× smaller, and the 95 MB it drops is Bun's runtime. The Phase 3 profile
-takes another 29 MB off the executable and still renders the Pong replay to the same layout and
-pixel digests at 60 fps, so it is a measurement rather than a hope. A public numeric claim still
-waits on the two outstanding items.
+application exports 2.62× smaller, dropping 93.5 MB when the shipping host replaces Bun. The
+size-first Phase 3 profile remains a measured option rather than the default because its frame-time
+cost has not been accepted against P4. All six target jobs remain report-only rather than turning
+cross-platform linker output into one shared gate; the Linux x64 budget continues to be the tracked
+regression gate.
 
 The key architectural consequence, which belongs in the product spec because it defines what
 the user installs: **Bun is the toolchain; Blitsen's own runtime is what ships.** The exported app

@@ -1,0 +1,7 @@
+{
+  "name": "blitsen-size-electron",
+  "version": "0.0.0",
+  "author": "Blitsen size fixture",
+  "private": true,
+  "main": "main.cjs"
+}
