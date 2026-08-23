@@ -11,6 +11,9 @@
   },
   "homepage": "https://github.com/krazyjakee/blitsen#readme",
   "bugs": "https://github.com/krazyjakee/blitsen/issues",
+  "engines": {
+    "node": ">=20.11.0"
+  },
   "keywords": [
     "desktop",
     "html",
@@ -115,6 +118,7 @@
     "size:phase2": "bun test/run-phase2-size.mjs",
     "size:android": "bun test/run-android-size.mjs",
     "test": "bun test",
+    "test:node": "node test/run-node-package-smoke.mjs",
     "test:determinism": "bun test/run-determinism.mjs",
     "golden:record": "bun test/run-determinism.mjs --update",
     "test:conformance": "cargo test -p blitsen-blitz --test conformance",

@@ -8,9 +8,11 @@ desktop executable.
 
 ## Prerequisites
 
-You need Node.js and a package manager to install and run the CLI. Installing `blitsen` downloads a
-prebuilt runtime for the current desktop platform; it does not compile Rust or run a post-install
-build.
+You need Node.js 20.11.0 or newer and a package manager to install and run the CLI. The minimum is
+where Node added the `import.meta.dirname` API used by Blitsen's runtime and Android toolchain
+resolution. Installing `blitsen` downloads a prebuilt runtime for the current desktop platform; it
+does not compile Rust or run a post-install build. Package managers warn about older Node releases
+from the package's `engines.node` requirement before the CLI can fail at runtime.
 
 Blitsen accepts static web output with an `index.html`. If your project uses TypeScript, JSX, Vue,
 Svelte or bare npm imports, keep using its existing build tool. Blitsen consumes the directory that
