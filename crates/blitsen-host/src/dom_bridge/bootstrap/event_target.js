@@ -2,6 +2,9 @@
     addEventListener(type, callback, options = false) {
       if (!validListener(callback)) return;
       type = String(type);
+      if (this === globalThis
+        && (type === "gamepadconnected" || type === "gamepaddisconnected"))
+        touchGamepads();
       const normalized = listenerOptions(options);
       const map = listenersFor(this);
       const listeners = map.get(type) ?? [];

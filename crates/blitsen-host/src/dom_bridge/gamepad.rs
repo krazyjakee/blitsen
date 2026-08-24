@@ -1,8 +1,9 @@
 //! Process-local bridge state for the standard Gamepad API.
 //!
-//! The platform backend is owned by the window session and polled exactly once
-//! per redraw. This module is only the synchronous view JavaScript reads and
-//! the two ordered queues crossing the already-borrowed session boundary.
+//! The platform backend is owned by the window session and, after JavaScript
+//! first uses the API, polled exactly once per redraw. This module is only the
+//! synchronous view JavaScript reads and the two ordered queues crossing the
+//! already-borrowed session boundary.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -31,11 +32,12 @@ pub(crate) enum ConnectionChange {
 #[derive(Clone, Debug, Default)]
 pub(crate) struct BackendFrame {
     pub(crate) changes: Vec<ConnectionChange>,
+    /// Fresh state only for controllers which produced input this poll.
     pub(crate) connected: Vec<RawGamepad>,
     pub(crate) vibration_completed: Vec<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct GamepadButton {
     pub(crate) pressed: bool,
@@ -63,28 +65,42 @@ pub(crate) struct ConnectionMessage {
     pub(crate) gamepad: GamepadSnapshot,
 }
 
+pub(crate) struct RegistryUpdate {
+    pub(crate) messages: Vec<ConnectionMessage>,
+    pub(crate) snapshots_changed: bool,
+}
+
 #[derive(Default)]
 pub(crate) struct Registry {
     slots: Vec<Option<(String, GamepadSnapshot)>>,
     connected: HashMap<String, usize>,
     preferred: HashMap<String, usize>,
+    #[cfg(test)]
+    snapshot_builds: usize,
 }
 
 impl Registry {
-    pub(crate) fn apply(&mut self, frame: BackendFrame, now_ms: f64) -> Vec<ConnectionMessage> {
+    pub(crate) fn apply(&mut self, frame: BackendFrame, now_ms: f64) -> RegistryUpdate {
         let mut messages = Vec::new();
+        let mut snapshots_changed = false;
         for change in frame.changes {
             match change {
                 ConnectionChange::Connected(raw) => {
                     if let Some(&index) = self.connected.get(&raw.key) {
-                        self.update(index, raw, now_ms);
+                        snapshots_changed |= self.update(index, raw, now_ms);
                         continue;
                     }
                     let index = self.allocate(&raw.key);
-                    let snapshot = snapshot(&raw, index, true, now_ms);
-                    self.slots[index] = Some((raw.key.clone(), snapshot.clone()));
-                    self.connected.insert(raw.key.clone(), index);
-                    self.preferred.insert(raw.key, index);
+                    let key = raw.key.clone();
+                    let snapshot = snapshot(raw, index, true, now_ms);
+                    #[cfg(test)]
+                    {
+                        self.snapshot_builds += 1;
+                    }
+                    self.connected.insert(key.clone(), index);
+                    self.preferred.insert(key.clone(), index);
+                    self.slots[index] = Some((key, snapshot.clone()));
+                    snapshots_changed = true;
                     messages.push(ConnectionMessage {
                         kind: "connected",
                         gamepad: snapshot,
@@ -99,6 +115,7 @@ impl Registry {
                     };
                     snapshot.connected = false;
                     snapshot.timestamp = now_ms;
+                    snapshots_changed = true;
                     messages.push(ConnectionMessage {
                         kind: "disconnected",
                         gamepad: snapshot,
@@ -108,10 +125,13 @@ impl Registry {
         }
         for raw in frame.connected {
             if let Some(&index) = self.connected.get(&raw.key) {
-                self.update(index, raw, now_ms);
+                snapshots_changed |= self.update(index, raw, now_ms);
             }
         }
-        messages
+        RegistryUpdate {
+            messages,
+            snapshots_changed,
+        }
     }
 
     fn allocate(&mut self, key: &str) -> usize {
@@ -127,26 +147,64 @@ impl Registry {
         self.slots.len() - 1
     }
 
-    fn update(&mut self, index: usize, raw: RawGamepad, now_ms: f64) {
-        let next = snapshot(&raw, index, true, now_ms);
+    fn update(&mut self, index: usize, raw: RawGamepad, now_ms: f64) -> bool {
         let Some((key, current)) = self.slots[index].as_mut() else {
-            return;
+            return false;
         };
-        let changed = current.id != next.id
-            || current.mapping != next.mapping
-            || current.axes != next.axes
-            || current.buttons != next.buttons
-            || current.vibration_actuator != next.vibration_actuator;
-        let timestamp = if changed { now_ms } else { current.timestamp };
-        *key = raw.key;
-        *current = GamepadSnapshot { timestamp, ..next };
+        let RawGamepad {
+            key: next_key,
+            id,
+            mapping,
+            mut axes,
+            buttons,
+            vibration_actuator,
+        } = raw;
+        let mut changed = current.id != id
+            || current.mapping != mapping
+            || current.axes.len() != axes.len()
+            || current.buttons.len() != buttons.len()
+            || current.vibration_actuator != vibration_actuator;
+        for value in &mut axes {
+            *value = normalized(*value, -1.0, 1.0);
+        }
+        changed |= current.axes != axes;
+        if current.buttons.len() != buttons.len() {
+            current
+                .buttons
+                .resize(buttons.len(), GamepadButton::default());
+        }
+        for (current, value) in current.buttons.iter_mut().zip(buttons) {
+            let value = normalized(value, 0.0, 1.0);
+            let next = GamepadButton {
+                pressed: value > 0.5,
+                touched: value > 0.0,
+                value,
+            };
+            changed |= *current != next;
+            *current = next;
+        }
+        *key = next_key;
+        current.id = id;
+        current.mapping = mapping;
+        current.axes = axes;
+        current.vibration_actuator = vibration_actuator;
+        if changed {
+            current.timestamp = now_ms;
+        }
+        changed
     }
 
+    #[cfg(test)]
     pub(crate) fn snapshots(&self) -> Vec<Option<GamepadSnapshot>> {
         self.slots
             .iter()
             .map(|slot| slot.as_ref().map(|(_, snapshot)| snapshot.clone()))
             .collect()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn snapshot_builds(&self) -> usize {
+        self.snapshot_builds
     }
 
     pub(crate) fn key_for_index(&self, index: usize) -> Option<(&str, bool)> {
@@ -165,23 +223,23 @@ fn normalized(value: f64, min: f64, max: f64) -> f64 {
     }
 }
 
-fn snapshot(raw: &RawGamepad, index: usize, connected: bool, timestamp: f64) -> GamepadSnapshot {
+fn snapshot(raw: RawGamepad, index: usize, connected: bool, timestamp: f64) -> GamepadSnapshot {
     GamepadSnapshot {
-        id: raw.id.clone(),
+        id: raw.id,
         index,
         connected,
         timestamp,
-        mapping: raw.mapping.clone(),
+        mapping: raw.mapping,
         axes: raw
             .axes
-            .iter()
-            .map(|value| normalized(*value, -1.0, 1.0))
+            .into_iter()
+            .map(|value| normalized(value, -1.0, 1.0))
             .collect(),
         buttons: raw
             .buttons
-            .iter()
+            .into_iter()
             .map(|value| {
-                let value = normalized(*value, 0.0, 1.0);
+                let value = normalized(value, 0.0, 1.0);
                 GamepadButton {
                     pressed: value > 0.5,
                     touched: value > 0.0,
@@ -193,13 +251,32 @@ fn snapshot(raw: &RawGamepad, index: usize, connected: bool, timestamp: f64) -> 
     }
 }
 
-#[derive(Default)]
 struct BridgeState {
-    slots: Vec<Option<GamepadSnapshot>>,
+    slots: String,
     messages: Vec<ConnectionMessage>,
     next_command: u64,
     requests: Vec<VibrationRequest>,
     completions: Vec<VibrationCompletion>,
+    touched: bool,
+    touch_generation: u64,
+    #[cfg(test)]
+    publishes: usize,
+}
+
+impl Default for BridgeState {
+    fn default() -> Self {
+        Self {
+            slots: "[]".to_owned(),
+            messages: Vec::new(),
+            next_command: 0,
+            requests: Vec::new(),
+            completions: Vec::new(),
+            touched: false,
+            touch_generation: 0,
+            #[cfg(test)]
+            publishes: 0,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -226,14 +303,66 @@ thread_local! {
 }
 
 pub(crate) fn reset() {
-    BRIDGE.with_borrow_mut(|state| *state = BridgeState::default());
+    BRIDGE.with_borrow_mut(|state| {
+        let touch_generation = state.touch_generation;
+        *state = BridgeState {
+            touch_generation,
+            ..BridgeState::default()
+        };
+    });
 }
 
-pub(crate) fn publish(slots: Vec<Option<GamepadSnapshot>>, messages: Vec<ConnectionMessage>) {
+pub(crate) fn poll_generation() -> Option<u64> {
+    BRIDGE.with_borrow(|state| state.touched.then_some(state.touch_generation))
+}
+
+fn touch() {
+    BRIDGE.with_borrow_mut(|state| {
+        if !state.touched {
+            state.touched = true;
+            state.touch_generation = state.touch_generation.saturating_add(1);
+        }
+    });
+}
+
+pub(crate) fn publish(registry: &Registry, messages: Vec<ConnectionMessage>) {
+    struct Snapshots<'a>(&'a [Option<(String, GamepadSnapshot)>]);
+
+    impl Serialize for Snapshots<'_> {
+        fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: serde::Serializer,
+        {
+            use serde::ser::SerializeSeq;
+
+            let mut slots = serializer.serialize_seq(Some(self.0.len()))?;
+            for slot in self.0 {
+                slots.serialize_element(&slot.as_ref().map(|(_, snapshot)| snapshot))?;
+            }
+            slots.end()
+        }
+    }
+
+    let slots = serde_json::to_string(&Snapshots(&registry.slots))
+        .expect("normalized gamepad snapshots serialize");
     BRIDGE.with_borrow_mut(|state| {
         state.slots = slots;
         state.messages.extend(messages);
+        #[cfg(test)]
+        {
+            state.publishes += 1;
+        }
     });
+}
+
+#[cfg(test)]
+pub(crate) fn touch_for_test() {
+    touch();
+}
+
+#[cfg(test)]
+pub(crate) fn publish_count() -> usize {
+    BRIDGE.with_borrow(|state| state.publishes)
 }
 
 pub(crate) fn take_requests() -> Vec<VibrationRequest> {
@@ -278,13 +407,17 @@ pub(crate) fn take_completion_results() -> Vec<(u64, Option<String>, Option<Stri
 #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
 pub(super) fn install<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsError> {
     engine.define_global_function(
+        "__blitsenGamepadTouch",
+        Box::new(move |call| {
+            touch();
+            Ok(call.this)
+        }),
+    )?;
+    engine.define_global_function(
         "__blitsenGamepads",
         Box::new(move |call| {
             let mut engine = E::from_value(&call.this);
-            let value = BRIDGE
-                .with_borrow(|state| serde_json::to_value(&state.slots))
-                .map_err(|error| JsError::new(error.to_string()))?;
-            json_value(&mut engine, &value)
+            BRIDGE.with_borrow(|state| engine.string(&state.slots))
         }),
     )?;
     engine.define_global_function(
@@ -398,6 +531,43 @@ pub(super) fn install<E: JsEngine + 'static>(_engine: &mut E) -> Result<(), JsEr
 mod tests {
     use super::*;
 
+    fn execute(source: &str) {
+        let mut engine = blitsen_quickjs::QuickJs::new().expect("an engine");
+        let _services = crate::runtime_services::RuntimeServices::install(&mut engine)
+            .expect("runtime services");
+        crate::harness::execute_animation_harness(
+            engine,
+            "<!doctype html><html><body></body></html>".to_owned(),
+            source.to_owned(),
+            1,
+            200,
+            100,
+        )
+        .expect("the gamepad activation probe runs");
+    }
+
+    #[test]
+    fn javascript_touches_polling_only_on_first_api_or_listener_use() {
+        reset();
+        execute("document.body.textContent = 'no gamepads';");
+        assert_eq!(poll_generation(), None);
+
+        for source in [
+            "navigator.getGamepads(); navigator.getGamepads();",
+            "addEventListener('gamepadconnected', () => {});",
+            "addEventListener('gamepaddisconnected', () => {});",
+            "globalThis[Symbol.for('blitsen.native')].input.onDeviceChange(() => {});",
+        ] {
+            reset();
+            execute(source);
+            assert!(
+                poll_generation().is_some(),
+                "this use must activate backend polling: {source}"
+            );
+        }
+        reset();
+    }
+
     #[test]
     fn javascript_sees_normalized_snapshots_and_ordered_connection_events() {
         reset();
@@ -418,7 +588,7 @@ mod tests {
             },
             12.5,
         );
-        publish(registry.snapshots(), messages);
+        publish(&registry, messages.messages);
 
         const SCRIPT: &str = r#"
           const seen = [];

@@ -20,6 +20,7 @@ pub(crate) struct Controller {
     backend: Box<dyn Backend>,
     registry: Registry,
     active_vibrations: std::collections::HashMap<String, u64>,
+    activation: Option<u64>,
 }
 
 impl Controller {
@@ -28,6 +29,7 @@ impl Controller {
             backend,
             registry: Registry::default(),
             active_vibrations: std::collections::HashMap::new(),
+            activation: None,
         }
     }
 
@@ -35,8 +37,13 @@ impl Controller {
         Self::with_backend(platform_backend())
     }
 
-    /// Polls exactly once for this redraw and publishes one atomic registry view.
+    /// Polls once for this redraw after first API use and publishes changed views.
     pub(crate) fn poll(&mut self, now_ms: f64) {
+        let Some(activation) = gamepad::poll_generation() else {
+            return;
+        };
+        let newly_activated = self.activation != Some(activation);
+        self.activation = Some(activation);
         let frame = self.backend.poll();
         for key in &frame.vibration_completed {
             if let Some(command_id) = self.active_vibrations.remove(key) {
@@ -50,8 +57,10 @@ impl Controller {
                 gamepad::complete(command_id, Ok("preempted"));
             }
         }
-        let messages = self.registry.apply(frame, now_ms);
-        gamepad::publish(self.registry.snapshots(), messages);
+        let update = self.registry.apply(frame, now_ms);
+        if newly_activated || update.snapshots_changed {
+            gamepad::publish(&self.registry, update.messages);
+        }
     }
 
     pub(crate) fn apply_requests(&mut self) -> bool {
@@ -146,6 +155,7 @@ struct GilrsBackend {
     force_feedback_enabled: bool,
     known: std::collections::HashMap<String, gilrs::GamepadId>,
     effects: std::collections::HashMap<String, gilrs::ff::Effect>,
+    enumerated: bool,
 }
 
 #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
@@ -164,6 +174,7 @@ impl GilrsBackend {
             force_feedback_enabled: false,
             known: std::collections::HashMap::new(),
             effects: std::collections::HashMap::new(),
+            enumerated: false,
         })
     }
 
@@ -263,16 +274,20 @@ impl Backend for GilrsBackend {
         use gilrs::EventType;
 
         let mut changes = Vec::new();
+        let mut changed = Vec::new();
         let mut vibration_completed = Vec::new();
         while let Some(event) = self.gilrs.next_event() {
             let key = Self::key(event.id);
             match event.event {
                 EventType::Connected => {
-                    self.known.insert(key.clone(), event.id);
-                    changes.push(ConnectionChange::Connected(Self::snapshot(
-                        event.id,
-                        &self.gilrs.gamepad(event.id),
-                    )));
+                    if self.known.insert(key, event.id).is_none() {
+                        changes.push(ConnectionChange::Connected(Self::snapshot(
+                            event.id,
+                            &self.gilrs.gamepad(event.id),
+                        )));
+                    } else if !changed.contains(&event.id) {
+                        changed.push(event.id);
+                    }
                 }
                 EventType::Disconnected => {
                     self.known.remove(&key);
@@ -285,23 +300,34 @@ impl Backend for GilrsBackend {
                     self.effects.remove(&key);
                     vibration_completed.push(key);
                 }
-                _ => {}
+                _ => {
+                    if self.known.values().any(|id| *id == event.id) && !changed.contains(&event.id)
+                    {
+                        changed.push(event.id);
+                    }
+                }
             }
         }
         // Some backends enumerate already-connected devices without queuing an
         // initial event. Add those in backend-id order so startup is stable.
-        let mut connected = self.gilrs.gamepads().collect::<Vec<_>>();
-        connected.sort_by_key(|(id, _)| usize::from(*id));
-        for (id, gamepad) in &connected {
-            let key = Self::key(*id);
-            if let std::collections::hash_map::Entry::Vacant(entry) = self.known.entry(key) {
-                entry.insert(*id);
-                changes.push(ConnectionChange::Connected(Self::snapshot(*id, gamepad)));
+        if !self.enumerated {
+            let mut connected = self.gilrs.gamepads().collect::<Vec<_>>();
+            connected.sort_by_key(|(id, _)| usize::from(*id));
+            for (id, gamepad) in connected {
+                let key = Self::key(id);
+                if let std::collections::hash_map::Entry::Vacant(entry) = self.known.entry(key) {
+                    entry.insert(id);
+                    changes.push(ConnectionChange::Connected(Self::snapshot(id, &gamepad)));
+                }
             }
+            self.enumerated = true;
         }
-        let connected = connected
+        let connected = changed
             .into_iter()
-            .map(|(id, gamepad)| Self::snapshot(id, &gamepad))
+            .filter_map(|id| {
+                let gamepad = self.gilrs.gamepad(id);
+                gamepad.is_connected().then(|| Self::snapshot(id, &gamepad))
+            })
             .collect();
         self.gilrs.inc();
         BackendFrame {
@@ -425,7 +451,7 @@ mod tests {
     }
 
     #[test]
-    fn polling_is_injected_and_does_no_work_until_a_frame_asks() {
+    fn polling_and_publication_are_gated_by_first_api_use() {
         gamepad::reset();
         let polls = Rc::new(RefCell::new(0));
         let mut controller = Controller::with_backend(Box::new(FakeBackend {
@@ -441,7 +467,24 @@ mod tests {
         );
         assert_eq!(*polls.borrow(), 0, "non-frame work never polls the backend");
         controller.poll(1.0);
+        assert_eq!(
+            *polls.borrow(),
+            0,
+            "an untouched Gamepad API pays no redraw-time backend work"
+        );
+        assert_eq!(gamepad::publish_count(), 0);
+
+        gamepad::touch_for_test();
+        controller.poll(2.0);
         assert_eq!(*polls.borrow(), 1, "one frame is exactly one backend poll");
+        assert_eq!(gamepad::publish_count(), 1, "activation publishes once");
+        controller.poll(3.0);
+        assert_eq!(*polls.borrow(), 2, "an active API keeps backend cadence");
+        assert_eq!(
+            gamepad::publish_count(),
+            1,
+            "an unchanged frame neither snapshots nor republishes"
+        );
     }
 
     #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
@@ -476,11 +519,16 @@ mod tests {
             10.0,
         );
         assert_eq!(
-            first.iter().map(|event| event.kind).collect::<Vec<_>>(),
+            first
+                .messages
+                .iter()
+                .map(|event| event.kind)
+                .collect::<Vec<_>>(),
             ["connected", "connected"]
         );
         assert_eq!(
             first
+                .messages
                 .iter()
                 .map(|event| event.gamepad.index)
                 .collect::<Vec<_>>(),
@@ -500,9 +548,9 @@ mod tests {
             },
             20.0,
         );
-        assert_eq!(disconnected[0].kind, "disconnected");
-        assert_eq!(disconnected[0].gamepad.index, 0);
-        assert!(!disconnected[0].gamepad.connected);
+        assert_eq!(disconnected.messages[0].kind, "disconnected");
+        assert_eq!(disconnected.messages[0].gamepad.index, 0);
+        assert!(!disconnected.messages[0].gamepad.connected);
         assert!(registry.snapshots()[0].is_none());
 
         let reconnected = registry.apply(
@@ -514,7 +562,7 @@ mod tests {
             30.0,
         );
         assert_eq!(
-            reconnected[0].gamepad.index, 0,
+            reconnected.messages[0].gamepad.index, 0,
             "a free preferred slot is reused"
         );
         assert_eq!(
@@ -539,7 +587,10 @@ mod tests {
             },
             50.0,
         );
-        assert_eq!(replacement[0].gamepad.index, 0, "the lowest hole is reused");
+        assert_eq!(
+            replacement.messages[0].gamepad.index, 0,
+            "the lowest hole is reused"
+        );
         let displaced = registry.apply(
             BackendFrame {
                 changes: vec![ConnectionChange::Connected(raw("a", 0.5, true))],
@@ -553,14 +604,53 @@ mod tests {
             60.0,
         );
         assert_eq!(
-            displaced[0].gamepad.index, 2,
+            displaced.messages[0].gamepad.index, 2,
             "a reconnect never evicts the device occupying its preferred slot"
         );
     }
 
     #[test]
+    fn registry_builds_once_on_connect_and_diffs_input_in_place() {
+        let mut registry = Registry::default();
+        let connected = registry.apply(
+            BackendFrame {
+                changes: vec![ConnectionChange::Connected(raw("a", 0.25, true))],
+                ..BackendFrame::default()
+            },
+            10.0,
+        );
+        assert!(connected.snapshots_changed);
+        assert_eq!(registry.snapshot_builds(), 1);
+
+        let unchanged = registry.apply(
+            BackendFrame {
+                connected: vec![raw("a", 0.25, true)],
+                ..BackendFrame::default()
+            },
+            20.0,
+        );
+        assert!(!unchanged.snapshots_changed);
+        assert_eq!(registry.snapshot_builds(), 1);
+        assert_eq!(registry.snapshots()[0].as_ref().unwrap().timestamp, 10.0);
+
+        let changed = registry.apply(
+            BackendFrame {
+                connected: vec![raw("a", 0.75, true)],
+                ..BackendFrame::default()
+            },
+            30.0,
+        );
+        assert!(changed.snapshots_changed);
+        assert_eq!(registry.snapshot_builds(), 1);
+        let snapshot = registry.snapshots()[0].clone().unwrap();
+        assert_eq!(snapshot.axes[0], 0.75);
+        assert_eq!(snapshot.timestamp, 30.0);
+    }
+
+    #[test]
     fn vibration_targets_the_registry_identity_and_refuses_unsupported_slots() {
         gamepad::reset();
+        gamepad::touch_for_test();
         let polls = Rc::new(RefCell::new(0));
         let vibrations = Rc::new(RefCell::new(Vec::new()));
         let mut controller = Controller::with_backend(Box::new(FakeBackend {
@@ -607,6 +697,7 @@ mod tests {
     #[test]
     fn vibration_settles_on_backend_completion_and_preemption_not_a_clock() {
         gamepad::reset();
+        gamepad::touch_for_test();
         let mut controller = Controller::with_backend(Box::new(FakeBackend {
             polls: Rc::new(RefCell::new(0)),
             frames: VecDeque::from([

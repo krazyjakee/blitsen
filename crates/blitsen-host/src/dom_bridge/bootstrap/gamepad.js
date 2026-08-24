@@ -1,5 +1,11 @@
   const gamepadInstalled = typeof globalThis.__blitsenGamepads === "function";
   const gamepadToken = Symbol("Blitsen gamepad snapshot");
+  let gamepadTouched = false;
+  const touchGamepads = () => {
+    if (!gamepadInstalled || gamepadTouched) return;
+    __blitsenGamepadTouch();
+    gamepadTouched = true;
+  };
 
   class GamepadButton {
     constructor(token, raw) {
@@ -18,6 +24,7 @@
   const gamepadPending = gamepadInstalled ? __blitsenGamepadPending : () => false;
   const gamepadWorkPending = () => gamepadCommands.size > 0 || gamepadPending();
   const startGamepadVibration = (index, strong, weak, duration, startDelay = 0) => {
+    touchGamepads();
     const id = __blitsenGamepadVibrate(
       String(index), String(strong), String(weak), String(duration), String(startDelay));
     return new Promise((resolve, reject) => gamepadCommands.set(String(id), { resolve, reject }));
@@ -75,11 +82,13 @@
   const gamepadFromRaw = raw => raw === null ? null : new Gamepad(gamepadToken, raw);
   const gamepadSnapshots = () => {
     if (!gamepadInstalled) return Object.freeze([]);
+    touchGamepads();
     return Object.freeze(JSON.parse(__blitsenGamepads()).map(gamepadFromRaw));
   };
   const gamepadListener = listener => {
     if (typeof listener !== "function")
       throw new TypeError("gamepad device-change listener must be a function");
+    touchGamepads();
     gamepadDeviceListeners.add(listener);
     return () => { gamepadDeviceListeners.delete(listener); };
   };
