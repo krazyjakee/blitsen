@@ -139,10 +139,12 @@ describe("release reproducibility", () => {
     expect(stdout).toContain("--cfg\ninherited\n");
     expect(stdout).toContain("--remap-path-prefix=D:/a/blitsen/blitsen=/src/blitsen\n");
     expect(stdout).toContain("--remap-path-prefix=D:\\a\\blitsen\\blitsen=/src/blitsen\n");
+    expect(stdout).toContain("--remap-path-prefix=\\\\?\\D:\\a\\blitsen\\blitsen=/src/blitsen\n");
     expect(stdout).toContain("-C\ntarget-feature=+crt-static\n-C\nlink-arg=/Brepro"
       + "\n-C\nlink-arg=/PDBALTPATH:%_PDB%");
-    expect(stdout).toContain("CFLAGS=/pathmap:D:/a/blitsen/blitsen=/src/blitsen ");
-    expect(stdout).toContain("/pathmap:D:\\a\\blitsen\\blitsen=/src/blitsen");
+    expect(stdout).toContain("CFLAGS='/pathmap:D:/a/blitsen/blitsen=/src/blitsen' ");
+    expect(stdout).toContain("'/pathmap:D:\\a\\blitsen\\blitsen=/src/blitsen'");
+    expect(stdout).toContain("'/pathmap:\\\\?\\D:\\a\\blitsen\\blitsen=/src/blitsen'");
   });
 
   test("gates one pinned native runner per executable format before signing", async () => {

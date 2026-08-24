@@ -49,11 +49,16 @@ append_rustflag "--remap-path-prefix=${source_root}=/src/blitsen"
 # native compiler the equivalent mapping as well.
 case "$target" in
   win32-*)
-    # rustc and cl.exe can receive the same absolute path with either separator.
-    # Prefix remapping is deliberately textual, so cover both representations.
+    # rustc and cl.exe can receive the same absolute path with either separator
+    # or in the extended-length spelling returned by Windows canonicalization.
+    # Prefix remapping is deliberately textual, so cover all representations.
     source_root_backslash=${source_root//\//\\}
+    source_root_extended="\\\\?\\${source_root_backslash}"
     append_rustflag "--remap-path-prefix=${source_root_backslash}=/src/blitsen"
-    native_map="/pathmap:${source_root}=/src/blitsen /pathmap:${source_root_backslash}=/src/blitsen"
+    append_rustflag "--remap-path-prefix=${source_root_extended}=/src/blitsen"
+    # `cc` shell-splits CFLAGS before invoking cl.exe. Quote each argument so
+    # that split removes the quotes but does not consume path backslashes.
+    native_map="'/pathmap:${source_root}=/src/blitsen' '/pathmap:${source_root_backslash}=/src/blitsen' '/pathmap:${source_root_extended}=/src/blitsen'"
     ;;
   *) native_map="-ffile-prefix-map=${source_root}=/src/blitsen" ;;
 esac
