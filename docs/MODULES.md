@@ -39,8 +39,10 @@ So: **option 2**.
 > runtime may load its already-built module graph.
 
 The resolver reads a graph the user's bundler produced. It does not parse the source, rewrite
-specifiers, concatenate modules, or transform syntax. `crates/blitsen-host/src/modules.rs` is
-about two hundred lines of path arithmetic and a map; nothing in it looks at JavaScript.
+specifiers, concatenate modules, or transform syntax. `crates/blitsen-host/src/modules.rs` is about
+550 non-test lines of path arithmetic, source loading and a map. It reads `sourceMappingURL`
+directives from JavaScript comments so stack traces can be remapped, but does not transform the
+source.
 
 ## The application origin
 
@@ -70,11 +72,17 @@ is about, and it would be lost by using `file://` for one and something else for
 | `/main.js` | Resolved against the application root |
 | `blitsen://app/other.js` | Taken as it is |
 | `react` | Refused, naming it as a bare specifier only a bundler can resolve |
-| `https://esm.sh/react`, `//esm.sh/react` | Refused: Blitsen does not fetch modules over the network |
+| `blitsen/dialog` | No runtime builtin exists; the application's bundler must resolve the npm subpath before Blitsen sees it |
+| `node:fs`, `bun:sqlite` | Refused with a builtin-specific message; the shipped runtime has no Node or Bun builtins |
+| `https://esm.sh/react`, `//esm.sh/react` | Refused: remote module specifiers are unsupported |
 | Anything resolving above the root | Refused |
 
-`?query` and `#fragment` are part of the URL and dropped when the path is resolved, the way a
-server drops them before opening a file — a bundler emits both (`?worker`, `?url`).
+`#fragment` is dropped during resolution. A `?query` is retained on the module URL, so `./x.js`
+and `./x.js?t=1` are distinct module records; file-backed sources drop it only when opening the
+file. Bundlers emit both forms (`?worker`, `?url`).
+
+Remote *specifiers* are refused on every host. In proxy mode (`blitsen http://localhost:5173`) the
+bytes behind `blitsen://app/` may still be fetched from that development server over HTTP.
 
 ## Where the graph is linked
 
@@ -106,5 +114,7 @@ instead of meeting it, and the JSC host has since been deleted.
 | Resolution policy | `crates/blitsen-host/src/modules.rs` | `modules::tests` |
 | Registry, source reading, reload eviction | same | `modules::tests` |
 | Host entry points the loader calls | `ModuleRegistry::install` | `modules::tests` |
-| Files from a directory or an appended bundle | `crates/blitsen-host/src/app/resources.rs` | `app::resources::tests` |
+| Files from a directory or an appended bundle | `DirectorySource` and `AppBundle` in `crates/blitsen-host/src/modules.rs` | `modules::tests` |
+| Files proxied from a development server | `DevServer` in `crates/blitsen-host/src/dev_server.rs` | `dev_server::tests` |
+| Files packaged as Android assets | `ApkAssets` in `crates/blitsen-host/src/apk.rs` | `apk::tests` |
 | Engine binding and capability check | `crates/blitsen-quickjs/src/modules.rs` | `--engine-report` |

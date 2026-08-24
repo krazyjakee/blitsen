@@ -90,7 +90,6 @@ The same documentation, formatted, is at [blitsen.dev](https://blitsen.dev/).
 | Check operating-system requirements and known limits | [Platform support](docs/PLATFORM-SUPPORT.md) |
 | Look up every command and option | [CLI reference](docs/CLI.md) |
 | Diagnose a failure | [Troubleshooting](docs/TROUBLESHOOTING.md) |
-| See working applications | [Examples](examples/README.md) |
 
 See [Web API support](docs/WEB-APIS.md) for the runtime boundary and the exact generated matrix.
 

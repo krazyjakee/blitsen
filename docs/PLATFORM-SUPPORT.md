@@ -34,7 +34,8 @@ Physical multi-monitor placement and grab behavior still require acceptance on W
 with fullscreen acceptance separately required on X11 and Wayland.
 
 Gamepad snapshots and connect/disconnect events are available on Linux, macOS and Windows through
-the target-gated `gilrs` backend. Controllers are sampled once per application redraw, so an idle
+the target-gated `gilrs` backend. No sampling happens at all until the application first touches
+the Gamepad API; thereafter controllers are sampled once per application redraw, so an idle
 window performs no application-side controller polling and learns about a hot-plug on its next
 frame. The backend still owns its platform event worker; the additional 50 ms force-feedback loop
 is initialized lazily, on the first nonzero effect rather than for controller-free applications.
@@ -57,8 +58,8 @@ still decide how a submitted notification is presented.
 ## Linux requirements
 
 Published Linux runtimes are built on Ubuntu 22.04 and require glibc 2.35 or newer. The machine
-must also provide ALSA, OpenSSL 3, fontconfig, libudev and the display libraries needed by its active X11 or
-Wayland session.
+must also provide ALSA, OpenSSL 3, fontconfig and the display libraries needed by its active X11
+or Wayland session.
 
 Minimal containers and headless Linux systems commonly omit these libraries. Blitsen is a windowed
 runtime, so a successful install does not imply that such an environment can open an application.
@@ -66,7 +67,7 @@ runtime, so a successful install does not imply that such an environment can ope
 Linux is currently the only desktop platform with `blitsen/dialog`. `setAlwaysOnTop` has no effect
 on Wayland because that protocol does not expose the operation. Cursor grab modes also vary; the
 runtime throws when a requested mode is unavailable. Pointer lock is currently exposed on Windows
-and macOS only: pinned winit 0.31 reports `Locked` cursor grab as unsupported on X11, and Blitsen
+and macOS only: pinned winit 0.31.0-beta.2 reports `Locked` cursor grab as unsupported on X11, and Blitsen
 does not claim a Linux API that can fail on a common backend.
 
 On Linux a hidraw node is owned by udev, so a packaged application reaches an intended device only
@@ -200,8 +201,10 @@ Android backend, and an always-empty registry would make feature detection lie. 
 `blitsen.default` channel; API 33+ requests `POST_NOTIFICATIONS`, while API 26–32 reports permission
 as granted. Submission, same-session replacement, close, body taps, action buttons and swipe
 dismissal are implemented through the packaged activation bridge. Its manifest, dex build and
-persisted handoff are covered deterministically; system-shade interaction and stopped-process
-delivery have not yet run on an emulator or device. The standard Web `Notification` global appears
+persisted handoff are covered deterministically, and permission state, channel, delivery, same-ID
+replacement, timeout expiry and `close` are verified on booted API 32 and 33 emulators in CI.
+Body/action tap activation, swipe dismissal and stopped-process delivery have not yet run on an
+emulator or device, because nothing taps or swipes in an unattended run. The standard Web `Notification` global appears
 only where that lifecycle contract is present. Android does not support Blitsen's app, clipboard,
 dialog, window, tray or menu native modules in this release.
 

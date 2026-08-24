@@ -263,19 +263,14 @@ await clipboard.writeText?.("hello");
 windowApi.setSize?.(800, 600);
 ```
 
-Plus generic system access through the interfaces that already exist:
+The shipped runtime deliberately has no Node or Bun builtins. `node:*` and `bun:*` imports fail at
+module resolution; generic filesystem access, process spawning and raw sockets are outside this
+profile. System access is the focused `blitsen/*` surface above plus `fetch`, WebSocket and
+`EventSource`.
 
-```js
-import fs from "node:fs";
-import { spawn } from "node:child_process";
-```
-
-The two never overlap. `native:` covers only what has no Node spelling at all — windows, trays,
-dialogs, clipboard. Files, processes, sockets and process metadata keep their Node names, so
-existing packages work unmodified.
-
-Plus the unlimited escape hatch — a Node-API addon, loaded from a module script. `import` is not
-the spelling: Bun refuses it for Node-API modules, and it took building the thing to find that out.
+A Node-API addon remains an escape hatch at an explicit cost. Declaring one with `--addon` selects
+the legacy Phase 1 Bun host because the default runtime has neither Node-API nor `node:module`.
+Inside that larger export the addon is loaded from a module script with `createRequire`:
 
 ```js
 import { createRequire } from "node:module";
@@ -287,11 +282,10 @@ const physics = createRequire(import.meta.url)("./box2d.node");
 ```
 Browser                    Blitsen
 HTML + CSS + JS            HTML + CSS + JS
-      │                          ├── filesystem
-      ▼                          ├── processes
- sandbox boundary                ├── sockets
-      ✗                          ├── native libraries
-                                 └── Rust/C/C++ addons
+      │                          ├── app/window/dialog/clipboard
+      ▼                          ├── tray/menu/notify/input/HID/OS
+ sandbox boundary                ├── fetch/WebSocket/EventSource
+      ✗                          └── optional Node-API via larger Bun host
 ```
 
 ---
@@ -393,7 +387,7 @@ Stated precisely, so the claim is not read as more than it is:
   `pressure`, multi-touch and pointer capture — is a desktop feature that Android happens to need
   too. Scroll and momentum from a touch drag are deliberately not part of it; see
   [COMPATIBILITY.md](COMPATIBILITY.md#pointer-events).
-- **Settled.** The `native:` matrix (#147) — each module has a decision below — and application
+- **Settled.** The `blitsen/*` matrix (#147) — each module has a decision below — and application
   files out of an APK (#144), read in place rather than extracted.
 - **Not started.** The entry point (#142), lifecycle (#146) and packaging (#148) are Blitsen's own
   desktop assumptions, not engine limits.
@@ -401,7 +395,7 @@ Stated precisely, so the claim is not read as more than it is:
 Android does not join P5b. It is a cross-compiled APK/AAB with per-ABI builds and keystore
 signing, not a seventh npm platform package an install resolves — see P5c.
 
-**The `native:` modules on Android.** §7's rule — absent rather than approximated — decides most
+**The `blitsen/*` modules on Android.** §7's rule — absent rather than approximated — decides most
 of them, and "absent" here is a position rather than a gap in the port. What makes it a usable
 position is that an absent module's members are `undefined` rather than throwing, so
 `if (clipboard.writeText)` selects a fallback; and `blitsen doctor --target android-arm64` reports
@@ -409,7 +403,7 @@ every module an application imports that the target does not have, with the reas
 
 | Module | On Android | Why |
 | --- | --- | --- |
-| `os` | **Present, whole** | `sysinfo` reads the same `/proc` there. The facts a platform will not give already arrive as `null` by design, so nothing had to change. |
+| `os` | **Present, minus `batteries`** | `sysinfo` reads the same `/proc` there, but Android's power service is a different API and `os.batteries` is absent. Other facts a platform will not give arrive as `null` by design. |
 | `window` | **Absent** | winit accepts every setter on Android and discards it, then answers the getter as though the request had never been made: `setDecorations(false)`, then `isDecorated()` saying true, on a platform with no decorations. The monitor list is the one worth naming, because it looks like the survivor — winit enumerates no monitors there, so `monitors()` would report a device with no display. Immersive mode and orientation are the real capabilities and are not these under another name (#146). |
 | `clipboard` | **Absent** | `arboard` has no Android backend and does not compile. `ClipboardManager` would not settle it either: Android refuses a read to an unfocused application, and these readers report an empty clipboard as `null`, so the refusal and the empty clipboard would arrive as the same value. A module shaped for that, over JNI. |
 | `app` | **Absent** | The directories are the Activity's `filesDir`/`cacheDir`; the XDG variables Android does not set would resolve to a path nothing can write to. `relaunch` has no executable to spawn inside an APK. Single-instance ownership is the platform's own — a second launch is an `Intent` to the process already running, not a command line to hand over. |
@@ -760,7 +754,7 @@ application code, and that estimate, along with the derived 20–40 MB Phase 3 e
 withdrawn. Installed and compressed sizes are always reported separately.
 
 What the numbers above do settle is that the phase reversal was worth making: the same bare
-application exports 2.62× smaller, dropping 93.5 MB when the shipping host replaces Bun. The
+application exports 3.46× smaller, dropping 93.5 MB when the shipping host replaces Bun. The
 size-first Phase 3 profile remains a measured option rather than the default because its frame-time
 cost has not been accepted against P4. All six target jobs remain report-only rather than turning
 cross-platform linker output into one shared gate; the Linux x64 budget continues to be the tracked
@@ -807,7 +801,7 @@ Recharts. Zero source changes and no flags, so P10 is met. Remote scripts are st
 they are skipped, with the rest of the document running, and reported as a warning rather than
 blocking the export.
 
-See the [M3b evidence](M3B.md) and [published v0 profile](COMPATIBILITY.md) for the deviations
+See the [M3b evidence](M3B.md) and [published v1 profile](COMPATIBILITY.md) for the deviations
 each application renders with.
 
 **M4 — Ships.** `npm i -D blitsen` resolves the correct runtime on all six platform targets,
@@ -831,13 +825,9 @@ dashboard) is built by someone who is not us.
 
 ## 12. Open questions
 
-1. ~~Name~~ — **settled**: Blitsen. Outstanding registration work before anything is published:
-   claim `blitsen` on npm and the `@blitsen` scope (the scope matters most — the platform
-   packages depend on it), plus `blitsen` on crates.io and a domain.
-   *Note the name's proximity to Blitz, the upstream renderer.* That is a fair signal of what
-   the project is built on, but it should never be allowed to imply that Blitsen is an official
-   DioxusLabs project — worth a line in the README, and worth care if the two are ever
-   discussed together upstream.
+1. ~~Name~~ — **settled and registered**: Blitsen. The `blitsen` npm name, `@blitsen` scope and
+   `blitsen.dev` domain are in use, and the README states that this is not an official or endorsed
+   DioxusLabs project. Publishing the facade crate on crates.io remains separate release work.
 2. ~~Licence and engine constraints~~ — **settled, and then settled more cheaply:** Blitsen is
    `MIT OR Apache-2.0` and closed-source applications are supported. The first answer accepted
    JavaScriptCore's LGPL-family terms, which meant a dynamically loaded, user-replaceable engine
@@ -859,14 +849,12 @@ dashboard) is built by someone who is not us.
    to `<outfile>.assets/` next to the executable for applications whose assets must stay patchable
    after shipping, or whose media is large enough that embedding is wasteful. Assets are
    content-hashed either way and the export is byte-for-byte reproducible (TECH.md §10).
-7. ~~Does the dev-server mode ship in v0?~~ — **settled by S7: no; target v1.** Bun can fetch
-   and execute a pre-scanned Vite module graph and service its WebSocket transport, but its
-   plugin loader does not preserve HTTP module identity or source-map URLs, async resolution is
-   unavailable, and the browser-facing HMR client still needs the v1 web-platform surface.
-   Directory watching plus full context reload remains the v0 development path.
-8. **Native API imports** — `native:dialog` (bare specifier, needs runtime resolver support in
-   every bundler) or `blitsen/dialog` (a real npm path that any bundler already resolves)? The
-   latter is likely more compatible; the former reads better. Possibly both.
+7. ~~Does the dev-server mode ship?~~ — **settled by S7 and implemented.** Proxy mode reads the
+   graph from the user's HTTP server while preserving `blitsen://app/` module identity, queries,
+   source maps and the application's WebSocket HMR connection. Directory watching remains the
+   zero-server path.
+8. ~~Native API imports~~ — **settled:** `blitsen/dialog` and the other real npm subpaths are the
+   supported spelling. A bare `native:*` specifier is not part of the runtime resolver.
 
 ---
 

@@ -242,7 +242,8 @@ export const CATALOGUE = {
     "Path2D.arc", "Path2D.arcTo", "Path2D.ellipse", "Path2D.rect", "Path2D.roundRect",
     "Path2D.closePath", "Path2D.addPath",
     "CanvasGradient.addColorStop", "CanvasPattern.setTransform"],
-  WEB_GPU: ["WebGLRenderingContext", "WebGL2RenderingContext", "GPUCanvasContext"],
+  WEB_GPU: ["WebGLRenderingContext", "WebGL2RenderingContext", "GPUCanvasContext",
+    "RTCPeerConnection"],
   // Audio, at the size the issue asked for: a context, gain, stereo panning and
   // buffer sources, plus the element built on them. The rest of Web Audio —
   // filters, oscillators, analysers, convolution, worklets, the HRTF panner —
@@ -386,6 +387,11 @@ export const NATIVE_CONDITIONAL = {
     platforms: ["android"],
     reason: "The controller backend has no Android implementation, so there are no controller "
       + "connection changes to report.",
+  },
+  "os.batteries": {
+    platforms: ["android"],
+    reason: "Android exposes battery state through a different power service, so the desktop "
+      + "sysinfo-backed member is absent rather than returning an invented value.",
   },
 };
 
@@ -559,8 +565,8 @@ export const DIAGNOSTICS = {
   WEB_CANVAS: ["warning", "This canvas API is not implemented; the 2D context is.",
     "Draw through getContext(\"2d\"), and feature-detect anything that needs a second "
     + "rendering target or a blur.", /\.getContext\s*\(\s*["'](?:webgl2?|webgpu|bitmaprenderer)/],
-  WEB_GPU: ["warning", "WebGL and WebGPU are not implemented.",
-    "Remove the GPU-web API path or replace it with a native addon/viewport."],
+  WEB_GPU: ["warning", "WebGL, WebGPU and WebRTC are not implemented.",
+    "Remove that browser API path or replace it with a native addon/viewport."],
   WEB_MEDIA: ["warning", "This media API is not implemented; Web Audio and <audio> are.",
     "Decode with AudioContext.decodeAudioData and play through a buffer source, or "
     + "feature-detect the media path."],

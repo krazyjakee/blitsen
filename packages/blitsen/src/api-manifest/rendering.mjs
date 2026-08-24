@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { absentNativeModules, NATIVE_PLATFORMS } from "../native-modules.mjs";
 
 export const COMPATIBILITY_DOC = join(import.meta.dirname, "../../../../docs/COMPATIBILITY.md");
 
@@ -119,8 +120,13 @@ export function renderNativeModules(manifest) {
   const conditional = manifest.native.filter(entry => entry.condition)
     .map(entry => `| \`${entry.api}\` | ${entry.condition.platforms.join(", ")} `
       + `| ${entry.condition.reason} |`);
+  const unavailableModules = NATIVE_PLATFORMS.flatMap(platform =>
+    absentNativeModules(`${platform}-x64`).map(entry =>
+      `| \`blitsen/${entry.module}\` | ${platform} | ${entry.reason} |`));
   return ["| Module | Implemented | Absent |", "| --- | --- | --- |", ...surface, "",
     "| Absent member | Why |", "| --- | --- |", ...absent, "",
+    "| Native module | Platform where absent | Why |", "| --- | --- | --- |",
+    ...unavailableModules, "",
     "| Conditional native member | Platform where absent | Why |", "| --- | --- | --- |",
     ...conditional].join("\n");
 }

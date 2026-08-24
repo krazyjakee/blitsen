@@ -41,8 +41,8 @@ npx blitsen doctor dist --json
 ```
 
 `doctor` exits non-zero for profile errors. A build repeats every diagnostic and **fails on any
-error** — an export that cannot run is not worth producing — while warnings let feature-detected
-fallback paths through. The scan is static and conservative: it finds references, not only
+error unless `--accept-errors` is passed**, explicitly accepting the missing behavior, while
+warnings let feature-detected fallback paths through. The scan is static and conservative: it finds references, not only
 executed paths, which is why [severity](#diagnostic-severity) is narrow. Every rule it applies to
 JavaScript comes from the [generated manifest](#capability-tiers) below.
 
@@ -334,7 +334,8 @@ three constants, `close()`, and comment lines that keep an idle connection warm.
 
 **Reconnection is the transport's, not the application's.** A stream whose body ends — a proxy
 timing out, a server restarting — fires `error` with `readyState` back at `CONNECTING`, waits the
-interval a `retry:` field asked for (three seconds if none did), and reconnects carrying
+interval a `retry:` field asked for, clamped to at least one second (three seconds if none did),
+and reconnects carrying
 `Last-Event-ID`, so a feed resumes where it stopped rather than from the top. A response that is
 not a `200 text/event-stream` is a different thing: that fires `error`, settles at `CLOSED` and is
 not retried, because retrying a 404 forever is not a reconnection.
@@ -357,13 +358,14 @@ exported executable. `import` works inside a worker and resolves against the wor
 script the application does not ship is refused at the constructor, naming it, rather than
 becoming an `error` event a turn later.
 
-**What a worker's global scope has:** `self`, `name`, `location`, `postMessage`, `close`,
-`onmessage`/`onmessageerror`, `addEventListener`, the timers, `queueMicrotask`, `console`,
+**What a worker's global scope has:** `self`, `name`, `location`, `navigator`, `postMessage`, `close`,
+`onmessage`/`onmessageerror`, `addEventListener`, `Event`, `EventTarget`, `MessageEvent`,
+`ErrorEvent`, `reportError`, the timers, `queueMicrotask`, `console`, `Intl`,
 `performance`, `fetch` and the request/response classes, `MessageChannel`, `MessagePort`,
 `structuredClone`, `DOMException`, and `Worker` itself — a worker may start a worker.
 
 **What it does not have:** any DOM at all — no `document`, no `window`, no `localStorage`, no
-`requestAnimationFrame` — and no `navigator`, no `WebSocket`, and no `importScripts`. A classic
+`requestAnimationFrame` — and no `WebSocket` and no `importScripts`. A classic
 worker (`type: "classic"`, the default) therefore has no way to load a second file; use a module
 worker, which is what every bundler emits anyway.
 
@@ -868,8 +870,9 @@ Two divergences worth knowing:
 
 What a control *looks* like is a separate question from what it does, and it is the weaker half.
 Blitz ships no equivalent of a browser's `forms.css`, so Blitsen appends the part of that baseline
-the engine can honour — control cursors, unselectable labels, a visibly disabled control, a
-`<fieldset>` that is a bordered block, and an `<a>` with no `href` that is not painted as a link.
+the engine can honour — control cursors, unselectable labels, a visibly disabled control and an
+`<a>` with no `href` that is not painted as a link. Blitz's own current sheet supplies the bordered
+block and legend rules for `<fieldset>`.
 The controls with no widget behind them are not covered and cannot be by a stylesheet: `<select>`,
 `<meter>`, `<progress>` and `input[type=range|color|number]` paint nothing usable, `placeholder`
 text is not drawn, and only `<input>` and `<textarea>` can show a focus ring. See G4 in
@@ -1166,17 +1169,18 @@ An `<svg>` subtree paints, and so does an SVG named by `<img src>` or by a CSS `
 the frame is painted into, so a shape is a filled or stroked path rather than a rasterised image:
 it stays sharp at any window scale, and a resize costs nothing but a repaint.
 
-What that gets you, precisely:
+What the focused renderer tests establish:
 
-| Paints | Does not |
+| Measured to paint | Measured not to paint |
 | --- | --- |
-| `path`, `rect`, `circle`, `ellipse`, `line`, `polygon`, `polyline`, `g`, `use`, `symbol`, `defs` | `foreignObject` |
-| `viewBox`, `preserveAspectRatio`, `transform` on any element | SMIL animation — `animate`, `animateTransform`, `set` |
-| `fill`, `stroke`, `stroke-width`, `stroke-linecap`/`linejoin`/`dasharray`, `fill-rule`, `paint-order` | `filter` and `mask` |
-| `currentColor`, resolved from the CSS `color` the element inherits | `<pattern>` fills |
-| `linearGradient` and `radialGradient`, including `stop-opacity` | A `clipPath` holding more than one path |
-| `opacity`, `mix-blend-mode` and a single-path `clipPath` | |
-| `<text>`, outlined through the host's fonts — with the caveat below | |
+| Basic shapes and paths, intrinsic/CSS sizing, `viewBox`, subtree mutation, fills and strokes including `currentColor` | `<pattern>` fills, which additionally mark the frame corner |
+| SVG files used by `<img>` and CSS `background-image` | CSS `filter`, gated separately by the conformance defect case |
+| `<text>`, outlined through the host's fonts — with the caveat below | — |
+
+Blitz/usvg also accepts gradients, dashed strokes, opacity, `use`/`symbol`, clipping and other SVG
+paint features, but those are not yet individual compatibility oracles. `doctor` warns on
+`pattern`, `filter`, `mask`, `foreignObject` and SMIL elements (`animate`, `animateTransform`,
+`animateMotion`, `set`); it does not claim to diagnose every unsupported SVG composition.
 
 The element is sized like the replaced element it is: its `width`/`height` attributes, or author
 CSS, which wins. A `viewBox`-only `<svg>` with no width, height or CSS box has nothing to size
@@ -1331,7 +1335,8 @@ references, not guards, and in real bundles those references are overwhelmingly 
 `try`/`catch` around `document.cookie`. Unmodified third-party builds are the evidence:
 shadcn-admin carried nineteen such findings and renders its entire admin dashboard, 364 elements
 in 16 colours; vue3-realworld carried five and renders. Refusing those builds was the diagnostic
-being confidently wrong, and it pointed users at an override that does not exist.
+being confidently wrong. `--accept-errors` now exists for the two remaining error classes, but
+these guarded API references are warnings and need no override.
 
 Detecting the guard was the alternative, and it was rejected rather than deferred: the guard is
 arbitrary minified JavaScript and may be several frames away from the reference, so a detector
@@ -1357,7 +1362,7 @@ actually draws it rather than where the pitch would prefer.
 `<canvas>` used to be the first row of this table and a build-blocking `HTML_CANVAS` error, on the
 reading that an element the renderer paints nothing inside has no degraded appearance to fall back
 to. It paints now (issue #99), so the error is gone: an application that draws is no longer the
-thing this profile refuses. What is still refused is a GPU context — `getContext("webgl")` answers
+thing this profile refuses. What the runtime still refuses is a GPU context — `getContext("webgl")` answers
 `null`, and `<blitsen-view>` is the supported way to put GPU output on screen.
 
 ## Capability tiers
@@ -1374,9 +1379,10 @@ doctor` reports from the same manifest, and the native harness asserts every abs
 genuinely `undefined` in a real runtime — so the diagnostics, this document and the runtime
 cannot drift apart. Regenerate with `bun run --cwd packages/blitsen api:sync`.
 
-One row of the surface table cannot be read as a build fact, and the **conditional** table below
-names it: an API listed there is implemented and installed everywhere, except on the platforms it
-names, where the host decides once per run whether the process it is in can carry the API at all.
+Some surface rows cannot be read as target-independent build facts. The generated native-module
+table names modules absent from whole platforms, and the **conditional** tables name individual
+APIs or members installed everywhere except on the platforms shown. Some web conditions are also
+decided once per run, where the host determines whether the current process can carry the API.
 Nothing changes for the application — the API is absent when the condition does not hold, so the
 same feature detection selects the same fallback — but two runs of one build can answer
 differently, which is why it is a table rather than a column.
@@ -1416,7 +1422,7 @@ determinism gate instead.
 | WEB_STREAM | — | `ReadableStream`, `WritableStream`, `TransformStream`, `Response.body`, `Response.clone` |
 | WEB_FORM | — | `FormData`, `File`, `FileReader` |
 | WEB_CANVAS | `HTMLCanvasElement`, `CanvasRenderingContext2D`, `ImageData`, `Path2D`, `CanvasGradient`, `CanvasPattern`, `TextMetrics`, `DOMMatrix`, `HTMLCanvasElement.width`, `HTMLCanvasElement.height`, `HTMLCanvasElement.getContext`, `HTMLCanvasElement.toDataURL`, `HTMLCanvasElement.toBlob`, `CanvasRenderingContext2D.canvas`, `CanvasRenderingContext2D.save`, `CanvasRenderingContext2D.restore`, `CanvasRenderingContext2D.reset`, `CanvasRenderingContext2D.scale`, `CanvasRenderingContext2D.rotate`, `CanvasRenderingContext2D.translate`, `CanvasRenderingContext2D.transform`, `CanvasRenderingContext2D.setTransform`, `CanvasRenderingContext2D.resetTransform`, `CanvasRenderingContext2D.getTransform`, `CanvasRenderingContext2D.globalAlpha`, `CanvasRenderingContext2D.globalCompositeOperation`, `CanvasRenderingContext2D.fillStyle`, `CanvasRenderingContext2D.strokeStyle`, `CanvasRenderingContext2D.lineWidth`, `CanvasRenderingContext2D.lineCap`, `CanvasRenderingContext2D.lineJoin`, `CanvasRenderingContext2D.miterLimit`, `CanvasRenderingContext2D.setLineDash`, `CanvasRenderingContext2D.getLineDash`, `CanvasRenderingContext2D.lineDashOffset`, `CanvasRenderingContext2D.font`, `CanvasRenderingContext2D.textAlign`, `CanvasRenderingContext2D.textBaseline`, `CanvasRenderingContext2D.direction`, `CanvasRenderingContext2D.imageSmoothingEnabled`, `CanvasRenderingContext2D.imageSmoothingQuality`, `CanvasRenderingContext2D.beginPath`, `CanvasRenderingContext2D.closePath`, `CanvasRenderingContext2D.moveTo`, `CanvasRenderingContext2D.lineTo`, `CanvasRenderingContext2D.quadraticCurveTo`, `CanvasRenderingContext2D.bezierCurveTo`, `CanvasRenderingContext2D.arc`, `CanvasRenderingContext2D.arcTo`, `CanvasRenderingContext2D.ellipse`, `CanvasRenderingContext2D.rect`, `CanvasRenderingContext2D.roundRect`, `CanvasRenderingContext2D.fill`, `CanvasRenderingContext2D.stroke`, `CanvasRenderingContext2D.clip`, `CanvasRenderingContext2D.isPointInPath`, `CanvasRenderingContext2D.isPointInStroke`, `CanvasRenderingContext2D.fillRect`, `CanvasRenderingContext2D.strokeRect`, `CanvasRenderingContext2D.clearRect`, `CanvasRenderingContext2D.fillText`, `CanvasRenderingContext2D.strokeText`, `CanvasRenderingContext2D.measureText`, `CanvasRenderingContext2D.drawImage`, `CanvasRenderingContext2D.createLinearGradient`, `CanvasRenderingContext2D.createRadialGradient`, `CanvasRenderingContext2D.createConicGradient`, `CanvasRenderingContext2D.createPattern`, `CanvasRenderingContext2D.createImageData`, `CanvasRenderingContext2D.getImageData`, `CanvasRenderingContext2D.putImageData`, `Path2D.moveTo`, `Path2D.lineTo`, `Path2D.bezierCurveTo`, `Path2D.quadraticCurveTo`, `Path2D.arc`, `Path2D.arcTo`, `Path2D.ellipse`, `Path2D.rect`, `Path2D.roundRect`, `Path2D.closePath`, `Path2D.addPath`, `CanvasGradient.addColorStop`, `CanvasPattern.setTransform` | `OffscreenCanvas`, `OffscreenCanvasRenderingContext2D`, `ImageBitmap`, `createImageBitmap`, `HTMLCanvasElement.captureStream`, `HTMLCanvasElement.transferControlToOffscreen`, `CanvasRenderingContext2D.shadowBlur`, `CanvasRenderingContext2D.shadowColor`, `CanvasRenderingContext2D.shadowOffsetX`, `CanvasRenderingContext2D.shadowOffsetY`, `CanvasRenderingContext2D.filter`, `CanvasRenderingContext2D.letterSpacing`, `CanvasRenderingContext2D.wordSpacing`, `CanvasRenderingContext2D.fontKerning`, `CanvasRenderingContext2D.getContextAttributes`, `CanvasRenderingContext2D.drawFocusIfNeeded` |
-| WEB_GPU | — | `WebGLRenderingContext`, `WebGL2RenderingContext`, `GPUCanvasContext` |
+| WEB_GPU | — | `WebGLRenderingContext`, `WebGL2RenderingContext`, `GPUCanvasContext`, `RTCPeerConnection` |
 | WEB_MEDIA | `Audio`, `AudioContext`, `AudioNode`, `AudioParam`, `AudioBuffer`, `AudioBufferSourceNode`, `AudioDestinationNode`, `GainNode`, `StereoPannerNode`, `HTMLAudioElement`, `AudioContext.decodeAudioData`, `AudioContext.createGain`, `AudioContext.createStereoPanner`, `AudioContext.createBufferSource`, `AudioContext.destination`, `AudioContext.currentTime`, `AudioContext.sampleRate`, `AudioContext.resume`, `AudioContext.suspend`, `AudioContext.close` | `webkitAudioContext`, `HTMLMediaElement` |
 | WEB_DIALOG | — | `alert`, `confirm`, `prompt`, `print` |
 | WEB_NAVIGATION | `stop` | `open`, `close`, `navigation`, `document.write`, `document.writeln`, `document.open`, `document.close`, `location.assign`, `location.replace`, `location.reload`, `location.ancestorOrigins` |
@@ -1454,7 +1460,7 @@ determinism gate instead.
 | `WEB_STREAM` | warning | Streaming bodies are not implemented; a response is buffered whole. |
 | `WEB_FORM` | warning | Multipart form bodies and file objects are not implemented. |
 | `WEB_CANVAS` | warning | This canvas API is not implemented; the 2D context is. |
-| `WEB_GPU` | warning | WebGL and WebGPU are not implemented. |
+| `WEB_GPU` | warning | WebGL, WebGPU and WebRTC are not implemented. |
 | `WEB_MEDIA` | warning | This media API is not implemented; Web Audio and <audio> are. |
 | `WEB_DIALOG` | warning | Modal browser dialogs are not implemented. |
 | `WEB_NAVIGATION` | warning | Document navigation is deliberately absent; there is no page to leave. |
@@ -1482,20 +1488,19 @@ this boundary exists.
 
 ## Native modules
 
-The profile above is what a web application may already assume. The `native:` modules are the
-other direction: capability the web has no spelling for, imported under a name that makes the
-non-portability obvious at the import site.
+The profile above is what a web application may already assume. The `blitsen/*` modules are the
+other direction: focused capability the web has no spelling for, imported under package subpaths
+that make the non-portability obvious at the import site.
 
 ```js
 import app from "blitsen/app";
 import clipboard from "blitsen/clipboard";
+import windowApi from "blitsen/window";
 ```
 
-**`native:` is additive, never a superset** (TECH.md §9). Under the Phase 1 host, anything Node
-already names keeps its Node name — the command line is `process.argv`, the executable is `process.execPath`, stopping is
-`process.exit`, CPU and platform facts are `node:os`, and files are `node:fs`. So there is no
-`app.argv` and no `app.quit`: a `native:` member exists only where neither Node nor the web has a
-word for the thing.
+The shipped runtime has no Node or Bun builtins. These modules are not a replacement Node surface:
+there is no `app.argv`, `app.quit`, generic filesystem, process or raw-socket module. They expose
+only the capabilities in the tables below.
 
 **Absence is the API.** Outside the runtime — a browser tab, a plain Node script — every access on
 these modules throws, because importing them there is a mistake. Inside it, a capability this
@@ -1504,7 +1509,7 @@ as it does for the web surface:
 
 ```js
 if (app.requestSingleInstanceLock && !app.requestSingleInstanceLock("My App", relaunchedWith)) {
-  process.exit(0);
+  windowApi.close?.();
 }
 ```
 
@@ -1526,17 +1531,17 @@ What replaces it:
 
 | Phase 1 | Phase 2 |
 | --- | --- |
-| `process.argv` | `app.secondInstance` invocations, or the platform's own launch arguments |
+| `process.argv` | the invocation passed to `requestSingleInstanceLock`'s second-instance callback, or the platform's own launch arguments |
 | `process.exit` | closing the window |
 | `node:os` facts | `blitsen/os` |
-| `node:fs` under the app directory | `blitsen/app` directories, and the application's own bundled files |
+| `node:fs` under the app directory | no generic replacement; `blitsen/app` only locates platform directories, and bundled files are available through application URLs |
 | `import("node:anything")` | refused at resolution, naming the alternative |
 
 That refusal is the point of listing this here rather than in a release note: an import of a
 builtin fails with a message that says the runtime implements no `node:fs` and points at
 `blitsen/*`, so the absence is detectable and attributable rather than a blank window
-(structural constraint 4). The paragraph above about Node keeping its Node names describes the
-Phase 1 host; where Phase 2 has no Node name to keep, the `blitsen/*` module is the whole API.
+(structural constraint 4). A carried Node-API addon selects the Phase 1 host explicitly; the
+default runtime does not regain Node builtins through these modules.
 
 ### TypeScript
 
@@ -1605,10 +1610,23 @@ lib. The capability tiers above are the list, and `blitsen doctor` is the check.
 | `os.displays` | The monitors are `window.monitors()`, which already reports each one's size, position and scale factor. A second list here could disagree with that one. |
 | `os.idleTime` | Seconds since the last input is a different mechanism on every platform — the X11 screensaver extension, `CGEventSourceSecondsSinceLastEventType`, `GetLastInputInfo` — and Wayland has no answer at all for a client that is not focused: the idle-notify protocol reports crossing a threshold the compositor was asked about, not a duration. Reporting zero on the sessions that cannot answer would be indistinguishable from a machine in use. It is also the one reading in this module that describes the person rather than the machine — how long they have been away from the keyboard, available to any application that asks for it — so implementing it where it happens to work would buy that signal on three platforms in exchange for a wrong answer on the fourth. |
 
+| Native module | Platform where absent | Why |
+| --- | --- | --- |
+| `blitsen/menu` | linux | A Linux menu bar is a widget inside the window, and the only backend the menu crate has for one is a gtk::MenuBar packed into a gtk::Window — Blitsen windows are winit's, and the renderer owns the whole client area, so there is nowhere to pack it and no GTK main loop to run it. The desktop-level alternative is the D-Bus global menu, which only some desktops implement, needs an X11 window id and so answers nothing on Wayland, and would leave the same application with a menu on KDE and none on GNOME. The tray menu is not this under another name: it belongs to a status item the application may never show. What would change this is a menu bar Blitsen renders itself, which is a different feature — an in-document menu is DOM, not a native one. |
+| `blitsen/dialog` | darwin | macOS opens a file dialog on the main thread, which is the thread Blitsen keeps free to paint. That is a different design rather than this one with the backend swapped out, so the module is absent rather than approximated. |
+| `blitsen/dialog` | win32 | The Windows dialog was never verified against this design, and a dialog that blocks the thread pumping the window would stop the application painting while it is up. |
+| `blitsen/app` | android | The directories are the Activity's `filesDir` and `cacheDir`, which only the Activity can name; Android sets none of the XDG variables, so resolving them would answer a path nothing can write to. `relaunch` has no executable to spawn inside an APK, and single-instance ownership is the platform's own — a second launch is an Intent delivered to the process already running, not a command line to hand over. |
+| `blitsen/clipboard` | android | `arboard` has no Android backend and does not compile there. The service it would wrap, `ClipboardManager`, refuses a read outright unless the application holds focus, and these readers report an empty clipboard as `null` — so a refusal and an empty clipboard would be indistinguishable. It needs a module shaped for that, over JNI. |
+| `blitsen/dialog` | android | There is no XDG desktop portal on Android. The system's own choosers are Intents answered by another activity, which is a different shape from a call that resolves. |
+| `blitsen/window` | android | winit accepts every setter on Android and discards it, then answers the getter as though the request had never been made: `setDecorations(false)` is followed by `isDecorated()` saying true, on a platform with no decorations. The monitor list goes too, and it is the one worth naming because it looks like the survivor — winit enumerates no monitors there, so `monitors()` would report a device with no display. Immersive mode and orientation are the real capabilities here and are not these under another name. |
+| `blitsen/tray` | android | Android has no desktop notification area or status-item menu. Its persistent status UI is a notification, which belongs to blitsen/notify and carries its own runtime permission and channel semantics rather than pretending to be a tray icon. |
+| `blitsen/menu` | android | Android has no application menu bar. Its equivalents are the app bar's overflow menu and the navigation drawer, which are views inside the activity's own layout rather than a menu the platform owns, and neither has this shape. |
+
 | Conditional native member | Platform where absent | Why |
 | --- | --- | --- |
 | `input.vibrateGamepad` | android | The controller backend has no Android implementation, so there is no discovered slot or actuator to address. |
 | `input.onDeviceChange` | android | The controller backend has no Android implementation, so there are no controller connection changes to report. |
+| `os.batteries` | android | Android exposes battery state through a different power service, so the desktop sysinfo-backed member is absent rather than returning an invented value. |
 
 <!-- /generated -->
 
@@ -1618,9 +1636,9 @@ Where a member exists, it means the same thing everywhere. What differs is under
 
 | Member | What differs |
 | --- | --- |
-| `app.dataDir`, `app.cacheDir`, `app.configDir` | The application passes its own name, because the runtime does not know one: during development the executable is the host runtime, and a window title is not an identity. The name must be a single path segment. Linux answers with `$XDG_DATA_HOME`/`$XDG_CACHE_HOME`/`$XDG_CONFIG_HOME` and their `~/.local/share`, `~/.cache`, `~/.config` defaults; macOS with `~/Library/Application Support` and `~/Library/Caches`, so data and config are the same directory; Windows with `%APPDATA%` and `%LOCALAPPDATA%`. The directory is returned, never created — making it is `node:fs`. |
+| `app.dataDir`, `app.cacheDir`, `app.configDir` | The application passes its own name, because the runtime does not know one: during development the executable is the host runtime, and a window title is not an identity. The name must be a single path segment. Linux answers with `$XDG_DATA_HOME`/`$XDG_CACHE_HOME`/`$XDG_CONFIG_HOME` and their `~/.local/share`, `~/.cache`, `~/.config` defaults; macOS with `~/Library/Application Support` and `~/Library/Caches`, so data and config are the same directory; Windows with `%APPDATA%` and `%LOCALAPPDATA%`. The directory is returned, never created; the shipped profile has no generic filesystem API with which to create it. |
 | `app.requestSingleInstanceLock` | Binding the hand-off endpoint is the ownership claim on every desktop. Unix uses a filesystem socket in a private per-user runtime directory; a socket left after a crash is reclaimed only when connecting proves no listener remains. Windows uses `\\.\pipe\blitsen-<user SID>-<application>` with a protected DACL. Because a DACL controls access but does not reserve a discoverable name before creation, the client also verifies the connected pipe object's owner SID and the server authenticates the connected client through pipe impersonation. Processes running under the same SID share that trust boundary. The second process's `argv` and `cwd` cross as one size- and time-bounded invocation; it remains alive until the owner has authenticated and acknowledged that frame. Delivery then happens on the frame turn, alongside `fetch` completions, so an application is never re-entered part-way through a frame. |
-| `app.relaunch` | Spawns a copy of this process with the same arguments, environment and working directory, and drops the single-instance lock so the successor can take it. It does not stop this process: that is `process.exit`, and only the application knows what it still has to flush. |
+| `app.relaunch` | Spawns a copy of this process with the same arguments, environment and working directory, and drops the single-instance lock so the successor can take it. It does not stop this process: the application closes its window after flushing what it owns. |
 | `clipboard.*` | On X11 and Wayland the process that copied is the one that serves the selection, so **what an exported Blitsen application copies disappears when it exits**, unless the desktop runs a clipboard manager that takes a copy. macOS and Windows hand the data to the system and it survives. `writeHtml` also stores the plain text an application that cannot read HTML will paste instead. Images cross as 8-bit RGBA, `{ width, height, data }`, and are carried as PNG on Linux, `CF_DIB` on Windows and an `NSImage` on macOS — a decoded image is not guaranteed to be byte-identical to the one that was copied. A read finds `null` where the clipboard holds nothing in that flavour; a clipboard the session does not offer at all — a headless process — throws instead, because that is an environment refusing rather than an empty clipboard. |
 | `window.*` | Operates on the window the run already opened, and is available from the `load` event onwards — document scripts run before the window exists, and a call before then says so rather than doing nothing. `setAlwaysOnTop` reaches the X11 window manager and Windows and macOS; **Wayland has no protocol for stacking a window above others, so the call is accepted and has no effect there**. `setCursorGrab("locked")` is X11-unsupported and `"confined"` is macOS-unsupported; both throw naming the platform rather than silently degrading. `setSize` asks, it does not assert: the size that arrives is whatever the window manager granted, and it is reported by the `resize` event and `innerWidth`/`innerHeight` like any other resize. |
 | `dialog.*` | Linux only, through the XDG desktop portal — a backend the BSDs share, though no BSD runtime is published — and absent on macOS and Windows rather than approximated: those platforms require a file dialog on the main thread, which is the thread this design deliberately leaves free to keep painting. Every dialog is modal to the application window and needs one, so these are available from the `load` event onwards like `window.*`. Each returns a **Promise**, and the frame loop keeps turning while the dialog is up — `requestAnimationFrame` still fires, the window still paints, and the answer is delivered on a frame turn alongside `fetch` completions rather than part-way through one. Blocking instead would stop the application repainting for as long as the dialog was open, which X11 and Wayland compositors treat as a hung client. A dismissed file dialog answers `null`: the portal cannot distinguish Cancel from choosing nothing. Paths are real filesystem paths, not `File` objects. Where no portal is running, the desktop's `zenity` is used instead. |

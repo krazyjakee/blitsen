@@ -38,8 +38,9 @@ Choose side-loaded assets for large or replaceable content:
 npx blitsen build dist --assets side-loaded
 ```
 
-This writes `<output>.assets/` beside the executable. Distribute both together. On macOS Blitsen
-moves that directory inside the `.app` bundle beside its executable.
+This writes `<output>.assets/` beside the executable. Distribute both together. On macOS, when the
+build produces a `.app` bundle (pass `--icon`, `--bundle-id` or `--app-version`), Blitsen moves
+that directory inside the bundle beside its executable.
 
 Files not reachable from `index.html` are omitted. Keep intentional runtime-loaded files with
 repeatable `--include` globs.

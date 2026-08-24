@@ -1,8 +1,8 @@
 //! Application directories, single-instance ownership and relaunch.
 //!
 //! Deliberately not here: the command line, the executable path and exit.
-//! Those are `process.argv`, `process.execPath` and `process.exit`, and
-//! `native:` is additive rather than a second spelling of Node (TECH.md §9).
+//! The shipped runtime exposes no Node process surface; the focused `blitsen/app`
+//! module deliberately does not invent equivalents for them (TECH.md §9).
 //!
 //! Absent on Android, and each of the three capabilities for its own reason
 //! rather than one blanket one — which is the point of writing them down, since

@@ -36,13 +36,14 @@ polyfill.
 | `blitsen/tray` | `configure`, `remove`, `onClick`, `onAction` |
 | `blitsen/menu` | `configure`, `remove`, `onAction` |
 | `blitsen/notify` | `show`, `permission`, `requestPermission`, `update`, `close`, `onEvent` |
-| `blitsen/input` | `snapshot` |
+| `blitsen/input` | `snapshot`, `vibrateGamepad`, `onDeviceChange` (the latter two desktop-only) |
 | `blitsen/hid` | `devices`, `open`, `onDeviceChange` |
 | `blitsen/os` | `cpu`, `memory`, `storage`, `host`, `batteries`, `locale` |
 
 The declaration files installed with `blitsen` document parameters and result types. The
 [generated native module matrix](COMPATIBILITY.md#native-modules) is available when you need the
-exact per-member runtime manifest.
+exact per-member runtime manifest. On Android the `app`, `window`, `clipboard`, `tray`, `menu` and
+`dialog` modules are absent whole; each module's section below notes its other platform gaps.
 
 ## Window lifetime
 
@@ -58,7 +59,9 @@ addEventListener("load", () => {
 ```
 
 Calling these methods from a document script before the window exists throws instead of silently
-doing nothing.
+doing nothing. Platform gaps throw rather than pretend: `setCursorGrab("locked")` is unsupported
+on X11 and `setCursorGrab("confined")` on macOS, while Wayland accepts `setAlwaysOnTop` and leaves
+it inert. The [platform differences table](COMPATIBILITY.md) has the full set.
 
 There is deliberately no `window.create` in this release. The multi-window architecture is
 [decided](TECH.md#multi-window-contexts-isolated-on-one-ui-thread), but its required per-window
@@ -79,7 +82,10 @@ on an eventual API, not members available for feature detection today.
 Package configuration still creates the tray before application JavaScript runs. The runtime API
 operates on that same tray: `configure` creates or atomically replaces it, and `remove` destroys it.
 Runtime icons are PNG file contents rather than paths, so their meaning does not change between a
-development directory and a standalone export.
+development directory and a standalone export. Beside `icon`, `tooltip` and `menu`, the options
+accept `openOnClick` (default true) and `closeToTray` (default false; it requires a `quit` action
+somewhere in the tree, or `configure` rejects). Trees share the package-configuration invariants:
+at most 16 levels deep and 512 entries in total, with IDs unique across the whole tree.
 
 ```js
 import tray from "blitsen/tray";
@@ -121,7 +127,8 @@ not exposed: the installed Windows/macOS menu backend cannot represent them cons
 accelerators use modifier-first spellings such as `Control+Shift+KeyP`; `CmdOrCtrl` maps to Command
 on macOS and Control elsewhere. Package configuration accepts the same menu tree and invariants,
 using PNG paths relative to its `package.json` where the runtime API uses unambiguous byte arrays.
-Configured custom and checkable actions queue until application listeners are installed.
+Package configuration also spells the tray menu key `contextMenu` where the runtime API spells it
+`menu`. Configured custom and checkable actions queue until application listeners are installed.
 Tray support is desktop-only.
 
 ## Application menu
@@ -171,8 +178,8 @@ On macOS, `role` on a *top-level submenu* claims one of the four positions AppKi
 rather than by title. Blitsen supplies a standard `application`, `edit` and `window` submenu for
 each role the application did not claim, because without them there is no About or Quit anywhere and
 ⌘C and ⌘V do nothing in a text field. The synthesized `application` submenu is always first, the
-`window` submenu is always second to last, and a synthesized `edit` submenu goes immediately before
-it; a submenu the application declares with a role is moved into that place instead, and a declared
+`window` submenu is last — second to last when the application declared a `help` submenu — and a
+synthesized `edit` submenu goes immediately before it; a submenu the application declares with a role is moved into that place instead, and a declared
 `edit` submenu keeps the position the application chose. A `help` submenu is placed last and never
 synthesized: its role is a position, there is no predefined command to put in one, and a submenu
 with nothing in it is a greyed-out title. Windows installs the tree as written, with no synthesis.
@@ -211,9 +218,14 @@ const id = await notify.show?.({
   actions: [{ id: "open", title: "Open archive" }],
 });
 
-await notify.update?.(id, { body: "Copied to Downloads" });
-await notify.close?.(id);
+if (id) {
+  await notify.update?.(id, { body: "Copied to Downloads" });
+  await notify.close?.(id);
+}
 ```
+
+The options also accept a `timeout` in milliseconds before expiry; zero requests a persistent
+notification. The packaged Linux portal ignores it, as described below.
 
 `permission()` reads without prompting; `requestPermission()` prompts on macOS and Android 13+
 and otherwise reads the platform result. Linux returns `"granted"` because neither its freedesktop
@@ -280,6 +292,9 @@ notify.onEvent?.(event => {
   resumeFrom(event.id, event.action);
 });
 ```
+
+Beside `id`, `action` and `reason`, an activation carries `platform` and `entry`, naming the
+platform entry point that delivered it.
 
 It is delivered **once**, on the first frame turn, which is after the document's scripts have run—so
 a listener registered at the top level of a module receives it. A reload does not repeat it, and
@@ -354,7 +369,7 @@ and the standard Gamepad API.
 import hid from "blitsen/hid";
 
 const found = (await hid.devices?.() ?? []).find(device => device.vendorId === 0x16c0);
-if (found) {
+if (found && hid.open) {
   const device = await hid.open(found.id);
   device.onInputReport(report => {
     console.log(report.reportId, report.data);
@@ -468,9 +483,10 @@ import app from "blitsen/app";
 const dataDirectory = app.dataDir?.("MyApp");
 ```
 
-The methods return a platform-appropriate path but do not create it. Use your filesystem library
-to create the directory before writing. `requestSingleInstanceLock` uses a private per-user Unix
-socket or Windows named pipe and has the same invocation hand-off contract on every desktop.
+The methods return a platform-appropriate path but do not create it. The shipped profile has no
+generic filesystem API; writing there requires application-provided native integration (which, for
+a Node-API addon, selects the Phase 1 host). `requestSingleInstanceLock` uses a private per-user
+Unix socket or Windows named pipe and has the same invocation hand-off contract on every desktop.
 
 ## OS readings
 
@@ -512,23 +528,11 @@ unfocused client, and reporting zero there is indistinguishable from a machine i
 the one reading that describes the person rather than the machine, so a partial implementation
 would buy that signal on three platforms in exchange for a wrong answer on the fourth.
 
-## Using the `native:*` spelling
+## Module spelling
 
-The shorter `native:window` form only works when the bundler leaves it external. Prefer
-`blitsen/window` unless you have a reason to expose runtime imports directly.
-
-Vite and Rollup:
-
-```js
-import { blitsenVite } from "blitsen/bundler";
-
-export default {
-  plugins: [blitsenVite()],
-};
-```
-
-The package also exports `blitsenRollup`, `blitsenEsbuild` and `blitsenWebpackExternals`. webpack
-must emit ESM when it leaves `native:*` external.
+Use the `blitsen/<module>` package subpaths shown above. The shipped runtime resolves only the
+already-built application graph; a bare `native:*` specifier left in that graph is refused like
+any other unresolved package specifier.
 
 ## TypeScript
 

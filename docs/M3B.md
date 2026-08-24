@@ -90,9 +90,10 @@ the staged export, and embeds the three output files with the runtime into one e
   render change from `0` to `1`.
 - The optimized Linux x64 acceptance artifact measured 132,364,416 bytes installed. This is a
   Phase 1 Bun-hosted measurement, not a production size target.
-- The gate exposed and fixed a compiled-host-only identity failure: weak native wrappers could be
-  reclaimed while their connected DOM nodes remained. Each document context now strongly interns
-  wrappers, preserving React's listener and fiber properties across garbage collection.
+- The gate exposed and fixed a compiled-host-only identity failure in the original cache. Wrapper
+  identity is now weak on both sides of the bridge, with tokened finalization preventing a stale
+  finalizer from removing a newer wrapper; application references preserve React's listener and
+  fiber properties without retaining every detached node until document replacement.
 
 The weakness is the application. `examples/vite-react` was written here, and its markup carries
 `data-react-ready="true"`, `id="count"` and `id="increment"` — the exact selectors

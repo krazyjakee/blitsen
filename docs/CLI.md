@@ -76,7 +76,7 @@ the result. Compatibility errors stop the build unless `--accept-errors` is supp
 | --- | --- |
 | `--name <text>` | Application name, window title and default output name |
 | `--title <text>` | Override only the window title |
-| `--out <path>` | Output path |
+| `--out <path>` | Output path; defaults to the application name, or without one to the basename of the ingested directory. Windows targets get `.exe` appended |
 | `--outfile <path>` | Alias of `--out` |
 | `--width <pixels>` | Initial logical width; default `800` |
 | `--height <pixels>` | Initial logical height; default `600` |
@@ -101,15 +101,16 @@ release flag.
 | --- | --- |
 | `--target <triple>` | Build for another supported desktop target and cache its runtime |
 | `--icon <path>` | PNG or a platform-native `.ico`, `.icns` or `.svg` |
-| `--bundle-id <id>` | macOS bundle identifier; also supplies the Android package ID if one is not set |
-| `--app-version <version>` | Version recorded in platform metadata |
+| `--bundle-id <id>` | Application identity: the macOS bundle identifier, the Windows AppUserModelID and toast registration, the Linux desktop and D-Bus identity, and the per-application storage identity; also supplies the Android package ID if one is not set. Defaults to `com.blitsen.<title>` |
+| `--app-version <version>` | Version recorded in platform metadata; no version is written unless given (Android defaults to `0.1.0`) |
 | `--sign <command>` | Run a signing command with the packaged artifact as its only argument |
 
 Cross-building creates the target's files but does not provide its signing or notarization tools.
 
 ### Android
 
-Android produces an APK and does not use `--target`:
+Android produces an APK and does not use `--target`; it also rejects `--assets`, `--addon` and —
+not yet supported for APKs — `--icon`:
 
 | Option | Meaning |
 | --- | --- |
@@ -132,19 +133,26 @@ for toolchain and credential variables.
 
 ## Environment variables
 
-Most users do not need these. They are useful for CI, source checkouts and custom toolchains.
+Most users do not need these. They are useful for CI, source checkouts and custom toolchains. The
+table covers the build-time CLI; variables read by the runtime itself are documented where the
+feature is.
 
 | Variable | Purpose |
 | --- | --- |
-| `BLITSEN_CACHE_DIR` | Override the downloaded cross-target runtime cache |
+| `BLITSEN_CACHE_DIR` | Override Blitsen's cache directory: fetched cross-target runtimes and the `--dev-bundle` development `.app` |
 | `BLITSEN_NATIVE_PATH` | Override the development runtime addon |
 | `BLITSEN_RUNTIME_PATH` | Override the executable runtime used for ordinary desktop exports |
 | `BLITSEN_ANDROID_CRATE` | Path to the `blitsen-android` crate |
 | `BLITSEN_ANDROID_KEYSTORE_PASSWORD` | Android keystore password |
 | `BLITSEN_ANDROID_KEY_ALIAS` | Key alias when a keystore contains more than one key |
 | `BLITSEN_ANDROID_KEY_PASSWORD` | Key password when it differs from the store password |
-| `BLITSEN_NOTICES_PATH` | Audited third-party notices to embed in an Android APK |
+| `BLITSEN_NOTICES_PATH` | Audited third-party notices to embed. On desktop it replaces the `NOTICES.txt` beside the linked runtime; on Android it is the only source |
 | `BLITSEN_HOST` | Force the export host — `bun` or `blitsen` — instead of letting the exporter choose. A regression escape hatch; see [Migration](MIGRATION.md) |
 
-Runtime overrides are unversioned and must match the requested operating system and architecture.
-Blitsen validates them before use and reports that package resolution was bypassed.
+Runtime overrides are unversioned and must match the requested operating system and architecture;
+a `file:` URL is accepted as well as a path. Blitsen validates them before use and reports that
+package resolution was bypassed.
+
+The exported executable has a small CLI of its own: `--version`, `--licenses`
+([Licensing](LICENSING.md)), `--engine-report` ([JSC](JSC.md)) and internal replay and
+notification-activation flags.

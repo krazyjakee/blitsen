@@ -33,7 +33,8 @@ the directory run first, then test the exported artifact. Do not use the browser
 only release check because Blitsen intentionally implements a smaller platform.
 
 With no directory, `blitsen` and `blitsen build` find the nearest `package.json` containing a
-`blitsen` key, run its optional build command and use its configured output directory. A directory
+`blitsen` key, run its optional build command and use its configured output directory. Without any
+configuration, the current directory is used when it contains an `index.html`. A directory
 argument skips configuration discovery and the configured build command.
 
 ## Web APIs are a compatibility boundary
@@ -44,8 +45,8 @@ browser APIs. It does not try to be a complete browser.
 An unimplemented API is normally absent, so use feature detection:
 
 ```js
-if ("Worker" in globalThis) {
-  // Use the worker path.
+if ("SharedWorker" in globalThis) {
+  // Use the shared-worker path.
 } else {
   // Use the fallback.
 }
@@ -87,8 +88,9 @@ npx blitsen build dist --include 'locales/**' --include 'models/*.bin'
 ```
 
 Use `*` within one path segment and `**` across directories. Prefer relative URLs in HTML, CSS and
-JavaScript. Blitsen handles common server-root HTML/CSS paths from bundlers in its private staging
-copy, but it does not rewrite JavaScript strings assembled at runtime.
+JavaScript. Blitsen handles common server-root paths from bundlers — HTML attributes and CSS
+`url()`, though not CSS `@import` — in its private staging copy, but it does not rewrite
+JavaScript strings assembled at runtime.
 
 The default `--assets embedded` stores assets inside the executable. `--assets side-loaded` writes
 them to `<output>.assets/` beside it when files need to be replaceable or are too large to embed.
