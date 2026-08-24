@@ -19,15 +19,27 @@
     }
   }
 
-  const gamepadCommands = new Map();
   const gamepadDeviceListeners = new Set();
   const gamepadPending = gamepadInstalled ? __blitsenGamepadPending : () => false;
-  const gamepadWorkPending = () => gamepadCommands.size > 0 || gamepadPending();
+  const gamepadChannel = makeCommandChannel({
+    pending: gamepadPending,
+    take: () => JSON.parse(__blitsenGamepadTake()),
+    result: message => message.result,
+    error: message => new DOMException(message.error, message.errorName ?? "OperationError"),
+    onMessage: message => {
+      const gamepad = gamepadFromRaw(message.gamepad);
+      globalThis.dispatchEvent(new GamepadEvent(`gamepad${message.kind}`, { gamepad }));
+      deliverCommandListeners(gamepadDeviceListeners, Object.freeze({
+        type: message.kind, index: gamepad.index, id: gamepad.id,
+      }), "gamepad device-change");
+    },
+  });
+  const gamepadWorkPending = gamepadChannel.workPending;
   const startGamepadVibration = (index, strong, weak, duration, startDelay = 0) => {
     touchGamepads();
     const id = __blitsenGamepadVibrate(
       String(index), String(strong), String(weak), String(duration), String(startDelay));
-    return new Promise((resolve, reject) => gamepadCommands.set(String(id), { resolve, reject }));
+    return gamepadChannel.run(id);
   };
 
   class GamepadHapticActuator {
@@ -92,28 +104,7 @@
     gamepadDeviceListeners.add(listener);
     return () => { gamepadDeviceListeners.delete(listener); };
   };
-  const settleGamepads = () => {
-    if (!gamepadInstalled || !gamepadPending()) return;
-    for (const message of JSON.parse(__blitsenGamepadTake())) {
-      if (message.type === "completion") {
-        const command = gamepadCommands.get(String(message.commandId));
-        if (!command) continue;
-        gamepadCommands.delete(String(message.commandId));
-        if (message.error === null) command.resolve(message.result);
-        else command.reject(new DOMException(message.error, message.errorName ?? "OperationError"));
-        continue;
-      }
-      const gamepad = gamepadFromRaw(message.gamepad);
-      globalThis.dispatchEvent(new GamepadEvent(`gamepad${message.kind}`, { gamepad }));
-      const nativeEvent = Object.freeze({
-        type: message.kind, index: gamepad.index, id: gamepad.id,
-      });
-      for (const listener of gamepadDeviceListeners) {
-        try { listener(nativeEvent); }
-        catch (error) { console.error("Uncaught exception in gamepad device-change listener", error); }
-      }
-    }
-  };
+  const settleGamepads = gamepadChannel.settle;
 
   // Android and unrecognised targets compile no controller backend. Keep the
   // member genuinely absent there so feature detection does not mistake an

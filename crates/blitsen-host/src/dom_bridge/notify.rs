@@ -3,11 +3,12 @@
 //! Platform callbacks never enter JavaScript. They wake winit and are drained by
 //! the window session; this queue is the final hop into the next frame turn.
 
-use std::cell::{Cell, RefCell};
-use std::collections::VecDeque;
+use std::cell::Cell;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+
+use super::command_channel::{CommandChannel, CommandRequest};
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -136,10 +137,7 @@ pub(crate) enum RequestKind {
     },
 }
 
-pub(crate) struct Request {
-    pub(crate) command_id: u64,
-    pub(crate) kind: RequestKind,
-}
+pub(crate) type Request = CommandRequest<RequestKind>;
 
 #[derive(Serialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
@@ -193,17 +191,12 @@ struct Message {
 }
 
 thread_local! {
-    static NEXT_COMMAND_ID: Cell<u64> = const { Cell::new(1) };
     static NEXT_NOTIFICATION_ID: Cell<u64> = const { Cell::new(1) };
-    static REQUESTS: RefCell<VecDeque<Request>> = const { RefCell::new(VecDeque::new()) };
-    static MESSAGES: RefCell<VecDeque<Message>> = const { RefCell::new(VecDeque::new()) };
+    static CHANNEL: CommandChannel<RequestKind, Message> = const { CommandChannel::new() };
 }
 
 fn request(kind: RequestKind) -> u64 {
-    let command_id = NEXT_COMMAND_ID.get();
-    NEXT_COMMAND_ID.set(command_id.saturating_add(1));
-    REQUESTS.with_borrow_mut(|requests| requests.push_back(Request { command_id, kind }));
-    command_id
+    CHANNEL.with(|channel| channel.request(kind))
 }
 
 pub(crate) fn request_permission() -> u64 {
@@ -228,11 +221,11 @@ pub(crate) fn close(public_id: String) -> u64 {
 }
 
 pub(crate) fn take_requests() -> Vec<Request> {
-    REQUESTS.with_borrow_mut(|requests| requests.drain(..).collect())
+    CHANNEL.with(CommandChannel::take_requests)
 }
 
 fn push(kind: MessageKind) {
-    MESSAGES.with_borrow_mut(|messages| messages.push_back(Message { kind }));
+    CHANNEL.with(|channel| channel.push(Message { kind }));
 }
 
 pub(crate) fn complete(command_id: u64, result: Result<Value, String>) {
@@ -287,23 +280,22 @@ pub(crate) fn activated(activation: Activation) {
 }
 
 pub(crate) fn pending() -> bool {
-    MESSAGES.with_borrow(|messages| !messages.is_empty())
+    CHANNEL.with(CommandChannel::pending)
 }
 
 pub(crate) fn take_messages() -> Vec<Value> {
-    MESSAGES.with_borrow_mut(|messages| {
-        messages
-            .drain(..)
+    CHANNEL.with(|channel| {
+        channel
+            .take_messages()
+            .into_iter()
             .map(|message| serde_json::to_value(message).expect("notification messages serialize"))
             .collect()
     })
 }
 
 pub(crate) fn reset() {
-    NEXT_COMMAND_ID.set(1);
     NEXT_NOTIFICATION_ID.set(1);
-    REQUESTS.with_borrow_mut(VecDeque::clear);
-    MESSAGES.with_borrow_mut(VecDeque::clear);
+    CHANNEL.with(CommandChannel::reset);
 }
 
 #[cfg(test)]

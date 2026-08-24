@@ -11,6 +11,7 @@ use std::collections::HashMap;
 use blitsen_js::{JsEngine, JsError};
 use serde::Serialize;
 
+use super::command_channel::{CommandChannel, CommandRequest, Queue};
 use super::{argument, json_value};
 
 #[derive(Clone, Debug, PartialEq)]
@@ -251,26 +252,18 @@ fn snapshot(raw: RawGamepad, index: usize, connected: bool, timestamp: f64) -> G
     }
 }
 
-struct BridgeState {
+struct SnapshotState {
     slots: String,
-    messages: Vec<ConnectionMessage>,
-    next_command: u64,
-    requests: Vec<VibrationRequest>,
-    completions: Vec<VibrationCompletion>,
     touched: bool,
     touch_generation: u64,
     #[cfg(test)]
     publishes: usize,
 }
 
-impl Default for BridgeState {
+impl Default for SnapshotState {
     fn default() -> Self {
         Self {
             slots: "[]".to_owned(),
-            messages: Vec::new(),
-            next_command: 0,
-            requests: Vec::new(),
-            completions: Vec::new(),
             touched: false,
             touch_generation: 0,
             #[cfg(test)]
@@ -280,14 +273,15 @@ impl Default for BridgeState {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct VibrationRequest {
-    pub(crate) command_id: u64,
+pub(crate) struct VibrationRequestKind {
     pub(crate) index: usize,
     pub(crate) strong: f64,
     pub(crate) weak: f64,
     pub(crate) duration_ms: u32,
     pub(crate) start_delay_ms: u32,
 }
+
+pub(crate) type VibrationRequest = CommandRequest<VibrationRequestKind>;
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -299,25 +293,30 @@ struct VibrationCompletion {
 }
 
 thread_local! {
-    static BRIDGE: RefCell<BridgeState> = RefCell::new(BridgeState::default());
+    static SNAPSHOTS: RefCell<SnapshotState> = RefCell::new(SnapshotState::default());
+    static CONNECTIONS: Queue<ConnectionMessage> = const { Queue::new() };
+    static VIBRATIONS: CommandChannel<VibrationRequestKind, VibrationCompletion> =
+        const { CommandChannel::new() };
 }
 
 pub(crate) fn reset() {
-    BRIDGE.with_borrow_mut(|state| {
+    SNAPSHOTS.with_borrow_mut(|state| {
         let touch_generation = state.touch_generation;
-        *state = BridgeState {
+        *state = SnapshotState {
             touch_generation,
-            ..BridgeState::default()
+            ..SnapshotState::default()
         };
     });
+    CONNECTIONS.with(Queue::clear);
+    VIBRATIONS.with(CommandChannel::reset);
 }
 
 pub(crate) fn poll_generation() -> Option<u64> {
-    BRIDGE.with_borrow(|state| state.touched.then_some(state.touch_generation))
+    SNAPSHOTS.with_borrow(|state| state.touched.then_some(state.touch_generation))
 }
 
 fn touch() {
-    BRIDGE.with_borrow_mut(|state| {
+    SNAPSHOTS.with_borrow_mut(|state| {
         if !state.touched {
             state.touched = true;
             state.touch_generation = state.touch_generation.saturating_add(1);
@@ -345,14 +344,14 @@ pub(crate) fn publish(registry: &Registry, messages: Vec<ConnectionMessage>) {
 
     let slots = serde_json::to_string(&Snapshots(&registry.slots))
         .expect("normalized gamepad snapshots serialize");
-    BRIDGE.with_borrow_mut(|state| {
+    SNAPSHOTS.with_borrow_mut(|state| {
         state.slots = slots;
-        state.messages.extend(messages);
         #[cfg(test)]
         {
             state.publishes += 1;
         }
     });
+    CONNECTIONS.with(|connections| connections.extend(messages));
 }
 
 #[cfg(test)]
@@ -362,11 +361,11 @@ pub(crate) fn touch_for_test() {
 
 #[cfg(test)]
 pub(crate) fn publish_count() -> usize {
-    BRIDGE.with_borrow(|state| state.publishes)
+    SNAPSHOTS.with_borrow(|state| state.publishes)
 }
 
 pub(crate) fn take_requests() -> Vec<VibrationRequest> {
-    BRIDGE.with_borrow_mut(|state| std::mem::take(&mut state.requests))
+    VIBRATIONS.with(CommandChannel::take_requests)
 }
 
 pub(crate) fn complete(command_id: u64, result: Result<&'static str, (&'static str, String)>) {
@@ -374,8 +373,8 @@ pub(crate) fn complete(command_id: u64, result: Result<&'static str, (&'static s
         Ok(value) => (Some(value.to_owned()), None, None),
         Err((name, message)) => (None, Some(name.to_owned()), Some(message)),
     };
-    BRIDGE.with_borrow_mut(|state| {
-        state.completions.push(VibrationCompletion {
+    VIBRATIONS.with(|channel| {
+        channel.push(VibrationCompletion {
             command_id,
             result: value,
             error,
@@ -385,13 +384,14 @@ pub(crate) fn complete(command_id: u64, result: Result<&'static str, (&'static s
 }
 
 pub(crate) fn pending() -> bool {
-    BRIDGE.with_borrow(|state| !state.messages.is_empty() || !state.completions.is_empty())
+    CONNECTIONS.with(Queue::pending) || VIBRATIONS.with(CommandChannel::pending)
 }
 
 #[cfg(test)]
 pub(crate) fn take_completion_results() -> Vec<(u64, Option<String>, Option<String>)> {
-    BRIDGE.with_borrow_mut(|state| {
-        std::mem::take(&mut state.completions)
+    VIBRATIONS.with(|channel| {
+        channel
+            .take_messages()
             .into_iter()
             .map(|completion| {
                 (
@@ -417,7 +417,7 @@ pub(super) fn install<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsErr
         "__blitsenGamepads",
         Box::new(move |call| {
             let mut engine = E::from_value(&call.this);
-            BRIDGE.with_borrow(|state| engine.string(&state.slots))
+            SNAPSHOTS.with_borrow(|state| engine.string(&state.slots))
         }),
     )?;
     engine.define_global_function(
@@ -431,30 +431,28 @@ pub(super) fn install<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsErr
         "__blitsenGamepadTake",
         Box::new(move |call| {
             let mut engine = E::from_value(&call.this);
-            let messages = BRIDGE.with_borrow_mut(|state| {
-                let connections = std::mem::take(&mut state.messages)
+            let messages = {
+                let connections = CONNECTIONS.with(Queue::take).into_iter().map(|message| {
+                    serde_json::json!({
+                        "type": "connection",
+                        "kind": message.kind,
+                        "gamepad": message.gamepad,
+                    })
+                });
+                let completions = VIBRATIONS
+                    .with(CommandChannel::take_messages)
                     .into_iter()
-                    .map(|message| {
+                    .map(|completion| {
                         serde_json::json!({
-                            "type": "connection",
-                            "kind": message.kind,
-                            "gamepad": message.gamepad,
+                            "type": "completion",
+                            "commandId": completion.command_id,
+                            "result": completion.result,
+                            "error": completion.error,
+                            "errorName": completion.error_name,
                         })
                     });
-                let completions =
-                    std::mem::take(&mut state.completions)
-                        .into_iter()
-                        .map(|completion| {
-                            serde_json::json!({
-                                "type": "completion",
-                                "commandId": completion.command_id,
-                                "result": completion.result,
-                                "error": completion.error,
-                                "errorName": completion.error_name,
-                            })
-                        });
                 connections.chain(completions).collect::<Vec<_>>()
-            });
+            };
             let value =
                 serde_json::to_value(messages).map_err(|error| JsError::new(error.to_string()))?;
             json_value(&mut engine, &value)
@@ -501,18 +499,14 @@ pub(super) fn install<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsErr
                     "gamepad magnitudes must be 0..1 and duration/start delay must be 0..60000ms",
                 ));
             }
-            let command_id = BRIDGE.with_borrow_mut(|state| {
-                state.next_command = state.next_command.saturating_add(1);
-                let command_id = state.next_command;
-                state.requests.push(VibrationRequest {
-                    command_id,
+            let command_id = VIBRATIONS.with(|channel| {
+                channel.request(VibrationRequestKind {
                     index,
                     strong,
                     weak,
                     duration_ms: duration.round() as u32,
                     start_delay_ms: start_delay.round() as u32,
-                });
-                command_id
+                })
             });
             engine.string(&command_id.to_string())
         }),
@@ -647,10 +641,10 @@ mod tests {
         );
         assert_eq!(
             (
-                requests[0].strong,
-                requests[0].weak,
-                requests[0].duration_ms,
-                requests[0].start_delay_ms,
+                requests[0].kind.strong,
+                requests[0].kind.weak,
+                requests[0].kind.duration_ms,
+                requests[0].kind.start_delay_ms,
             ),
             (1.0, 0.0, 100, 500)
         );

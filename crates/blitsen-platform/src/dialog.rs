@@ -148,6 +148,14 @@ pub struct Completion {
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 /// Dialogs opened whose outcome has not been queued yet.
 static OPEN: AtomicUsize = AtomicUsize::new(0);
+/// The deliberately narrow exception to the DOM bridge `CommandChannel`.
+///
+/// A dialog command is submitted immediately and its answer is produced on a
+/// worker thread, so this queue must be `Sync` and process-visible. The shared
+/// bridge channel is thread-local because JavaScript and the window session
+/// hand work to each other on one thread. Only completed outcomes cross this
+/// boundary; request IDs, pending worker accounting and the mutex therefore
+/// stay here rather than pretending the two concurrency models are the same.
 /// Completed work is independent: one dialog thread failing must not poison
 /// the queue for every later dialog.
 static COMPLETED: Mutex<Vec<Completion>> = Mutex::new(Vec::new());

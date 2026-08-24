@@ -128,7 +128,7 @@
       liveEventSources.clear();
       livePorts.clear();
       liveWorkers.clear();
-      dialogs.clear();
+      dialogChannel.clear();
       // A press held across a reload would otherwise keep the old document's
       // field alive to drag a selection in, and a pointer captured by an element
       // of the old document would retarget the new document's events at it.
@@ -138,7 +138,7 @@
       // document that is gone.
       disposeDragState();
       secondInstanceHandler = null;
-      notifyCommands.clear();
+      notifyChannel.clear();
       notifyListeners.clear();
       __blitsenFetchDispose();
       __blitsenSocketDispose();

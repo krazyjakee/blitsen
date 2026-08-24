@@ -73,12 +73,13 @@ impl Controller {
     }
 
     fn apply_request(&mut self, request: &VibrationRequest) {
-        let Some((key, vibration)) = self.registry.key_for_index(request.index) else {
+        let vibration_request = &request.kind;
+        let Some((key, vibration)) = self.registry.key_for_index(vibration_request.index) else {
             gamepad::complete(
                 request.command_id,
                 Err((
                     "NotFoundError",
-                    format!("gamepad slot {} is not connected", request.index),
+                    format!("gamepad slot {} is not connected", vibration_request.index),
                 )),
             );
             return;
@@ -89,24 +90,29 @@ impl Controller {
                 request.command_id,
                 Err((
                     "NotSupportedError",
-                    format!("gamepad slot {} has no vibration actuator", request.index),
+                    format!(
+                        "gamepad slot {} has no vibration actuator",
+                        vibration_request.index
+                    ),
                 )),
             );
             return;
         }
         let result = self.backend.vibrate(
             &key,
-            request.strong,
-            request.weak,
-            request.duration_ms,
-            request.start_delay_ms,
+            vibration_request.strong,
+            vibration_request.weak,
+            vibration_request.duration_ms,
+            vibration_request.start_delay_ms,
         );
         if let Some(command_id) = self.active_vibrations.remove(&key) {
             gamepad::complete(command_id, Ok("preempted"));
         }
         if let Err(message) = result {
             gamepad::complete(request.command_id, Err(("OperationError", message)));
-        } else if request.duration_ms == 0 || (request.strong == 0.0 && request.weak == 0.0) {
+        } else if vibration_request.duration_ms == 0
+            || (vibration_request.strong == 0.0 && vibration_request.weak == 0.0)
+        {
             gamepad::complete(request.command_id, Ok("complete"));
         } else {
             self.active_vibrations.insert(key, request.command_id);
@@ -668,11 +674,13 @@ mod tests {
         controller.poll(1.0);
         controller.apply_request(&VibrationRequest {
             command_id: 1,
-            index: 0,
-            strong: 0.8,
-            weak: 0.3,
-            duration_ms: 250,
-            start_delay_ms: 75,
+            kind: gamepad::VibrationRequestKind {
+                index: 0,
+                strong: 0.8,
+                weak: 0.3,
+                duration_ms: 250,
+                start_delay_ms: 75,
+            },
         });
         assert_eq!(
             &*vibrations.borrow(),
@@ -681,11 +689,13 @@ mod tests {
         assert_eq!(controller.active_vibrations.get("a"), Some(&1));
         controller.apply_request(&VibrationRequest {
             command_id: 2,
-            index: 1,
-            strong: 1.0,
-            weak: 1.0,
-            duration_ms: 10,
-            start_delay_ms: 0,
+            kind: gamepad::VibrationRequestKind {
+                index: 1,
+                strong: 1.0,
+                weak: 1.0,
+                duration_ms: 10,
+                start_delay_ms: 0,
+            },
         });
         assert_eq!(controller.active_vibrations.get("a"), Some(&1));
         assert_eq!(
@@ -717,11 +727,13 @@ mod tests {
         controller.poll(1.0);
         let request = |command_id, duration_ms| VibrationRequest {
             command_id,
-            index: 0,
-            strong: 1.0,
-            weak: 0.5,
-            duration_ms,
-            start_delay_ms: 40,
+            kind: gamepad::VibrationRequestKind {
+                index: 0,
+                strong: 1.0,
+                weak: 0.5,
+                duration_ms,
+                start_delay_ms: 40,
+            },
         };
 
         controller.apply_request(&request(1, 1_000));
@@ -746,11 +758,13 @@ mod tests {
         controller.apply_request(&request(3, 1_000));
         controller.apply_request(&VibrationRequest {
             command_id: 4,
-            index: 0,
-            strong: 0.0,
-            weak: 0.0,
-            duration_ms: 0,
-            start_delay_ms: 0,
+            kind: gamepad::VibrationRequestKind {
+                index: 0,
+                strong: 0.0,
+                weak: 0.0,
+                duration_ms: 0,
+                start_delay_ms: 0,
+            },
         });
         assert_eq!(
             gamepad::take_completion_results(),

@@ -19,6 +19,7 @@ use crate::DomRuntime;
 
 mod audio;
 mod canvas;
+mod command_channel;
 mod event_source;
 mod fetch;
 pub(crate) mod gamepad;
@@ -77,6 +78,7 @@ const BOOTSTRAP: &str = concat!(
     include_str!("dom_bridge/bootstrap/history.js"),
     include_str!("dom_bridge/bootstrap/url.js"),
     include_str!("dom_bridge/bootstrap/storage.js"),
+    include_str!("dom_bridge/bootstrap/command_channel.js"),
     include_str!("dom_bridge/bootstrap/gamepad.js"),
     include_str!("dom_bridge/bootstrap/native.js"),
     include_str!("dom_bridge/bootstrap/transfer.js"),

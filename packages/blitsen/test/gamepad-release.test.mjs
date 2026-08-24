@@ -37,6 +37,6 @@ describe("desktop gamepad release prerequisites", () => {
       repository, "crates/blitsen-host/src/dom_bridge/bootstrap/gamepad.js"), "utf8");
     expect(bootstrap).not.toContain("setTimeout");
     expect(bootstrap).toContain("String(startDelay)");
-    expect(bootstrap).toContain("command.resolve(message.result)");
+    expect(bootstrap).toContain("result: message => message.result");
   });
 });

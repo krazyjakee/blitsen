@@ -140,43 +140,32 @@
   // state; this module replaces or removes that same tray once JavaScript is
   // running, rather than creating an unrelated second icon.
   const trayInstalled = hosted("__blitsenNativeTrayConfigure");
-  const trayCommands = new Map();
   const trayClickListeners = new Set();
   const trayActionListeners = new Set();
   const nativeTrayPending = hosted("__blitsenNativeTrayPending")
     ? __blitsenNativeTrayPending : () => false;
-  const nativeTrayWorkPending = () => trayCommands.size > 0 || nativeTrayPending();
   const trayListener = (listeners, listener, name) => {
     if (typeof listener !== "function") throw new TypeError(`${name} listener must be a function`);
     listeners.add(listener);
     return () => { listeners.delete(listener); };
   };
-  const runTrayCommand = id => new Promise((resolve, reject) => {
-    trayCommands.set(id, { resolve, reject });
-  });
-  const settleTrays = () => {
-    if (!nativeTrayPending()) return;
-    for (const message of JSON.parse(__blitsenNativeTrayTake())) {
-      if (message.type === "completion") {
-        const command = trayCommands.get(String(message.commandId));
-        if (!command) continue;
-        trayCommands.delete(String(message.commandId));
-        if (message.error === null) command.resolve();
-        else command.reject(new Error(message.error));
-        continue;
-      }
+  const trayChannel = makeCommandChannel({
+    pending: nativeTrayPending,
+    take: () => JSON.parse(__blitsenNativeTrayTake()),
+    result: () => undefined,
+    onMessage: message => {
       const selected = message.type === "click" ? trayClickListeners : trayActionListeners;
       const event = message.type === "click"
         ? Object.freeze({ type: "click" })
         : Object.freeze(message.checked === undefined
           ? { type: "action", id: message.id }
           : { type: "action", id: message.id, checked: message.checked });
-      for (const listener of selected) {
-        try { listener(event); }
-        catch (error) { console.error("Uncaught exception in tray listener", error); }
-      }
-    }
-  };
+      deliverCommandListeners(selected, event, "tray");
+    },
+  });
+  const nativeTrayWorkPending = trayChannel.workPending;
+  const runTrayCommand = trayChannel.run;
+  const settleTrays = trayChannel.settle;
   const normaliseTrayOptions = options => {
     if (options === null || typeof options !== "object")
       throw new TypeError("tray options must be an object");
@@ -288,34 +277,23 @@
   // has one of these, and replacing one must not disturb the other. Both are
   // absent where the platform has none to install (`native-modules.mjs`).
   const menuInstalled = hosted("__blitsenNativeMenuConfigure");
-  const menuCommands = new Map();
   const menuActionListeners = new Set();
   const nativeMenuPending = hosted("__blitsenNativeMenuPending")
     ? __blitsenNativeMenuPending : () => false;
-  const nativeMenuWorkPending = () => menuCommands.size > 0 || nativeMenuPending();
-  const runMenuCommand = id => new Promise((resolve, reject) => {
-    menuCommands.set(id, { resolve, reject });
-  });
-  const settleMenus = () => {
-    if (!nativeMenuPending()) return;
-    for (const message of JSON.parse(__blitsenNativeMenuTake())) {
-      if (message.type === "completion") {
-        const command = menuCommands.get(String(message.commandId));
-        if (!command) continue;
-        menuCommands.delete(String(message.commandId));
-        if (message.error === null) command.resolve();
-        else command.reject(new Error(message.error));
-        continue;
-      }
+  const menuChannel = makeCommandChannel({
+    pending: nativeMenuPending,
+    take: () => JSON.parse(__blitsenNativeMenuTake()),
+    result: () => undefined,
+    onMessage: message => {
       const event = Object.freeze(message.checked === undefined
         ? { type: "action", id: message.id }
         : { type: "action", id: message.id, checked: message.checked });
-      for (const listener of menuActionListeners) {
-        try { listener(event); }
-        catch (error) { console.error("Uncaught exception in menu listener", error); }
-      }
-    }
-  };
+      deliverCommandListeners(menuActionListeners, event, "menu");
+    },
+  });
+  const nativeMenuWorkPending = menuChannel.workPending;
+  const runMenuCommand = menuChannel.run;
+  const settleMenus = menuChannel.settle;
   // The same tree the tray accepts, minus the entries a menu bar cannot carry
   // and plus the roles only it can: the host parses one model for both, and
   // this is the half of that contract the caller hears about immediately.
@@ -436,7 +414,6 @@
   // read by a native worker that owns the handle and must never re-enter the
   // application from the thread it blocked on.
   const hidInstalled = hosted("__blitsenNativeHidDevices");
-  const hidCommands = new Map();
   const hidOpenDevices = new Map();
   const hidChangeListeners = new Set();
   const nativeHidPending = hosted("__blitsenNativeHidPending")
@@ -444,56 +421,43 @@
   // An open device and a hot-plug listener both keep the loop turning, for the
   // reason a live socket does: the report is already in the host, and a loop
   // that idled would never reach the turn that delivers it.
-  const nativeHidWorkPending = () => hidCommands.size > 0 || hidOpenDevices.size > 0
-    || hidChangeListeners.size > 0 || nativeHidPending();
-  const runHidCommand = id => new Promise((resolve, reject) => {
-    hidCommands.set(String(id), { resolve, reject });
-  });
   const hidListener = (listeners, listener, what) => {
     if (typeof listener !== "function") throw new TypeError(`${what} listener must be a function`);
     listeners.add(listener);
     return () => { listeners.delete(listener); };
   };
-  const deliverHid = (listeners, event, what) => {
-    for (const listener of listeners) {
-      try { listener(event); }
-      catch (error) { console.error(`Uncaught exception in ${what} listener`, error); }
-    }
-  };
+  const deliverHid = (listeners, event, what) =>
+    deliverCommandListeners(listeners, event, what);
   const hidDeviceInfo = info => Object.freeze({
     ...info, usages: Object.freeze(info.usages.map(usage => Object.freeze(usage))),
   });
-  const settleHid = () => {
-    if (!nativeHidPending()) return;
-    for (const { json, data } of __blitsenNativeHidTake()) {
-      const message = JSON.parse(json);
-      if (message.type === "completion") {
-        const command = hidCommands.get(String(message.commandId));
-        if (!command) continue;
-        hidCommands.delete(String(message.commandId));
-        // The four open outcomes are told apart by the exception name rather
-        // than by its text, so `error.name === "NotAllowedError"` is a udev
-        // rule or an entitlement and nothing else is.
-        if (message.error !== null)
-          command.reject(new DOMException(message.error, message.errorName));
-        else command.resolve(data === null ? message.value : data);
-        continue;
-      }
+  const hidChannel = makeCommandChannel({
+    pending: nativeHidPending,
+    take: () => __blitsenNativeHidTake(),
+    decode: ({ json, data }) => ({ ...JSON.parse(json), data }),
+    result: message => message.data === null ? message.value : message.data,
+    // The four open outcomes are told apart by the exception name rather than
+    // by its text, so `error.name === "NotAllowedError"` is a udev rule or an
+    // entitlement and nothing else is.
+    error: message => new DOMException(message.error, message.errorName),
+    keepAlive: () => hidOpenDevices.size > 0 || hidChangeListeners.size > 0,
+    onMessage: message => {
+      const { data } = message;
       if (message.type === "change") {
         deliverHid(hidChangeListeners, Object.freeze({
           type: message.change, device: hidDeviceInfo(message.device),
         }), "HID device change");
-        continue;
+        return;
       }
       const device = hidOpenDevices.get(message.deviceId);
-      if (!device) continue;
+      if (!device) return;
       if (message.type === "input") {
         // The report ID is separate and the data excludes it, so nothing here
         // depends on whether a platform backend retained the leading byte.
         deliverHid(device.inputListeners, Object.freeze({
           deviceId: message.deviceId, reportId: message.reportId, data,
         }), "HID input report");
-        continue;
+        return;
       }
       // The one terminal event. The host has already closed the handle and
       // will not send another for this device.
@@ -501,8 +465,11 @@
       device.opened = false;
       deliverHid(device.disconnectListeners, Object.freeze({ deviceId: message.deviceId }),
         "HID disconnect");
-    }
-  };
+    },
+  });
+  const nativeHidWorkPending = hidChannel.workPending;
+  const runHidCommand = hidChannel.run;
+  const settleHid = hidChannel.settle;
   // Checked here, at the call, rather than a frame later in a rejection: the
   // application knows the bound because `open` reported it, so a report past it
   // is a mistake in this line of code.
@@ -592,34 +559,21 @@
   // callbacks only enqueue messages in the host; no notification service or
   // callback thread is allowed to enter application JavaScript directly.
   const notifyInstalled = hosted("__blitsenNativeNotifyShow");
-  const notifyCommands = new Map();
   const notifyListeners = new Set();
   const nativeNotifyPending = hosted("__blitsenNativeNotifyPending")
     ? __blitsenNativeNotifyPending : () => false;
-  const nativeNotifyWorkPending = () => notifyCommands.size > 0 || nativeNotifyPending();
-  const runNotifyCommand = (id, onComplete = null) => new Promise((resolve, reject) => {
-    notifyCommands.set(String(id), { resolve, reject, onComplete });
-  });
-  const settleNotifications = () => {
-    if (!nativeNotifyPending()) return;
-    for (const message of JSON.parse(__blitsenNativeNotifyTake())) {
-      if (message.type === "completion") {
-        const command = notifyCommands.get(String(message.commandId));
-        if (!command) continue;
-        notifyCommands.delete(String(message.commandId));
-        command.onComplete?.(message.value, message.error);
-        if (message.error === null) command.resolve(message.value);
-        else command.reject(new Error(message.error));
-        continue;
-      }
+  const notifyChannel = makeCommandChannel({
+    pending: nativeNotifyPending,
+    take: () => JSON.parse(__blitsenNativeNotifyTake()),
+    onMessage: message => {
       const event = Object.freeze(message);
       settleStandardNotification?.(event);
-      for (const listener of notifyListeners) {
-        try { listener(event); }
-        catch (error) { console.error("Uncaught exception in notification listener", error); }
-      }
-    }
-  };
+      deliverCommandListeners(notifyListeners, event, "notification");
+    },
+  });
+  const nativeNotifyWorkPending = notifyChannel.workPending;
+  const runNotifyCommand = (id, onComplete = null) => notifyChannel.run(id, { onComplete });
+  const settleNotifications = notifyChannel.settle;
   const normaliseNotificationActions = actions => {
     if (actions === undefined) return [];
     if (!Array.isArray(actions)) throw new TypeError("notification actions must be an array");
@@ -896,21 +850,24 @@
   // and the frame loop keeps turning, which is also how the answer gets back.
   const nativeDialogPending = typeof __blitsenNativeDialogPending === "function"
     ? __blitsenNativeDialogPending : () => false;
-  const dialogs = new Map();
   // The one handoff point for dialog answers, for the same reason `fetch` has
   // one: a promise must not settle part-way through a frame.
-  const settleDialogs = () => {
-    if (dialogs.size === 0) return;
-    for (const closed of JSON.parse(__blitsenNativeDialogTake())) {
-      const settle = dialogs.get(closed.id);
-      if (!settle) continue;
-      dialogs.delete(closed.id);
-      settle(closed.value);
-    }
-  };
+  const dialogChannel = makeCommandChannel({
+    take: () => JSON.parse(__blitsenNativeDialogTake()),
+    completion: () => true,
+    commandId: closed => closed.id,
+    result: closed => closed.value,
+    rejected: () => false,
+    keepAlive: nativeDialogPending,
+    // The prior dialog handoff polled while a JavaScript answer was retained,
+    // independently of the host pending flag. Keep that exact cancellation and
+    // worker-race behaviour while using the shared settlement protocol.
+    pollPendingCommands: true,
+  });
+  const settleDialogs = dialogChannel.settle;
   const dialogInstalled = typeof __blitsenNativeDialogFile === "function";
   const opened = (id, answer) =>
-    new Promise(resolve => { dialogs.set(id, value => resolve(answer(value))); });
+    dialogChannel.run(id, { transform: answer });
   // Everything the options say is checked before the dialog opens, so a mistake
   // in the call is an exception where it was made rather than a promise that
   // rejects a frame later.

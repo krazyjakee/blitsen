@@ -12,10 +12,11 @@
 //! numbers would re-encode every byte of every report of every frame, and the
 //! bridge can already hand a `Uint8Array` straight across.
 
-use std::cell::{Cell, RefCell};
-use std::collections::VecDeque;
+use std::cell::Cell;
 
 use serde_json::{Value, json};
+
+use super::command_channel::{CommandChannel, CommandRequest};
 
 /// A HID failure, with the `DOMException` name that tells it from the others.
 ///
@@ -88,10 +89,7 @@ pub(crate) enum RequestKind {
     ReceiveFeatureReport { device_id: String, report_id: u8 },
 }
 
-pub(crate) struct Request {
-    pub(crate) command_id: u64,
-    pub(crate) kind: RequestKind,
-}
+pub(crate) type Request = CommandRequest<RequestKind>;
 
 /// One frame-turn message: structured fields, and a report payload beside them.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -149,17 +147,12 @@ impl Message {
 }
 
 thread_local! {
-    static NEXT_COMMAND_ID: Cell<u64> = const { Cell::new(1) };
-    static REQUESTS: RefCell<VecDeque<Request>> = const { RefCell::new(VecDeque::new()) };
-    static MESSAGES: RefCell<VecDeque<Message>> = const { RefCell::new(VecDeque::new()) };
+    static CHANNEL: CommandChannel<RequestKind, Message> = const { CommandChannel::new() };
     static WATCHING: Cell<bool> = const { Cell::new(false) };
 }
 
 fn request(kind: RequestKind) -> u64 {
-    let command_id = NEXT_COMMAND_ID.get();
-    NEXT_COMMAND_ID.set(command_id.saturating_add(1));
-    REQUESTS.with_borrow_mut(|requests| requests.push_back(Request { command_id, kind }));
-    command_id
+    CHANNEL.with(|channel| channel.request(kind))
 }
 
 pub(crate) fn devices() -> u64 {
@@ -190,11 +183,11 @@ pub(crate) fn receive_feature_report(device_id: String, report_id: u8) -> u64 {
 }
 
 pub(crate) fn take_requests() -> Vec<Request> {
-    REQUESTS.with_borrow_mut(|requests| requests.drain(..).collect())
+    CHANNEL.with(CommandChannel::take_requests)
 }
 
 pub(crate) fn push(message: Message) {
-    MESSAGES.with_borrow_mut(|messages| messages.push_back(message));
+    CHANNEL.with(|channel| channel.push(message));
 }
 
 /// Settles a command that answers a structured value.
@@ -229,18 +222,16 @@ pub(crate) fn watch(watching: bool) {
 }
 
 pub(crate) fn pending() -> bool {
-    MESSAGES.with_borrow(|messages| !messages.is_empty())
+    CHANNEL.with(CommandChannel::pending)
 }
 
 pub(crate) fn take_messages() -> Vec<Message> {
-    MESSAGES.with_borrow_mut(|messages| messages.drain(..).collect())
+    CHANNEL.with(CommandChannel::take_messages)
 }
 
 pub(crate) fn reset() {
-    NEXT_COMMAND_ID.set(1);
     WATCHING.set(false);
-    REQUESTS.with_borrow_mut(VecDeque::clear);
-    MESSAGES.with_borrow_mut(VecDeque::clear);
+    CHANNEL.with(CommandChannel::reset);
 }
 
 #[cfg(test)]

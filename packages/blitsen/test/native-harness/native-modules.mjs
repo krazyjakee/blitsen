@@ -62,6 +62,64 @@ for (const [name, namespace] of Object.entries(namespaces)) {
 }
 assert.throws(() => { app.dataDir = () => "/tmp"; }, /read-only/);
 
+// Every asynchronous native capability uses one command/completion protocol.
+// Exercise two independent channels with the same command ID so a completion
+// can neither cross capability boundaries nor be captured by a stale message.
+const commandChannels = JSON.parse(native.runBridgeHarness(
+  `<div id="channels"></div>`,
+  `{ const makeChannel = globalThis.__blitsenTestCommandChannel;
+     if (typeof makeChannel !== "function") throw new Error("missing test command-channel seam");
+     const trayWire = [];
+     const hidWire = [];
+     const seen = [];
+     const trayChannel = makeChannel({
+       pending: () => trayWire.length > 0,
+       take: () => trayWire.splice(0),
+       result: message => message.value,
+       onMessage: message => seen.push(message.type),
+     });
+     const hidChannel = makeChannel({
+       pending: () => hidWire.length > 0,
+       take: () => hidWire.splice(0),
+       error: message => {
+         seen.push(message.errorName + ":" + message.error);
+         return new DOMException(message.error, message.errorName);
+       },
+     });
+     void trayChannel.run("1", { onComplete: value => seen.push("tray:" + value) });
+     void hidChannel.run("1").catch(() => {});
+     trayWire.push(
+       { type: "completion", commandId: "stale", value: "wrong", error: null },
+       { type: "click" },
+       { type: "completion", commandId: 1, value: "ready", error: null },
+     );
+     trayChannel.settle();
+     if (!hidChannel.workPending()) throw new Error("one channel consumed another's command ID");
+     hidWire.push({ type: "completion", commandId: 1, value: null,
+       error: "access denied", errorName: "NotAllowedError" });
+     hidChannel.settle();
+
+     const dialogWire = [{ id: 3, value: [] }];
+     const dialogChannel = makeChannel({
+       take: () => dialogWire.splice(0), completion: () => true,
+       commandId: answer => answer.id, result: answer => answer.value,
+       rejected: () => false, pollPendingCommands: true,
+     });
+     let cancelled = "unsettled";
+     void dialogChannel.run(3, { transform: paths => (cancelled = paths[0] ?? null) });
+     dialogChannel.settle();
+     const expected = ["click", "tray:ready", "NotAllowedError:access denied"];
+     if (JSON.stringify(seen) !== JSON.stringify(expected) || cancelled !== null
+       || trayChannel.workPending() || hidChannel.workPending() || dialogChannel.workPending())
+       throw new Error("command channels lost FIFO, errors, cancellation, or isolation: "
+         + JSON.stringify({ seen, cancelled }));
+     document.getElementById("channels").setAttribute("data-result", "passed"); }`,
+  32,
+  32,
+));
+assert.equal(commandChannels.nodes.find(node => node.attributes.id === "channels")
+  .attributes["data-result"], "passed", "shared native command channels preserve their contracts");
+
 const inputState = input.snapshot();
 assert.equal(typeof inputState.sequence, "number");
 assert.equal(typeof inputState.focused, "boolean");

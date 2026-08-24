@@ -484,7 +484,7 @@ impl<E: JsEngine + Clone + 'static> WindowSession<E> {
                     Ok(())
                 }
             };
-            crate::dom_bridge::tray::complete(request.id, result);
+            crate::dom_bridge::tray::complete(request.command_id, result);
         }
         self.request_redraw();
     }
@@ -589,7 +589,7 @@ impl<E: JsEngine + Clone + 'static> WindowSession<E> {
                     Ok(())
                 }
             };
-            crate::dom_bridge::menu::complete(request.id, result);
+            crate::dom_bridge::menu::complete(request.command_id, result);
         }
         // The completion is a frame-turn message, so the frame it settles on
         // has to be asked for; nothing else in this turn would ask.

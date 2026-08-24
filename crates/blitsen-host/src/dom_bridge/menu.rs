@@ -11,22 +11,18 @@
 //! completions and native menu events travel back through the same queue and
 //! are delivered at the top of a later frame.
 
-use std::cell::{Cell, RefCell};
-use std::collections::VecDeque;
-
 use serde::Serialize;
 
 use crate::MenuDefinition;
+
+use super::command_channel::{CommandChannel, CommandRequest};
 
 pub(crate) enum RequestKind {
     Configure(Vec<MenuDefinition>),
     Remove,
 }
 
-pub(crate) struct Request {
-    pub(crate) id: u64,
-    pub(crate) kind: RequestKind,
-}
+pub(crate) type Request = CommandRequest<RequestKind>;
 
 #[derive(Serialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
@@ -50,16 +46,11 @@ struct Message {
 }
 
 thread_local! {
-    static NEXT_ID: Cell<u64> = const { Cell::new(1) };
-    static REQUESTS: RefCell<VecDeque<Request>> = const { RefCell::new(VecDeque::new()) };
-    static MESSAGES: RefCell<VecDeque<Message>> = const { RefCell::new(VecDeque::new()) };
+    static CHANNEL: CommandChannel<RequestKind, Message> = const { CommandChannel::new() };
 }
 
 fn request(kind: RequestKind) -> u64 {
-    let id = NEXT_ID.get();
-    NEXT_ID.set(id.saturating_add(1));
-    REQUESTS.with_borrow_mut(|requests| requests.push_back(Request { id, kind }));
-    id
+    CHANNEL.with(|channel| channel.request(kind))
 }
 
 pub(crate) fn configure(entries: Vec<MenuDefinition>) -> u64 {
@@ -71,12 +62,12 @@ pub(crate) fn remove() -> u64 {
 }
 
 pub(crate) fn take_requests() -> Vec<Request> {
-    REQUESTS.with_borrow_mut(|requests| requests.drain(..).collect())
+    CHANNEL.with(CommandChannel::take_requests)
 }
 
 pub(crate) fn complete(id: u64, result: Result<(), String>) {
-    MESSAGES.with_borrow_mut(|messages| {
-        messages.push_back(Message {
+    CHANNEL.with(|channel| {
+        channel.push(Message {
             kind: MessageKind::Completion {
                 id,
                 error: result.err(),
@@ -86,30 +77,29 @@ pub(crate) fn complete(id: u64, result: Result<(), String>) {
 }
 
 pub(crate) fn action(id: String, checked: Option<bool>) {
-    MESSAGES.with_borrow_mut(|messages| {
-        messages.push_back(Message {
+    CHANNEL.with(|channel| {
+        channel.push(Message {
             kind: MessageKind::Action { id, checked },
         });
     });
 }
 
 pub(crate) fn pending() -> bool {
-    MESSAGES.with_borrow(|messages| !messages.is_empty())
+    CHANNEL.with(CommandChannel::pending)
 }
 
 pub(crate) fn take_messages() -> Vec<serde_json::Value> {
-    MESSAGES.with_borrow_mut(|messages| {
-        messages
-            .drain(..)
+    CHANNEL.with(|channel| {
+        channel
+            .take_messages()
+            .into_iter()
             .map(|message| serde_json::to_value(message).expect("menu messages serialize"))
             .collect()
     })
 }
 
 pub(crate) fn reset() {
-    NEXT_ID.set(1);
-    REQUESTS.with_borrow_mut(VecDeque::clear);
-    MESSAGES.with_borrow_mut(VecDeque::clear);
+    CHANNEL.with(CommandChannel::reset);
 }
 
 #[cfg(test)]
@@ -127,9 +117,9 @@ mod tests {
             .iter()
             .map(|request| match &request.kind {
                 RequestKind::Configure(entries) => {
-                    (request.id, format!("configure {}", entries.len()))
+                    (request.command_id, format!("configure {}", entries.len()))
                 }
-                RequestKind::Remove => (request.id, "remove".to_owned()),
+                RequestKind::Remove => (request.command_id, "remove".to_owned()),
             })
             .collect::<Vec<_>>();
         assert_eq!(
