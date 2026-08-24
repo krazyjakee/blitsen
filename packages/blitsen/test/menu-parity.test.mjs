@@ -20,6 +20,7 @@ const repository = join(import.meta.dir, "../../..");
 const NATIVE_WINDOW = "crates/blitsen-host/src/native_window";
 const JS_SOURCES = "packages/blitsen/src";
 const SCHEMA = "packages/blitsen/src/config.schema.json";
+const NATIVE_BOOTSTRAP = "crates/blitsen-host/src/dom_bridge/bootstrap/native.js";
 
 /** Every .rs file under native_window (recursively, surviving the file split),
  *  plus native_window.rs itself, concatenated. */
@@ -60,6 +61,16 @@ function schemaEnums(node, accepts, found = []) {
 const quoted = text => [...text.matchAll(/"([^"]+)"/g)].map(([, value]) => value);
 
 describe("menu vocabulary parity between the CLI and the runtime", () => {
+  test("the runtime has one parameterized menu walker and accelerator parser", async () => {
+    const source = await readFile(join(repository, NATIVE_BOOTSTRAP), "utf8");
+    expect(source.match(/const normaliseMenuTree\s*=/g)?.length).toBe(1);
+    expect(source.match(/const normaliseAccelerator\s*=/g)?.length).toBe(1);
+    expect(source.match(/normaliseMenuTree\(menu, \{/g)?.length,
+      "tray and application menu normalization must both use the shared walker").toBe(2);
+    expect(source).not.toContain("const normaliseMenu =");
+    expect(source).not.toContain("const normaliseLevel =");
+  });
+
   test("the schema's item role enum matches MenuRole::parse", async () => {
     const rust = await rustMenuSource();
     // The parse arms live inside `impl MenuRole { ... }`; the block is matched

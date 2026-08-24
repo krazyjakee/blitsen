@@ -143,6 +143,14 @@ assert.throws(() => tray.configure({
 }), /modifiers must precede one key/);
 assert.throws(() => tray.configure({
   icon: new Uint8Array(),
+  menu: [
+    { action: "separator" },
+    { id: "open", label: "Open", accelerator: "KeyO+Control" },
+  ],
+}), /modifiers must precede one key/,
+"the legacy tray separator is normalized before the following entry is validated");
+assert.throws(() => tray.configure({
+  icon: new Uint8Array(),
   menu: [{ id: "open", label: "Open", icon: new Uint8Array([1, 2, 3]) }],
 }), /not a valid PNG/);
 
@@ -158,6 +166,10 @@ if (menu.configure) {
   assert.throws(() => menu.configure({
     menu: [{ type: "submenu", label: "File", menu: [{ action: "quit" }] }],
   }), /application menu action id/);
+  assert.throws(() => menu.configure({
+    menu: [{ type: "submenu", label: "File", menu: [{ action: "separator" }] }],
+  }), /application menu action id/,
+  "legacy action separators remain a tray-only compatibility spelling");
   assert.throws(() => menu.configure({
     menu: [
       { type: "submenu", role: "edit", label: "Edit", menu: [] },

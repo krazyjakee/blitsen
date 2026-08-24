@@ -166,6 +166,90 @@
   const nativeTrayWorkPending = trayChannel.workPending;
   const runTrayCommand = trayChannel.run;
   const settleTrays = trayChannel.settle;
+  // Tray and application menus share their recursive shape, accelerator
+  // grammar, radio invariants, and resource limits. Surface-specific rules
+  // below describe only the entries they genuinely do not share.
+  const menuTreeMaxDepth = 16;
+  const menuTreeMaxItems = 512;
+  const acceleratorModifiers = new Set([
+    "ctrl", "control", "alt", "option", "shift", "cmd", "command", "super", "meta",
+    "cmdorctrl", "commandorcontrol",
+  ]);
+  const requireNonEmpty = (value, description) => {
+    if (value === undefined || String(value).length === 0)
+      throw new TypeError(`${description} must be a non-empty string`);
+    return String(value);
+  };
+  const normaliseAccelerator = (value, noun) => {
+    if (value === undefined) return null;
+    const result = requireNonEmpty(value, `${noun} accelerator`);
+    const parts = result.split("+").map(part => part.trim());
+    if (parts.some(part => part.length === 0)
+      || acceleratorModifiers.has(parts[parts.length - 1].toLowerCase())
+      || parts.slice(0, -1).some(part => !acceleratorModifiers.has(part.toLowerCase()))
+      || new Set(parts.slice(0, -1).map(part => part.toLowerCase())).size !== parts.length - 1)
+      throw new TypeError(
+        `invalid ${noun} accelerator ${JSON.stringify(result)}: modifiers must precede one key`,
+      );
+    return result;
+  };
+  const normaliseMenuTree = (menu, rules) => {
+    let itemCount = 0;
+    const level = (items, depth) => {
+      if (!Array.isArray(items)) throw new TypeError(rules.array);
+      if (depth > menuTreeMaxDepth)
+        throw new TypeError(`${rules.trees} may be nested at most ${menuTreeMaxDepth} levels`);
+      let activeRadio = null;
+      const closedRadios = new Set();
+      const checkedRadios = new Map();
+      const result = items.map(item => {
+        if (++itemCount > menuTreeMaxItems)
+          throw new TypeError(`${rules.trees} may contain at most ${menuTreeMaxItems} entries`);
+        if (item === null || typeof item !== "object")
+          throw new TypeError(`${rules.entry} must be an object`);
+        const type = rules.typeOf(item);
+        if (rules.top !== undefined && depth === 1 && type !== "submenu")
+          throw new TypeError(rules.top);
+        const radio = type === "radio" ? requireNonEmpty(item.group, `${rules.noun} radio group`) : null;
+        if (radio !== activeRadio) {
+          if (activeRadio !== null) closedRadios.add(activeRadio);
+          if (radio !== null && closedRadios.has(radio))
+            throw new TypeError(
+              `items in a ${rules.noun} radio group must be consecutive at one menu level`,
+            );
+          activeRadio = radio;
+        }
+        if (type === "separator") return { type };
+        const special = rules.special?.(item, type);
+        if (special !== undefined) return special;
+        if (type === "submenu")
+          return rules.submenu(item, type, nested => level(nested, depth + 1));
+        if (type === "checkbox" || type === "radio") {
+          if (type === "radio")
+            checkedRadios.set(radio, (checkedRadios.get(radio) ?? 0) + Number(item.checked === true));
+          return {
+            type,
+            id: requireNonEmpty(item.id, `checkable ${rules.noun} item id`),
+            label: requireNonEmpty(item.label, `checkable ${rules.noun} item label`),
+            enabled: item.enabled === undefined ? true : Boolean(item.enabled),
+            checked: item.checked === undefined ? false : Boolean(item.checked),
+            group: radio,
+            accelerator: normaliseAccelerator(item.accelerator, rules.noun),
+          };
+        }
+        if (type !== "action") throw new TypeError(`unknown ${rules.kind} item type: ${type}`);
+        return rules.action(item, type);
+      });
+      for (const [group, checked] of checkedRadios) {
+        if (checked !== 1)
+          throw new TypeError(
+            `${rules.noun} radio group ${JSON.stringify(group)} must have exactly one checked item`,
+          );
+      }
+      return result;
+    };
+    return level(menu, 1);
+  };
   const normaliseTrayOptions = options => {
     if (options === null || typeof options !== "object")
       throw new TypeError("tray options must be an object");
@@ -174,78 +258,12 @@
       throw new TypeError("tray icon must be a Uint8Array or Uint8ClampedArray");
     if (!Array.isArray(menu)) throw new TypeError("tray menu must be an array");
     const menuIcons = [];
-    let itemCount = 0;
-    const nonEmpty = (value, description) => {
-      if (value === undefined || String(value).length === 0)
-        throw new TypeError(`${description} must be a non-empty string`);
-      return String(value);
-    };
-    const accelerator = value => {
-      if (value === undefined) return null;
-      const result = nonEmpty(value, "tray accelerator");
-      const parts = result.split("+").map(part => part.trim());
-      const modifiers = new Set([
-        "ctrl", "control", "alt", "option", "shift", "cmd", "command", "super", "meta",
-        "cmdorctrl", "commandorcontrol",
-      ]);
-      if (parts.some(part => part.length === 0)
-        || modifiers.has(parts[parts.length - 1].toLowerCase())
-        || parts.slice(0, -1).some(part => !modifiers.has(part.toLowerCase()))
-        || new Set(parts.slice(0, -1).map(part => part.toLowerCase())).size !== parts.length - 1)
-        throw new TypeError(
-          `invalid tray accelerator ${JSON.stringify(result)}: modifiers must precede one key`,
-        );
-      return result;
-    };
     const itemIcon = value => {
       if (value === undefined) return null;
       if (!(value instanceof Uint8Array) && !(value instanceof Uint8ClampedArray))
         throw new TypeError("a tray menu icon must be a Uint8Array or Uint8ClampedArray");
       menuIcons.push(value);
       return menuIcons.length - 1;
-    };
-    const normaliseMenu = (items, depth = 1) => {
-      if (!Array.isArray(items)) throw new TypeError("tray menu must be an array");
-      if (depth > 16) throw new TypeError("tray menus may be nested at most 16 levels");
-      return items.map(item => {
-        if (++itemCount > 512) throw new TypeError("tray menus may contain at most 512 entries");
-        if (item === null || typeof item !== "object")
-          throw new TypeError("a tray menu item must be an object");
-        const type = item.type === undefined
-          ? (item.action === "separator" ? "separator" : "action")
-          : String(item.type);
-        if (type === "separator") return { type };
-        if (type === "submenu") return {
-          type,
-          label: nonEmpty(item.label, "tray submenu label"),
-          enabled: item.enabled === undefined ? true : Boolean(item.enabled),
-          iconIndex: itemIcon(item.icon),
-          menu: normaliseMenu(item.menu, depth + 1),
-        };
-        if (type === "checkbox" || type === "radio") return {
-          type,
-          id: nonEmpty(item.id, "checkable tray item id"),
-          label: nonEmpty(item.label, "checkable tray item label"),
-          enabled: item.enabled === undefined ? true : Boolean(item.enabled),
-          checked: item.checked === undefined ? false : Boolean(item.checked),
-          group: type === "radio" ? nonEmpty(item.group, "tray radio group") : null,
-          accelerator: accelerator(item.accelerator),
-        };
-        if (type !== "action") throw new TypeError(`unknown tray menu item type: ${type}`);
-        const hasId = item.id !== undefined;
-        const hasAction = item.action !== undefined;
-        if (hasId === hasAction)
-          throw new TypeError("a tray action must have exactly one of id or action");
-        return {
-          type,
-          id: hasId ? nonEmpty(item.id, "tray action id") : null,
-          action: hasAction ? String(item.action) : null,
-          label: item.label === undefined ? null : String(item.label),
-          enabled: item.enabled === undefined ? true : Boolean(item.enabled),
-          accelerator: accelerator(item.accelerator),
-          iconIndex: itemIcon(item.icon),
-        };
-      });
     };
     return {
       icon,
@@ -254,7 +272,38 @@
         tooltip: tooltip === null ? null : String(tooltip),
         openOnClick: Boolean(openOnClick),
         closeToTray: Boolean(closeToTray),
-        menu: normaliseMenu(menu),
+        menu: normaliseMenuTree(menu, {
+          noun: "tray",
+          kind: "tray menu",
+          trees: "tray menus",
+          entry: "a tray menu item",
+          array: "tray menu must be an array",
+          typeOf: item => item.type === undefined
+            ? (item.action === "separator" ? "separator" : "action")
+            : String(item.type),
+          submenu: (item, type, recurse) => ({
+            type,
+            label: requireNonEmpty(item.label, "tray submenu label"),
+            enabled: item.enabled === undefined ? true : Boolean(item.enabled),
+            iconIndex: itemIcon(item.icon),
+            menu: recurse(item.menu),
+          }),
+          action: (item, type) => {
+            const hasId = item.id !== undefined;
+            const hasAction = item.action !== undefined;
+            if (hasId === hasAction)
+              throw new TypeError("a tray action must have exactly one of id or action");
+            return {
+              type,
+              id: hasId ? requireNonEmpty(item.id, "tray action id") : null,
+              action: hasAction ? String(item.action) : null,
+              label: item.label === undefined ? null : String(item.label),
+              enabled: item.enabled === undefined ? true : Boolean(item.enabled),
+              accelerator: normaliseAccelerator(item.accelerator, "tray"),
+              iconIndex: itemIcon(item.icon),
+            };
+          },
+        }),
       }),
     };
   };
@@ -302,69 +351,33 @@
       throw new TypeError("application menu options must be an object");
     const { menu } = options;
     if (!Array.isArray(menu)) throw new TypeError("the application menu must be an array");
-    let itemCount = 0;
-    const nonEmpty = (value, description) => {
-      if (value === undefined || String(value).length === 0)
-        throw new TypeError(`${description} must be a non-empty string`);
-      return String(value);
-    };
-    const accelerator = value => {
-      if (value === undefined) return null;
-      const result = nonEmpty(value, "menu accelerator");
-      const parts = result.split("+").map(part => part.trim());
-      const modifiers = new Set([
-        "ctrl", "control", "alt", "option", "shift", "cmd", "command", "super", "meta",
-        "cmdorctrl", "commandorcontrol",
-      ]);
-      if (parts.some(part => part.length === 0)
-        || modifiers.has(parts[parts.length - 1].toLowerCase())
-        || parts.slice(0, -1).some(part => !modifiers.has(part.toLowerCase()))
-        || new Set(parts.slice(0, -1).map(part => part.toLowerCase())).size !== parts.length - 1)
-        throw new TypeError(
-          `invalid menu accelerator ${JSON.stringify(result)}: modifiers must precede one key`,
-        );
-      return result;
-    };
-    const normaliseLevel = (items, depth = 1) => {
-      if (!Array.isArray(items)) throw new TypeError("an application menu must be an array");
-      if (depth > 16) throw new TypeError("application menus may be nested at most 16 levels");
-      return items.map(item => {
-        if (++itemCount > 512)
-          throw new TypeError("application menus may contain at most 512 entries");
-        if (item === null || typeof item !== "object")
-          throw new TypeError("an application menu item must be an object");
-        const type = item.type === undefined ? "action" : String(item.type);
-        if (depth === 1 && type !== "submenu")
-          throw new TypeError("every top-level application menu entry must be a submenu");
-        if (type === "separator") return { type };
-        if (type === "role") return { type, role: nonEmpty(item.role, "an application menu role") };
-        if (type === "submenu") return {
-          type,
-          label: nonEmpty(item.label, "application submenu label"),
-          role: item.role === undefined ? null : nonEmpty(item.role, "an application submenu role"),
-          enabled: item.enabled === undefined ? true : Boolean(item.enabled),
-          menu: normaliseLevel(item.menu, depth + 1),
-        };
-        if (type === "checkbox" || type === "radio") return {
-          type,
-          id: nonEmpty(item.id, "checkable menu item id"),
-          label: nonEmpty(item.label, "checkable menu item label"),
-          enabled: item.enabled === undefined ? true : Boolean(item.enabled),
-          checked: item.checked === undefined ? false : Boolean(item.checked),
-          group: type === "radio" ? nonEmpty(item.group, "menu radio group") : null,
-          accelerator: accelerator(item.accelerator),
-        };
-        if (type !== "action") throw new TypeError(`unknown application menu item type: ${type}`);
-        return {
-          type,
-          id: nonEmpty(item.id, "application menu action id"),
-          label: nonEmpty(item.label, "application menu action label"),
-          enabled: item.enabled === undefined ? true : Boolean(item.enabled),
-          accelerator: accelerator(item.accelerator),
-        };
-      });
-    };
-    return JSON.stringify(normaliseLevel(menu));
+    return JSON.stringify(normaliseMenuTree(menu, {
+      noun: "menu",
+      kind: "application menu",
+      trees: "application menus",
+      entry: "an application menu item",
+      array: "an application menu must be an array",
+      top: "every top-level application menu entry must be a submenu",
+      typeOf: item => item.type === undefined ? "action" : String(item.type),
+      special: (item, type) => type === "role"
+        ? { type, role: requireNonEmpty(item.role, "an application menu role") }
+        : undefined,
+      submenu: (item, type, recurse) => ({
+        type,
+        label: requireNonEmpty(item.label, "application submenu label"),
+        role: item.role === undefined
+          ? null : requireNonEmpty(item.role, "an application submenu role"),
+        enabled: item.enabled === undefined ? true : Boolean(item.enabled),
+        menu: recurse(item.menu),
+      }),
+      action: (item, type) => ({
+        type,
+        id: requireNonEmpty(item.id, "application menu action id"),
+        label: requireNonEmpty(item.label, "application menu action label"),
+        enabled: item.enabled === undefined ? true : Boolean(item.enabled),
+        accelerator: normaliseAccelerator(item.accelerator, "menu"),
+      }),
+    }));
   };
   const nativeMenu = {
     configure: !menuInstalled ? undefined : options =>
