@@ -212,12 +212,17 @@ hidapi = { version = "2.6.6", default-features = false, features = ["windows-nat
 # toast and to remove one from notification history. Blitsen forks no second
 # toast implementation to get that.
 winrt-toast-reborn = "0.3.8"
+winreg = "0.55"
 # `ToastNotifier::Setting()`, and nothing else. Whether the user, the
 # administrator or policy has switched this application's toasts off is the only
 # notification permission state Windows has, and no toast library in the tree
 # surfaces it. The crate is already resolved behind the one above, so naming it
 # here links nothing new.
-windows = { version = "0.61", features = ["UI_Notifications"] }
+windows = { version = "0.61", features = ["UI_Notifications", "Win32_Foundation", "Win32_System_Com", "Win32_UI_Notifications"] }
+# The `windows::core::implement` macro expands through this exact companion
+# crate. A newer `windows-core` is also present behind winit; keeping the direct
+# pairing explicit prevents the generated COM vtables from binding that one.
+windows-core = "=0.61.2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 # `macos-shared-device` is the one feature that changes behaviour rather than
@@ -226,6 +231,16 @@ windows = { version = "0.61", features = ["UI_Notifications"] }
 # system merely because an application read one report from it.
 hidapi = { version = "2.6.6", default-features = false, features = ["macos-shared-device"] }
 mac-usernotifications = "0.3.1"
+# `mac-usernotifications` owns notification submission, while its delegate is
+# intentionally private and drops responses for requests the current process
+# did not submit. Cold activation is precisely such a response, so Blitsen
+# installs a small delegate that persists its own encoded request identifiers
+# before the JavaScript bridge exists. These are already resolved by the crate
+# above; naming them directly adds no frameworks or duplicate versions.
+block2 = "0.6"
+objc2 = "0.6"
+objc2-foundation = "0.3"
+objc2-user-notifications = { version = "0.3", features = ["UNNotification", "UNNotificationRequest", "UNNotificationResponse", "UNUserNotificationCenter"] }
 
 # Vello's Metal compute path can wedge the display GPU on Intel Macs before
 # wgpu can report device loss (#229). Use vello_cpu to rasterize on the CPU and

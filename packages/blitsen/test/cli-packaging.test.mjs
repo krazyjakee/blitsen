@@ -5,8 +5,8 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { buildStandalone, describeExecutableBinary, describeNativeBinary, notificationActivation }
   from "../src/export.mjs";
-import { activationEntryPoint, developmentBundle, developmentIdentifier, packageBuild, signArgv,
-  signArtifact } from "../src/packaging.mjs";
+import { activationEntryPoint, developmentBundle, developmentIdentifier,
+  notificationActivatorClsid, packageBuild, signArgv, signArtifact } from "../src/packaging.mjs";
 import { viteBase, addonFixtures, icon, signHook, compiler, engineAddon, engineBuilt, compileAddon, elfHeader, executableStub, exportedName, nativeStub, withStubbedExport, withArtifact } from "./cli-support.mjs";
 
 describe("directory CLI", () => {
@@ -241,6 +241,11 @@ describe("directory CLI", () => {
     expect(() => activationEntryPoint({
       platform: "linux", identifier: "not one name",
     })).toThrow("not a Linux D-Bus application name");
+    expect(() => activationEntryPoint({
+      platform: "win32", identifier: "not\\one\\identity",
+    })).toThrow("not a Windows AppUserModelID");
+    expect(notificationActivatorClsid("com.example.Pong"))
+      .toBe("{022c05fc-9e96-52d4-89fa-e74df195db71}");
   });
 
   test("packages Linux D-Bus activation beside the desktop entry", async () => {
@@ -352,6 +357,7 @@ describe("directory CLI", () => {
       expect(plist).toContain("<key>CFBundleIconFile</key>\n  <string>Pong.icns</string>");
       expect(plist).toContain("<key>CFBundlePackageType</key>\n  <string>APPL</string>");
       expect(plist).toContain("<key>CFBundleShortVersionString</key>\n  <string>1.2.3</string>");
+      expect(plist).toContain("<key>NSUserNotificationAlertStyle</key>\n  <string>alert</string>");
       expect(plist).toContain("<key>NSHighResolutionCapable</key>\n  <true/>");
       expect(plist.trimEnd().endsWith("</plist>")).toBeTrue();
 
@@ -471,6 +477,24 @@ describe("directory CLI", () => {
       expect(ico.readUInt32LE(14)).toBe(png.length);
       expect(ico.readUInt32LE(18)).toBe(22);
       expect(Buffer.compare(ico.subarray(22), png)).toBe(0);
+    });
+  });
+
+  test("packages the registered Windows toast COM activator for an identified app", async () => {
+    await withArtifact(async ({ executable }) => {
+      const result = await packageBuild({
+        platform: "win32", executable, title: "Pong Deluxe", identifier: "com.example.Pong",
+      });
+      const registration = `${executable}.notification-register.ps1`;
+      expect(result.artifacts).toEqual([`${executable}.manifest`, registration]);
+      expect(result.notes.join(" ")).toContain("per-user COM registration");
+      const text = await readFile(registration, "utf8");
+      const clsid = "{022c05fc-9e96-52d4-89fa-e74df195db71}";
+      expect(text).toContain("HKCU:\\Software\\Classes\\AppUserModelId\\com.example.Pong");
+      expect(text).toContain(`New-ItemProperty -Path $appId -Name 'CustomActivator' -Value '${clsid}'`);
+      expect(text).toContain(`HKCU:\\Software\\Classes\\CLSID\\${clsid}\\LocalServer32`);
+      expect(text).toContain("--notification-com-server");
+      expect(text).toContain(`Join-Path $PSScriptRoot '${basename(executable)}'`);
     });
   });
 

@@ -219,6 +219,11 @@ impl Settings {
                 "--notification-activation" => {
                     settings.activation.launched_by = Some(value()?);
                 }
+                // Launch markers used by Windows' out-of-process toast COM
+                // server. They carry no envelope themselves; the registered
+                // callback persists the toast argument once the event loop is
+                // alive, and the first eligible frame drains it (#252).
+                "--notification-com-server" | "-ToastActivated" | "-Embedding" => {}
                 other => return Err(format!("unknown option {other}")),
             }
         }

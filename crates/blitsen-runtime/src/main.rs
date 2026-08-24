@@ -72,6 +72,14 @@ fn run() -> Result<ExitCode, String> {
         // on both hosts. The Phase 1 side of this is `replayDocumentFrames` in
         // the addon; this is the same function behind the other engine.
         Some("--replay") => report::replay(&arguments[1..]),
+        // Windows starts the registered toast COM local server with the first
+        // flag; COM itself may append either conventional spelling. They are
+        // launch provenance rather than application options, and the class
+        // factory is installed while the bundled session opens (#252).
+        Some("--notification-com-server" | "-ToastActivated" | "-Embedding") => match bundle {
+            Some(bundle) => session::run_bundle(bundle, &arguments),
+            None => Err("the notification COM server carries no application bundle".to_owned()),
+        },
         Some(argument) if argument.starts_with("--") => Err(format!("unknown option {argument}")),
         // Proxy mode (#67): a URL is a dev server to read the application from,
         // rather than a directory to read it from. Same session either way.

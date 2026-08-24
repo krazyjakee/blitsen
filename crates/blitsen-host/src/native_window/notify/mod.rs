@@ -7,11 +7,21 @@ mod android;
 mod desktop;
 #[cfg(target_os = "linux")]
 mod linux_portal;
+#[cfg(target_os = "macos")]
+mod macos_activation;
+#[cfg(target_os = "windows")]
+mod windows_activation;
 
 use std::sync::OnceLock;
 
+#[cfg(any(target_os = "linux", target_os = "android"))]
+pub(crate) use activation::addresses_session;
+pub(crate) use activation::{ActivationStore, NO_ACTIVATION_IDENTITY, session_token};
+#[cfg(target_os = "windows")]
+pub(crate) use activation::{activator_clsid, activator_uuid};
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 pub(crate) use activation::{
-    ActivationStore, NO_ACTIVATION_IDENTITY, addresses_session, session_token,
+    addresses_generation, decode_desktop_envelope, encode_desktop_envelope, generation_nonce,
 };
 #[cfg(target_os = "android")]
 pub(crate) use android::*;

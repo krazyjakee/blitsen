@@ -81,8 +81,8 @@ what each platform's notification service reads:
 | Platform | Registered by the build | Registered at startup |
 | --- | --- | --- |
 | Linux | `<id>.desktop` with `DBusActivatable=true`, plus `<id>.service` | The runtime owns `<id>` on the session bus, registers that host identity with the portal and exports `org.freedesktop.Application` |
-| macOS | The `.app`'s `CFBundleIdentifier` | — |
-| Windows | — | The AppUserModelID, under the running user's own `SOFTWARE\Classes\AppUserModelId` |
+| macOS | The `.app`'s `CFBundleIdentifier` and notification alert style | The response-capturing `UNUserNotificationCenter` delegate |
+| Windows | `<name>.exe.notification-register.ps1` with the AppUserModelID and deterministic `LocalServer32` activator class | The same AppUserModelID/COM mapping is refreshed for the executable's current path, and its class factory is registered |
 | Android | — | The application ID the package was installed as, read from the Activity |
 
 The Linux files are installer inputs: install the desktop entry under
@@ -92,9 +92,11 @@ executable does not register them. The session must provide `xdg-desktop-portal`
 application registry and notification interfaces; a packaged `show` rejects with that missing
 prerequisite instead of silently submitting a notification that cannot launch the application.
 
-Windows and Android register at startup rather than at build time on purpose: `blitsen build`
-cross-compiles, so the machine that writes a Windows artifact is routinely not the machine that will
-run it, and the key that has to exist belongs to the user who eventually does.
+The Windows PowerShell file is an installer input: run it only after the executable is in its final
+location. It resolves the executable beside the script rather than embedding the cross-build host's
+path. Startup writes the same per-user mapping so a portable build can establish or refresh its
+own current path; cross-compilation cannot write the eventual user's registry hive. Android's
+application identity is likewise available only at startup from the installed Activity.
 
 Where a platform, distribution or installer uses a command-line launch context, it does so as
 `--notification-activation <envelope>` on the application's own command line. Linux portal actions

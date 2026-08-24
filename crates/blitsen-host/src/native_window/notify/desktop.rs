@@ -14,6 +14,8 @@ use parking_lot::Mutex;
 use serde_json::{Value, json};
 use winit::event_loop::EventLoopProxy;
 
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+use crate::dom_bridge::notify::Activation;
 use crate::dom_bridge::notify::{NotificationOptions, NotificationPatch};
 
 #[derive(Debug)]
@@ -84,12 +86,15 @@ enum LinuxHandle {
 struct Record {
     options: NotificationOptions,
     token: u64,
+    native_id: String,
+    nonce: Option<String>,
 }
 
 #[cfg(target_os = "windows")]
 struct Record {
     options: NotificationOptions,
     token: u64,
+    nonce: Option<String>,
 }
 
 /// The identity Windows files every Blitsen toast under when nothing registered
@@ -138,6 +143,7 @@ pub(super) fn register_entry_point(display_name: &str) {
     // is not, `permission` reports the missing identity in the sentence #251
     // wrote for exactly this.
     let _ = winrt_toast_reborn::register(&entry_point.entry, display_name, None);
+    let _ = super::windows_activation::register(&entry_point.entry, display_name);
 }
 
 /// The toast group Blitsen's own notifications share.
@@ -189,6 +195,14 @@ pub(crate) struct NotifyController {
     signals: Arc<Mutex<VecDeque<Signal>>>,
     records: HashMap<String, Record>,
     next_token: u64,
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    notification_session: String,
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    activation_store: Option<super::ActivationStore>,
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    activation_errors: Arc<Mutex<VecDeque<(String, String)>>>,
+    #[cfg(target_os = "windows")]
+    _com_server: Option<super::windows_activation::ComServer>,
     #[cfg(target_os = "linux")]
     portal: Result<Option<super::linux_portal::LinuxPortal>, String>,
 }
@@ -247,6 +261,30 @@ fn notification(options: &NotificationOptions) -> Result<Notification, String> {
     Ok(notification)
 }
 
+/// The persisted envelope represented by one generation of a desktop
+/// notification. `None` is the intentional development mode: no installed
+/// identity means there is no stopped application for the platform to address.
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+fn activation(
+    public_id: &str,
+    action: Option<&str>,
+    session: &str,
+    generation: u64,
+    platform: &str,
+) -> Option<Activation> {
+    let entry = super::entry_point()?;
+    Some(Activation {
+        nonce: super::generation_nonce(session, generation),
+        identity: entry.identity.clone(),
+        id: public_id.to_owned(),
+        session: Some(session.to_owned()),
+        action: action.map(str::to_owned),
+        dismissed: None,
+        platform: platform.to_owned(),
+        entry: entry.entry.clone(),
+    })
+}
+
 /// The Windows toast for `options`, tagged with the session ID that addresses it.
 ///
 /// The tag is what makes `update` and `close` possible at all: Windows replaces
@@ -258,10 +296,19 @@ fn notification(options: &NotificationOptions) -> Result<Notification, String> {
 fn toast(
     public_id: &str,
     options: &NotificationOptions,
-) -> Result<winrt_toast_reborn::Toast, String> {
+    session: &str,
+    generation: u64,
+) -> Result<(winrt_toast_reborn::Toast, Option<String>), String> {
     use winrt_toast_reborn::content::image::ImagePlacement;
     use winrt_toast_reborn::{Action, Image, Scenario, Toast, ToastDuration};
 
+    let body_activation = activation(public_id, None, session, generation, "windows");
+    let nonce = body_activation
+        .as_ref()
+        .map(|activation| activation.nonce.clone());
+    let launch = body_activation
+        .as_ref()
+        .map_or_else(|| "default".to_owned(), super::encode_desktop_envelope);
     let mut toast = Toast::new();
     toast
         .text1(&options.title)
@@ -271,7 +318,7 @@ fn toast(
         // Windows gives a body click no argument of its own, so the toast's
         // launch string is what distinguishes it from a button in the activation
         // handler. `"default"` is the identifier the declarations reserve for it.
-        .launch("default")
+        .launch(&launch)
         // Windows has two toast durations rather than a timeout, and picks the
         // exact seconds itself. This is the mapping `notify-rust` applied.
         .duration(match options.timeout {
@@ -294,9 +341,12 @@ fn toast(
         toast.image(1, image.with_placement(ImagePlacement::AppLogoOverride));
     }
     for action in &options.actions {
-        toast.action(Action::new(&action.title, &action.id, ""));
+        let argument = activation(public_id, Some(&action.id), session, generation, "windows")
+            .as_ref()
+            .map_or_else(|| action.id.clone(), super::encode_desktop_envelope);
+        toast.action(Action::new(&action.title, &argument, ""));
     }
-    Ok(toast)
+    Ok((toast, nonce))
 }
 
 fn close_reason(reason: CloseReason) -> &'static str {
@@ -382,16 +432,26 @@ fn notifier(
             // nor a button. Calling that a click would end the notification for
             // the user on a guess, so it is dropped instead.
             let Some(activated) = activated else { return };
+            let response = super::decode_desktop_envelope(&activated.arg).map_or_else(
+                |_| {
+                    if activated.arg == "default" {
+                        NotificationResponse::Default
+                    } else {
+                        NotificationResponse::Action(activated.arg)
+                    }
+                },
+                |activation| {
+                    activation
+                        .action
+                        .map_or(NotificationResponse::Default, NotificationResponse::Action)
+                },
+            );
             queue(
                 &activated_signals,
                 &activated_proxy,
                 activated_id.clone(),
                 token,
-                SignalKind::Response(if activated.arg == "default" {
-                    NotificationResponse::Default
-                } else {
-                    NotificationResponse::Action(activated.arg)
-                }),
+                SignalKind::Response(response),
             );
         })
         .on_dismissed(move |dismissed| {
@@ -429,11 +489,62 @@ impl NotifyController {
     pub(crate) fn new(proxy: EventLoopProxy) -> Self {
         #[cfg(target_os = "linux")]
         let portal = super::linux_portal::LinuxPortal::new(proxy.clone());
+        let signals = Arc::new(Mutex::new(VecDeque::new()));
+        #[cfg(any(target_os = "windows", target_os = "macos"))]
+        let notification_session = super::session_token();
+        #[cfg(any(target_os = "windows", target_os = "macos"))]
+        let activation_errors = Arc::new(Mutex::new(VecDeque::new()));
+        #[cfg(any(target_os = "windows", target_os = "macos"))]
+        let activation_location =
+            super::entry_point().and_then(|entry| match super::store_directory(&entry.identity) {
+                Ok(directory) => Some((entry.clone(), directory)),
+                Err(error) => {
+                    activation_errors.lock().push_back((String::new(), error));
+                    None
+                }
+            });
+        #[cfg(any(target_os = "windows", target_os = "macos"))]
+        let activation_store = activation_location
+            .as_ref()
+            .map(|(entry, directory)| super::ActivationStore::new(directory, &entry.identity));
+        #[cfg(target_os = "macos")]
+        if let Some((entry, directory)) = &activation_location {
+            super::macos_activation::install(
+                directory.clone(),
+                entry.identity.clone(),
+                entry.entry.clone(),
+                Arc::clone(&activation_errors),
+                proxy.clone(),
+            );
+        }
+        #[cfg(target_os = "windows")]
+        let com_server = activation_location.as_ref().and_then(|(entry, directory)| {
+            match super::windows_activation::ComServer::start(
+                directory.clone(),
+                entry.identity.clone(),
+                Arc::clone(&activation_errors),
+                proxy.clone(),
+            ) {
+                Ok(server) => Some(server),
+                Err(error) => {
+                    activation_errors.lock().push_back((String::new(), error));
+                    None
+                }
+            }
+        });
         Self {
             proxy,
-            signals: Arc::new(Mutex::new(VecDeque::new())),
+            signals,
             records: HashMap::new(),
             next_token: 1,
+            #[cfg(any(target_os = "windows", target_os = "macos"))]
+            notification_session,
+            #[cfg(any(target_os = "windows", target_os = "macos"))]
+            activation_store,
+            #[cfg(any(target_os = "windows", target_os = "macos"))]
+            activation_errors,
+            #[cfg(target_os = "windows")]
+            _com_server: com_server,
             #[cfg(target_os = "linux")]
             portal,
         }
@@ -528,22 +639,27 @@ impl NotifyController {
         // process.
         #[cfg(target_os = "macos")]
         bundle_identity()?;
-        #[cfg(all(not(target_os = "windows"), not(target_os = "linux")))]
+        let token = self.token();
+        #[cfg(target_os = "macos")]
+        let mac_activation =
+            activation(&public_id, None, &self.notification_session, token, "macos");
+        #[cfg(target_os = "macos")]
+        let native_id = mac_activation
+            .as_ref()
+            .map_or_else(|| public_id.clone(), super::encode_desktop_envelope);
+        #[cfg(target_os = "macos")]
         let handle = {
-            #[allow(unused_mut)]
             let mut spec = notification(&options)?;
-            #[cfg(target_os = "macos")]
-            spec.id(public_id.clone());
+            spec.id(native_id.clone());
             spec.show()
                 .map_err(|error| format!("could not show notification: {error}"))?
         };
         // Windows registers the response handlers on the notifier before the
         // toast reaches the platform, so the token they report at has to exist
-        // first. Building the toast before taking one keeps a rejected option —
-        // an unusable icon, an unknown urgency — from consuming a token.
+        // first. Its encoded launch argument is also the durable cold-start
+        // envelope the COM callback receives.
         #[cfg(target_os = "windows")]
-        let toast = toast(&public_id, &options)?;
-        let token = self.token();
+        let (toast, nonce) = toast(&public_id, &options, &self.notification_session, token)?;
 
         #[cfg(target_os = "linux")]
         {
@@ -611,15 +727,27 @@ impl NotifyController {
 
         #[cfg(target_os = "macos")]
         {
-            watch(
-                handle,
+            let nonce = mac_activation.map(|activation| activation.nonce);
+            // An identity-less development bundle has no durable activation
+            // envelope, so it retains the dependency's live-process watcher.
+            if nonce.is_none() {
+                watch(
+                    handle,
+                    public_id.clone(),
+                    token,
+                    Arc::clone(&self.signals),
+                    self.proxy.clone(),
+                );
+            }
+            self.records.insert(
                 public_id.clone(),
-                token,
-                Arc::clone(&self.signals),
-                self.proxy.clone(),
+                Record {
+                    options,
+                    token,
+                    native_id,
+                    nonce,
+                },
             );
-            self.records
-                .insert(public_id.clone(), Record { options, token });
         }
 
         #[cfg(target_os = "windows")]
@@ -627,8 +755,14 @@ impl NotifyController {
             notifier(&public_id, token, &self.signals, &self.proxy)
                 .show(&toast)
                 .map_err(|error| format!("could not show notification: {error}"))?;
-            self.records
-                .insert(public_id.clone(), Record { options, token });
+            self.records.insert(
+                public_id.clone(),
+                Record {
+                    options,
+                    token,
+                    nonce,
+                },
+            );
         }
 
         Ok(json!(public_id))
@@ -669,23 +803,39 @@ impl NotifyController {
 
         #[cfg(target_os = "macos")]
         {
-            let mut spec = notification(&record.options)?;
-            spec.id(public_id);
+            let options = record.options.clone();
+            let old_native_id = record.native_id.clone();
+            let token = self.token();
+            let activation =
+                activation(public_id, None, &self.notification_session, token, "macos");
+            let native_id = activation
+                .as_ref()
+                .map_or_else(|| public_id.to_owned(), super::encode_desktop_envelope);
+            let mut spec = notification(&options)?;
+            spec.id(native_id.clone());
             let handle = spec
                 .show()
                 .map_err(|error| format!("could not update notification {public_id}: {error}"))?;
-            let token = self.token();
-            self.records
+            let nonce = activation.map(|activation| activation.nonce);
+            if nonce.is_none() {
+                watch(
+                    handle,
+                    public_id.to_owned(),
+                    token,
+                    Arc::clone(&self.signals),
+                    self.proxy.clone(),
+                );
+            }
+            if old_native_id != native_id {
+                mac_usernotifications::blocking::close_delivered(&old_native_id);
+            }
+            let record = self
+                .records
                 .get_mut(public_id)
-                .expect("record still exists")
-                .token = token;
-            watch(
-                handle,
-                public_id.to_owned(),
-                token,
-                Arc::clone(&self.signals),
-                self.proxy.clone(),
-            );
+                .expect("record still exists");
+            record.token = token;
+            record.native_id = native_id;
+            record.nonce = nonce;
             Ok(json!(true))
         }
 
@@ -695,15 +845,18 @@ impl NotifyController {
         // remaining callbacks stale.
         #[cfg(target_os = "windows")]
         {
-            let toast = toast(public_id, &record.options)?;
+            let options = record.options.clone();
             let token = self.token();
-            self.records
-                .get_mut(public_id)
-                .expect("record still exists")
-                .token = token;
+            let (toast, nonce) = toast(public_id, &options, &self.notification_session, token)?;
             notifier(public_id, token, &self.signals, &self.proxy)
                 .show(&toast)
                 .map_err(|error| format!("could not update notification {public_id}: {error}"))?;
+            let record = self
+                .records
+                .get_mut(public_id)
+                .expect("record still exists");
+            record.token = token;
+            record.nonce = nonce;
             Ok(json!(true))
         }
     }
@@ -725,7 +878,7 @@ impl NotifyController {
             LinuxHandle::Freedesktop(handle) => handle.close(),
         }
         #[cfg(target_os = "macos")]
-        mac_usernotifications::blocking::close_delivered(public_id);
+        mac_usernotifications::blocking::close_delivered(&record.native_id);
         // The toast is addressed by the group and tag `show` gave it, so nothing
         // the record holds is needed to withdraw it — only the fact that this
         // session still owned the ID. Removal covers both a toast still on
@@ -765,6 +918,44 @@ impl NotifyController {
                         }
                     }
                 }
+                Err(error) => crate::dom_bridge::notify::failed(String::new(), error),
+            }
+        }
+        #[cfg(any(target_os = "windows", target_os = "macos"))]
+        {
+            for (id, error) in self.activation_errors.lock().drain(..) {
+                crate::dom_bridge::notify::failed(id, error);
+            }
+            let activations = self
+                .activation_store
+                .as_ref()
+                .map(super::ActivationStore::take)
+                .transpose();
+            match activations {
+                Ok(Some(activations)) => {
+                    for activation in activations {
+                        let current = super::addresses_generation(
+                            &activation,
+                            &self.notification_session,
+                            self.records
+                                .get(&activation.id)
+                                .and_then(|record| record.nonce.as_deref()),
+                        );
+                        if current {
+                            self.records.remove(&activation.id);
+                            if activation.dismissed.is_some() {
+                                crate::dom_bridge::notify::closed(activation.id, "dismissed");
+                            } else if let Some(action) = activation.action {
+                                crate::dom_bridge::notify::action(activation.id, action);
+                            } else {
+                                crate::dom_bridge::notify::clicked(activation.id);
+                            }
+                        } else {
+                            crate::dom_bridge::notify::activated(activation);
+                        }
+                    }
+                }
+                Ok(None) => {}
                 Err(error) => crate::dom_bridge::notify::failed(String::new(), error),
             }
         }
@@ -818,6 +1009,8 @@ impl NotifyController {
         }
         self.records.clear();
         self.signals.lock().clear();
+        #[cfg(any(target_os = "windows", target_os = "macos"))]
+        self.activation_errors.lock().clear();
     }
 
     /// Drops this process's callback state without withdrawing notifications.
@@ -828,6 +1021,8 @@ impl NotifyController {
     pub(crate) fn detach(&mut self) {
         self.records.clear();
         self.signals.lock().clear();
+        #[cfg(any(target_os = "windows", target_os = "macos"))]
+        self.activation_errors.lock().clear();
     }
 }
 

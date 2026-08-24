@@ -46,6 +46,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
+#[cfg(any(target_os = "windows", target_os = "macos", test))]
+use base64::Engine as _;
+#[cfg(any(target_os = "windows", test))]
+use sha2::{Digest, Sha256};
+
 use crate::dom_bridge::notify::Activation;
 
 /// What a process with no installed application identity is told.
@@ -78,6 +83,15 @@ const CONSUMED_LIMIT: usize = 64;
 static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 static SESSION_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
+/// Identifies request IDs and toast arguments owned by this activation bridge.
+///
+/// The payload is URL-safe base64 rather than raw JSON because both Windows'
+/// toast XML and macOS' notification request identifier impose their own
+/// escaping rules. A closed alphabet makes the exact same string safe in both
+/// places and leaves non-Blitsen notifications unmistakably outside the seam.
+#[cfg(any(target_os = "windows", target_os = "macos", test))]
+const DESKTOP_ENVELOPE_PREFIX: &str = "blitsen-notification-v1:";
+
 pub(crate) fn session_token() -> String {
     let minted = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -86,12 +100,93 @@ pub(crate) fn session_token() -> String {
     format!("{minted:x}-{:x}-{sequence:x}", std::process::id())
 }
 
+/// The generation token embedded in every desktop notification response.
+///
+/// A replacement gets a new generation, so a callback already in flight from
+/// the superseded notification cannot consume the replacement's record. The
+/// session token makes the same generation number unique across process starts.
+#[cfg(any(target_os = "windows", target_os = "macos", test))]
+pub(crate) fn generation_nonce(session: &str, generation: u64) -> String {
+    format!("{session}-{generation:x}")
+}
+
+/// Deterministic COM class identity for one installed application identity.
+///
+/// Installers and the running Windows host have to name the same CLSID without
+/// sharing mutable state. A namespaced, RFC 4122-shaped hash gives each AUMID a
+/// stable class while preventing two applications from claiming one another's
+/// activator registration.
+#[cfg(any(target_os = "windows", test))]
+pub(crate) fn activator_uuid(identity: &str) -> u128 {
+    let mut digest: [u8; 32] =
+        Sha256::digest(format!("blitsen-notification-activator:{identity}")).into();
+    let bytes = &mut digest;
+    bytes[6] = (bytes[6] & 0x0f) | 0x50;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    u128::from_be_bytes(
+        bytes[..16]
+            .try_into()
+            .expect("a SHA-256 prefix is 16 bytes"),
+    )
+}
+
+#[cfg(any(target_os = "windows", test))]
+pub(crate) fn activator_clsid(identity: &str) -> String {
+    let value = activator_uuid(identity);
+    format!(
+        "{{{:08x}-{:04x}-{:04x}-{:04x}-{:012x}}}",
+        value >> 96,
+        (value >> 80) & 0xffff,
+        (value >> 64) & 0xffff,
+        (value >> 48) & 0xffff,
+        value & 0xffff_ffff_ffff,
+    )
+}
+
+/// Encodes an activation in the restricted string alphabet accepted by both
+/// desktop notification entry points.
+#[cfg(any(target_os = "windows", target_os = "macos", test))]
+pub(crate) fn encode_desktop_envelope(activation: &Activation) -> String {
+    let json = serde_json::to_vec(activation).expect("an activation envelope serializes");
+    format!(
+        "{DESKTOP_ENVELOPE_PREFIX}{}",
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(json)
+    )
+}
+
+/// Decodes only payloads produced by [`encode_desktop_envelope`].
+#[cfg(any(target_os = "windows", target_os = "macos", test))]
+pub(crate) fn decode_desktop_envelope(text: &str) -> Result<Activation, String> {
+    let encoded = text.strip_prefix(DESKTOP_ENVELOPE_PREFIX).ok_or_else(|| {
+        "notification activation does not carry a Blitsen desktop envelope".to_owned()
+    })?;
+    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(encoded)
+        .map_err(|error| format!("malformed notification activation encoding: {error}"))?;
+    serde_json::from_slice(&bytes)
+        .map_err(|error| format!("malformed notification activation: {error}"))
+}
+
 pub(crate) fn addresses_session(
     activation: &Activation,
     session: &str,
     active_record: bool,
 ) -> bool {
     active_record && activation.session.as_deref() == Some(session)
+}
+
+/// Whether a desktop response still addresses the live replacement generation.
+#[cfg(any(target_os = "windows", target_os = "macos", test))]
+pub(crate) fn addresses_generation(
+    activation: &Activation,
+    session: &str,
+    record_nonce: Option<&str>,
+) -> bool {
+    addresses_session(
+        activation,
+        session,
+        record_nonce == Some(activation.nonce.as_str()),
+    )
 }
 
 fn replace_file(source: &Path, destination: &Path) -> std::io::Result<()> {
@@ -752,6 +847,66 @@ mod tests {
         assert!(addresses_session(&current, &second, true));
         assert!(!addresses_session(&current, &second, false));
         assert_eq!(old.id, current.id, "both generations deliberately reuse n1");
+        assert!(addresses_generation(&current, &second, Some("a2")));
+        assert!(
+            !addresses_generation(&old, &second, Some("a2")),
+            "a late callback from a previous process cannot consume this session's n1"
+        );
+        let replaced = Activation {
+            nonce: "a3".into(),
+            session: Some(second.clone()),
+            ..current.clone()
+        };
+        assert!(
+            !addresses_generation(&current, &second, Some("a3")),
+            "a late callback from this session's superseded generation cannot consume its replacement"
+        );
+        assert!(addresses_generation(&replaced, &second, Some("a3")));
+    }
+
+    #[test]
+    fn a_desktop_envelope_round_trips_without_xml_or_identifier_metacharacters() {
+        let value = Activation {
+            nonce: generation_nonce("abc-1", 42),
+            identity: "com.example.Pong".into(),
+            id: "n1".into(),
+            session: Some("abc-1".into()),
+            action: Some("open archive & reveal".into()),
+            dismissed: None,
+            platform: "windows".into(),
+            entry: "com.example.Pong".into(),
+        };
+        let encoded = encode_desktop_envelope(&value);
+        assert!(encoded.starts_with(DESKTOP_ENVELOPE_PREFIX));
+        assert!(
+            encoded
+                .strip_prefix(DESKTOP_ENVELOPE_PREFIX)
+                .expect("prefix")
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_')),
+            "the encoded payload must be safe in toast XML and a macOS request identifier"
+        );
+        assert_eq!(decode_desktop_envelope(&encoded).expect("decoded"), value);
+    }
+
+    #[test]
+    fn a_desktop_envelope_refuses_foreign_and_damaged_input() {
+        assert!(decode_desktop_envelope("default").is_err());
+        assert!(decode_desktop_envelope("blitsen-notification-v1:not-base64!").is_err());
+    }
+
+    #[test]
+    fn a_windows_activator_class_is_stable_per_application_identity() {
+        let first = activator_uuid("com.example.Pong");
+        assert_eq!(first, activator_uuid("com.example.Pong"));
+        assert_ne!(first, activator_uuid("com.example.Other"));
+        let bytes = first.to_be_bytes();
+        assert_eq!(bytes[6] >> 4, 5, "the class uses UUID version-5 bits");
+        assert_eq!(bytes[8] >> 6, 2, "the class uses the RFC 4122 variant");
+        assert_eq!(
+            activator_clsid("com.example.Pong"),
+            "{022c05fc-9e96-52d4-89fa-e74df195db71}"
+        );
     }
 
     #[test]

@@ -117,13 +117,16 @@ produce it differs, and only the parts named here exist:
   desktop's policy.
 - **Windows** — an export built with `--bundle-id` registers that AppUserModelID with the
   notification platform at startup, which is what gives it a notifier of its own and a permission
-  state to read. Windows starts a stopped desktop application for a toast only through a registered
-  COM activator implementing `INotificationActivationCallback`; Blitsen does not implement one, so
-  toast activation reaches a running process and not a stopped one.
+  state to read. Packaging also writes a path-independent `.notification-register.ps1` installer input for the
+  deterministic `LocalServer32` class, and startup refreshes that path after a portable build is
+  moved. The executable registers an `INotificationActivationCallback` class factory while its
+  event loop is alive. Body and named-action toast arguments contain generation-scoped envelopes;
+  the callback persists one before waking the first eligible frame.
 - **macOS** — an exported `.app` is relaunched by the notification centre, and the response is
-  delivered to the `UNUserNotificationCenter` delegate. The delegate Blitsen's notification library
-  installs discards a response for a notification the running process did not itself submit, so a
-  cold-start response is not surfaced.
+  delivered to the `UNUserNotificationCenter` delegate. Identified exports encode a durable envelope
+  in the native request identifier, and Blitsen's delegate records body, named-action and dismissal
+  responses even when the request was submitted by the previous process. A replacement uses a new
+  generation so a late response cannot consume the replacement's live record.
 - **Android** — body, action and delete `PendingIntent`s target a private receiver in the minimal
   `classes.dex`. It persists the activation before body/actions launch the platform
   `NativeActivity` with a clean Intent; swipe dismissal does not open it. The exported launcher

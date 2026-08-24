@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import { copyFile, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, join, resolve } from "node:path";
@@ -110,6 +111,8 @@ function infoPlist({ name, executable, identifier, icon, version }) {
 <plist version="1.0">
 <dict>
 ${body}
+  <key>NSUserNotificationAlertStyle</key>
+  <string>alert</string>
   <key>NSHighResolutionCapable</key>
   <true/>
 </dict>
@@ -133,6 +136,43 @@ function linuxIdentity(identifier) {
       + "name: use at least two dot-separated components, each beginning with a letter or _");
   }
   return identifier;
+}
+
+const WINDOWS_IDENTITY = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+
+function windowsIdentity(identifier) {
+  if (identifier && !WINDOWS_IDENTITY.test(identifier)) {
+    throw new Error(`--bundle-id ${JSON.stringify(identifier)} is not a Windows AppUserModelID: `
+      + "use at most 128 letters, numbers, dots, underscores or hyphens");
+  }
+  return identifier;
+}
+
+/** Stable CLSID shared with the Windows runtime's COM class registration. */
+export function notificationActivatorClsid(identifier) {
+  const bytes = createHash("sha256")
+    .update(`blitsen-notification-activator:${identifier}`, "utf8").digest().subarray(0, 16);
+  bytes[6] = (bytes[6] & 0x0f) | 0x50;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = bytes.toString("hex");
+  return `{${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-`
+    + `${hex.slice(16, 20)}-${hex.slice(20)}}`;
+}
+
+const escapePowerShellString = value => String(value).replaceAll("'", "''");
+
+function windowsNotificationRegistration({ identifier, executable, title }) {
+  const clsid = notificationActivatorClsid(identifier);
+  return `$ErrorActionPreference = 'Stop'
+$executable = Join-Path $PSScriptRoot '${escapePowerShellString(basename(executable))}'
+$appId = 'HKCU:\\Software\\Classes\\AppUserModelId\\${identifier}'
+$server = 'HKCU:\\Software\\Classes\\CLSID\\${clsid}\\LocalServer32'
+New-Item -Path $appId -Force | Out-Null
+New-ItemProperty -Path $appId -Name 'DisplayName' -Value '${escapePowerShellString(title)}' -PropertyType String -Force | Out-Null
+New-ItemProperty -Path $appId -Name 'CustomActivator' -Value '${clsid}' -PropertyType String -Force | Out-Null
+New-Item -Path $server -Force | Out-Null
+Set-Item -Path $server -Value ('"' + $executable + '" --notification-com-server')
+`;
 }
 
 function desktopEntry({ name, executable, icon, identity }) {
@@ -183,6 +223,7 @@ function dbusService({ identity, executable }) {
 export function activationEntryPoint({ platform, identifier }) {
   if (!identifier) return null;
   if (platform === "linux") linuxIdentity(identifier);
+  if (platform === "win32") windowsIdentity(identifier);
   return {
     identity: identifier,
     entry: identifier,
@@ -298,6 +339,7 @@ function packagePlan({ platform, executable, icon, identifier = null, hid = fals
   const directory = dirname(executable);
   const name = basename(executable, platform === "win32" ? ".exe" : "");
   if (platform === "linux") linuxIdentity(identifier);
+  if (platform === "win32") windowsIdentity(identifier);
   const resource = icon ? iconFile(platform, icon, name) : null;
   if (platform === "darwin") {
     const bundle = join(directory, `${name}.app`);
@@ -312,7 +354,11 @@ function packagePlan({ platform, executable, icon, identifier = null, hid = fals
     };
   }
   const artifacts = platform === "win32"
-    ? [`${executable}.manifest`, ...resource ? [join(directory, resource)] : []]
+    ? [
+      `${executable}.manifest`,
+      ...identifier ? [`${executable}.notification-register.ps1`] : [],
+      ...resource ? [join(directory, resource)] : [],
+    ]
     : [
       join(directory, `${identifier ?? name}.desktop`),
       ...identifier ? [join(directory, `${identifier}.service`)] : [],
@@ -369,6 +415,14 @@ export async function packageBuild({
   } else if (platform === "win32") {
     await writeFile(`${executable}.manifest`, windowsManifest({ name: title, version }));
     written.push(`${executable}.manifest`);
+    if (identifier) {
+      const registration = `${executable}.notification-register.ps1`;
+      await writeFile(registration,
+        windowsNotificationRegistration({ identifier, executable, title }));
+      written.push(registration);
+      notes.push("Run the notification registration PowerShell script after placing the executable "
+        + "at its final installed path; the application refreshes the same per-user COM registration when run.");
+    }
     if (resource) {
       const target = join(dirname(executable), resource.file);
       await writeFile(target, resource.bytes);

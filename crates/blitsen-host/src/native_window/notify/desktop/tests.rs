@@ -123,6 +123,12 @@ mod windows_tests {
         }
     }
 
+    fn test_toast(public_id: &str, options: &NotificationOptions) -> winrt_toast_reborn::Toast {
+        toast(public_id, options, "test-session", 1)
+            .expect("the toast builds")
+            .0
+    }
+
     #[test]
     fn permission_is_the_notifier_setting_or_the_missing_identity() {
         // Both outcomes are the contract, and which one a machine gives is a
@@ -162,20 +168,14 @@ mod windows_tests {
             Ok(setting) => {
                 let delivers = setting == json!("granted");
                 manager
-                    .show(
-                        &toast(public_id, &options("The archive is ready."))
-                            .expect("the toast builds"),
-                    )
+                    .show(&test_toast(public_id, &options("The archive is ready.")))
                     .expect("the toast is accepted");
                 if delivers {
                     settles_on(&[public_id]);
                 }
 
                 manager
-                    .show(
-                        &toast(public_id, &options("Copied to Downloads."))
-                            .expect("the toast builds"),
-                    )
+                    .show(&test_toast(public_id, &options("Copied to Downloads.")))
                     .expect("the replacement is accepted");
                 if delivers {
                     settles_on(&[public_id]);
@@ -212,10 +212,10 @@ mod windows_tests {
         // not a path it can be asked about later.
         let mut relative_icon = options("The archive is ready.");
         relative_icon.icon = Some("archive.png".into());
-        assert!(toast("n1", &relative_icon).is_err());
+        assert!(toast("n1", &relative_icon, "test-session", 1).is_err());
 
         let mut unknown_urgency = options("The archive is ready.");
         unknown_urgency.urgency = "urgent".into();
-        assert!(toast("n1", &unknown_urgency).is_err());
+        assert!(toast("n1", &unknown_urgency, "test-session", 1).is_err());
     }
 }
