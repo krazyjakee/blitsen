@@ -28,6 +28,7 @@ mod intl;
 // `native_window/menu.rs` — and in the test build everywhere, because the
 // public FIFO shape this settles is not a platform decision and a queue only
 // two targets could compile would be a queue nothing here checks.
+mod canvas;
 #[cfg(any(target_os = "windows", target_os = "macos", test))]
 pub(crate) mod menu;
 mod native;
@@ -36,7 +37,6 @@ pub(crate) mod tray;
 // The thread pool the network runs on. Not a web worker — those are
 // [`crate::worker`], and the two were one name for long enough to be worth
 // spelling out.
-mod canvas;
 mod net_pool;
 mod ops;
 mod storage;
