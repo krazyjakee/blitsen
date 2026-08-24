@@ -8,3 +8,14 @@ updates:
     open-pull-requests-limit: 10
     commit-message:
       prefix: ci
+  # The blitz crates in Cargo.toml are pinned to a git rev on purpose and moved
+  # by hand when the port is ready for it; Dependabot only updates registry
+  # dependencies, so it will not touch that pin.
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: deps

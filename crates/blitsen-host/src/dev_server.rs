@@ -105,9 +105,30 @@ impl DevServer {
 
     /// The URL a path is served at, for messages and for the HMR channel.
     pub fn url_for(&self, path: &str) -> String {
-        self.origin
-            .join(path)
+        self.resolve(path)
             .map_or_else(|_| format!("{}{path}", self.origin), |url| url.to_string())
+    }
+
+    /// Resolves a path against the origin, refusing a result that leaves it.
+    ///
+    /// `Url::join` follows the URL rules, under which a path is not always a
+    /// path: `//evil.example/x` is protocol-relative and an absolute URL
+    /// replaces the base outright, both landing on another origin. Paths here
+    /// come from the application's own source, but the contract of this type
+    /// is "a request to the configured server", so a join that resolves
+    /// elsewhere is refused rather than requested.
+    fn resolve(&self, path: &str) -> Result<Url, String> {
+        let url = self
+            .origin
+            .join(path)
+            .map_err(|error| format!("{path} is not a path this server can serve: {error}"))?;
+        if url.origin() != self.origin.origin() {
+            return Err(format!(
+                "{path} resolves outside {}, which is the only place this server requests from",
+                self.origin
+            ));
+        }
+        Ok(url)
     }
 
     /// Why the last read failed, if it did.
@@ -156,10 +177,7 @@ impl DevServer {
 
     /// One GET. `Ok(None)` is a server that answered without the file.
     fn request(&self, path: &str) -> Result<Option<Vec<u8>>, String> {
-        let url = self
-            .origin
-            .join(path)
-            .map_err(|error| format!("{path} is not a path this server can serve: {error}"))?;
+        let url = self.resolve(path)?;
         let client = self.client.clone();
         let pool = crate::dom_bridge::net_runtime().map_err(|error| error.to_string())?;
         pool.block_on(async move {
@@ -188,6 +206,40 @@ fn connection_error(error: &reqwest::Error) -> String {
         "the request timed out".to_owned()
     } else {
         error.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn server() -> DevServer {
+        DevServer {
+            origin: Url::parse("http://localhost:5173/").unwrap(),
+            client: reqwest::Client::new(),
+            last_error: Mutex::new(None),
+        }
+    }
+
+    #[test]
+    fn paths_resolving_to_another_origin_are_refused() {
+        let server = server();
+        for path in ["/src/main.jsx", "src/main.jsx?t=1738", "./assets/logo.svg"] {
+            assert!(server.resolve(path).is_ok(), "{path} is an ordinary path");
+        }
+        for path in [
+            "//evil.example/x",
+            "http://evil.example/x",
+            "https://localhost:5173/x",
+        ] {
+            let error = server.resolve(path).unwrap_err();
+            assert!(error.contains("resolves outside"), "{path}: {error}");
+        }
+        assert_eq!(
+            server.url_for("//evil.example/x"),
+            "http://localhost:5173///evil.example/x",
+            "a message about a refused path still names it, on the origin"
+        );
     }
 }
 

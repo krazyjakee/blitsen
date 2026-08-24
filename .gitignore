@@ -1,5 +1,7 @@
-/node_modules/
-/target/
+# Unanchored: examples and spikes carry their own installs and build trees
+# (packages/blitsen/node_modules, spikes/s6/node_modules, spikes/s10/target).
+node_modules/
+target/
 # Generated per target by `bun run --cwd packages/blitsen notices` (#121).
 /packages/platforms/*/NOTICES.txt
 /packages/platforms/*/NOTICES.json
@@ -13,9 +15,36 @@
 # Built documentation site; regenerate with `bun run site:build`.
 /site/dist/
 
-# Default output when `blitsen build` is run from this example directory.
+# Default output when `blitsen build` is run from an example directory: a
+# binary named after the directory — or after the configured application name
+# (`blitsen.name` in package.json), which only monaco sets — plus `.exe` on
+# Windows. One explicit pair per example, never a wildcard that could hide source.
+/examples/assets/assets
+/examples/assets/assets.exe
+/examples/audio/audio
+/examples/audio/audio.exe
+/examples/canvas/canvas
+/examples/canvas/canvas.exe
 /examples/hardware/hardware
 /examples/hardware/hardware.exe
+/examples/hello-dom/hello-dom
+/examples/hello-dom/hello-dom.exe
+/examples/interactive/interactive
+/examples/interactive/interactive.exe
+/examples/monaco/Monaco Editor
+/examples/monaco/Monaco Editor.exe
+/examples/native-view/native-view
+/examples/native-view/native-view.exe
+/examples/pong/pong
+/examples/pong/pong.exe
+/examples/reactflow/reactflow
+/examples/reactflow/reactflow.exe
+/examples/responsive/responsive
+/examples/responsive/responsive.exe
+/examples/todo/todo
+/examples/todo/todo.exe
+/examples/vite-react/vite-react
+/examples/vite-react/vite-react.exe
 
 # Raw 2048px image-model renders the brand vectors were traced from. Kept locally,
 # not in history — the SVGs in assets/brand/svg are the canonical artifact.

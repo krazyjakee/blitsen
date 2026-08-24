@@ -14,6 +14,23 @@ fn execute_scripts(
     )
 }
 
+/// Minimal filesystem loader standing in for a host's real one: reads `src`
+/// below the entrypoint's directory, treating a leading slash as the
+/// application root — the meaning every production loader gives it. A file
+/// that does not read fails the load, which is what the runner's skip
+/// behaviour is exercised against.
+struct LocalScripts;
+
+impl ScriptLoader for LocalScripts {
+    fn load(&self, root: &Path, src: &str) -> Result<(String, String), JsError> {
+        let path = root.join(src.trim_start_matches('/'));
+        let source = std::fs::read_to_string(&path).map_err(|error| {
+            JsError::new(format!("could not read script {}: {error}", path.display()))
+        })?;
+        Ok((source, path.to_string_lossy().into_owned()))
+    }
+}
+
 /// A script read off disk is named by its path, which is the platform's own —
 /// `\` on Windows. The identity under test is which file was reached, not which
 /// separator the host spells it with, so both are compared in one spelling.

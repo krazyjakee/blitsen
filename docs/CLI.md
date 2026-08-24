@@ -144,6 +144,7 @@ Most users do not need these. They are useful for CI, source checkouts and custo
 | `BLITSEN_ANDROID_KEY_ALIAS` | Key alias when a keystore contains more than one key |
 | `BLITSEN_ANDROID_KEY_PASSWORD` | Key password when it differs from the store password |
 | `BLITSEN_NOTICES_PATH` | Audited third-party notices to embed in an Android APK |
+| `BLITSEN_HOST` | Force the export host — `bun` or `blitsen` — instead of letting the exporter choose. A regression escape hatch; see [Migration](MIGRATION.md) |
 
 Runtime overrides are unversioned and must match the requested operating system and architecture.
 Blitsen validates them before use and reports that package resolution was bypassed.

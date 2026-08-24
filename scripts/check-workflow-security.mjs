@@ -3,7 +3,20 @@ import { join } from "node:path";
 
 const ACTION_PIN = /^[^/\s]+\/[^@\s]+@[0-9a-f]{40}$/;
 const UNTRUSTED_EXPRESSION =
-  /\$\{\{\s*(?:inputs(?:\.|\[)|github\.(?:event(?:\.|\[)|head_ref\b|base_ref\b|ref_name\b))/;
+  /\$\{\{\s*(?:inputs(?:\.|\[)|github\.(?:event(?:\.|\[)|head_ref\b|base_ref\b|ref_name\b|actor\b|triggering_actor\b))/;
+
+// Triggers that run with elevated permissions (secrets, a write token) against
+// attacker-controlled refs. Using one safely takes an explicit review of what
+// the workflow checks out and executes, so the policy refuses them outright
+// rather than trying to enumerate the safe shapes.
+const ELEVATED_TRIGGERS = ["pull_request_target", "workflow_run"];
+
+function triggerNames(triggers) {
+  if (typeof triggers === "string") return [triggers];
+  if (Array.isArray(triggers)) return triggers.filter((name) => typeof name === "string");
+  if (triggers !== null && typeof triggers === "object") return Object.keys(triggers);
+  return [];
+}
 
 function visit(value, path, errors) {
   if (Array.isArray(value)) {
@@ -42,6 +55,18 @@ export function checkWorkflowSource(source, file = "workflow.yml") {
     workflow = Bun.YAML.parse(source);
   } catch (error) {
     return [`${file}: invalid YAML: ${error.message}`];
+  }
+
+  // YAML 1.1 parsers read a bare `on` as the boolean `true`, so accept either
+  // spelling of the key rather than depend on the parser's dialect.
+  const triggers = workflow?.on ?? workflow?.[true];
+  for (const name of triggerNames(triggers)) {
+    if (ELEVATED_TRIGGERS.includes(name)) {
+      errors.push(
+        `${file}: the ${name} trigger runs with elevated permissions against ` +
+          `attacker-controlled refs and requires explicit review before this policy can admit it`,
+      );
+    }
   }
 
   visit(workflow, file, errors);

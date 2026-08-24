@@ -101,7 +101,21 @@ fn marker(engine: &mut QuickJs) -> String {
 }
 
 fn main() {
-    if std::env::var_os("DISPLAY").is_none() && std::env::var_os("WAYLAND_DISPLAY").is_none() {
+    // macOS and Windows create windows natively without a DISPLAY variable, so
+    // the environment check only means anything on the platforms that use one.
+    let has_display = cfg!(any(target_os = "macos", target_os = "windows"))
+        || std::env::var_os("DISPLAY").is_some()
+        || std::env::var_os("WAYLAND_DISPLAY").is_some();
+    if !has_display {
+        // A CI job that arranged a display sets this to assert the test really
+        // ran, so an arrangement that quietly broke fails instead of skipping.
+        if std::env::var_os("BLITSEN_REQUIRE_DISPLAY").is_some_and(|value| value == "1") {
+            panic!(
+                "BLITSEN_REQUIRE_DISPLAY=1, but there is no DISPLAY or \
+                 WAYLAND_DISPLAY: this environment promised a display and \
+                 did not provide one"
+            );
+        }
         eprintln!(
             "SKIPPED surface_lifecycle: a surface cycle needs a real window, and \
              there is no DISPLAY or WAYLAND_DISPLAY. This test measures nothing \

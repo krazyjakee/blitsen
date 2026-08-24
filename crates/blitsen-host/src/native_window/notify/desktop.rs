@@ -43,7 +43,7 @@ enum SignalKind {
 const NO_BUNDLE_IDENTITY: &str = concat!(
     "macOS notifications need an application bundle identity, and this process has no ",
     "CFBundleIdentifier for UNUserNotificationCenter to address or hold permission against. ",
-    "Give the development host one of its own with `blitsen run --dev-bundle`, which builds and ",
+    "Give the development host one of its own with `blitsen --dev-bundle`, which builds and ",
     "re-executes into a signed development .app, or run an application exported by ",
     "`blitsen build --bundle-id <id> --sign <command>`.",
 );

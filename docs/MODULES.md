@@ -59,7 +59,7 @@ rewrite cannot cover, because the language hands the URL to the application and 
 does arithmetic on it. The origin exists only where that is true.
 
 The same origin is used for a directory being run and for a bundle inside an executable, so
-`blitsen run ./dist` and the exported binary resolve identically. That property is what issue #90
+`blitsen ./dist` and the exported binary resolve identically. That property is what issue #90
 is about, and it would be lost by using `file://` for one and something else for the other.
 
 ### Resolution rules

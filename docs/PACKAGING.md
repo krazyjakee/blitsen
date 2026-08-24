@@ -127,7 +127,7 @@ particular, distribute macOS applications only after notarization when Gatekeepe
 ## Run with a macOS development identity
 
 macOS grants notification permission to an application identity — a bundle identifier and a
-signature — and refuses a process that has none. An exported `.app` has one. `blitsen run` is an
+signature — and refuses a process that has none. An exported `.app` has one. A development run is an
 interpreter executing a script, so it does not, and `blitsen/notify` rejects there rather than
 submitting under some other application's name.
 
@@ -180,7 +180,9 @@ npx blitsen build dist --addon native/physics.node
 ```
 
 An application containing a `.node` addon uses the Bun-based host because the standard runtime has
-no Node-API implementation. This produces a much larger artifact and brings Bun/JavaScriptCore
+no Node-API implementation. Building such an export additionally requires `bun` on `PATH`: the Bun
+host is linked with `Bun.build`, which only Bun can run, so this is the one export the Node-only
+CLI cannot produce alone. This produces a much larger artifact and brings Bun/JavaScriptCore
 redistribution requirements that the default notice flow does not automate. Treat addons as an
 escape hatch and obtain a licensing review before distribution.
 

@@ -11,7 +11,7 @@
 // usage: bun run-determinism.mjs [--update] [--dump <dir>] [--debug]
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { buildAddon, repository } from "./build-addon.mjs";
 
 const traceFile = join(import.meta.dir, "replay/pong.trace.json");

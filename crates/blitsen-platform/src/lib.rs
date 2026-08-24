@@ -1,9 +1,9 @@
 //! Native platform services used below the bridge boundary.
 //!
 //! Capability the web has no spelling for, in a crate that knows nothing about
-//! JavaScript. The `native:` modules in `blitsen-node` are a thin translation
-//! of what is here, so the Phase 2 host swap re-wires the bridge rather than
-//! rewriting the platform code behind it.
+//! JavaScript. The `native:` modules in `blitsen-host`'s DOM bridge are a thin
+//! translation of what is here, so the Phase 2 host swap re-wires the bridge
+//! rather than rewriting the platform code behind it.
 //!
 //! Not every module is present on every platform, and a `cfg` here is a decision
 //! rather than a gap waiting to be filled: `docs/PRODUCT.md` §7 says a capability

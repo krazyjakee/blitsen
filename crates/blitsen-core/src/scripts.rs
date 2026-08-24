@@ -110,19 +110,6 @@ pub trait ScriptLoader {
     }
 }
 
-/// Reads scripts from the filesystem, below the entrypoint's directory.
-pub struct LocalScripts;
-
-impl ScriptLoader for LocalScripts {
-    fn load(&self, root: &Path, src: &str) -> Result<(String, String), JsError> {
-        let path = resolve_local_script(root, src)?;
-        let source = std::fs::read_to_string(&path).map_err(|error| {
-            JsError::new(format!("could not read script {}: {error}", path.display()))
-        })?;
-        Ok((source, path.to_string_lossy().into_owned()))
-    }
-}
-
 /// Executes a collected script list, reading `src` scripts through `loader`.
 pub fn execute_collected_document_scripts_from<J>(
     scripts: Vec<DocumentScript>,
@@ -279,32 +266,4 @@ pub fn simplified(path: PathBuf) -> PathBuf {
         }
     }
     path
-}
-
-fn resolve_local_script(root: &Path, src: &str) -> Result<PathBuf, JsError> {
-    if src.contains("://") {
-        return Err(JsError::new(format!(
-            "script src must be relative to the entrypoint: {src}"
-        )));
-    }
-    let root = root
-        .canonicalize()
-        .map_err(|error| JsError::new(format!("could not resolve {}: {error}", root.display())))?;
-    // A leading slash is the application root, not the filesystem's — the same
-    // meaning the module resolver gives it inside a shipped executable, and the
-    // one `blitsen build` rewrites it to. `root.join("/assets/x.js")` would
-    // otherwise replace the root entirely, which is how a stock `vite build`
-    // ended up looking for its bundle at the top of the disk.
-    let path = root
-        .join(src.trim_start_matches('/'))
-        .canonicalize()
-        .map_err(|error| JsError::new(format!("could not resolve script {src}: {error}")))?;
-    if !path.starts_with(&root) {
-        return Err(JsError::new(format!(
-            "script src escapes the application directory: {src}"
-        )));
-    }
-    // Simplified only after the containment check, which compares two paths in
-    // the same canonical spelling.
-    Ok(simplified(path))
 }

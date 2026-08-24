@@ -35,6 +35,8 @@ jobs:
       "github.event.pull_request.title",
       "github.head_ref",
       "github.ref_name",
+      "github.actor",
+      "github.triggering_actor",
     ]) {
       const errors = checkWorkflowSource(`
 jobs:
@@ -47,5 +49,40 @@ jobs:
       expect(errors).toHaveLength(2);
       expect(errors[0]).toContain("through env");
     }
+  });
+
+  test("rejects triggers that run elevated against attacker-controlled refs", () => {
+    for (const trigger of ["pull_request_target", "workflow_run"]) {
+      for (const spelling of [
+        `on: ${trigger}`,
+        `on: [push, ${trigger}]`,
+        `on:\n  ${trigger}:\n    branches: [main]`,
+      ]) {
+        const errors = checkWorkflowSource(`
+${spelling}
+jobs:
+  test:
+    steps:
+      - run: echo ok
+`);
+        expect(errors).toHaveLength(1);
+        expect(errors[0]).toContain(trigger);
+        expect(errors[0]).toContain("requires explicit review");
+      }
+    }
+  });
+
+  test("accepts the ordinary pull_request trigger", () => {
+    const errors = checkWorkflowSource(`
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  test:
+    steps:
+      - run: echo ok
+`);
+    expect(errors).toEqual([]);
   });
 });

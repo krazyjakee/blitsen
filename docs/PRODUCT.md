@@ -1,7 +1,6 @@
 # Blitsen — Product Specification
 
-**Status:** Draft v0.1
-**Date:** 2026-08-10
+**Status:** Living contributor specification; updated with the code
 **Name:** Blitsen — npm package `blitsen`, CLI `blitsen`, platform packages `@blitsen/*`
 
 ---
@@ -313,7 +312,7 @@ pen, with pressure, multi-touch and pointer capture) · the first `blitsen/*` mo
 
 | Partial | Why |
 | --- | --- |
-| `dialog.*` | Linux and the BSDs only, by design: macOS and Windows require a file dialog on the main thread, which is the thread kept free to paint. Absent there rather than approximated. |
+| `dialog.*` | Linux only, by design: macOS and Windows require a file dialog on the main thread, which is the thread kept free to paint. Absent there rather than approximated. The XDG portal backend is one the BSDs share, but no BSD runtime is published. |
 | `window.create` | Deliberately absent — the context, communication and lifetime contract is settled by #105, but the per-window host state it requires is not implemented. |
 
 **v2 — makes real apps comfortable** — *partly landed early*

@@ -127,6 +127,40 @@ npx blitsen doctor dist --target darwin-arm64
 npx blitsen doctor dist --target win32-x64
 ```
 
+## GPU output
+
+WebGL and WebGPU are not implemented. `<blitsen-view>` is the native viewport element: layout
+treats it as a replaced element, and what the application writes into its surface is composited
+into the same frame as the painted DOM — see [TECH.md §7](TECH.md#7-the-native-viewport-element).
+Acquire the surface once and write RGBA pixels each frame:
+
+```html
+<blitsen-view id="view"></blitsen-view>
+```
+
+```js
+const view = document.getElementById("view");
+const surface = view.acquireSurface();
+
+let pixels = null;
+view.addEventListener("resize", () => { pixels = null; });
+
+function frame(timestamp) {
+  if (pixels === null || pixels.length !== surface.byteLength) {
+    pixels = new Uint8Array(surface.byteLength);
+  }
+  // Fill `pixels` with surface.width × surface.height RGBA rows…
+  surface.write(pixels);
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+```
+
+The surface reports `width`, `height` and `devicePixelRatio`, and its `generation` changes when a
+resize replaces the underlying texture. A complete animated version is
+[`examples/native-view`](../examples/native-view). For 2D drawing prefer `<canvas>`, which records
+a display list instead of uploading a frame.
+
 ## Build a patchable asset layout
 
 Use side-loaded assets when content needs to change without relinking the executable:

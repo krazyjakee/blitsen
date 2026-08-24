@@ -49,7 +49,7 @@ lists individual globals, classes and members.
 
 | Feature | What to use or expect |
 | --- | --- |
-| WebGL and WebGPU | Not implemented; `getContext("webgl")` answers `null`. Use the 2D context, or `<blitsen-view>` for GPU output |
+| WebGL and WebGPU | Not implemented; `getContext("webgl")` answers `null`. Use the 2D context, or `<blitsen-view>` for [GPU output](RECIPES.md#gpu-output) |
 | Canvas shadows and `ctx.filter` | Absent, so a feature test selects a fallback; both need a blur the renderer has none of |
 | `OffscreenCanvas` and `ImageBitmap` | Absent; a `<canvas>` that is never in the document draws, reads back and encodes |
 | WebAssembly | Absent from the standard shipped JavaScript engine |

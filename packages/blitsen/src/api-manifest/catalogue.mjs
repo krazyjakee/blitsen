@@ -452,7 +452,7 @@ export const CONDITIONAL = {
       + "address and to hold permission against — and answers a process that has none by aborting "
       + "it rather than by failing the call, so the facade cannot be installed and left to throw. "
       + "An exported `.app` carries that identity and a development run of the interpreter does "
-      + "not; `blitsen run --dev-bundle` gives the development host one of its own rather than "
+      + "not; `blitsen --dev-bundle` gives the development host one of its own rather than "
       + "borrowing an installed application's. A process cannot acquire or lose a bundle "
       + "identifier while it runs, so the question is settled once, as the runtime installs "
       + "(#253). On Android the same question has a different subject: the facade's `click` is a "

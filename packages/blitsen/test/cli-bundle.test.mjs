@@ -15,6 +15,11 @@ import { machoFixture } from "./fixtures/macho.mjs";
 const run = promisify(execFile);
 const REPO = new URL("../../../", import.meta.url).pathname;
 
+// Resolved once at the top so the absence of a built runtime reads as a skip in
+// the report rather than a silent pass (the cli-runtime.test.mjs precedent).
+const RUST_RUNTIME = join(REPO, "target/debug/blitsen-runtime");
+const rustRuntimeBuilt = await Bun.file(RUST_RUNTIME).exists();
+
 function machoCommands(executable) {
   const commands = [];
   let offset = 32;
@@ -198,9 +203,8 @@ describe("Phase 2 link step", () => {
   // so agreement with it is the whole point of the format. Skipped rather than
   // failed when the runtime has not been built, so this file still runs in the
   // JavaScript-only CI job.
-  test("the Rust runtime reads what this package writes", async () => {
-    const runtime = join(REPO, "target/debug/blitsen-runtime");
-    if (!(await Bun.file(runtime).exists())) return;
+  test.skipIf(!rustRuntimeBuilt)("the Rust runtime reads what this package writes", async () => {
+    const runtime = RUST_RUNTIME;
     const directory = await mkdtemp(join(tmpdir(), "blitsen-bundle-rust-"));
     try {
       const output = join(directory, "MyApp");

@@ -76,6 +76,8 @@ available from a source checkout and requires the Android/Rust toolchain. See
 
 ## Documentation
 
+The same documentation, formatted, is at [blitsen.dev](https://blitsen.dev/).
+
 | If you want to… | Read |
 | --- | --- |
 | Run your first application | [Getting started](docs/GETTING-STARTED.md) |
@@ -88,6 +90,7 @@ available from a source checkout and requires the Android/Rust toolchain. See
 | Check operating-system requirements and known limits | [Platform support](docs/PLATFORM-SUPPORT.md) |
 | Look up every command and option | [CLI reference](docs/CLI.md) |
 | Diagnose a failure | [Troubleshooting](docs/TROUBLESHOOTING.md) |
+| See working applications | [Examples](examples/README.md) |
 
 See [Web API support](docs/WEB-APIS.md) for the runtime boundary and the exact generated matrix.
 

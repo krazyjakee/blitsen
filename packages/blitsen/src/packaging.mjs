@@ -475,8 +475,15 @@ export async function packageBuild({
 // code 127 (#134). It is the same reason a cross-target build cannot sign at
 // all — the signing tool has to exist on the host, and only the host's shell
 // can start it.
-export function signArgv(command, artifact) {
-  return process.platform === "win32"
+export function signArgv(command, artifact, platform = process.platform) {
+  // cmd.exe expands %VAR% even inside quotes, so a percent in the artifact
+  // path would rewrite the command line — the same expansion the .bat/.cmd
+  // invocations in android-toolchain.mjs refuse, with the same character set.
+  if (platform === "win32" && /[\0\r\n"%]/.test(artifact)) {
+    throw new Error("a Windows signing artifact path contains NUL, a newline, quote or %, "
+      + "which cannot be passed through cmd.exe without expansion");
+  }
+  return platform === "win32"
     ? ["cmd", "/c", `${command} "${artifact}"`]
     : ["sh", "-c", `${command} "$@"`, "sh", artifact];
 }

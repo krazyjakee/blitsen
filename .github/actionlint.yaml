@@ -1,8 +1,10 @@
-# actionlint's bundled label list predates GitHub's arm64 runners, so the two
-# this repository's release matrix uses are declared here rather than silenced
-# at the call site. Both are real GitHub-hosted labels (generally available for
-# public repositories since 2025-08-07); see .github/workflows/release.yml for
-# why they are overridable.
+# actionlint's bundled label list predated GitHub's arm64 runners when this
+# file was written; the 1.7.12 CI pins now knows ubuntu-22.04-arm,
+# ubuntu-24.04-arm and windows-11-arm natively, so only the one label below is
+# still declared — belt and braces against a lint version whose list lags. It
+# is a real GitHub-hosted label (generally available for public repositories
+# since 2025-08-07); see .github/workflows/release.yml for why the arm64
+# runner labels are overridable.
 self-hosted-runner:
   labels:
     - windows-11-arm

@@ -9,14 +9,19 @@ import { checkNativeModuleTable } from "../src/native-modules.mjs";
 import { resolvePhase2Runtime } from "../src/runtime.mjs";
 import { capture } from "./cli-support.mjs";
 
+// Resolved once at the top so the absence of a built runtime reads as a skip in
+// the report rather than a silent pass (the cli-runtime.test.mjs precedent).
+const phase2Runtime = await resolvePhase2Runtime().catch(() => null);
+const phase2RuntimeBuilt = phase2Runtime !== null
+  && await Bun.file(phase2Runtime.path).exists();
+
 describe("directory CLI", () => {
   // The profile's engine-level absences are declared rather than derived (see
   // ENGINE_ABSENT in api-manifest.mjs), so this is what keeps the declaration
   // from becoming fiction: the shipping runtime reports what it does not
   // define, and the manifest has to agree exactly.
-  test("the engine agrees with what the profile says it does not implement", async () => {
-    const runtime = await resolvePhase2Runtime().catch(() => null);
-    if (!runtime || !(await Bun.file(runtime.path).exists())) return;
+  test.skipIf(!phase2RuntimeBuilt)("the engine agrees with what the profile says it does not implement", async () => {
+    const runtime = phase2Runtime;
     const reported = Bun.spawnSync({ cmd: [runtime.path, "--engine-report"], stdout: "pipe", stderr: "pipe" });
     expect(reported.exitCode).toBe(0);
     const report = JSON.parse(reported.stdout.toString());

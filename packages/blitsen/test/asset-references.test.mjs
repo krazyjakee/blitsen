@@ -1,28 +1,45 @@
 import { describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { planIngest, rewriteRootRelativeReferences } from "../src/application-ingest.mjs";
-import { CSS_ASSET_REFERENCES, HTML_ASSET_ATTRIBUTES } from "../src/asset-references.mjs";
+import { HTML_ASSET_ATTRIBUTES } from "../src/asset-references.mjs";
 import { generateApiManifest } from "../src/api-manifest.mjs";
 
-describe("asset reference rules", () => {
-  test("one HTML attribute table drives reachability, rewriting, and remote diagnostics", async () => {
-    expect(HTML_ASSET_ATTRIBUTES.map(({ element, attribute, remote }) =>
-      [element, attribute, remote])).toEqual([
-      ["script", "src", "script"],
-      ["img", "src", "asset"],
-      ["source", "src", "asset"],
-      ["audio", "src", "asset"],
-      ["video", "src", "asset"],
-      ["track", "src", "asset"],
-      ["embed", "src", "asset"],
-      ["input", "src", "asset"],
-      ["link", "href", "asset"],
-      ["video", "poster", "asset"],
-      ["object", "data", "asset"],
-    ]);
+const JS_TABLE = join(import.meta.dir, "../src/asset-references.mjs");
+const RUST_VALIDATOR = join(import.meta.dir, "../../../crates/blitsen-host/src/assets.rs");
 
+describe("asset reference rules", () => {
+  // The same table exists twice: the JS side decides what an export collects,
+  // and the Rust side decides what a running directory accepts. Drift between
+  // them is silently asymmetric — a build carries what the runtime refuses, or
+  // the runtime accepts what no build ever ships — so the two are held equal
+  // here rather than each being compared to a literal copy of itself.
+  test("the Rust runtime validates the same (element, attribute) pairs the export collects", async () => {
+    const rust = await readFile(RUST_VALIDATOR, "utf8");
+    const table = /for \(selector, attribute\) in \[([\s\S]*?)\]\s*\{/.exec(rust)?.[1];
+    expect(table,
+      `${RUST_VALIDATOR} no longer declares a for (selector, attribute) in [...] table; `
+      + `update this test's extraction alongside it`).toBeDefined();
+    const rustPairs = [...table.matchAll(/\("([a-z]+)\[([a-z-]+)\]",\s*"([a-z-]+)"\)/g)]
+      .map(([, element, selectorAttribute, attribute]) => {
+        // The selector and the attribute read from the node must agree with
+        // each other before either is compared across languages.
+        expect(selectorAttribute).toBe(attribute);
+        return `${element}[${attribute}]`;
+      });
+    // A reader finding nothing must fail, not pass on an empty set.
+    expect(rustPairs.length).toBeGreaterThanOrEqual(10);
+    const jsPairs = HTML_ASSET_ATTRIBUTES.map(({ element, attribute }) => `${element}[${attribute}]`);
+    expect(jsPairs.length).toBeGreaterThanOrEqual(10);
+    expect(new Set(rustPairs).size).toBe(rustPairs.length);
+    expect(new Set(jsPairs).size).toBe(jsPairs.length);
+    expect(rustPairs.sort(), `the HTML asset-reference tables in ${RUST_VALIDATOR} `
+      + `(validate_local_assets) and ${JS_TABLE} (HTML_ASSET_ATTRIBUTES) disagree`)
+      .toEqual([...jsPairs].sort());
+  });
+
+  test("one HTML attribute table drives reachability, rewriting, and remote diagnostics", async () => {
     const directory = await mkdtemp(join(tmpdir(), "blitsen-asset-rules-"));
     try {
       await mkdir(join(directory, "assets"));
@@ -57,11 +74,6 @@ describe("asset reference rules", () => {
   });
 
   test("CSS syntax keeps its deliberate scan, rewrite, and diagnostic capabilities", async () => {
-    expect(CSS_ASSET_REFERENCES.map(({ syntax, rewriteRoot, remote }) =>
-      ({ syntax, rewriteRoot, remote }))).toEqual([
-      { syntax: "url", rewriteRoot: true, remote: true },
-      { syntax: "import", rewriteRoot: false, remote: false },
-    ]);
     const directory = await mkdtemp(join(tmpdir(), "blitsen-css-asset-rules-"));
     try {
       await mkdir(join(directory, "assets"));

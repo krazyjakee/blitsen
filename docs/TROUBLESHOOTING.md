@@ -114,12 +114,36 @@ A cross-target build may need registry/network access to download the target run
 is damaged, remove only the version/target entry reported by the error or set `BLITSEN_CACHE_DIR`
 to a new cache directory; do not modify application output to work around it.
 
+## An export carrying a `.node` addon asks for Bun
+
+An application with a Node-API addon is linked into the Bun-based host, and that link step is
+`Bun.build`, which only Bun can run. Re-run the same build command with `bun` on `PATH`, or remove
+the addon — an application without one links Blitsen's own runtime, which needs nothing beyond this
+package. See [Packaging](PACKAGING.md#native-addons).
+
 ## Linux fails to load a shared library
 
 Published Linux runtimes require glibc 2.35 or newer plus ALSA, OpenSSL 3, fontconfig and the active
 X11 or Wayland display libraries. Install the missing system package using the distribution's
 package manager. Headless containers also need a display environment and are not representative of
 a user desktop.
+
+## `MALLOC_ARENA_MAX` and `GLIBC_TUNABLES` on Linux
+
+On Linux glibc targets the runtime limits the allocator to two malloc arenas — `mallopt(M_ARENA_MAX, 2)`,
+applied before any thread starts — because per-thread arenas otherwise multiply idle heap in a
+process with many threads. It applies that default only when neither `MALLOC_ARENA_MAX` nor a
+`GLIBC_TUNABLES` entry for `glibc.malloc.arena_max` is set; set either and your value is left in
+force untouched.
+
+## `WGPU_BACKEND` appears in the environment, or only one Vulkan driver is loaded
+
+On Linux the runtime sets `WGPU_BACKEND=vulkan` before graphics initialization when the variable is
+unset, so wgpu brings up one backend rather than every backend it was compiled with. When Vulkan is
+in use, no Vulkan loader override variables are set, and the machine exposes exactly one known DRM
+render driver, it also sets `VK_LOADER_DRIVERS_SELECT` to that driver's ICDs so the loader does not
+open every installed one. A value you set for any of these variables is respected and never
+replaced; hybrid or unrecognized graphics keep full driver discovery.
 
 ## A native API is `undefined`
 

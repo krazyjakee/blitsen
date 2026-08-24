@@ -45,6 +45,15 @@ use super::net_pool::{client, runtime as net_runtime};
 /// server-side keepalive and its client's patience tuned to that number.
 const DEFAULT_RETRY: Duration = Duration::from_millis(3_000);
 
+/// The floor under a `retry:` a server asks for.
+///
+/// The sleep on the reconnection interval is the only pause in the reconnect
+/// loop, on the connection-refused path as much as after a stream that ended —
+/// so a server sending `retry: 0` and closing would have this task spinning
+/// through connections with no delay at all. A second is low enough for any
+/// legitimate rapid-retry stream and high enough not to be a busy loop.
+const MIN_RETRY: Duration = Duration::from_secs(1);
+
 /// The media type a stream has to arrive as for it to be one.
 const EVENT_STREAM: &str = "text/event-stream";
 
@@ -152,7 +161,12 @@ impl Interpreter {
             }
             "retry" if !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit()) => {
                 if let Ok(milliseconds) = value.parse::<u64>() {
-                    interpreted.push(Interpreted::Retry(Duration::from_millis(milliseconds)));
+                    // Clamped to [`MIN_RETRY`]: applied as parsed, `retry: 0`
+                    // would make the reconnect loop's only pause a zero-length
+                    // sleep — a busy loop.
+                    interpreted.push(Interpreted::Retry(
+                        Duration::from_millis(milliseconds).max(MIN_RETRY),
+                    ));
                 }
             }
             // Anything else — including an `id:` carrying a NUL and a `retry:`
@@ -554,12 +568,31 @@ mod tests {
         let events = drain(&host, 2);
         assert_eq!(events[1]["data"], "one");
         host.close(id);
-        // Long enough for the 10ms reconnection to have happened twice over.
-        std::thread::sleep(Duration::from_millis(200));
+        // Long enough for the reconnection — `retry: 10` clamped to the 1s
+        // floor — to have happened.
+        std::thread::sleep(Duration::from_millis(1_100));
         let after: Vec<Value> = host.poll().as_array().cloned().unwrap_or_default();
         assert!(
             after.iter().all(|event| event["type"] != "open"),
             "a closed stream does not reconnect: {after:?}"
+        );
+    }
+
+    #[test]
+    fn a_retry_of_zero_is_clamped_to_the_floor() {
+        let mut interpreter = Interpreter::default();
+        let interpreted = interpreter.chunk(1, b"retry: 0\nretry: 250\nretry: 5000\n");
+        let intervals: Vec<Duration> = interpreted
+            .iter()
+            .map(|interpreted| match interpreted {
+                Interpreted::Retry(interval) => *interval,
+                Interpreted::Dispatch(event) => panic!("not a retry: {event}"),
+            })
+            .collect();
+        assert_eq!(
+            intervals,
+            [MIN_RETRY, MIN_RETRY, Duration::from_millis(5_000)],
+            "a retry below the floor is clamped to it; one above passes through"
         );
     }
 

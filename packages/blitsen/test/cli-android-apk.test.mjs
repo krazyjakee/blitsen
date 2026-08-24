@@ -144,7 +144,7 @@ describe("the documented stopped-application boundary", () => {
     expect(support).toContain("launch-capable notification portal");
     expect(support).toContain("portal starts a stopped service");
     expect(support).toContain("INotificationActivationCallback");
-    expect(support).toContain("cold-start response is not surfaced");
+    expect(support).toContain("UNUserNotificationCenter");
   });
 });
 

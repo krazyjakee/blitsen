@@ -142,6 +142,15 @@ describe("menu vocabulary parity between the CLI and the runtime", () => {
       .toEqual([rustLimits.depths[0]]);
     expect([...new Set([...rust.matchAll(/\bitems\s*>\s*(\d+)/g)].map(([, v]) => Number(v)))])
       .toEqual([rustLimits.counts[0]]);
+    // On the JS side enforcement runs through named constants, so the constants
+    // are held to the parser too — otherwise a constant edit could leave the
+    // messages (asserted above) stating a limit the validator no longer applies.
+    expect([...js.matchAll(/MENU_MAX_DEPTH\s*=\s*(\d+)/g)].map(([, v]) => Number(v)),
+      `no MENU_MAX_DEPTH constant found in ${JS_SOURCES}/*.mjs`)
+      .toEqual([rustLimits.depths[0]]);
+    expect([...js.matchAll(/MENU_MAX_ITEMS\s*=\s*(\d+)/g)].map(([, v]) => Number(v)),
+      `no MENU_MAX_ITEMS constant found in ${JS_SOURCES}/*.mjs`)
+      .toEqual([rustLimits.counts[0]]);
     for (const depth of [...rustLimits.depths, ...jsLimits.depths]) {
       expect(depth, `the menu nesting limit in ${JS_SOURCES}/*.mjs disagrees with `
         + `the parser under ${NATIVE_WINDOW}`).toBe(rustLimits.depths[0]);

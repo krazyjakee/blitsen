@@ -1,5 +1,12 @@
 # M3b — compatible adoption proof
 
+> **Historical milestone record.** M3b was met on 2026-08-11 against the Linux-x64-only scope of
+> that date; that scope is superseded — Blitsen now publishes six desktop runtimes
+> ([Platform support](PLATFORM-SUPPORT.md)). The Phase 1 "not yet cleared for redistribution"
+> standing below is also superseded: releases 0.1.0–0.2.1 have since shipped with the notice flow
+> that gate required. The gates (`test:m3b`, `test:third-party`) still run against the current
+> runtime.
+
 **M3b is met.** The export pipeline works and is gated. The adoption claim it was declared on —
 take a real, existing Vite application that we did not write and run it unchanged — was measured
 against six applications on 2026-08-11 and **all six failed**. After the work that measurement
@@ -17,6 +24,8 @@ added but a dev dependency and a script line.
 | vue3-realworld (Vue 3, vue-router, Pinia) | yes | 29 elements, 16 colours |
 | Wordle+ (Svelte) | yes | 349 elements, 16 colours |
 | `create-vite react-ts` / `vue-ts` / `svelte-ts` | yes | 50 elements, 16 colours each |
+
+![Shadcn Admin's dashboard rendered by Blitsen: sidebar navigation, stat cards and the Recent Sales list are drawn; the Recharts Overview panel is empty, as recorded under "Deviations" below](shadcn-admin.png)
 
 Zero source changes to any fixture, and no flags. P10 asks for one dev dependency and one script
 line, and that is what each of the six needed.

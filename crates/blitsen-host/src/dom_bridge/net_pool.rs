@@ -13,6 +13,7 @@
 //! must not disable networking for every other context in the process.
 
 use std::sync::OnceLock;
+use std::time::Duration;
 
 use blitsen_js::JsError;
 use reqwest::Client;
@@ -37,7 +38,14 @@ pub(super) fn runtime() -> Result<&'static Runtime, JsError> {
 /// Builds an HTTP client inside the runtime that owns its connection pool.
 pub(super) fn client(runtime: &Runtime) -> Result<Client, JsError> {
     let guard = runtime.enter();
+    // A connect timeout and deliberately no whole-request `.timeout()`: this
+    // client also carries `EventSource` streams, which are open for as long as
+    // the application listens, and a total-request deadline would cut every one
+    // of them off. An address that swallows the connection attempt, though,
+    // would otherwise hold a task forever on a two-thread pool — thirty
+    // seconds is the figure the dev-server client already settled on.
     let client = Client::builder()
+        .connect_timeout(Duration::from_secs(30))
         .build()
         .map_err(|error| JsError::new(format!("could not start the HTTP client: {error}")))?;
     drop(guard);

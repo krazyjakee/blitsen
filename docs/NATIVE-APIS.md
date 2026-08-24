@@ -226,9 +226,9 @@ sealed file descriptor for an image, so this API rejects its absolute paths rath
 unsupported `file` variant. Windows accepts an image path. Android accepts an application drawable
 resource name and otherwise uses a system fallback icon.
 
-An exported macOS application has that identity. A development run does not: `blitsen run` is an
+An exported macOS application has that identity. A development run does not: it is an
 interpreter executing a script, so `permission`, `requestPermission` and `show` reject with a
-message naming `blitsen run --dev-bundle`, which builds a signed development `.app` around the
+message naming `blitsen --dev-bundle`, which builds a signed development `.app` around the
 interpreter and re-runs the same command inside it. That bundle's identifier is the development
 host's own—`com.blitsen.dev.<name>` unless `--bundle-id` names another—and never an installed
 application's, so a permission granted in development is not one granted to what you ship. See

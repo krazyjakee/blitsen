@@ -16,13 +16,23 @@ on:
       - 'site/**'
       - 'assets/brand/**'
       - '.github/workflows/pages.yml'
+  # Pull requests get the build and the link/anchor check, so a broken page is
+  # reported before merge rather than by the post-merge deploy. Nothing is
+  # published for them: the Pages steps below and the deploy job are push-only.
+  pull_request:
+    paths:
+      - 'docs/**'
+      - 'site/**'
+      - 'assets/brand/**'
+      - '.github/workflows/pages.yml'
   workflow_dispatch:
 
 permissions: {}
 
-# Let a running deploy finish rather than cancelling it midway.
+# Let a running deploy finish rather than cancelling it midway. Grouped per
+# ref so pull-request checks queue with themselves, not behind a deploy.
 concurrency:
-  group: pages
+  group: pages-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -48,14 +58,19 @@ jobs:
       - name: Check links, anchors and rendering
         run: bun run site:check
 
+      # Deploy plumbing only where a deploy can follow; a pull request needs
+      # the check above, not a Pages artifact.
       - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+        if: github.event_name != 'pull_request'
 
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        if: github.event_name != 'pull_request'
         with:
           path: site/dist
 
   deploy:
     needs: build
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       pages: write

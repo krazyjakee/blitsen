@@ -1,7 +1,6 @@
 # Blitsen — Technical Specification
 
-**Status:** Draft v0.1
-**Date:** 2026-08-10
+**Status:** Living contributor specification; updated with the code
 **Companion document:** `PRODUCT.md` (what and why; this document is how)
 
 ---

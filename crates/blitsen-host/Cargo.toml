@@ -12,7 +12,7 @@ publish.workspace = true
 anyrender = "0.13"
 anyrender_vello = "0.14"
 anyrender_vello_cpu = "0.16"
-base64 = "0.22"
+base64.workspace = true
 blitsen-blitz = { path = "../blitsen-blitz" }
 blitsen-core = { path = "../blitsen-core" }
 blitsen-dom = { path = "../blitsen-dom" }
@@ -23,7 +23,7 @@ blitz.workspace = true
 # `svg` is what paints an `<svg>` subtree once blitz-dom has parsed it (#238).
 # Both are named rather than taken through `default`, so the feature list is a
 # decision this file records instead of whatever upstream defaults to next.
-blitz-paint = { git = "https://github.com/DioxusLabs/blitz", rev = "111ed2f7224e49cd3177ef3cb5990efc279d3e73", default-features = false, features = ["custom-widget", "svg"] }
+blitz-paint = { workspace = true, features = ["custom-widget", "svg"] }
 # The third-party notices an artifact carries are gzipped inside it (#121), and
 # reading them belongs to the application's files rather than to the appended
 # section: an APK carries the same file under `assets/` (#144). Already in the
@@ -90,8 +90,8 @@ png = "0.18"
 # `stream` is what `EventSource` reads a response body through (#236): a feed is
 # a body that never ends, so the one thing it cannot do is await the whole of it.
 reqwest = { version = "0.13", default-features = false, features = ["charset", "native-tls", "stream"] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
 sha2 = "0.10"
 # Runtime diagnostics consume the mappings a user's bundler emitted. The crate
 # owns Source Map v3 decoding (including indexed maps); Blitsen keeps URL and
@@ -110,7 +110,7 @@ url = "2"
 # majors — 0.6 directly, and 0.5 through `creek`, which is not optional — and no
 # feature selection collapses them.
 web-audio-api = "1.7"
-winit = "=0.31.0-beta.2"
+winit.workspace = true
 
 # An engine to drive `tests/surface_lifecycle.rs` with. QuickJS rather than
 # JavaScriptCore because it needs nothing found on the machine at runtime, and

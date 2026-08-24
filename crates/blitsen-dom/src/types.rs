@@ -1,8 +1,9 @@
-//! The shapes crossing the DOM boundary: handles, names, geometry and errors.
+//! The shapes crossing the DOM boundary: names, geometry and errors.
 //!
 //! Every one of these is a value the bridge and a backend both name. None of
 //! them has behaviour a backend can override, which is what separates them
-//! from [`crate::DomBackend`].
+//! from [`crate::DomBackend`]. Node handles are not here: each backend supplies
+//! its own through [`crate::DomBackend::NodeId`].
 
 use std::error::Error;
 use std::fmt;

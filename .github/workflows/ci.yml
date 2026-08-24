@@ -119,7 +119,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             libfontconfig1-dev libxkbcommon-dev libwayland-dev \
             libx11-dev libxcursor-dev libxi-dev libxrandr-dev \
-            libasound2-dev libudev-dev
+            libasound2-dev libudev-dev xvfb
       # Formatting first: it compiles nothing, so an unformatted change is
       # reported in seconds instead of after clippy has built the whole graph.
       - name: Lint
@@ -127,7 +127,18 @@ jobs:
         run: |
           cargo fmt --all -- --check
           cargo clippy --workspace --all-targets -- -D warnings
-      - run: cargo test --workspace
+      # Under a virtual display on Linux, so blitsen-host's surface-lifecycle
+      # test executes instead of skipping itself: headless runners set no
+      # DISPLAY, so no Linux runner had ever run it. The runner image ships
+      # xvfb; the apt line above keeps that true.
+      - if: runner.os == 'Linux'
+        run: xvfb-run -a cargo test --workspace
+        env:
+          # Turns a broken Xvfb arrangement into a failure instead of letting
+          # the surface-lifecycle test resume skipping silently.
+          BLITSEN_REQUIRE_DISPLAY: "1"
+      - if: runner.os != 'Linux'
+        run: cargo test --workspace
       # Prime the release-profile dependencies used by acceptance and release.
       # `rust-cache` omits workspace outputs, so consumers still build and test
       # Blitsen itself while avoiding another full dependency compilation.
@@ -210,7 +221,8 @@ jobs:
   # The M3 acceptance evidence, and the P5/P6 claim it stands on. Both harnesses
   # are headless: the bridge harness renders through the CPU rasterizer, and the
   # standalone check skips its frame-cadence assertion when no display is present
-  # (see docs/M3.md).
+  # (see docs/M3.md) — which is why the Linux standalone step runs under Xvfb,
+  # so a display is present and the assertion executes.
   #
   # Issue #123: this ran on ubuntu alone, so every claim about the runtime, the
   # bridge and the export was a Linux claim wearing a cross-platform label. It
@@ -248,7 +260,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             libfontconfig1-dev libxkbcommon-dev libwayland-dev \
             libx11-dev libxcursor-dev libxi-dev libxrandr-dev \
-            libasound2-dev libudev-dev
+            libasound2-dev libudev-dev xvfb
       - run: bun install --frozen-lockfile
       # Issue #90: one project, both runtimes, and the only difference allowed
       # is size. The engine is inside the runtime, so nothing is installed for it.
@@ -273,7 +285,12 @@ jobs:
         run: bun run --cwd packages/blitsen notices --root blitsen-runtime --out ${{ github.workspace }}/target/release
       - run: bun run --cwd packages/blitsen test:native
       - run: bun run --cwd packages/blitsen test:m2
-      - run: bun run --cwd packages/blitsen test:standalone
+      # Under Xvfb on Linux, so the frame-cadence assertion (gated on DISPLAY)
+      # executes instead of skipping — see the header comment above.
+      - if: runner.os == 'Linux'
+        run: xvfb-run -a bun run --cwd packages/blitsen test:standalone
+      - if: runner.os != 'Linux'
+        run: bun run --cwd packages/blitsen test:standalone
       - run: bun run --cwd packages/blitsen test:m3b
       - run: bun run --cwd packages/blitsen test:hosts
       # Issue #121: the notices an export owes travel inside it, and the gate

@@ -20,6 +20,40 @@ or operating-system integration behaves identically. Test the exported artifact 
 Only the package matching the install machine is downloaded. A cross-target build fetches the
 requested runtime separately and stores it in the platform cache.
 
+## All desktop targets
+
+Declarative and runtime tray control—including nested actions, checkboxes, radio groups,
+accelerators and action/submenu PNGs—notification submission/lifecycle events and focused native
+input snapshots are available on desktop targets. Checkable tray icons and hidden menu items are
+not exposed because the native backends do not agree on them.
+
+Root-element fullscreen is available on every desktop through winit. Fullscreen is borderless on
+the monitor containing the window (primary fallback), never an exclusive video-mode switch.
+Fullscreen and pointer lock release on Escape, focus loss, surface loss, or target disconnection.
+Physical multi-monitor placement and grab behavior still require acceptance on Windows and macOS,
+with fullscreen acceptance separately required on X11 and Wayland.
+
+Gamepad snapshots and connect/disconnect events are available on Linux, macOS and Windows through
+the target-gated `gilrs` backend. Controllers are sampled once per application redraw, so an idle
+window performs no application-side controller polling and learns about a hot-plug on its next
+frame. The backend still owns its platform event worker; the additional 50 ms force-feedback loop
+is initialized lazily, on the first nonzero effect rather than for controller-free applications.
+Standard dual-rumble is exposed only where the device and driver advertise it. Synthetic tests
+cover slot, normalization, event, backend-completion and command semantics; physical hot-plug,
+mapping and motor behavior still require representative X11, Wayland, Windows and macOS hardware.
+
+`os.batteries` reads the machine's own batteries on every desktop target and answers an empty list
+where there are none; `os.displays` and `os.idleTime` are absent by decision, the monitors being
+`window.monitors()` and idle time having no answer a Wayland client can trust.
+
+Desktop notifications can be updated and closed through their session ID on every desktop target;
+a Windows toast carries that ID as its own tag, which is what an update replaces and a close
+removes from the screen and from notification history. Individual notification-server policies
+still decide how a submitted notification is presented.
+
+`blitsen/hid` is available on every desktop target, and on Android over a different backend (see
+"Android").
+
 ## Linux requirements
 
 Published Linux runtimes are built on Ubuntu 22.04 and require glibc 2.35 or newer. The machine
@@ -31,39 +65,15 @@ runtime, so a successful install does not imply that such an environment can ope
 
 Linux is currently the only desktop platform with `blitsen/dialog`. `setAlwaysOnTop` has no effect
 on Wayland because that protocol does not expose the operation. Cursor grab modes also vary; the
-runtime throws when a requested mode is unavailable. Declarative and runtime tray control—including
-nested actions, checkboxes, radio groups, accelerators and action/submenu PNGs—notification
-submission/lifecycle events and focused native input snapshots are available on desktop targets.
-Root-element fullscreen is available on every desktop through winit. Pointer lock is currently
-exposed on Windows and macOS only: pinned winit 0.31 reports `Locked` cursor grab as unsupported on
-X11, and Blitsen does not claim a Linux API that can fail on a common backend. Fullscreen is
-borderless on the monitor containing the window (primary fallback), never an exclusive video-mode
-switch. Both modes release on Escape, focus loss, surface loss, or target disconnection. Physical
-multi-monitor placement and grab behavior still require acceptance on Windows and macOS, with
-fullscreen acceptance separately required on X11 and Wayland.
-Gamepad snapshots and connect/disconnect events are available on Linux, macOS and Windows through
-the target-gated `gilrs` backend. Controllers are sampled once per application redraw, so an idle
-window performs no application-side controller polling and learns about a hot-plug on its next
-frame. The backend still owns its platform event worker; the additional 50 ms force-feedback loop
-is initialized lazily, on the first nonzero effect rather than for controller-free applications.
-Standard dual-rumble is exposed only where the device and driver advertise it. Synthetic tests
-cover slot, normalization, event, backend-completion and command semantics; physical hot-plug,
-mapping and motor behavior still require representative X11, Wayland, Windows and macOS hardware.
-`os.batteries` reads the machine's own batteries on every desktop target and answers an empty list
-where there are none; `os.displays` and `os.idleTime` are absent by decision, the monitors being
-`window.monitors()` and idle time having no answer a Wayland client can trust.
-Checkable tray icons and hidden menu items are not exposed because the native backends do not agree
-on them. Desktop notifications can be updated and closed through their session ID on every desktop
-target; a Windows toast carries that ID as its own tag, which is what an update replaces and a
-close removes from the screen and from notification history. Individual notification-server
-policies still decide how a submitted notification is presented.
+runtime throws when a requested mode is unavailable. Pointer lock is currently exposed on Windows
+and macOS only: pinned winit 0.31 reports `Locked` cursor grab as unsupported on X11, and Blitsen
+does not claim a Linux API that can fail on a common backend.
 
-`blitsen/hid` is available on every desktop target, and on Android over a different backend (see
-"Android"). On Linux a hidraw node is owned by udev, so a
-packaged application reaches an intended device only once a distribution or installer has added a
-rule granting access; `blitsen build` writes a `<name>.hid.rules` template beside the executable and
-`blitsen doctor` reports the requirement. Blitsen never installs a rule itself and running the
-application as root is not a supported substitute.
+On Linux a hidraw node is owned by udev, so a packaged application reaches an intended device only
+once a distribution or installer has added a rule granting access; `blitsen build` writes a
+`<name>.hid.rules` template beside the executable and `blitsen doctor` reports the requirement.
+Blitsen never installs a rule itself and running the application as root is not a supported
+substitute.
 
 ## Application menu
 
@@ -87,14 +97,14 @@ application as root is not a supported substitute.
   navigation drawer — are views inside the activity's own layout rather than a menu the platform
   owns.
 
+## Notifications
+
 The standard Web `Notification` facade is installed on Linux, on Windows, on any macOS process
-carrying a bundle identity—an exported application, or a development run inside `blitsen run
+carrying a bundle identity—an exported application, or a development run inside `blitsen
 --dev-bundle`—and on any Android package the platform launched, where a body tap has an application
 identity to be addressed back to. It is absent in an unbundled macOS development host and in an
 Android runtime started against a directory standing in for `assets/`. The native `blitsen/notify`
 module is available on every desktop target and Android, and exposes its platform limits directly.
-
-### Notifications
 
 A notification outlives the process that showed it, so activating one belonging to a stopped
 application is a launch rather than an event. Blitsen delivers that launch context once, on the
@@ -147,7 +157,7 @@ an application you export is unsigned unless your build runs an appropriate sign
 Distribute a macOS application only after signing its `.app` bundle and completing notarization on
 macOS. Modern macOS notifications also require a signed `.app` bundle identity, which an export has
 and a development run does not: submission and permission from an unbundled executable reject with
-a message naming `blitsen run --dev-bundle`, which builds a signed development `.app` around the
+a message naming `blitsen --dev-bundle`, which builds a signed development `.app` around the
 interpreter and runs inside it under `com.blitsen.dev.<name>`. No installed application's identifier
 is ever borrowed for either. The current `blitsen/dialog` module is absent on macOS.
 

@@ -31,7 +31,7 @@ fn update_patch_preserves_unspecified_values() {
 fn the_unbundled_macos_refusal_names_a_command_and_borrows_no_identity() {
     // Both halves of #253's acceptance: the limitation is actionable, and
     // the action is one the reader can type.
-    assert!(NO_BUNDLE_IDENTITY.contains("blitsen run --dev-bundle"));
+    assert!(NO_BUNDLE_IDENTITY.contains("blitsen --dev-bundle"));
     assert!(NO_BUNDLE_IDENTITY.contains("blitsen build --bundle-id <id> --sign <command>"));
     // And the shortcut it refuses stays refused: submitting under an
     // installed application's identifier is what the legacy backend's

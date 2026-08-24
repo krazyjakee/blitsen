@@ -1,8 +1,10 @@
-//! Renderer-independent DOM interfaces.
+//! The DOM surface the bridge relies on, named in one place.
 //!
-//! Blitz owns the live tree in the first backend.  This crate describes the
-//! operations the bridge may perform without exposing Blitz types or keeping a
-//! second, shadow DOM.
+//! Blitz owns the live tree, and its node handle flows through
+//! [`DomBackend::NodeId`] to consumers — this crate does not hide the backend.
+//! What it does is spell out every operation the bridge may perform, so the
+//! contract is reviewable here rather than scattered through call sites, and
+//! without keeping a second, shadow DOM.
 
 mod invalidation;
 mod types;

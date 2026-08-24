@@ -520,6 +520,19 @@ describe("directory CLI", () => {
     });
   });
 
+  test("refuses a signing artifact path cmd.exe would expand", () => {
+    // cmd expands %VAR% inside quotes, so a percent-carrying path is refused
+    // before a command line is built from it.
+    expect(() => signArgv("signtool sign", "C:\\out\\%TEMP%-app.exe", "win32"))
+      .toThrow("cannot be passed through cmd.exe without expansion");
+    expect(() => signArgv("signtool sign", 'C:\\out\\"quoted".exe', "win32"))
+      .toThrow("cannot be passed through cmd.exe without expansion");
+    // The POSIX branch hands the artifact over as a positional argument, so a
+    // percent is inert there.
+    expect(signArgv("codesign -s ID", "/out/100% Pong.app", "linux"))
+      .toEqual(["sh", "-c", 'codesign -s ID "$@"', "sh", "/out/100% Pong.app"]);
+  });
+
   test("hands the signing hook the artifact and fails the build when it rejects it", async () => {
     // The interpreter is this machine's: the hook runs here, whatever platform
     // the artifact is for.

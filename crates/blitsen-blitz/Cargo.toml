@@ -15,9 +15,9 @@ anyrender = "0.13"
 # the pipeline for a frame or more. `blitsen-host` already links this renderer
 # for its own headless and CPU-fallback paths, so the binary carries it once.
 anyrender_vello_cpu = "0.16"
-# Canvas data URLs need only the standard padded alphabet. Keep the encoder's
-# allocation support without the crate's unrelated `std` surface.
-base64 = { version = "0.22", default-features = false, features = ["alloc"] }
+# Canvas data URLs need only the standard padded alphabet; the workspace entry
+# keeps the encoder's allocation support without the crate's `std` surface.
+base64.workspace = true
 blitsen-dom = { path = "../blitsen-dom" }
 blitz.workspace = true
 # The meta-crate pulls blitz-dom with default features off, which drops
@@ -27,7 +27,7 @@ blitz.workspace = true
 # subresource (#238), and custom-widget is the seam canvas and `<blitsen-view>`
 # use. Upstream custom-widget currently activates its internal AccessKit node
 # model too; the platform adapter is disabled centrally through `blitz` (#102).
-blitz-dom = { git = "https://github.com/DioxusLabs/blitz", rev = "111ed2f7224e49cd3177ef3cb5990efc279d3e73", default-features = false, features = ["system-fonts", "woff", "file-input", "custom-widget", "svg"] }
+blitz-dom = { workspace = true, features = ["system-fonts", "woff", "file-input", "custom-widget", "svg"] }
 # The cursor a resolved `cursor` keyword names. Blitz keeps its own copy of
 # this mapping private, and the enum is what the shell takes, so it is named
 # here directly rather than through a re-export that does not exist.
@@ -52,14 +52,14 @@ peniko = "0.6"
 # bounding box and what an application vertically centres text with. Parley
 # reads outlines through this crate already; it is named here to ask it the one
 # question Parley's own layout does not answer.
-skrifa = "0.42"
+skrifa = "0.44"
 style = { package = "stylo", version = "0.20" }
 
 [dev-dependencies]
 blitsen-core = { path = "../blitsen-core" }
-blitz-paint = { git = "https://github.com/DioxusLabs/blitz", rev = "111ed2f7224e49cd3177ef3cb5990efc279d3e73", default-features = false, features = ["custom-widget", "svg"] }
+blitz-paint = { workspace = true, features = ["custom-widget", "svg"] }
 png = "0.18"
-serde_json = "1"
+serde_json.workspace = true
 
 [lints]
 workspace = true
