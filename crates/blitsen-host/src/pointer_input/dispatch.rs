@@ -38,6 +38,10 @@ pub(crate) struct PointerEventInit {
     pub(crate) button: i32,
     pub(crate) delta_x: f64,
     pub(crate) delta_y: f64,
+    /// Connected root-to-target handles from the hit test that chose the target.
+    ///
+    /// This is an internal dispatch hint, not a public `PointerEvent` member.
+    pub(crate) propagation_path: Vec<String>,
     #[serde(flatten)]
     pub(crate) modifiers: ModifierFlags,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -232,6 +236,11 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Ren
                 button,
                 delta_x: wheel_delta.map_or(0.0, |delta| delta.0),
                 delta_y: wheel_delta.map_or(0.0, |delta| delta.1),
+                propagation_path: hit
+                    .path
+                    .iter()
+                    .map(|node| DomRuntime::serialize_handle(*node))
+                    .collect(),
                 modifiers: self.modifier_flags(),
                 pointer_id: pointer.map(|pointer| pointer.pointer_id),
                 pointer_type: pointer.map(|pointer| pointer.pointer_type.as_str()),
@@ -281,6 +290,7 @@ mod tests {
             button: 0,
             delta_x: 0.0,
             delta_y: 0.0,
+            propagation_path: Vec::new(),
             modifiers: ModifierFlags::default(),
             pointer_id: pointer.map(|pointer| pointer.pointer_id),
             pointer_type: pointer.map(|pointer| pointer.pointer_type.as_str()),
@@ -343,6 +353,31 @@ mod tests {
             &mut ids,
         );
         assert_eq!(entry_point(&init_for(&cancelled)), InputBootstrap::Pointer);
+    }
+
+    #[test]
+    fn the_native_hit_path_is_serialized_as_an_internal_dispatch_hint() {
+        let mut ids = PointerIds::default();
+        let input = queued(
+            &WindowEvent::PointerButton {
+                device_id: None,
+                state: ElementState::Pressed,
+                position: PhysicalPosition::new(0.0, 0.0),
+                primary: true,
+                button: ButtonSource::Touch {
+                    finger_id: FingerId::from_raw(0),
+                    force: None,
+                },
+            },
+            &mut ids,
+        );
+        let mut init = init_for(&input);
+        init.propagation_path = vec!["document".into(), "body".into(), "target".into()];
+        let serialized = serde_json::to_value(init).unwrap();
+        assert_eq!(
+            serialized["propagationPath"],
+            serde_json::json!(["document", "body", "target"])
+        );
     }
 
     #[test]

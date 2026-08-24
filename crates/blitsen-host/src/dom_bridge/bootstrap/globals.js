@@ -195,6 +195,7 @@
       screenX: Number(clientX), screenY: Number(clientY),
       offsetX: hit.offsetX, offsetY: hit.offsetY,
       button: 0, ...init,
+      propagationPath: hit.path,
     };
     const allowed = String(type).startsWith("pointer")
       ? dispatchPointerEvent(String(type), hit.target, members)

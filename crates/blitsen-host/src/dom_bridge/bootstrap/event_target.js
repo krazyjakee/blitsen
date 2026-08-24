@@ -30,6 +30,7 @@
     return false;
   };
   const notifyMutation = record => {
+    treeRevision += 1;
     windowModesTreeMutation();
     for (const observer of mutationObservers) {
       if (!observer._observations.some(({ target, options }) =>

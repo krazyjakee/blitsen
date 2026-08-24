@@ -68,7 +68,16 @@ mod tests {
         let services = crate::runtime_services::RuntimeServices::install(&mut engine)
             .expect("runtime services");
         let dom = BlitzDom::from_html(
-            "<!doctype html><html><body><div id='target'></div><div id='other'></div></body></html>",
+            r#"<!doctype html><html><head><style>
+              html, body { margin: 0; width: 200px; height: 100px }
+              #outer, #other-parent { position: absolute; top: 0; width: 80px; height: 80px }
+              #outer { left: 0 }
+              #other-parent { left: 100px }
+              #target, #other { width: 80px; height: 80px }
+            </style></head><body>
+              <div id='outer'><div id='target'></div></div>
+              <div id='other-parent'><div id='other'></div></div>
+            </body></html>"#,
             DocumentConfig {
                 viewport: Some(Viewport::new(200, 100, 1.0, ColorScheme::Light)),
                 ..Default::default()
@@ -99,6 +108,194 @@ mod tests {
             .evaluate_script("globalThis.__seen.join('|')", "blitsen:test-observations")
             .expect("observations are readable");
         engine.to_string(&value).expect("observations are text")
+    }
+
+    fn json(engine: &mut blitsen_quickjs::QuickJs, script: &str) -> serde_json::Value {
+        let value = engine
+            .evaluate_script(script, "blitsen:test-pointer-path")
+            .expect("the pointer path test runs");
+        let value = engine.to_string(&value).expect("the result is JSON text");
+        serde_json::from_str(&value).expect("the result is valid JSON")
+    }
+
+    #[test]
+    fn native_hit_path_skips_parent_bridge_calls_for_pointer_and_compatibility_mouse() {
+        let (mut engine, _services) = realm(crate::dom_bridge::DocumentMode::TestHarness);
+        let result = json(
+            &mut engine,
+            r#"
+          (() => {
+            const outer = document.getElementById("outer");
+            const target = document.getElementById("target");
+            const order = [];
+            for (const [node, name] of [[window, "window"], [document, "document"],
+              [outer, "outer"], [target, "target"]]) {
+              for (const type of ["pointermove", "mousemove"]) {
+                node.addEventListener(type, () => order.push(`${type}:${name}:capture`), true);
+                node.addEventListener(type, () => order.push(`${type}:${name}:bubble`));
+              }
+            }
+            // Refuse only mousedown's focus default, which otherwise dispatches
+            // four unrelated focus events through their ordinary DOM paths.
+            // Pointer compatibility remains enabled, including the click.
+            target.addEventListener("mousedown", event => event.preventDefault());
+            const clicks = [];
+            target.addEventListener("click", event => {
+              clicks.push(`target:${event.target.id}`);
+              event.preventDefault();
+            });
+            outer.addEventListener("click", event => clicks.push(`outer:${event.target.id}`));
+            const parents = __blitsenDomCallCount("parentNode");
+            const connected = __blitsenDomCallCount("isConnected");
+            const hit = __blitsenInjectPointerAt("pointermove", 10, 10, {
+              pointerId: 1, pointerType: "mouse", isPrimary: true,
+            });
+            __blitsenInjectPointerAt("pointerdown", 10, 10, {
+              pointerId: 1, pointerType: "mouse", isPrimary: true, button: 0,
+            });
+            __blitsenInjectPointerAt("pointerup", 10, 10, {
+              pointerId: 1, pointerType: "mouse", isPrimary: true, button: 0,
+            });
+            return JSON.stringify({
+              target: hit?.target.id ?? null,
+              parents: __blitsenDomCallCount("parentNode") - parents,
+              connected: __blitsenDomCallCount("isConnected") - connected,
+              order, clicks,
+            });
+          })()
+        "#,
+        );
+        assert_eq!(result["target"], "target");
+        assert_eq!(result["parents"], 0);
+        assert_eq!(result["connected"], 0);
+        assert_eq!(
+            result["clicks"],
+            serde_json::json!(["target:target", "outer:target"])
+        );
+        assert_eq!(
+            result["order"],
+            serde_json::json!([
+                "pointermove:window:capture",
+                "pointermove:document:capture",
+                "pointermove:outer:capture",
+                "pointermove:target:capture",
+                "pointermove:target:bubble",
+                "pointermove:outer:bubble",
+                "pointermove:document:bubble",
+                "pointermove:window:bubble",
+                "mousemove:window:capture",
+                "mousemove:document:capture",
+                "mousemove:outer:capture",
+                "mousemove:target:capture",
+                "mousemove:target:bubble",
+                "mousemove:outer:bubble",
+                "mousemove:document:bubble",
+                "mousemove:window:bubble",
+            ])
+        );
+    }
+
+    #[test]
+    fn pointer_capture_retargets_and_recomputes_the_hit_path() {
+        let (mut engine, _services) = realm(crate::dom_bridge::DocumentMode::TestHarness);
+        let result = json(
+            &mut engine,
+            r#"
+          (() => {
+            const outer = document.getElementById("outer");
+            const target = document.getElementById("target");
+            const otherParent = document.getElementById("other-parent");
+            const other = document.getElementById("other");
+            target.addEventListener("pointerdown", event => other.setPointerCapture(event.pointerId));
+            __blitsenInjectPointerAt("pointerdown", 10, 10, {
+              pointerId: 1, pointerType: "mouse", isPrimary: true, button: 0,
+            });
+            const reached = [];
+            for (const [node, name] of [[outer, "outer"], [target, "target"],
+              [otherParent, "other-parent"], [other, "other"]]) {
+              for (const type of ["pointermove", "mousemove"])
+                node.addEventListener(type, event => reached.push(`${type}:${name}:${event.target.id}`));
+            }
+            const parents = __blitsenDomCallCount("parentNode");
+            const connected = __blitsenDomCallCount("isConnected");
+            __blitsenInjectPointerAt("pointermove", 10, 10, {
+              pointerId: 1, pointerType: "mouse", isPrimary: true,
+            });
+            return JSON.stringify({
+              parents: __blitsenDomCallCount("parentNode") - parents,
+              connected: __blitsenDomCallCount("isConnected") - connected,
+              reached,
+            });
+          })()
+        "#,
+        );
+        assert!(result["parents"].as_u64().unwrap() > 0, "{result}");
+        assert!(result["connected"].as_u64().unwrap() > 0, "{result}");
+        assert_eq!(
+            result["reached"],
+            serde_json::json!([
+                "pointermove:other:other",
+                "pointermove:other-parent:other",
+                "mousemove:other:other",
+                "mousemove:other-parent:other",
+            ])
+        );
+    }
+
+    #[test]
+    fn pointer_lock_retargets_and_recomputes_the_hit_path() {
+        let (mut engine, services) = realm(crate::dom_bridge::DocumentMode::TestHarness);
+        engine
+            .evaluate_script(
+                r#"
+          const target = document.getElementById("target");
+          target.addEventListener("pointerdown", () => target.requestPointerLock(), { once: true });
+          __blitsenInjectPointerAt("pointerdown", 10, 10, {
+            pointerId: 1, pointerType: "mouse", isPrimary: true, button: 0,
+          });
+        "#,
+                "blitsen:test-pointer-path-lock",
+            )
+            .expect("pointer lock is requested from a trusted press");
+        settle(&mut engine, &services);
+        let result = json(
+            &mut engine,
+            r#"
+          (() => {
+            const outer = document.getElementById("outer");
+            const target = document.getElementById("target");
+            const otherParent = document.getElementById("other-parent");
+            const other = document.getElementById("other");
+            const reached = [];
+            for (const [node, name] of [[outer, "outer"], [target, "target"],
+              [otherParent, "other-parent"], [other, "other"]]) {
+              for (const type of ["pointermove", "mousemove"])
+                node.addEventListener(type, event => reached.push(`${type}:${name}:${event.target.id}`));
+            }
+            const parents = __blitsenDomCallCount("parentNode");
+            const connected = __blitsenDomCallCount("isConnected");
+            __blitsenInjectPointerAt("pointermove", 110, 10, {
+              pointerId: 1, pointerType: "mouse", isPrimary: true,
+            });
+            return JSON.stringify({
+              parents: __blitsenDomCallCount("parentNode") - parents,
+              connected: __blitsenDomCallCount("isConnected") - connected,
+              reached,
+            });
+          })()
+        "#,
+        );
+        assert!(result["parents"].as_u64().unwrap() > 0, "{result}");
+        assert!(result["connected"].as_u64().unwrap() > 0, "{result}");
+        assert_eq!(
+            result["reached"],
+            serde_json::json!([
+                "pointermove:target:target",
+                "pointermove:outer:target",
+                "mousemove:target:target",
+                "mousemove:outer:target",
+            ])
+        );
     }
 
     #[test]

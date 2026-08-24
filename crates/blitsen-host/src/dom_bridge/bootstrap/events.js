@@ -284,6 +284,10 @@
     }
   };
 
+  // Incremented by every JavaScript-side tree mutation. A native hit path is a
+  // snapshot of the tree immediately before dispatch; compatibility mouse and
+  // click events may reuse it only while no listener has changed that tree.
+  let treeRevision = 0;
   const propagationPath = target => {
     if (target === globalThis) return [globalThis];
     if (target === document) return [globalThis, document];
@@ -296,7 +300,21 @@
       : [...ancestors.reverse(), target];
   };
 
-  const dispatchTo = (target, event) => {
+  // Turns the root-to-target handles returned by the native hit test into the
+  // event path without reading parentNode or isConnected back through the JSON
+  // bridge. The first handle is the backing document node; JavaScript exposes
+  // the singleton `document` instead of a wrapper for that node.
+  const makePropagationHint = (target, rawPath) => {
+    if (!Array.isArray(rawPath) || rawPath.length < 2 || !(target instanceof Node)) return null;
+    if (String(rawPath[rawPath.length - 1]) !== String(target[handle])) return null;
+    const path = [globalThis, document, ...rawPath.slice(1).map(wrap)];
+    return path[path.length - 1] === target ? { revision: treeRevision, path } : null;
+  };
+  const hintedPropagationPath = (target, hint) =>
+    hint?.revision === treeRevision && hint.path[hint.path.length - 1] === target
+      ? hint.path : null;
+
+  const dispatchTo = (target, event, hint = null) => {
     if (!(event instanceof Event)) throw new TypeError("dispatchEvent argument must be an Event");
     const state = stateFor(event);
     if (state.dispatching) throw new DOMException("The event is already being dispatched", "InvalidStateError");
@@ -304,7 +322,7 @@
     state.target = target;
     state.propagationStopped = false;
     state.immediatePropagationStopped = false;
-    const path = propagationPath(target);
+    const path = hintedPropagationPath(target, hint) ?? propagationPath(target);
     try {
       for (const currentTarget of path.slice(0, -1)) {
         const snapshot = [...(listenerMaps.get(currentTarget)?.get(state.type) ?? [])];
@@ -408,20 +426,22 @@
   // surprising fixed point and is also what a browser preserves on entry.
   let lastMousePosition = { clientX: 0, clientY: 0, screenX: 0, screenY: 0 };
 
-  const dispatchMouseEvent = (type, rawHandle, init) => {
+  const dispatchMouseEvent = (type, rawHandle, init, inheritedHint = null) => {
     if (pointerLockElement === null) {
       lastMousePosition = {
         clientX: Number(init.clientX ?? 0), clientY: Number(init.clientY ?? 0),
         screenX: Number(init.screenX ?? 0), screenY: Number(init.screenY ?? 0),
       };
     }
-    const target = pointerLockElement ?? wrap(String(rawHandle));
+    const rawTarget = wrap(String(rawHandle));
+    const hint = inheritedHint ?? makePropagationHint(rawTarget, init.propagationPath);
+    const target = pointerLockElement ?? rawTarget;
     // `buttons` is the pointer's state rather than this event's, so an event
     // that does not carry one — a wheel, which no pointer produced — reads it
     // off the mouse pointer instead of reporting nothing held.
     const event = new MouseEvent(String(type), { ...init, view: init.view ?? globalThis,
       buttons: init.buttons ?? (activePointers.get(MOUSE_POINTER_ID)?.buttons ?? 0) });
-    const allowed = target.dispatchEvent(event);
+    const allowed = dispatchTo(target, event, hint);
     // Focus is `mousedown`'s default action and activation is `click`'s. They
     // are two different events on purpose: a component that has focused
     // something of its own — a code editor moving the caret into its hidden
@@ -535,8 +555,10 @@
       bubbles: true, cancelable: type !== "pointercancel",
       pointerId, pointerType, isPrimary, pressure, button, buttons: state.buttons };
     processPendingPointerCapture(pointerId, members);
-    const target = pointerLockElement ?? pointerCaptures.get(pointerId) ?? wrap(String(rawHandle));
-    const allowed = target.dispatchEvent(new PointerEvent(String(type), members));
+    const rawTarget = wrap(String(rawHandle));
+    const hint = makePropagationHint(rawTarget, init.propagationPath);
+    const target = pointerLockElement ?? pointerCaptures.get(pointerId) ?? rawTarget;
+    const allowed = dispatchTo(target, new PointerEvent(String(type), members), hint);
     if (type === "pointerdown" && !allowed) state.compatibilitySuppressed = true;
     const compatibility = COMPATIBILITY_MOUSE_EVENT[type];
     const synthesise = isPrimary && !state.compatibilitySuppressed;
@@ -545,7 +567,7 @@
       // -1 to a pointer event and 0 to the mouse event, where the interfaces
       // simply disagree and both spellings are the correct one.
       dispatchMouseEvent(compatibility, String(target[handle]),
-        { ...members, button: type === "pointermove" ? 0 : button });
+        { ...members, button: type === "pointermove" ? 0 : button }, hint);
     if (type === "pointerdown") state.downTargets.set(button, target);
     if (type === "pointerup") {
       const pressed = state.downTargets.get(button);
@@ -554,7 +576,7 @@
       // capture that is the capturing element for both, which is what makes a
       // drag that ends outside its handle still a click on it.
       if (button === 0 && pressed === target && synthesise)
-        dispatchMouseEvent("click", String(target[handle]), members);
+        dispatchMouseEvent("click", String(target[handle]), members, hint);
     }
     if (type === "pointerup" || type === "pointercancel") {
       // Capture is released implicitly when the contact ends, after the event
