@@ -1,4 +1,7 @@
-import nativeWindow from "blitsen/window";
+// An application with a build step imports this as `blitsen/window`. This
+// example is committed as already-built static output, so it reads the same
+// namespace that package subpath proxies directly.
+const nativeWindow = globalThis[Symbol.for("blitsen.native")]?.window ?? {};
 
 // The list stays windowed so it remains responsive if a real task collection
 // grows large, while localStorage gives the example ordinary app persistence.
