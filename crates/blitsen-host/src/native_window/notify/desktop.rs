@@ -827,7 +827,7 @@ impl NotifyController {
     /// that replaces a live session whose notifications must not keep speaking.
     pub(crate) fn detach(&mut self) {
         self.records.clear();
-        crate::dom_bridge::net_lock(&self.signals).clear();
+        self.signals.lock().clear();
     }
 }
 

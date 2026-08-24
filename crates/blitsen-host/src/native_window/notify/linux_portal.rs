@@ -16,10 +16,11 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::path::Path;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use parking_lot::Mutex;
 use winit::event_loop::EventLoopProxy;
 use zbus::blocking::{Connection, Proxy, connection};
 use zbus::zvariant::{OwnedValue, Value};
@@ -205,7 +206,8 @@ impl Application {
             .and_then(|text| Activation::parse(&text))
             .and_then(|activation| {
                 let id = activation.id.clone();
-                crate::dom_bridge::net_lock(&self.store)
+                self.store
+                    .lock()
                     .record(activation)
                     .map_err(|error| format!("{id}\0{error}"))
             });
@@ -213,7 +215,8 @@ impl Application {
             let (id, message) = error
                 .split_once('\0')
                 .map_or(("", error.as_str()), |(id, message)| (id, message));
-            crate::dom_bridge::net_lock(&self.errors)
+            self.errors
+                .lock()
                 .push_back((id.to_owned(), message.to_owned()));
         }
         self.proxy.wake_up();
@@ -340,7 +343,7 @@ impl LinuxPortal {
 
     fn ensure_registered(&self) -> Result<(), String> {
         let owner = self.portal_owner()?;
-        crate::dom_bridge::net_lock(&self.registration).ensure(&owner, || {
+        self.registration.lock().ensure(&owner, || {
             Proxy::new(
                 &self.connection,
                 PORTAL_DESTINATION,
@@ -392,10 +395,8 @@ impl LinuxPortal {
     }
 
     pub(crate) fn take(&self) -> (Result<Vec<Activation>, String>, Vec<(String, String)>) {
-        let activations = crate::dom_bridge::net_lock(&self.store).take();
-        let errors = crate::dom_bridge::net_lock(&self.errors)
-            .drain(..)
-            .collect();
+        let activations = self.store.lock().take();
+        let errors = self.errors.lock().drain(..).collect();
         (activations, errors)
     }
 
