@@ -187,9 +187,8 @@ describe("directory CLI", () => {
       // to a raw path: backslashes are reserved, so a Windows path arrives
       // quoted and escaped. The rules themselves are the next test's subject.
       const exec = /^Exec=(.*)$/m.exec(entry)[1];
-      // `%u` is the field code a notification activation arrives through (#252):
-      // the entry can be started with one argument, and an ordinary launch
-      // substitutes nothing for it.
+      // `%u` remains the non-D-Bus fallback and protocol-handler argument; a
+      // packaged notification activation uses ActivateAction instead (#252).
       expect(exec.endsWith(" %u")).toBe(true);
       const command = exec.slice(0, -" %u".length);
       expect(command.startsWith('"') ? command.slice(1, -1).replace(/\\(.)/g, "$1") : command)
@@ -220,13 +219,13 @@ describe("directory CLI", () => {
   });
 
   // Issue #252. The identity a notification activation is addressed to, and the
-  // name the platform's own notification service knows the entry point by —
-  // which is the identity everywhere except Linux, where the notification hint
-  // names a desktop entry and a desktop entry is named after the executable.
+  // name the platform's own notification service knows the entry point by.
+  // Linux now uses the identity too: D-Bus activation requires the bus name,
+  // desktop filename and service filename to be the same string.
   test("names the activation entry point each platform's notification service uses", () => {
     expect(activationEntryPoint({
       platform: "linux", identifier: "com.example.pong", executable: "/opt/pong/Pong",
-    })).toEqual({ identity: "com.example.pong", entry: "Pong" });
+    })).toEqual({ identity: "com.example.pong", entry: "com.example.pong" });
     expect(activationEntryPoint({
       platform: "win32", identifier: "com.example.pong", executable: "C:\\Pong\\Pong.exe",
     })).toEqual({ identity: "com.example.pong", entry: "com.example.pong" });
@@ -239,6 +238,34 @@ describe("directory CLI", () => {
     expect(activationEntryPoint({
       platform: "darwin", identifier: null, executable: "/Applications/Pong",
     })).toBeNull();
+    expect(() => activationEntryPoint({
+      platform: "linux", identifier: "not one name", executable: "/opt/pong/Pong",
+    })).toThrow("not a Linux D-Bus application name");
+  });
+
+  test("packages Linux D-Bus activation beside the desktop entry", async () => {
+    await withArtifact(async ({ directory, executable }) => {
+      const result = await packageBuild({
+        platform: "linux", executable, title: "Pong", identifier: "com.example.Pong",
+      });
+      const desktop = join(directory, "com.example.Pong.desktop");
+      const service = join(directory, "com.example.Pong.service");
+      expect(result.artifacts).toEqual([desktop, service]);
+      expect(await readFile(desktop, "utf8")).toContain(
+        `Exec=${executable} %u\nDBusActivatable=true\n`);
+      expect(await readFile(service, "utf8")).toBe(
+        `[D-BUS Service]\nName=com.example.Pong\nExec=${executable}\n`);
+
+      const backend = await readFile(join(import.meta.dir,
+        "../../../crates/blitsen-host/src/native_window/notify/linux_portal.rs"), "utf8");
+      expect(backend).toContain('"org.freedesktop.host.portal.Registry"');
+      expect(backend).toContain('"org.freedesktop.Application"');
+      expect(backend).toContain('const ACTION: &str = "app.blitsen-notification"');
+      expect(backend).toContain("only the notification portal may activate");
+      const session = await readFile(join(import.meta.dir,
+        "../../../crates/blitsen-host/src/native_window/session.rs"), "utf8");
+      expect(session).toContain("self.application.notify.detach()");
+    });
   });
 
   // The other half of the same contract: what a platform entry point hands the

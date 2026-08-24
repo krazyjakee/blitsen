@@ -599,7 +599,7 @@ export interface NativeNotificationOptions {
   /** Milliseconds before expiry; zero requests a persistent notification. */
   timeout?: number;
   urgency?: "low" | "normal" | "critical";
-  /** Icon name or absolute image path. Rejected on macOS, whose centre uses the app icon. */
+  /** Platform icon name or image path. Packaged Linux accepts names only; macOS rejects this. */
   icon?: string;
   /** Buttons whose identifiers are returned by `onEvent`. */
   actions?: readonly NativeNotificationAction[];

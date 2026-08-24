@@ -216,12 +216,15 @@ await notify.close?.(id);
 ```
 
 `permission()` reads without prompting; `requestPermission()` prompts on macOS and Android 13+
-and otherwise reads the platform result. Linux returns `"granted"` because the freedesktop service
-has no per-app authorization state—an unavailable service still makes `show` reject. macOS
+and otherwise reads the platform result. Linux returns `"granted"` because neither its freedesktop
+service nor notification portal exposes a permission prompt—an unavailable service still makes
+`show` reject. macOS
 requires a signed `.app` bundle identity for authorization and uses its application icon;
-passing `icon` is rejected. Linux accepts an icon theme name or absolute path. Windows accepts an
-image path. Android accepts an application drawable resource name and otherwise uses a system
-fallback icon.
+passing `icon` is rejected. A Linux development run accepts an icon theme name or absolute path;
+an identified export uses the notification portal, which accepts a theme name but requires a
+sealed file descriptor for an image, so this API rejects its absolute paths rather than sending the
+unsupported `file` variant. Windows accepts an image path. Android accepts an application drawable
+resource name and otherwise uses a system fallback icon.
 
 An exported macOS application has that identity. A development run does not: `blitsen run` is an
 interpreter executing a script, so `permission`, `requestPermission` and `show` reject with a
@@ -247,11 +250,21 @@ run borrows Windows PowerShell's, which is what an unregistered process has alwa
 with no registered AppUserModelID at all keeps no notifier and therefore no setting, so both calls
 reject there with a message naming that missing identity instead of reporting `"denied"`, which
 would claim a decision nobody made.
+On Linux, a development run retains the freedesktop backend and its running-process click, action,
+dismissal and expiry events. An export with `--bundle-id` instead uses the notification portal so a
+body click or named action can D-Bus-activate a stopped application. The portal supports replacement
+by ID and removal, but exposes neither a dismissal/expiry callback nor a timeout field; for packaged
+applications the desktop owns presentation lifetime, `appName` is the installed desktop identity,
+and only explicit `close` produces a close event. Its `icon` is an installed icon-theme name; unlike
+the live-process backend, an absolute image path is rejected because the portal accepts image files
+only through a sealed file descriptor.
 Android implements permission, an idempotent `blitsen.default` channel, submission, update, close,
 body taps and action buttons through `android-activity` and `jni`. Android urgency is a builder hint
 inside the user-controlled default channel, and `appName` cannot rename a channel Android has
-already created. Android reports no dismissal: a swipe-away needs a `BroadcastReceiver`, a receiver
-needs a Java class, and a Blitsen APK carries no `classes.dex` at all.
+already created. The APK's only dex provides a private activation receiver. It persists body,
+action and delete Intents before body/actions launch the platform `NativeActivity` with no trusted
+extras; a swipe dismissal does not open the Activity. An activation is delivered on the next
+eligible frame, or once after a later launch if no session was alive.
 
 ### Cold-start activation
 
@@ -261,8 +274,8 @@ that has exited is a launch rather than an event. What arrives is an `activation
 ```js
 notify.onEvent?.(event => {
   if (event.type !== "activation") return;
-  // `action` is null for a body click, `reason` is null where the platform
-  // reports no dismissal. `id` names a notification from the session that
+  // `action` is null for a body click; a persisted dismissal carries
+  // `reason: "dismissed"`. `id` names a notification from the session that
   // showed it, which is a session that has ended.
   resumeFrom(event.id, event.action);
 });
@@ -274,6 +287,11 @@ neither does a later launch: the activation is recorded as delivered in the appl
 directory, keyed by a nonce the platform entry point minted, and an envelope offered a second time
 is dropped. That is the same guard that keeps an Android `Intent` re-delivered to a recreated
 Activity from arriving twice.
+
+Shown notifications are not withdrawn merely because the application exits normally; shutdown
+detaches this process's callback state and leaves the platform-owned notification for its registered
+entry point. Reload is different: it replaces a live JavaScript session and closes that session's
+notifications before installing the next one.
 
 The identity that record is kept under is the one `blitsen build --bundle-id <id>` registered; on
 Android it is the application ID the package was installed as, which the runtime reads from the

@@ -28,11 +28,13 @@ import { join } from "node:path";
 import {
   androidProject, apkEntries, apkPlan, buildAndroid, cargoTargetDirectory, CONFIG_CHANGES,
   detectAndroidToolchain, ENTRY_CRATE, ENTRY_LIBRARY, ENTRY_SO, ensureDebugKeystore, findLibclang,
-  MIN_SDK, resolveEntryCrate, storedZip, TARGET_SDK, versionCode,
+  MIN_SDK, NOTIFICATION_BRIDGE_SOURCE, resolveEntryCrate, storedZip, TARGET_SDK, versionCode,
 } from "../src/android.mjs";
 import { ASSET_INDEX, ASSET_ROOT } from "../src/android-assets.mjs";
+import { subprocessInvocation } from "../src/android-toolchain.mjs";
 
 const entrySource = join(import.meta.dir, "../../../crates", ENTRY_CRATE);
+const platformSupport = join(import.meta.dir, "../../../docs/PLATFORM-SUPPORT.md");
 
 const withWork = async run => {
   const directory = await mkdtemp(join(tmpdir(), "blitsen-android-"));
@@ -42,6 +44,33 @@ const withWork = async run => {
     await rm(directory, { recursive: true, force: true });
   }
 };
+
+describe("Windows Android build-tool invocation", () => {
+  test("runs .bat and .cmd tools through cmd.exe with one fully quoted command", () => {
+    const environment = { ComSpec: "C:\\Windows\\System32\\cmd.exe" };
+    expect(subprocessInvocation([
+      "C:\\Android SDK & Tools\\d8.bat", "--min-api", "26",
+      "C:\\build output\\NotificationBridge.class",
+    ], { platform: "win32", environment })).toEqual({
+      executable: environment.ComSpec,
+      arguments: ["/d", "/v:off", "/s", "/c",
+        "\"\"C:\\Android SDK & Tools\\d8.bat\" \"--min-api\" \"26\" "
+          + "\"C:\\build output\\NotificationBridge.class\"\""],
+    });
+    expect(subprocessInvocation(["C:\\sdk\\apksigner.CMD", "sign"], {
+      platform: "win32", environment: { COMSPEC: "C:\\Windows\\cmd.exe" },
+    }).executable).toBe("C:\\Windows\\cmd.exe");
+  });
+
+  test("does not put native executables through a shell and rejects cmd expansion", () => {
+    expect(subprocessInvocation(["C:\\sdk\\aapt2.exe", "link", "a & b"], {
+      platform: "win32",
+    })).toEqual({ executable: "C:\\sdk\\aapt2.exe", arguments: ["link", "a & b"] });
+    expect(() => subprocessInvocation(["C:\\sdk\\d8.bat", "%TEMP%\\classes"], {
+      platform: "win32",
+    })).toThrow("cannot be passed through cmd.exe without expansion");
+  });
+});
 
 /** A small application on disk, with one reference for the rewriter to follow. */
 async function application(directory) {
@@ -88,7 +117,7 @@ describe("the entry point this build links, as the crate actually declares it", 
     expect(MIN_SDK).toBeLessThanOrEqual(TARGET_SDK);
   });
 
-  test("is what the generated manifest tells NativeActivity to load", () => {
+  test("keeps the platform NativeActivity as the exported launcher", () => {
     const { manifest } = androidProject({ name: "P", applicationId: "com.a.b" });
     expect(manifest).toContain(
       `<meta-data android:name="android.app.lib_name" android:value="${ENTRY_LIBRARY}" />`);
@@ -106,6 +135,16 @@ describe("the entry point this build links, as the crate actually declares it", 
 
   test("resolves out of the checkout with nothing set", async () => {
     expect(await resolveEntryCrate({})).toContain(ENTRY_CRATE);
+  });
+});
+
+describe("the documented stopped-application boundary", () => {
+  test("claims only the desktop activation entry points the backends implement", async () => {
+    const support = await readFile(platformSupport, "utf8");
+    expect(support).toContain("launch-capable notification portal");
+    expect(support).toContain("portal starts a stopped service");
+    expect(support).toContain("INotificationActivationCallback");
+    expect(support).toContain("cold-start response is not surfaced");
   });
 });
 
@@ -144,13 +183,57 @@ describe("the AndroidManifest.xml this build writes", () => {
     expect(manifest).not.toContain("android.permission.USB");
   });
 
-  test("claims no dex and no extraction, which is what the archive is written for", () => {
+  test("declares only the activation bridge dex and no native extraction", async () => {
     const { manifest } = project();
-    // `hasCode="false"` is true because #142 chose android-activity's
-    // native-activity backend: the activity class ships with the platform.
-    expect(manifest).toContain('android:hasCode="false"');
+    expect(manifest).toContain('android:hasCode="true"');
+    expect(manifest).toContain("android.app.NativeActivity");
+    expect(manifest).toContain("com.blitsen.runtime.NotificationBridge$ActivationReceiver");
+    expect(manifest).toContain('android:exported="false"');
+    const bridge = await readFile(NOTIFICATION_BRIDGE_SOURCE, "utf8");
+    expect(bridge).toContain("extends BroadcastReceiver");
+    expect(bridge).toContain("context.startActivity(launch)");
+    expect(bridge).not.toContain("onNewIntent");
+    const rust = await readFile(join(entrySource, "../blitsen-host/src/native_window/notify/android.rs"),
+      "utf8");
+    for (const value of ["blitsen.notification.activation", "blitsen.notification.nonce",
+      "notification-activation-inbox"]) {
+      expect(bridge).toContain(value);
+      expect(rust).toContain(value);
+    }
+    expect(rust).toContain('jni_str!("setDeleteIntent")');
+    expect(rust).toContain('jni_str!("getBroadcast")');
+    expect(rust).not.toContain('jni_str!("getIntent")');
+    expect(rust).not.toContain("record_intent_activation");
+    expect(rust).not.toContain("NOTIFICATION_SESSION");
+    expect(rust).toContain("super::addresses_session(");
     // Only legal for a stored, page-aligned .so — see the archive suite.
     expect(manifest).toContain('android:extractNativeLibs="false"');
+  });
+
+  test("an explicit Intent to the exported launcher cannot forge activation extras", async () => {
+    const { manifest } = project();
+    const activity = /<activity[\s\S]*?<\/activity>/.exec(manifest)?.[0] ?? "";
+    const receiver = /<receiver[\s\S]*?\/>/.exec(manifest)?.[0] ?? "";
+    expect(activity).toContain('android:name="android.app.NativeActivity"');
+    expect(activity).toContain('android:exported="true"');
+    expect(receiver).toContain("NotificationBridge$ActivationReceiver");
+    expect(receiver).toContain('android:exported="false"');
+
+    const bridge = await readFile(NOTIFICATION_BRIDGE_SOURCE, "utf8");
+    expect(bridge).toContain("getStringExtra(ACTIVATION_EXTRA)");
+    expect(bridge).toContain("new Intent(context, NativeActivity.class)");
+    const rust = await readFile(join(entrySource, "../blitsen-host/src/native_window/notify/android.rs"),
+      "utf8");
+    expect(rust).not.toContain('jni_str!("getIntent")');
+    expect(rust).not.toContain('jni_str!("getStringExtra")');
+  });
+
+  test("the replay queue uses replacement semantics Windows actually guarantees", async () => {
+    const source = await readFile(join(entrySource,
+      "../blitsen-host/src/native_window/notify/activation.rs"), "utf8");
+    expect(source).toContain("#[cfg(target_os = \"windows\")]");
+    expect(source).toContain("MoveFileExW(");
+    expect(source).toContain("MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH");
   });
 
   test("declares every configuration change, because the failure is silent", () => {
@@ -277,6 +360,8 @@ describe("the archive, which is written here because no tool will store every en
         await mkdir(linked, { recursive: true });
         await writeFile(join(linked, "AndroidManifest.xml"), "xml");
         await writeFile(join(linked, "resources.arsc"), "arsc");
+        const dex = join(directory, "classes.dex");
+        await writeFile(dex, "dex");
         const so = join(directory, "libblitsen_android.so");
         await writeFile(so, "elf");
         const assets = join(directory, "assets", ASSET_ROOT);
@@ -285,6 +370,7 @@ describe("the archive, which is written here because no tool will store every en
         await writeFile(join(assets, "assets", "app.css"), "body{}");
         const entries = await apkEntries({
           linked,
+          dex,
           libraries: [
             { abi: "x86_64", entry: "lib/x86_64/libblitsen_android.so", source: so },
             { abi: "arm64-v8a", entry: "lib/arm64-v8a/libblitsen_android.so", source: so },
@@ -294,6 +380,7 @@ describe("the archive, which is written here because no tool will store every en
         expect(entries.map(entry => entry.name)).toEqual([
           "AndroidManifest.xml",
           "resources.arsc",
+          "classes.dex",
           // Sorted, not in the order the ABIs were given: readdir order and
           // argument order are both machine-dependent, and the archive is not.
           "lib/arm64-v8a/libblitsen_android.so",
@@ -314,8 +401,13 @@ describe("the archive, which is written here because no tool will store every en
         .rejects.toThrow("aapt2 produced no AndroidManifest.xml");
       await writeFile(join(linked, "AndroidManifest.xml"), "xml");
       await writeFile(join(linked, "resources.arsc"), "arsc");
+      const dex = join(directory, "classes.dex");
+      await expect(apkEntries({ linked, dex, libraries: [], assets }))
+        .rejects.toThrow("d8 produced no classes.dex");
+      await writeFile(dex, "dex");
       await expect(apkEntries({
         linked,
+        dex,
         libraries: [{ abi: "x86_64", entry: "lib/x86_64/x.so", source: join(directory, "gone") }],
         assets,
       })).rejects.toThrow("the x86_64 slice of this APK would be empty");
@@ -325,7 +417,7 @@ describe("the archive, which is written here because no tool will store every en
 
 /** A minimal SDK tree: enough for the detector, nothing that could build. */
 async function fakeSdk(directory, { ndk = "27.2.12479018",
-  tools = ["aapt2", "zipalign", "apksigner"], buildTools = "34.0.0" } = {}) {
+  tools = ["aapt2", "d8", "zipalign", "apksigner"], buildTools = "34.0.0" } = {}) {
   const sdk = join(directory, "Sdk");
   if (ndk) {
     // The C toolchain the detector reads back out. An NDK ships exactly one
@@ -348,7 +440,7 @@ const detected = (sdk, overrides = {}) => detectAndroidToolchain({
   env: { ANDROID_HOME: sdk, LIBCLANG_PATH: "/llvm/lib", ...overrides },
   // Answers by name, so that *which* binary is looked for is part of what this
   // asserts rather than something a stub hides.
-  which: name => (name === "cargo-ndk" ? "/somewhere/cargo-ndk" : null),
+  which: name => ({ "cargo-ndk": "/somewhere/cargo-ndk", javac: "/jdk/bin/javac" })[name] ?? null,
 });
 
 describe("the toolchain is detected, never installed", () => {
@@ -365,11 +457,33 @@ describe("the toolchain is detected, never installed", () => {
       // Each tool is a path the plan puts in an argv, not a name off PATH: a
       // second SDK earlier on PATH would otherwise silently package the build.
       expect(toolchain.tools.aapt2).toBe(join(sdk, "build-tools", "34.0.0", "aapt2"));
+      expect(toolchain.tools.d8).toBe(join(sdk, "build-tools", "34.0.0", "d8"));
       expect(toolchain.tools.zipalign).toBe(join(sdk, "build-tools", "34.0.0", "zipalign"));
       expect(toolchain.tools.apksigner).toBe(join(sdk, "build-tools", "34.0.0", "apksigner"));
+      expect(toolchain.tools.javac).toBe("/jdk/bin/javac");
       expect(toolchain.libclang).toBe("/llvm/lib");
       // The cross-compiler driver, by the name that is actually run.
       expect(toolchain.packager).toBe("/somewhere/cargo-ndk");
+    });
+  });
+
+  test("uses the executable and batch names Google's Windows SDK actually ships", async () => {
+    await withWork(async directory => {
+      const sdk = await fakeSdk(directory, {
+        tools: ["aapt2.exe", "d8.bat", "zipalign.exe", "apksigner.bat"],
+      });
+      const toolchain = await detectAndroidToolchain({
+        env: { ANDROID_HOME: sdk, LIBCLANG_PATH: "/llvm/lib" },
+        hostPlatform: "win32",
+        which: name => ({ "cargo-ndk": "cargo-ndk.exe", javac: "javac.exe" })[name] ?? null,
+      });
+      expect(toolchain.tools).toEqual({
+        aapt2: join(sdk, "build-tools", "34.0.0", "aapt2.exe"),
+        d8: join(sdk, "build-tools", "34.0.0", "d8.bat"),
+        zipalign: join(sdk, "build-tools", "34.0.0", "zipalign.exe"),
+        apksigner: join(sdk, "build-tools", "34.0.0", "apksigner.bat"),
+        javac: "javac.exe",
+      });
     });
   });
 
@@ -382,13 +496,19 @@ describe("the toolchain is detected, never installed", () => {
       await expect(detected(noNdk)).rejects.toThrow("Blitsen does not download it");
       // aapt2 and not aapt: v1 is the tool Google is removing, and nothing on
       // this path runs it now that the archive is written rather than packaged.
-      const noAapt2 = await fakeSdk(join(directory, "b"), { tools: ["zipalign", "apksigner"] });
+      const noAapt2 = await fakeSdk(join(directory, "b"),
+        { tools: ["d8", "zipalign", "apksigner"] });
       await expect(detected(noAapt2)).rejects.toThrow("has no aapt2");
-      const noSigner = await fakeSdk(join(directory, "d"), { tools: ["aapt2", "zipalign"] });
+      const noSigner = await fakeSdk(join(directory, "d"),
+        { tools: ["aapt2", "d8", "zipalign"] });
       await expect(detected(noSigner)).rejects.toThrow("has no apksigner");
       const sdk = await fakeSdk(join(directory, "c"));
       await expect(detectAndroidToolchain({
         env: { ANDROID_HOME: sdk, LIBCLANG_PATH: "/llvm/lib" }, which: () => null,
+      })).rejects.toThrow("javac is not on PATH");
+      await expect(detectAndroidToolchain({
+        env: { ANDROID_HOME: sdk, LIBCLANG_PATH: "/llvm/lib" },
+        which: name => name === "javac" ? "/jdk/bin/javac" : null,
       })).rejects.toThrow("cargo-ndk is not on PATH");
     });
   });
@@ -474,7 +594,8 @@ describe("the build plan", () => {
     sysroot: `${llvm}/sysroot`,
     platform: "/sdk/platforms/android-33/android.jar",
     libclang: "/llvm/lib",
-    tools: { aapt2: "/sdk/bt/aapt2", zipalign: "/sdk/bt/zipalign", apksigner: "/sdk/bt/apksigner" },
+    tools: { aapt2: "/sdk/bt/aapt2", d8: "/sdk/bt/d8", javac: "/jdk/bin/javac",
+      zipalign: "/sdk/bt/zipalign", apksigner: "/sdk/bt/apksigner" },
   };
   const plan = (overrides = {}) => apkPlan({
     project: androidProject({ name: "Pong", applicationId: "com.blitsen.pong", version: "1.2.3" }),
@@ -545,6 +666,19 @@ describe("the build plan", () => {
     ]);
     expect(plan({ release: false }).libraries[0].source)
       .toBe(join("/checkout/target/aarch64-linux-android/debug", ENTRY_SO));
+  });
+
+  test("compiles exactly the private activation bridge and dexes its two classes", () => {
+    const { javaCompile, dex, paths } = plan();
+    expect(javaCompile.command).toEqual(["/jdk/bin/javac", "-source", "8", "-target", "8",
+      "-bootclasspath", "/sdk/platforms/android-33/android.jar", "-d", paths.classes,
+      NOTIFICATION_BRIDGE_SOURCE]);
+    expect(dex.command.slice(0, 5)).toEqual([
+      "/sdk/bt/d8", "--min-api", String(MIN_SDK), "--output", paths.dex,
+    ]);
+    expect(dex.command.slice(5).map(path => path.split("/").at(-1))).toEqual([
+      "NotificationBridge.class", "NotificationBridge$ActivationReceiver.class",
+    ]);
   });
 
   test("links only the manifest, and asks aapt2 for a directory", () => {
@@ -662,7 +796,8 @@ describe("an Android build, with every subprocess stubbed", () => {
     sdk: "/sdk", ndk: "/sdk/ndk/27", buildTools: "/sdk/bt", buildToolsVersion: "34.0.0",
     llvm: "/sdk/ndk/27/llvm", sysroot: "/sdk/ndk/27/llvm/sysroot",
     platform: "/sdk/p", packager: "cargo-ndk", libclang: "/llvm/lib",
-    tools: { aapt2: "aapt2", zipalign: "zipalign", apksigner: "apksigner" },
+    tools: { aapt2: "aapt2", d8: "d8", javac: "javac", zipalign: "zipalign",
+      apksigner: "apksigner" },
   });
 
   /**
@@ -683,6 +818,22 @@ describe("an Android build, with every subprocess stubbed", () => {
         await mkdir(at, { recursive: true });
         await writeFile(join(at, ENTRY_SO), `ELF ${triple}`);
       }
+      return { code: 0, stdout: "", stderr: "" };
+    }
+    if (command[0] === "javac") {
+      const at = command[command.indexOf("-d") + 1];
+      const packageDirectory = join(at, "com", "blitsen", "runtime");
+      await mkdir(packageDirectory, { recursive: true });
+      for (const name of ["NotificationBridge.class",
+        "NotificationBridge$ActivationReceiver.class"]) {
+        await writeFile(join(packageDirectory, name), `class ${name}`);
+      }
+      return { code: 0, stdout: "", stderr: "" };
+    }
+    if (command[0] === "d8") {
+      const at = command[command.indexOf("--output") + 1];
+      await mkdir(at, { recursive: true });
+      await writeFile(join(at, "classes.dex"), "dex");
       return { code: 0, stdout: "", stderr: "" };
     }
     if (command[0] === "aapt2") {
@@ -731,8 +882,8 @@ describe("an Android build, with every subprocess stubbed", () => {
       // and its full command has dedicated coverage above.
       const commandNames = commands.map(command => `${command[0]} ${command[1]}`);
       expect(commandNames.filter(command => command !== "keytool -genkeypair")).toEqual([
-        "rustup target", "cargo metadata", "cargo ndk", "aapt2 link", "zipalign -f",
-        "apksigner sign",
+        "rustup target", "cargo metadata", "cargo ndk", "javac -source", "d8 --min-api",
+        "aapt2 link", "zipalign -f", "apksigner sign",
       ]);
       const keytool = commandNames.indexOf("keytool -genkeypair");
       expect(keytool === -1 || keytool === commandNames.indexOf("apksigner sign") - 1).toBe(true);
@@ -749,6 +900,7 @@ describe("an Android build, with every subprocess stubbed", () => {
       // the CLI built with the engine's own entry point in it.
       expect(result.entries.map(entry => entry.name)).toEqual([
         "AndroidManifest.xml", "resources.arsc",
+        "classes.dex",
         `lib/arm64-v8a/${ENTRY_SO}`, `lib/x86_64/${ENTRY_SO}`,
         `assets/${ASSET_ROOT}/app.js`,
         `assets/${ASSET_ROOT}/assets/app.css`,
@@ -843,7 +995,8 @@ describe("an Android build, with every subprocess stubbed", () => {
         const result = await stub(command);
         return command.includes(at) ? { ...result, code: 3 } : result;
       };
-      for (const [at, said] of [["ndk", "cargo ndk exited 3"], ["aapt2", "aapt2 link exited 3"],
+      for (const [at, said] of [["ndk", "cargo ndk exited 3"], ["javac", "javac exited 3"],
+        ["d8", "d8 exited 3"], ["aapt2", "aapt2 link exited 3"],
         ["zipalign", "zipalign exited 3"], ["apksigner", "apksigner exited 3"]]) {
         await expect(buildAndroid({
           root,

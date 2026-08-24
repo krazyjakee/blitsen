@@ -90,7 +90,12 @@ pub struct WindowSession<E: JsEngine + Clone> {
 
 impl<E: JsEngine + Clone> Drop for WindowSession<E> {
     fn drop(&mut self) {
-        self.application.notify.clear();
+        // A notification is platform-owned once shown and deliberately
+        // outlives a graceful process exit: that is what leaves something for
+        // #252's registered entry point to activate. Reload calls `clear`
+        // explicitly because it replaces one live document/session with
+        // another; dropping the process only detaches callback state.
+        self.application.notify.detach();
     }
 }
 
@@ -417,6 +422,14 @@ impl<E: JsEngine + Clone + 'static> WindowSession<E> {
         self.event_loop
             .pump_app_events(timeout, &mut self.application);
         self.application.notify.poll();
+        #[cfg(target_os = "linux")]
+        if self.application.notify.take_present_request() {
+            for view in self.application.inner.windows.values() {
+                view.window.focus_window();
+                view.window
+                    .request_user_attention(Some(winit::window::UserAttentionType::Informational));
+            }
+        }
         if crate::dom_bridge::notify::pending() {
             self.request_redraw();
         }
