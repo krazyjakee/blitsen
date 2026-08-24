@@ -280,6 +280,8 @@ const CATALOGUE = {
   WEB_COOKIE: ["document.cookie", "cookieStore", "Headers.getSetCookie"],
   WEB_DEVICE: ["Navigator", "navigator", "navigator.userAgent", "navigator.platform",
     "navigator.language", ["screen", null], "Notification", ["caches", null]],
+  WEB_GAMEPAD: ["Gamepad", "GamepadButton", "GamepadEvent", "GamepadHapticActuator",
+    "Navigator.getGamepads", "GamepadHapticActuator.playEffect", "GamepadHapticActuator.reset"],
   WEB_OBSERVER: ["ResizeObserver", "IntersectionObserver", "PerformanceObserver"],
   // The CSSOM stylesheet objects, at the size a framework transition needs: a
   // sheet is the `<style>` element that owns it, and a rule inserted into one
@@ -334,12 +336,8 @@ const NATIVE = {
 // oversight: the member is `undefined`, so `if (app.onQuitRequest)` selects a
 // fallback, and this is what the documentation says about each one.
 const NATIVE_ABSENT = {
-  "input.gamepads": "Gamepads need the standard navigator.getGamepads surface, stable device "
-    + "identity and hot-plug delivery; keyboard and pointer state alone cannot approximate them.",
-  "input.vibrateGamepad": "Vibration belongs to a discovered gamepad actuator and cannot be "
-    + "implemented before gamepad discovery identifies the device and its supported effects.",
-  "input.onDeviceChange": "Device change is the connection counterpart of gamepad and raw-device "
-    + "discovery, neither of which is installed yet.",
+  "input.gamepads": "The standard navigator.getGamepads surface already carries every observable "
+    + "controller field. A second native snapshot would only create a competing source of truth.",
   "app.onQuitRequest": "A close request is a window event, and windows are issue #77's to expose; "
     + "delivering one from here would mean a second, competing event loop.",
   "app.onSuspend": "Linux has no process-level suspend notification to report. The desktop "
@@ -387,6 +385,22 @@ const NATIVE_ABSENT = {
     + "that signal on three platforms in exchange for a wrong answer on the fourth.",
 };
 
+// Implemented native members that are deliberately omitted on named targets.
+// The bootstrap keeps these keys in its source so the generated type surface
+// stays optional, then `nativeMembers` removes their undefined runtime values.
+const NATIVE_CONDITIONAL = {
+  "input.vibrateGamepad": {
+    platforms: ["android"],
+    reason: "The controller backend has no Android implementation, so there is no discovered "
+      + "slot or actuator to address.",
+  },
+  "input.onDeviceChange": {
+    platforms: ["android"],
+    reason: "The controller backend has no Android implementation, so there are no controller "
+      + "connection changes to report.",
+  },
+};
+
 // Globals the *engine* supplies rather than the bridge, so their status cannot
 // be read out of `dom_bridge.rs` like everything else here.
 //
@@ -404,12 +418,11 @@ const ENGINE_ABSENT = {
 // running in cannot carry them. Implemented, and unconditional everywhere the
 // entry does not name.
 //
-// This is a third axis beside the two `native-modules.mjs` keeps apart. *Not
-// implemented anywhere* is derived from the bootstrap; *implemented, but not on
-// this target* is that file's declared table; this one is *implemented, and on
-// these platforms decided by the process rather than by the build*. A platform
-// cannot answer it, because two runs of the same binary on the same machine
-// answer differently, which is why neither of the other two could hold it.
+// This is the web counterpart of the target and run-time gates
+// `native-modules.mjs` keeps. Some entries are a build fact (the controller
+// backend is not compiled on Android); others are decided by the process (a
+// macOS notification facade needs the identity of the process actually
+// running). Both fail the same way for application code: the API is withdrawn.
 //
 // Declared rather than derived, for the reason `native-modules.mjs` gives about
 // its own table: the gate is a `cfg` and a run-time call in `crates/blitsen-host`
@@ -423,6 +436,28 @@ const ENGINE_ABSENT = {
 // when the condition does not hold, so `"Notification" in globalThis` selects a
 // fallback exactly as it does for an absence that is a build fact.
 const CONDITIONAL = {
+  Gamepad: {
+    platforms: ["android"],
+    reason: "The maintained controller backend supports Linux, macOS and Windows, but has no "
+      + "Android backend. The API is absent there rather than returning an always-empty snapshot.",
+  },
+  GamepadButton: {
+    platforms: ["android"],
+    reason: "This snapshot type is installed with the desktop Gamepad API and absent with it.",
+  },
+  GamepadEvent: {
+    platforms: ["android"],
+    reason: "Controller connection events require the desktop controller backend.",
+  },
+  GamepadHapticActuator: {
+    platforms: ["android"],
+    reason: "Dual-rumble is exposed only where the desktop controller backend can address it.",
+  },
+  "Navigator.getGamepads": {
+    platforms: ["android"],
+    reason: "The maintained controller backend supports Linux, macOS and Windows, but has no "
+      + "Android backend. The member is absent there rather than returning an always-empty array.",
+  },
   Notification: {
     platforms: ["darwin", "android"],
     reason: "macOS notifications are `UNUserNotificationCenter`, which needs a bundle identity to "
@@ -934,9 +969,14 @@ export function extractRuntimeSurface(source) {
   // withdraws by name when it did not. Read from the structure rather than
   // declared beside CONDITIONAL, so a claim that an API is conditional stands on
   // the runtime being able to drop it.
-  const conditional = [...structure.matchAll(
-    /\n\s*if \(!([A-Za-z_$][\w$]*)\) try \{ delete globalThis\.\1; \} catch \{\}/g)]
-    .map(([, name]) => name);
+  const conditional = [
+    ...[...structure.matchAll(
+      /\n\s*if \(![A-Za-z_$][\w$]*\) try \{ delete globalThis\.([A-Za-z_$][\w$]*); \} catch \{\}/g)]
+      .map(([, name]) => name),
+    ...[...structure.matchAll(
+      /\n\s*if \(![A-Za-z_$][\w$]*\) try \{ delete ([A-Za-z_$][\w$]*)\.prototype\.([A-Za-z_$][\w$]*); \} catch \{\}/g)]
+      .map(([, owner, member]) => `${owner}.${member}`),
+  ];
 
   const { classes, instances } = runtimeClassesAndInstances(structure);
   const native = new Map(Object.keys(NATIVE).map(module =>
@@ -992,7 +1032,17 @@ function nativeEntries(surface) {
         throw new Error(`native:${api} is not installed and NATIVE_ABSENT does not say why`);
       if (status === "implemented" && reason)
         throw new Error(`native:${api} is installed, so NATIVE_ABSENT must not explain it away`);
-      return { api, module, member, status, ...(reason ? { reason } : {}) };
+      const condition = NATIVE_CONDITIONAL[api];
+      if (condition) {
+        const unknown = condition.platforms
+          .filter(platform => !NATIVE_PLATFORMS.includes(platform));
+        if (unknown.length > 0)
+          throw new Error(`native:${api} is conditional on ${unknown.join(", ")}, which is not a platform`);
+        if (status !== "implemented")
+          throw new Error(`native:${api} is conditional and not implemented on any platform`);
+      }
+      return { api, module, member, status, ...(reason ? { reason } : {}),
+        ...(condition ? { condition } : {}) };
     });
   });
   return entries;
@@ -1197,8 +1247,13 @@ export function renderNativeModules(manifest) {
     + `| ${members(module, "implemented")} | ${members(module, "absent")} |`);
   const absent = manifest.native.filter(entry => entry.status === "absent")
     .map(entry => `| \`${entry.api}\` | ${entry.reason} |`);
+  const conditional = manifest.native.filter(entry => entry.condition)
+    .map(entry => `| \`${entry.api}\` | ${entry.condition.platforms.join(", ")} `
+      + `| ${entry.condition.reason} |`);
   return ["| Module | Implemented | Absent |", "| --- | --- | --- |", ...surface, "",
-    "| Absent member | Why |", "| --- | --- |", ...absent].join("\n");
+    "| Absent member | Why |", "| --- | --- |", ...absent, "",
+    "| Conditional native member | Platform where absent | Why |", "| --- | --- | --- |",
+    ...conditional].join("\n");
 }
 
 function replaceGenerated(document, section, body) {

@@ -1422,6 +1422,7 @@ determinism gate instead.
 | WEB_NAVIGATION | `stop` | `open`, `close`, `navigation`, `document.write`, `document.writeln`, `document.open`, `document.close`, `location.assign`, `location.replace`, `location.reload`, `location.ancestorOrigins` |
 | WEB_COOKIE | — | `document.cookie`, `cookieStore`, `Headers.getSetCookie` |
 | WEB_DEVICE | `Navigator`, `navigator`, `navigator.userAgent`, `navigator.platform`, `navigator.language`, `Notification` | `screen`, `caches` |
+| WEB_GAMEPAD | `Gamepad`, `GamepadButton`, `GamepadEvent`, `GamepadHapticActuator`, `Navigator.getGamepads`, `GamepadHapticActuator.playEffect`, `GamepadHapticActuator.reset` | — |
 | WEB_OBSERVER | `ResizeObserver` | `IntersectionObserver`, `PerformanceObserver` |
 | WEB_STYLE | `getComputedStyle`, `matchMedia`, `MediaQueryList`, `MediaQueryListEvent`, `CSS`, `CSSStyleSheet`, `StyleSheetList`, `CSSRule`, `CSSRuleList`, `HTMLStyleElement`, `document.styleSheets`, `HTMLStyleElement.sheet`, `HTMLLinkElement.sheet`, `CSSStyleSheet.cssRules`, `CSSStyleSheet.insertRule`, `CSSStyleSheet.deleteRule`, `CSSStyleSheet.ownerNode`, `CSSStyleSheet.href`, `CSSStyleSheet.title`, `CSSRule.cssText`, `CSSRule.parentStyleSheet` | `CSSStyleRule`, `CSSKeyframesRule`, `CSSKeyframeRule`, `CSSMediaRule`, `document.adoptedStyleSheets`, `CSSStyleSheet.disabled`, `CSSStyleSheet.replaceSync`, `CSSStyleSheet.replace`, `CSSRule.style`, `CSSRule.selectorText`, `CSSRule.type` |
 | WEB_COMPONENTS | `DOMParser` | `customElements`, `ShadowRoot` |
@@ -1430,6 +1431,11 @@ determinism gate instead.
 | Conditional API | Platform | Installed when |
 | --- | --- | --- |
 | `Notification` | darwin, android | macOS notifications are `UNUserNotificationCenter`, which needs a bundle identity to address and to hold permission against — and answers a process that has none by aborting it rather than by failing the call, so the facade cannot be installed and left to throw. An exported `.app` carries that identity and a development run of the interpreter does not; `blitsen run --dev-bundle` gives the development host one of its own rather than borrowing an installed application's. A process cannot acquire or lose a bundle identifier while it runs, so the question is settled once, as the runtime installs (#253). On Android the same question has a different subject: the facade's `click` is a body tap, and a body tap there is a `PendingIntent` addressed to an installed application identity, so a package the platform launched has one and a runtime started against a directory standing in for `assets/` does not — a `Notification` whose `onclick` could never fire would be a promise the constructor must not make (#252). `blitsen/notify` is present either way and says why a call was refused. |
+| `Gamepad` | android | The maintained controller backend supports Linux, macOS and Windows, but has no Android backend. The API is absent there rather than returning an always-empty snapshot. |
+| `GamepadButton` | android | This snapshot type is installed with the desktop Gamepad API and absent with it. |
+| `GamepadEvent` | android | Controller connection events require the desktop controller backend. |
+| `GamepadHapticActuator` | android | Dual-rumble is exposed only where the desktop controller backend can address it. |
+| `Navigator.getGamepads` | android | The maintained controller backend supports Linux, macOS and Windows, but has no Android backend. The member is absent there rather than returning an always-empty array. |
 
 | Diagnostic | Severity | Reported as |
 | --- | --- | --- |
@@ -1577,7 +1583,7 @@ lib. The capability tiers above are the list, and `blitsen doctor` is the check.
 | `blitsen/clipboard` | `readText`, `readHtml`, `readImage`, `writeText`, `writeHtml`, `writeImage`, `clear` | `readMime`, `writeMime` |
 | `blitsen/tray` | `configure`, `remove`, `onClick`, `onAction` | — |
 | `blitsen/menu` | `configure`, `remove`, `onAction` | — |
-| `blitsen/input` | `snapshot` | `gamepads`, `vibrateGamepad`, `onDeviceChange` |
+| `blitsen/input` | `snapshot`, `vibrateGamepad`, `onDeviceChange` | `gamepads` |
 | `blitsen/hid` | `devices`, `open`, `onDeviceChange` | — |
 | `blitsen/notify` | `show`, `permission`, `requestPermission`, `update`, `close`, `onEvent` | — |
 | `blitsen/os` | `cpu`, `memory`, `storage`, `host`, `batteries`, `locale` | `displays`, `idleTime` |
@@ -1595,11 +1601,14 @@ lib. The capability tiers above are the list, and `blitsen doctor` is the check.
 | `window.startFileDrag` | Dropping *into* the window is winit's to report and is implemented; dragging *out* of it is not something winit can start. A drag source is a platform object driven from the thread that owns the window — `IDropSource` with `DoDragDrop`, an `NSDraggingSession`, a `wl_data_device` offer — and the first two run a modal loop that does not return until the drop, on the one thread Blitsen keeps free to paint. That is a design question rather than a missing call, so the module says so instead of answering it. |
 | `clipboard.readMime` | `arboard` reads the flavours above and no others. Arbitrary MIME needs a different mechanism on each platform — X11 selection targets, `wl_data_offer`, `NSPasteboardType`, a registered Windows format — and no part of that is shared. |
 | `clipboard.writeMime` | The counterpart of `readMime`, absent for the same reason. |
-| `input.gamepads` | Gamepads need the standard navigator.getGamepads surface, stable device identity and hot-plug delivery; keyboard and pointer state alone cannot approximate them. |
-| `input.vibrateGamepad` | Vibration belongs to a discovered gamepad actuator and cannot be implemented before gamepad discovery identifies the device and its supported effects. |
-| `input.onDeviceChange` | Device change is the connection counterpart of gamepad and raw-device discovery, neither of which is installed yet. |
+| `input.gamepads` | The standard navigator.getGamepads surface already carries every observable controller field. A second native snapshot would only create a competing source of truth. |
 | `os.displays` | The monitors are `window.monitors()`, which already reports each one's size, position and scale factor. A second list here could disagree with that one. |
 | `os.idleTime` | Seconds since the last input is a different mechanism on every platform — the X11 screensaver extension, `CGEventSourceSecondsSinceLastEventType`, `GetLastInputInfo` — and Wayland has no answer at all for a client that is not focused: the idle-notify protocol reports crossing a threshold the compositor was asked about, not a duration. Reporting zero on the sessions that cannot answer would be indistinguishable from a machine in use. It is also the one reading in this module that describes the person rather than the machine — how long they have been away from the keyboard, available to any application that asks for it — so implementing it where it happens to work would buy that signal on three platforms in exchange for a wrong answer on the fourth. |
+
+| Conditional native member | Platform where absent | Why |
+| --- | --- | --- |
+| `input.vibrateGamepad` | android | The controller backend has no Android implementation, so there is no discovered slot or actuator to address. |
+| `input.onDeviceChange` | android | The controller backend has no Android implementation, so there are no controller connection changes to report. |
 
 <!-- /generated -->
 

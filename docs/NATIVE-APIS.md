@@ -322,8 +322,7 @@ requestAnimationFrame(frame);
 ```
 
 Losing focus clears held keys and buttons. Movement and wheel fields are accumulated since the
-previous snapshot and consumed by reading it. Gamepads, vibration and device-change events remain
-absent; ordinary pointer and keyboard events are unaffected.
+previous snapshot and consumed by reading it. Ordinary pointer and keyboard events are unaffected.
 
 The snapshot describes one pointer, in the same CSS pixels a `pointerdown` listener sees. Its
 position is `null` whenever no pointer is in the window — before one arrives, after the cursor
@@ -334,6 +333,15 @@ produce. A second finger does not disturb the pointer the first one set; multi-t
 pointer events, which carry every contact with its own `pointerId`. Keys are held by physical
 code, so an Android soft keyboard — which reports characters without the key behind them — appears
 as DOM composition and `input` events rather than here. Hardware keys still produce `keydown`.
+
+Desktop targets also expose `input.onDeviceChange` and `input.vibrateGamepad`. The former is the
+native convenience form of the standard `gamepadconnected`/`gamepaddisconnected` events and returns
+an unsubscribe function. The latter addresses the stable index from `navigator.getGamepads()` and
+starts dual-rumble with `duration`, `strongMagnitude` and `weakMagnitude`; it rejects if the slot
+disconnected, has no actuator, or the driver refused the effect. There is deliberately no
+`input.gamepads`: the standard snapshot already carries every controller field, and a second
+registry could disagree with it. Android leaves both native members and the standard Gamepad API
+absent because the controller backend has no Android implementation.
 
 ## Raw HID devices
 

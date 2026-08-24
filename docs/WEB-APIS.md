@@ -42,6 +42,7 @@ lists individual globals, classes and members.
 | Audio | `<audio>` and a focused Web Audio subset |
 | Storage | synchronous durable `localStorage` and realm-scoped `sessionStorage` |
 | Canvas | `<canvas>` with a full 2D context: paths, text, images, gradients, patterns, compositing, `getImageData` and `toDataURL` |
+| Gamepads | Per-frame `navigator.getGamepads()` snapshots and connection events on Linux, macOS and Windows, with standard mapping and dual-rumble where the device reports it |
 | Notifications | Standard `Notification` construction, permission, close, and lifecycle events on Linux, Windows, eligible packaged macOS apps and launched Android packages; see platform limits below |
 
 ## Important absences
@@ -145,6 +146,30 @@ grab behavior still need acceptance on the supported backends; a refused cursor 
 than pretending the lock succeeded. DOM modes temporarily override `native:window` fullscreen,
 cursor visibility and cursor-grab settings; changes made through the native API while a DOM mode is
 active become the state restored when that DOM mode exits or a document reloads.
+
+## Gamepads
+
+Linux, macOS and Windows install the standard `navigator.getGamepads()` surface. It returns a
+frozen array whose indices are stable while devices connect and disconnect; a disconnected slot is
+`null`, and a device that returns reuses its old slot when that slot is still free. Two controllers
+with the same public `id` remain distinct because the native backend identity, not the label, owns
+the slot. `gamepadconnected` and `gamepaddisconnected` are delivered in backend order at the top of
+the next application frame. Applications that need hot-plug while otherwise idle should keep a
+`requestAnimationFrame` loop active; Blitsen starts no controller-only polling loop.
+
+Known mappings expose the standard four axes and seventeen buttons. Axes are clamped to `[-1, 1]`,
+button values to `[0, 1]`, and the backend's default dead-zone and jitter filters apply. A device
+whose layout cannot be mapped honestly has `mapping === ""` and empty axes/buttons rather than a
+guessed ordering. `timestamp` changes only when that slot's state or connection changes.
+
+`vibrationActuator` is a `dual-rumble` actuator only when the backend reports force-feedback
+support; otherwise it is `null`. `playEffect()` supports only `"dual-rumble"`, with magnitudes in
+`[0, 1]` and a duration/start delay of at most 60 seconds. Motor availability and strength remain
+device and driver properties. Delay and duration are quantized by the backend's 50 ms force-
+feedback clock; the returned promise settles from its completion event, and a replacement settles
+the preceding effect as `"preempted"`. Android has no backend in the maintained controller library, so the
+Gamepad globals and `Navigator.getGamepads` are absent there—feature-detect the member rather than
+interpreting an empty array as platform support.
 
 ## Notifications
 
