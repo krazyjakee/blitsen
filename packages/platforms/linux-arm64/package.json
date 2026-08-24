@@ -1,6 +1,6 @@
 {
   "name": "@blitsen/linux-arm64",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Blitsen native runtime for linux-arm64",
   "license": "MIT OR Apache-2.0",
   "repository": {
