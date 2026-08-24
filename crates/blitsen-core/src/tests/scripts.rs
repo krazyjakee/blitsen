@@ -1,5 +1,19 @@
 use super::*;
 
+fn execute_scripts(
+    scripts: Vec<DocumentScript>,
+    evaluations: &mut RecordingEvaluations,
+    entrypoint: &Path,
+    loader: &dyn ScriptLoader,
+) -> Result<Vec<usize>, JsError> {
+    crate::scripts::execute_collected_document_scripts_with(
+        scripts,
+        entrypoint,
+        loader,
+        |module, source, identifier| evaluations.evaluate(module, source, identifier),
+    )
+}
+
 /// A script read off disk is named by its path, which is the platform's own —
 /// `\` on Windows. The identity under test is which file was reached, not which
 /// separator the host spells it with, so both are compared in one spelling.
@@ -75,17 +89,20 @@ fn document_scripts_run_in_order_with_local_module_identity() {
             defer_attribute: false,
         },
     ];
-    let mut engine = RecordingScriptEngine::default();
+    let mut evaluations = RecordingEvaluations::default();
     assert_eq!(
-        execute_collected_document_scripts_from(scripts, &mut engine, &fixture, &LocalScripts)
-            .unwrap(),
+        execute_scripts(scripts, &mut evaluations, &fixture, &LocalScripts).unwrap(),
         vec![1, 2]
     );
-    assert_eq!(engine.evaluations[0].0, "classic");
-    assert!(engine.evaluations[0].2.ends_with("index.html#script-1"));
-    assert_eq!(engine.evaluations[1].0, "module");
-    assert!(ends_with_path(&engine.evaluations[1].2, "src/math.js"));
-    assert!(!engine.evaluations[1].1.is_empty());
+    assert_eq!(evaluations.evaluations[0].0, "classic");
+    assert!(
+        evaluations.evaluations[0]
+            .2
+            .ends_with("index.html#script-1")
+    );
+    assert_eq!(evaluations.evaluations[1].0, "module");
+    assert!(ends_with_path(&evaluations.evaluations[1].2, "src/math.js"));
+    assert!(!evaluations.evaluations[1].1.is_empty());
 }
 
 #[test]
@@ -103,29 +120,29 @@ fn a_server_root_source_is_read_from_the_application_root() {
     // The leading slash is the application's root, not the filesystem's — the
     // meaning `blitsen build` rewrites it to and the application origin already
     // carries inside an export. A stock `vite build` emits nothing else.
-    let mut engine = RecordingScriptEngine::default();
-    execute_collected_document_scripts_from(
+    let mut evaluations = RecordingEvaluations::default();
+    execute_scripts(
         script("/src/math.js"),
-        &mut engine,
+        &mut evaluations,
         &fixture,
         &LocalScripts,
     )
     .unwrap();
-    assert!(ends_with_path(&engine.evaluations[0].2, "src/math.js"));
-    assert!(!engine.evaluations[0].1.is_empty());
+    assert!(ends_with_path(&evaluations.evaluations[0].2, "src/math.js"));
+    assert!(!evaluations.evaluations[0].1.is_empty());
 
     // What it is not is a licence to read the disk. A path the application does
     // not ship is skipped, for the reason a remote one is: one source that does
     // not arrive must not stop every other script on the page.
-    let mut engine = RecordingScriptEngine::default();
-    execute_collected_document_scripts_from(
+    let mut evaluations = RecordingEvaluations::default();
+    execute_scripts(
         script("/assets/app.js"),
-        &mut engine,
+        &mut evaluations,
         &fixture,
         &LocalScripts,
     )
     .unwrap();
-    assert!(engine.evaluations.is_empty());
+    assert!(evaluations.evaluations.is_empty());
 }
 
 /// A remote script is skipped rather than fatal, so the rest of the document
@@ -142,14 +159,13 @@ fn a_remote_script_skips_without_stopping_the_document() {
     };
     for remote in ["https://example.com/gtag.js", "//cdn.example.com/a.js"] {
         let scripts = vec![script(Some(remote), ""), script(None, "1")];
-        let mut engine = RecordingScriptEngine::default();
+        let mut evaluations = RecordingEvaluations::default();
         assert_eq!(
-            execute_collected_document_scripts_from(scripts, &mut engine, &fixture, &LocalScripts)
-                .unwrap(),
+            execute_scripts(scripts, &mut evaluations, &fixture, &LocalScripts).unwrap(),
             vec![1],
             "the inline script after {remote} still runs"
         );
-        assert_eq!(engine.evaluations.len(), 1);
+        assert_eq!(evaluations.evaluations.len(), 1);
     }
 }
 

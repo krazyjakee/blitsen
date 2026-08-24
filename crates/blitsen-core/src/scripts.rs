@@ -50,53 +50,25 @@ pub struct DocumentScript {
     pub defer_attribute: bool,
 }
 
-/// DOM access needed to collect scripts without copying the tree.
-pub trait ScriptDocument {
-    /// Returns script elements in document order.
-    fn document_scripts(&self) -> Result<Vec<DocumentScript>, DomError>;
-}
-
-impl<D: DomBackend> ScriptDocument for D {
-    fn document_scripts(&self) -> Result<Vec<DocumentScript>, DomError> {
-        self.query_selector_all(self.document(), "script")?
-            .into_iter()
-            .map(|node| {
-                Ok(DocumentScript {
-                    source: self.text_content(node)?,
-                    src: self.attribute(node, &DomName::attribute("src"))?,
-                    script_type: self.attribute(node, &DomName::attribute("type"))?,
-                    async_attribute: self
-                        .attribute(node, &DomName::attribute("async"))?
-                        .is_some(),
-                    defer_attribute: self
-                        .attribute(node, &DomName::attribute("defer"))?
-                        .is_some(),
-                })
+/// Collects script elements from a DOM backend in document order.
+pub fn document_scripts<D: DomBackend>(document: &D) -> Result<Vec<DocumentScript>, DomError> {
+    document
+        .query_selector_all(document.document(), "script")?
+        .into_iter()
+        .map(|node| {
+            Ok(DocumentScript {
+                source: document.text_content(node)?,
+                src: document.attribute(node, &DomName::attribute("src"))?,
+                script_type: document.attribute(node, &DomName::attribute("type"))?,
+                async_attribute: document
+                    .attribute(node, &DomName::attribute("async"))?
+                    .is_some(),
+                defer_attribute: document
+                    .attribute(node, &DomName::attribute("defer"))?
+                    .is_some(),
             })
-            .collect()
-    }
-}
-
-/// Evaluation operations used by the document script runner.
-pub trait ScriptEngine {
-    /// Engine-specific evaluation result.
-    type Value;
-    /// Evaluates a classic script.
-    fn run_classic(&mut self, source: &str, identifier: &str) -> Result<Self::Value, JsError>;
-    /// Starts module evaluation.
-    fn run_module(&mut self, source: &str, identifier: &str) -> Result<Self::Value, JsError>;
-}
-
-impl<J: JsEngine> ScriptEngine for J {
-    type Value = J::Value;
-
-    fn run_classic(&mut self, source: &str, identifier: &str) -> Result<Self::Value, JsError> {
-        self.evaluate_script(source, identifier)
-    }
-
-    fn run_module(&mut self, source: &str, identifier: &str) -> Result<Self::Value, JsError> {
-        self.evaluate_module(source, identifier)
-    }
+        })
+        .collect()
 }
 
 /// Where a document's external scripts are read from.
@@ -159,8 +131,28 @@ pub fn execute_collected_document_scripts_from<J>(
     loader: &dyn ScriptLoader,
 ) -> Result<Vec<J::Value>, JsError>
 where
-    J: ScriptEngine,
+    J: JsEngine,
 {
+    execute_collected_document_scripts_with(scripts, entrypoint, loader, |module, source, name| {
+        if module {
+            engine.evaluate_module(source, name)
+        } else {
+            engine.evaluate_script(source, name)
+        }
+    })
+}
+
+/// Runs the script ordering and loading policy through a supplied evaluator.
+///
+/// The evaluator's first argument says whether the source is a module. Keeping
+/// that one operation injectable tests the policy without mocking a complete
+/// JavaScript runtime.
+pub(crate) fn execute_collected_document_scripts_with<V>(
+    scripts: Vec<DocumentScript>,
+    entrypoint: &Path,
+    loader: &dyn ScriptLoader,
+    mut evaluate: impl FnMut(bool, &str, &str) -> Result<V, JsError>,
+) -> Result<Vec<V>, JsError> {
     let root = entrypoint.parent().unwrap_or_else(|| Path::new("."));
     let mut results = Vec::with_capacity(scripts.len());
     for (index, script) in scripts.into_iter().enumerate() {
@@ -228,12 +220,7 @@ where
                 inline_script_identifier(&document, index + 1),
             )
         };
-        let result = if module {
-            engine.run_module(&source, &identifier)
-        } else {
-            engine.run_classic(&source, &identifier)
-        }
-        .map_err(|error| {
+        let result = evaluate(module, &source, &identifier).map_err(|error| {
             if error.stack().is_some() {
                 error
             } else {

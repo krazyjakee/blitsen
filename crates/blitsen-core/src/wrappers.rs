@@ -7,42 +7,6 @@ use std::rc::Rc;
 
 use blitsen_js::{ExternalId, JsEngine, JsError};
 
-/// Weak-reference operations needed by the wrapper identity table.
-///
-/// Every complete [`JsEngine`] implements this automatically. The smaller
-/// boundary also permits deterministic identity-table tests without mocking
-/// the rest of a JavaScript runtime.
-pub trait WrapperEngine {
-    /// JavaScript object handle.
-    type Value: Clone;
-    /// Engine-owned weak reference.
-    type WeakRef;
-
-    /// Creates a weak reference to a wrapper.
-    fn downgrade_wrapper(&mut self, value: &Self::Value) -> Result<Self::WeakRef, JsError>;
-    /// Upgrades a weak reference while its wrapper remains live.
-    fn upgrade_wrapper(
-        &mut self,
-        reference: &Self::WeakRef,
-    ) -> Result<Option<Self::Value>, JsError>;
-}
-
-impl<E: JsEngine> WrapperEngine for E {
-    type Value = E::Value;
-    type WeakRef = E::WeakRef;
-
-    fn downgrade_wrapper(&mut self, value: &Self::Value) -> Result<Self::WeakRef, JsError> {
-        self.downgrade(value)
-    }
-
-    fn upgrade_wrapper(
-        &mut self,
-        reference: &Self::WeakRef,
-    ) -> Result<Option<Self::Value>, JsError> {
-        self.upgrade(reference)
-    }
-}
-
 struct WrapperEntry<W> {
     weak: W,
     token: u64,
@@ -88,13 +52,36 @@ where
         create: F,
     ) -> Result<E::Value, JsError>
     where
-        E: WrapperEngine<WeakRef = W>,
+        E: JsEngine<WeakRef = W>,
         F: FnOnce(&mut E, Box<dyn FnOnce(ExternalId) + 'static>) -> Result<E::Value, JsError>,
+    {
+        self.get_or_create_with(
+            engine,
+            node,
+            |engine, reference| engine.upgrade(reference),
+            create,
+            |engine, wrapper| engine.downgrade(wrapper),
+        )
+    }
+
+    /// Runs the identity-table algorithm with only its two weak-reference operations.
+    pub(crate) fn get_or_create_with<E, V, F, U, D>(
+        &self,
+        engine: &mut E,
+        node: N,
+        mut upgrade: U,
+        create: F,
+        mut downgrade: D,
+    ) -> Result<V, JsError>
+    where
+        U: FnMut(&mut E, &W) -> Result<Option<V>, JsError>,
+        F: FnOnce(&mut E, Box<dyn FnOnce(ExternalId) + 'static>) -> Result<V, JsError>,
+        D: FnMut(&mut E, &V) -> Result<W, JsError>,
     {
         let existing = {
             let entries = self.entries.borrow();
             match entries.get(&node) {
-                Some(entry) => engine.upgrade_wrapper(&entry.weak)?,
+                Some(entry) => upgrade(engine, &entry.weak)?,
                 None => None,
             }
         };
@@ -121,7 +108,7 @@ where
         });
 
         let wrapper = create(engine, finalizer)?;
-        let weak = engine.downgrade_wrapper(&wrapper)?;
+        let weak = downgrade(engine, &wrapper)?;
         self.entries
             .borrow_mut()
             .insert(node, WrapperEntry { weak, token });
@@ -134,13 +121,13 @@ where
     /// for hosts that defer finalizer callbacks until a later loop turn.
     pub fn prune_collected<E>(&self, engine: &mut E) -> Result<usize, JsError>
     where
-        E: WrapperEngine<WeakRef = W>,
+        E: JsEngine<WeakRef = W>,
     {
         let collected = {
             let entries = self.entries.borrow();
             let mut collected = Vec::new();
             for (node, entry) in entries.iter() {
-                if engine.upgrade_wrapper(&entry.weak)?.is_none() {
+                if engine.upgrade(&entry.weak)?.is_none() {
                     collected.push((node.clone(), entry.token));
                 }
             }

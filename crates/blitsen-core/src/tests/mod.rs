@@ -15,22 +15,17 @@ use blitsen_js::{ExternalId, JsError};
 use super::*;
 
 #[derive(Default)]
-struct RecordingScriptEngine {
+struct RecordingEvaluations {
     evaluations: Vec<(String, String, String)>,
 }
 
-impl ScriptEngine for RecordingScriptEngine {
-    type Value = usize;
-
-    fn run_classic(&mut self, source: &str, identifier: &str) -> Result<usize, JsError> {
-        self.evaluations
-            .push(("classic".into(), source.into(), identifier.into()));
-        Ok(self.evaluations.len())
-    }
-
-    fn run_module(&mut self, source: &str, identifier: &str) -> Result<usize, JsError> {
-        self.evaluations
-            .push(("module".into(), source.into(), identifier.into()));
+impl RecordingEvaluations {
+    fn evaluate(&mut self, module: bool, source: &str, identifier: &str) -> Result<usize, JsError> {
+        self.evaluations.push((
+            (if module { "module" } else { "classic" }).into(),
+            source.into(),
+            identifier.into(),
+        ));
         Ok(self.evaluations.len())
     }
 }
@@ -53,18 +48,12 @@ impl Drop for MockObject {
 #[derive(Default)]
 struct MockEngine;
 
-impl WrapperEngine for MockEngine {
-    type Value = Rc<MockObject>;
-    type WeakRef = Weak<MockObject>;
-
-    fn downgrade_wrapper(&mut self, value: &Self::Value) -> Result<Self::WeakRef, JsError> {
+impl MockEngine {
+    fn downgrade(&mut self, value: &Rc<MockObject>) -> Result<Weak<MockObject>, JsError> {
         Ok(Rc::downgrade(value))
     }
 
-    fn upgrade_wrapper(
-        &mut self,
-        reference: &Self::WeakRef,
-    ) -> Result<Option<Self::Value>, JsError> {
+    fn upgrade(&mut self, reference: &Weak<MockObject>) -> Result<Option<Rc<MockObject>>, JsError> {
         Ok(reference.upgrade())
     }
 }

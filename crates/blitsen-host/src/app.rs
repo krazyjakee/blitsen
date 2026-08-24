@@ -17,7 +17,7 @@ use std::sync::Arc;
 
 use blitsen_blitz::BlitzDom;
 use blitsen_core::bundle::AppBundle;
-use blitsen_core::{ScriptDocument, ScriptLoader, WindowState, simplified};
+use blitsen_core::{ScriptLoader, WindowState, document_scripts, simplified};
 use blitsen_dom::DomBackend;
 use blitsen_js::{JsEngine, JsError};
 use blitz::dom::DocumentConfig;
@@ -564,10 +564,7 @@ pub(crate) fn load_window_document<E: JsEngine + Clone + 'static>(
             eprintln!("blitsen: {note}");
         }
     }
-    let scripts = document
-        .borrow()
-        .document_scripts()
-        .map_err(crate::dom_error)?;
+    let scripts = document_scripts(&*document.borrow()).map_err(crate::dom_error)?;
     let entrypoint = files.entrypoint_name();
     let loader = files.script_loader();
     let installed = crate::harness::execute_window_scripts_from(
