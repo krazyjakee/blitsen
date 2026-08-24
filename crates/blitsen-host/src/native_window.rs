@@ -28,6 +28,7 @@ use crate::drag_drop::PendingDrag;
 use crate::pointer_input::{PendingPointerInput, PointerIds};
 use crate::surface_lifecycle::{SurfaceState, SyntheticPhase};
 
+pub(crate) mod gamepad;
 pub(crate) mod hid;
 pub(crate) mod menu;
 pub(crate) mod notify;
@@ -188,6 +189,7 @@ pub struct WindowApplication<Rend: anyrender::WindowRenderer, E: JsEngine + Clon
     pub(crate) app_menu: Option<menu::AppMenuController>,
     pub(crate) notify: notify::NotifyController,
     pub(crate) hid: hid::HidController,
+    pub(crate) gamepads: gamepad::Controller,
     pub(crate) quit_requested: bool,
 }
 
@@ -1240,6 +1242,10 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> ApplicationHandler
             self.drain_pointer_input(window_id);
             self.drain_keyboard_input(window_id);
             self.drain_drag_input(window_id);
+        }
+        if redraw && !self.surface.is_lost() && !self.has_parked_error() {
+            self.gamepads
+                .poll(self.started_at.elapsed().as_secs_f64() * 1_000.0);
         }
         // `requestAnimationFrame` means "before the next paint", and a window
         // with no surface has no next paint. Android's winit backend stops

@@ -66,8 +66,18 @@ struct Signal {
 #[cfg(target_os = "linux")]
 struct Record {
     options: NotificationOptions,
-    handle: notify_rust::NotificationHandle,
+    handle: LinuxHandle,
     token: u64,
+}
+
+#[cfg(target_os = "linux")]
+enum LinuxHandle {
+    /// Development runs have no installed identity and retain the original
+    /// freedesktop notification backend and its live-process response stream.
+    Freedesktop(Box<notify_rust::NotificationHandle>),
+    /// Packaged identities submit through the portal, which can D-Bus-activate
+    /// the application after this process and its connection have exited.
+    Portal,
 }
 
 #[cfg(target_os = "macos")]
@@ -179,6 +189,8 @@ pub(crate) struct NotifyController {
     signals: Arc<Mutex<VecDeque<Signal>>>,
     records: HashMap<String, Record>,
     next_token: u64,
+    #[cfg(target_os = "linux")]
+    portal: Result<Option<super::linux_portal::LinuxPortal>, String>,
 }
 
 fn urgency(value: &str) -> Result<Urgency, String> {
@@ -415,11 +427,15 @@ fn notifier(
 
 impl NotifyController {
     pub(crate) fn new(proxy: EventLoopProxy) -> Self {
+        #[cfg(target_os = "linux")]
+        let portal = super::linux_portal::LinuxPortal::new(proxy.clone());
         Self {
             proxy,
             signals: Arc::new(Mutex::new(VecDeque::new())),
             records: HashMap::new(),
             next_token: 1,
+            #[cfg(target_os = "linux")]
+            portal,
         }
     }
 
@@ -512,7 +528,7 @@ impl NotifyController {
         // process.
         #[cfg(target_os = "macos")]
         bundle_identity()?;
-        #[cfg(not(target_os = "windows"))]
+        #[cfg(all(not(target_os = "windows"), not(target_os = "linux")))]
         let handle = {
             #[allow(unused_mut)]
             let mut spec = notification(&options)?;
@@ -531,45 +547,58 @@ impl NotifyController {
 
         #[cfg(target_os = "linux")]
         {
-            let native_id = handle.id();
-            let signals = Arc::clone(&self.signals);
-            let proxy = self.proxy.clone();
-            let watched_id = public_id.clone();
-            std::thread::spawn(move || {
-                #[allow(deprecated)]
-                let result = notify_rust::handle_action(native_id, |response| {
-                    #[allow(deprecated)]
-                    let response = match response {
-                        notify_rust::ActionResponse::Custom("default") => {
-                            NotificationResponse::Default
-                        }
-                        notify_rust::ActionResponse::Custom(action) => {
-                            NotificationResponse::Action((*action).to_owned())
-                        }
-                        notify_rust::ActionResponse::Closed(reason) => {
-                            NotificationResponse::Closed(*reason)
-                        }
-                    };
-                    queue(
-                        &signals,
-                        &proxy,
-                        watched_id.clone(),
-                        token,
-                        SignalKind::Response(response),
-                    );
-                });
-                if let Err(error) = result {
-                    queue(
-                        &signals,
-                        &proxy,
-                        watched_id,
-                        token,
-                        SignalKind::Error(format!(
-                            "could not observe notification response: {error}"
-                        )),
-                    );
+            let handle = match &self.portal {
+                Ok(Some(portal)) => {
+                    portal.show(&public_id, &options)?;
+                    LinuxHandle::Portal
                 }
-            });
+                Ok(None) => {
+                    let handle = notification(&options)?
+                        .show()
+                        .map_err(|error| format!("could not show notification: {error}"))?;
+                    let native_id = handle.id();
+                    let signals = Arc::clone(&self.signals);
+                    let proxy = self.proxy.clone();
+                    let watched_id = public_id.clone();
+                    std::thread::spawn(move || {
+                        #[allow(deprecated)]
+                        let result = notify_rust::handle_action(native_id, |response| {
+                            #[allow(deprecated)]
+                            let response = match response {
+                                notify_rust::ActionResponse::Custom("default") => {
+                                    NotificationResponse::Default
+                                }
+                                notify_rust::ActionResponse::Custom(action) => {
+                                    NotificationResponse::Action((*action).to_owned())
+                                }
+                                notify_rust::ActionResponse::Closed(reason) => {
+                                    NotificationResponse::Closed(*reason)
+                                }
+                            };
+                            queue(
+                                &signals,
+                                &proxy,
+                                watched_id.clone(),
+                                token,
+                                SignalKind::Response(response),
+                            );
+                        });
+                        if let Err(error) = result {
+                            queue(
+                                &signals,
+                                &proxy,
+                                watched_id,
+                                token,
+                                SignalKind::Error(format!(
+                                    "could not observe notification response: {error}"
+                                )),
+                            );
+                        }
+                    });
+                    LinuxHandle::Freedesktop(Box::new(handle))
+                }
+                Err(error) => return Err(error.clone()),
+            };
             self.records.insert(
                 public_id.clone(),
                 Record {
@@ -617,14 +646,24 @@ impl NotifyController {
 
         #[cfg(target_os = "linux")]
         {
-            let native_id = record.handle.id();
-            let mut spec = notification(&record.options)?;
-            spec.id(native_id);
-            *record.handle = spec;
-            record
-                .handle
-                .update()
-                .map_err(|error| format!("could not update notification {public_id}: {error}"))?;
+            match &mut record.handle {
+                LinuxHandle::Portal => self
+                    .portal
+                    .as_ref()
+                    .map_err(Clone::clone)?
+                    .as_ref()
+                    .expect("a portal record has a portal")
+                    .show(public_id, &record.options)?,
+                LinuxHandle::Freedesktop(handle) => {
+                    let native_id = handle.id();
+                    let mut spec = notification(&record.options)?;
+                    spec.id(native_id);
+                    ***handle = spec;
+                    handle.update().map_err(|error| {
+                        format!("could not update notification {public_id}: {error}")
+                    })?;
+                }
+            }
             Ok(json!(true))
         }
 
@@ -675,7 +714,16 @@ impl NotifyController {
         };
 
         #[cfg(target_os = "linux")]
-        record.handle.close();
+        match record.handle {
+            LinuxHandle::Portal => self
+                .portal
+                .as_ref()
+                .map_err(Clone::clone)?
+                .as_ref()
+                .expect("a portal record has a portal")
+                .close(public_id)?,
+            LinuxHandle::Freedesktop(handle) => handle.close(),
+        }
         #[cfg(target_os = "macos")]
         mac_usernotifications::blocking::close_delivered(public_id);
         // The toast is addressed by the group and tag `show` gave it, so nothing
@@ -695,6 +743,31 @@ impl NotifyController {
     }
 
     pub(crate) fn poll(&mut self) {
+        #[cfg(target_os = "linux")]
+        if let Ok(Some(portal)) = &self.portal {
+            let (activations, errors) = portal.take();
+            for (id, error) in errors {
+                crate::dom_bridge::notify::failed(id, error);
+            }
+            match activations {
+                Ok(activations) => {
+                    for activation in activations {
+                        let active_record = self.records.contains_key(&activation.id);
+                        if portal.is_current(&activation, active_record) {
+                            self.records.remove(&activation.id);
+                            if let Some(action) = activation.action {
+                                crate::dom_bridge::notify::action(activation.id, action);
+                            } else {
+                                crate::dom_bridge::notify::clicked(activation.id);
+                            }
+                        } else {
+                            crate::dom_bridge::notify::activated(activation);
+                        }
+                    }
+                }
+                Err(error) => crate::dom_bridge::notify::failed(String::new(), error),
+            }
+        }
         let signals = self.signals.lock().drain(..).collect::<Vec<_>>();
         for signal in signals {
             if self
@@ -729,11 +802,30 @@ impl NotifyController {
         }
     }
 
+    #[cfg(target_os = "linux")]
+    pub(crate) fn take_present_request(&self) -> bool {
+        self.portal
+            .as_ref()
+            .ok()
+            .and_then(Option::as_ref)
+            .is_some_and(super::linux_portal::LinuxPortal::take_present_request)
+    }
+
     pub(crate) fn clear(&mut self) {
         let ids = self.records.keys().cloned().collect::<Vec<_>>();
         for id in ids {
             let _ = self.close(&id);
         }
+        self.records.clear();
+        self.signals.lock().clear();
+    }
+
+    /// Drops this process's callback state without withdrawing notifications.
+    ///
+    /// A graceful application exit is the ordinary way a notification gains a
+    /// stopped application to activate. Reload uses [`Self::clear`] instead:
+    /// that replaces a live session whose notifications must not keep speaking.
+    pub(crate) fn detach(&mut self) {
         self.records.clear();
         self.signals.lock().clear();
     }

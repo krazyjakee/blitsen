@@ -359,7 +359,7 @@ describe("Phase 2 link step", () => {
       }, nativePath);
       const record = readBundle(await readFile(identified.outfile));
       expect(JSON.parse(record.files.get("blitsen.runtime.json").toString("utf8")).activation)
-        .toEqual({ identity: "com.example.classic", entry: basename(identified.outfile) });
+        .toEqual({ identity: "com.example.classic", entry: "com.example.classic" });
     });
   }, 120_000);
 

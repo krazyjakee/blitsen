@@ -111,6 +111,22 @@ if (input.snapshot) {
   void state.keys[0]?.code;
   void state.pointer.movementX;
 }
+if (input.onDeviceChange) {
+  const unsubscribe = input.onDeviceChange(event => {
+    const slot: number = event.index;
+    const identity: string = event.id;
+    const kind: "connected" | "disconnected" = event.type;
+    void [slot, identity, kind];
+  });
+  unsubscribe();
+}
+if (input.vibrateGamepad) {
+  void input.vibrateGamepad(0, {
+    duration: 100,
+    strongMagnitude: 0.75,
+    weakMagnitude: 0.25,
+  });
+}
 if (hid.devices) {
   void hid.devices().then(async devices => {
     const found = devices[0];

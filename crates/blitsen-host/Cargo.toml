@@ -118,6 +118,7 @@ winit = "=0.31.0-beta.2"
 # be hosting (#146).
 [dev-dependencies]
 blitsen-quickjs = { path = "../blitsen-quickjs" }
+tempfile.workspace = true
 
 # No libtest harness: a winit event loop must be created on the main thread, and
 # libtest runs every test on one it spawned. `fn main()` is the only way to be
@@ -145,6 +146,9 @@ harness = false
 [target.'cfg(not(target_os = "android"))'.dependencies]
 notify-rust = { version = "4.18.0", default-features = false, features = ["preview-macos-un", "z-with-tokio"] }
 
+[target.'cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))'.dependencies]
+gilrs = "0.11.2"
+
 # An APK's `assets/`, read through `AAssetManager` (#144). Android only: the
 # other six targets have no asset manager, and the same provider reads a
 # directory standing in for one, which is what the tests run against.
@@ -162,6 +166,11 @@ ndk = { version = "0.9", default-features = false }
 # implementations; keeping these target-specific avoids irrelevant platform
 # dependencies in every runtime.
 [target.'cfg(target_os = "linux")'.dependencies]
+# The notification portal and org.freedesktop.Application activation service
+# use the same zbus major and Tokio transport already linked by notify-rust.
+# Naming it directly adds no crate to the resolved graph; `blocking-api` only
+# exposes zbus's synchronous facade for the frame-thread submission calls.
+zbus = { version = "5", default-features = false, features = ["blocking-api", "tokio"] }
 # `blitsen/hid` (#246, spikes/s10). One crate with three native backends, and
 # each of the three lines named below is a choice rather than a default: the
 # crate's own default (`linux-static-hidraw`) would compile its vendored C
@@ -187,7 +196,7 @@ tray-icon = { version = "0.24.2", default-features = false }
 # (`native_window/session.rs`). Already in the tree behind winit and `muda`, at
 # the major both resolve to, so naming it here compiles no new crate.
 [target.'cfg(target_os = "windows")'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_UI_WindowsAndMessaging"] }
+windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem", "Win32_UI_WindowsAndMessaging"] }
 # `windows-native` reaches the HID class driver through `windows-sys` instead of
 # compiling hidapi's C, so the toolchain requirement stays the one `windows-sys`
 # already imposes.

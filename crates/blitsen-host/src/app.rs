@@ -719,11 +719,10 @@ mod tests {
 
     #[test]
     fn a_bundle_addresses_its_files_by_the_application_origin() {
-        let root = std::env::temp_dir().join(format!("blitsen-app-{}", std::process::id()));
-        std::fs::create_dir_all(&root).unwrap();
-        let runtime = root.join("runtime");
+        let root = tempfile::tempdir().unwrap();
+        let runtime = root.path().join("runtime");
         std::fs::write(&runtime, vec![0_u8; 512]).unwrap();
-        let linked = root.join("app");
+        let linked = root.path().join("app");
         blitsen_core::bundle::write_bundle(
             &runtime,
             &linked,
@@ -764,7 +763,6 @@ mod tests {
             files.source().read("assets/app.js").unwrap(),
             b"globalThis.ran = 1"
         );
-        std::fs::remove_dir_all(&root).ok();
     }
 
     #[test]
@@ -808,16 +806,16 @@ mod tests {
     /// application root is what it meant.
     #[test]
     fn a_directory_serves_a_server_root_subresource_from_the_application_root() {
-        let root = std::env::temp_dir().join(format!("blitsen-dir-net-{}", std::process::id()));
-        std::fs::create_dir_all(root.join("assets")).unwrap();
-        std::fs::write(root.join("index.html"), b"<p>hi").unwrap();
-        std::fs::write(root.join("assets/app.css"), b"body{margin:0}").unwrap();
-        let files = AppFiles::directory(root.join("index.html")).unwrap();
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join("assets")).unwrap();
+        std::fs::write(root.path().join("index.html"), b"<p>hi").unwrap();
+        std::fs::write(root.path().join("assets/app.css"), b"body{margin:0}").unwrap();
+        let files = AppFiles::directory(root.path().join("index.html")).unwrap();
         assert_eq!(
             files.storage_identity(),
             format!(
                 "directory:{}",
-                simplified(root.canonicalize().unwrap()).display()
+                simplified(root.path().canonicalize().unwrap()).display()
             )
         );
         let provider = files
@@ -832,12 +830,11 @@ mod tests {
         // through `Url::from_file_path` rather than by formatting the path into
         // a string: on Windows that string is `C:\...`, whose drive letter parses
         // as a URL host and whose separators are not URL separators.
-        let inside = Url::from_file_path(root.join("assets").join("app.css")).unwrap();
+        let inside = Url::from_file_path(root.path().join("assets").join("app.css")).unwrap();
         assert_eq!(served(inside.as_str()), 14);
         // And a server-root path the application does not ship stays empty, so
         // the document paints without it rather than waiting on it.
         assert_eq!(served("file:///assets/nothing.css"), 0);
-        std::fs::remove_dir_all(&root).ok();
     }
 
     /// The fourth shape reaching the same session as the other three: same
@@ -846,9 +843,8 @@ mod tests {
     /// what the platform mounts one as (issue #144).
     #[test]
     fn an_apk_addresses_its_files_by_the_application_origin_exactly_as_a_bundle_does() {
-        let root = std::env::temp_dir().join(format!("blitsen-apk-app-{}", std::process::id()));
-        std::fs::remove_dir_all(&root).ok();
-        let application = root.join(crate::apk::DEFAULT_ASSET_ROOT);
+        let root = tempfile::tempdir().unwrap();
+        let application = root.path().join(crate::apk::DEFAULT_ASSET_ROOT);
         std::fs::create_dir_all(application.join("assets")).unwrap();
         std::fs::write(application.join("index.html"), b"<p>hi").unwrap();
         std::fs::write(application.join("assets/app.js"), b"globalThis.ran = 1").unwrap();
@@ -868,7 +864,7 @@ mod tests {
         )
         .unwrap();
 
-        let assets = ApkAssets::open_directory(&root, crate::apk::DEFAULT_ASSET_ROOT);
+        let assets = ApkAssets::open_directory(root.path(), crate::apk::DEFAULT_ASSET_ROOT);
         let files = AppFiles::assets(assets, "index.html").unwrap();
         assert_eq!(files.entrypoint_source().unwrap(), "<p>hi");
         assert_eq!(files.base_url(), APP_ORIGIN);
@@ -911,22 +907,19 @@ mod tests {
         assert_eq!(served("blitsen://app/assets/nothing.css"), 0);
         // Nothing outside the application is reachable through the provider.
         assert_eq!(served("blitsen://app/../secret.txt"), 0);
-        std::fs::remove_dir_all(&root).ok();
     }
 
     #[test]
     fn an_apk_without_an_entrypoint_says_so_rather_than_opening_a_blank_window() {
-        let root = std::env::temp_dir().join(format!("blitsen-apk-empty-{}", std::process::id()));
-        std::fs::remove_dir_all(&root).ok();
-        let application = root.join(crate::apk::DEFAULT_ASSET_ROOT);
+        let root = tempfile::tempdir().unwrap();
+        let application = root.path().join(crate::apk::DEFAULT_ASSET_ROOT);
         std::fs::create_dir_all(&application).unwrap();
         std::fs::write(application.join("readme.txt"), b"x").unwrap();
-        let assets = ApkAssets::open_directory(&root, crate::apk::DEFAULT_ASSET_ROOT);
+        let assets = ApkAssets::open_directory(root.path(), crate::apk::DEFAULT_ASSET_ROOT);
         let error = AppFiles::assets(assets, "index.html")
             .err()
             .expect("no entrypoint");
         assert!(error.message().contains("no index.html"), "{error}");
-        std::fs::remove_dir_all(&root).ok();
     }
 
     /// The notices are a file at a known path, not a property of the trailer,
@@ -936,16 +929,15 @@ mod tests {
     fn the_third_party_notices_are_read_from_an_apk_the_same_way_as_from_a_bundle() {
         use std::io::Write as _;
 
-        let root = std::env::temp_dir().join(format!("blitsen-apk-notices-{}", std::process::id()));
-        std::fs::remove_dir_all(&root).ok();
-        let application = root.join(crate::apk::DEFAULT_ASSET_ROOT);
+        let root = tempfile::tempdir().unwrap();
+        let application = root.path().join(crate::apk::DEFAULT_ASSET_ROOT);
         std::fs::create_dir_all(&application).unwrap();
         std::fs::write(application.join("index.html"), b"<p>hi").unwrap();
         let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
         encoder.write_all(b"THIRD-PARTY NOTICES\n").unwrap();
         std::fs::write(application.join(NOTICES), encoder.finish().unwrap()).unwrap();
 
-        let assets = ApkAssets::open_directory(&root, crate::apk::DEFAULT_ASSET_ROOT);
+        let assets = ApkAssets::open_directory(root.path(), crate::apk::DEFAULT_ASSET_ROOT);
         let files = AppFiles::assets(assets, "index.html").unwrap();
         assert_eq!(
             notices(files.source().as_ref()).unwrap(),
@@ -954,9 +946,8 @@ mod tests {
 
         // An artifact that carries none says so, which is the whole of the
         // acceptance gate: it has to be answerable by the thing that ships.
-        let bare = ApkAssets::open_directory(root.join("nowhere"), "");
+        let bare = ApkAssets::open_directory(root.path().join("nowhere"), "");
         assert!(notices(&bare).is_none());
-        std::fs::remove_dir_all(&root).ok();
     }
 
     /// `aapt` strips `.gz` from an asset and inflates it, so what an APK
@@ -965,9 +956,8 @@ mod tests {
     /// shape an appended bundle has. Both have to read.
     #[test]
     fn notices_are_read_from_an_apk_whose_packager_stripped_the_gzip() {
-        let root = std::env::temp_dir().join(format!("blitsen-apk-plain-{}", std::process::id()));
-        std::fs::remove_dir_all(&root).ok();
-        let application = root.join(crate::apk::DEFAULT_ASSET_ROOT);
+        let root = tempfile::tempdir().unwrap();
+        let application = root.path().join(crate::apk::DEFAULT_ASSET_ROOT);
         std::fs::create_dir_all(&application).unwrap();
         std::fs::write(application.join("index.html"), b"<p>hi").unwrap();
         std::fs::write(
@@ -976,7 +966,7 @@ mod tests {
         )
         .unwrap();
 
-        let assets = ApkAssets::open_directory(&root, crate::apk::DEFAULT_ASSET_ROOT);
+        let assets = ApkAssets::open_directory(root.path(), crate::apk::DEFAULT_ASSET_ROOT);
         let files = AppFiles::assets(assets, "index.html").unwrap();
         assert_eq!(
             notices(files.source().as_ref()).unwrap(),
@@ -985,16 +975,14 @@ mod tests {
         // The gzipped name still wins where both are present, so an artifact
         // built before this and one built after cannot be read differently.
         assert!(!application.join(NOTICES).exists());
-        std::fs::remove_dir_all(&root).ok();
     }
 
     #[test]
     fn a_bundle_without_an_entrypoint_says_so_rather_than_opening_a_blank_window() {
-        let root = std::env::temp_dir().join(format!("blitsen-app-empty-{}", std::process::id()));
-        std::fs::create_dir_all(&root).unwrap();
-        let runtime = root.join("runtime");
+        let root = tempfile::tempdir().unwrap();
+        let runtime = root.path().join("runtime");
         std::fs::write(&runtime, vec![0_u8; 512]).unwrap();
-        let linked = root.join("app");
+        let linked = root.path().join("app");
         blitsen_core::bundle::write_bundle(
             &runtime,
             &linked,
@@ -1006,6 +994,5 @@ mod tests {
             .err()
             .expect("no entrypoint");
         assert!(error.message().contains("no index.html"));
-        std::fs::remove_dir_all(&root).ok();
     }
 }

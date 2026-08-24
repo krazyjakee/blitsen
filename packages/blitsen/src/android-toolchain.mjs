@@ -134,7 +134,9 @@ export const missing = (what, fix) => new Error(`${what}\n  ${fix}`);
  * assumed, because a machine with `ANDROID_HOME` set to a directory that no
  * longer exists is the ordinary failure, not an exotic one.
  */
-export async function detectAndroidToolchain({ env = process.env, which = onPath } = {}) {
+export async function detectAndroidToolchain({
+  env = process.env, which = onPath, hostPlatform = process.platform,
+} = {}) {
   const named = SDK_VARIABLES.map(name => [name, env[name]]).find(([, value]) => value);
   const guess = join(homedir(), "Android", "Sdk");
   const sdk = named?.[1] ?? (await readable(guess) ? guess : null);
@@ -186,13 +188,24 @@ export async function detectAndroidToolchain({ env = process.env, which = onPath
   // `aapt`: v1 is what Google has been removing, and nothing here needs it now
   // that the archive is written rather than handed to a packager.
   const tools = {};
-  for (const tool of ["aapt2", "zipalign", "apksigner"]) {
-    tools[tool] = join(buildTools, tool);
+  const buildToolFile = tool => hostPlatform === "win32"
+    ? ({ aapt2: "aapt2.exe", d8: "d8.bat", zipalign: "zipalign.exe",
+      apksigner: "apksigner.bat" })[tool]
+    : tool;
+  for (const tool of ["aapt2", "d8", "zipalign", "apksigner"]) {
+    tools[tool] = join(buildTools, buildToolFile(tool));
     if (!await readable(tools[tool])) {
       throw missing(`build-tools ${version} has no ${tool}, which packaging an APK runs.`,
         `Reinstall build-tools ${version} — \`sdkmanager "build-tools;${version}"\`.`);
     }
   }
+  const javac = which("javac");
+  if (!javac) {
+    throw missing("javac is not on PATH, and the notification activation bridge is Java code.",
+      "Install a JDK. Android packaging already needs its Java runtime for apksigner and its "
+      + "keytool for the default debug signing key.");
+  }
+  tools.javac = javac;
   const platform = join(sdk, "platforms", `android-${TARGET_SDK}`, "android.jar");
   if (!await readable(platform)) {
     throw missing(`the API ${TARGET_SDK} platform is not installed under ${sdk}.`,
@@ -302,10 +315,52 @@ export async function cargoTargetDirectory(entryCrate, run = defaultRun) {
   return directory;
 }
 
+/**
+ * The executable and argv Node should spawn for one planned command.
+ *
+ * Android's Windows build-tools deliberately ship `d8.bat` and
+ * `apksigner.bat`. Windows does not make batch files executable through
+ * CreateProcess, so spawning those paths directly fails before the tool runs.
+ * Do not use `shell: true`: it expands metacharacters in every command on
+ * every platform. Only the two batch suffixes go through cmd.exe, with
+ * AutoRun and delayed expansion disabled and every token quoted.
+ *
+ * Percent and quote cannot be represented without invoking cmd.exe expansion
+ * rules. Windows filenames cannot contain quote, and rejecting percent in the
+ * uncommon path/argument that has one is safer than turning it into an
+ * environment-variable expansion. Ampersand, pipe and the other ordinary cmd
+ * metacharacters remain inert inside the quotes.
+ */
+export function subprocessInvocation(command, {
+  platform = process.platform,
+  environment = process.env,
+} = {}) {
+  if (!Array.isArray(command) || command.length === 0) {
+    throw new Error("a subprocess command needs an executable");
+  }
+  const [executable, ...arguments_] = command.map(String);
+  if (platform !== "win32" || !/\.(?:bat|cmd)$/i.test(executable)) {
+    return { executable, arguments: arguments_ };
+  }
+  const unsafe = command.find(value => /[\0\r\n"%]/.test(String(value)));
+  if (unsafe !== undefined) {
+    throw new Error("a Windows .bat/.cmd tool argument contains NUL, a newline, quote or %, "
+      + "which cannot be passed through cmd.exe without expansion");
+  }
+  const line = `"${command.map(value => `"${String(value)}"`).join(" ")}"`;
+  return {
+    executable: environment.ComSpec ?? environment.COMSPEC ?? "cmd.exe",
+    arguments: ["/d", "/v:off", "/s", "/c", line],
+  };
+}
+
 /** Runs one command, streaming its output, and resolves with its exit code. */
 export function defaultRun(command, { cwd, environment, capture = false, output = null } = {}) {
   return new Promise((settle, fail) => {
-    const child = spawn(command[0], command.slice(1), {
+    const invocation = subprocessInvocation(command, {
+      environment: { ...process.env, ...environment },
+    });
+    const child = spawn(invocation.executable, invocation.arguments, {
       cwd,
       env: { ...process.env, ...environment },
       stdio: capture ? ["ignore", "pipe", "pipe"] : ["ignore", "pipe", "pipe"],

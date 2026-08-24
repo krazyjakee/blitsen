@@ -20,8 +20,8 @@ use super::{UsbApi, UsbConnection, UsbInterface};
 
 /// The action of the broadcast `requestPermission` sends when it is answered.
 ///
-/// Nothing receives it — an APK with `android:hasCode="false"` has no class to
-/// register — and the parent module explains why the answer is read from
+/// Nothing receives it — the APK's scoped notification bridge declares no USB
+/// receiver — and the parent module explains why the answer is read from
 /// `hasPermission` instead. It is still named after this package rather than
 /// left generic, because an implicit intent with a borrowable action is a way
 /// for another application to be woken by this one's permission dialog.

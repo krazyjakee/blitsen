@@ -147,6 +147,11 @@ export const INTERNAL_PAGES: DocPage[] = [
   { file: "MIGRATION.md", slug: "migration", nav: "Runtime migration", title: "Runtime migration record", blurb: "Historical runtime migration note." },
   { file: "RELEASING.md", slug: "releasing", nav: "Maintainer release process", title: "Maintainer release process", blurb: "Instructions for Blitsen maintainers publishing the runtime." },
   { file: "RELEASE-NOTES-0.1.0.md", slug: "release-notes-0-1-0", nav: "0.1.0 notes", title: "0.1.0 release notes", blurb: "Release-specific notes for Blitsen 0.1.0." },
+  { file: "RELEASE-NOTES-0.1.1.md", slug: "release-notes-0-1-1", nav: "0.1.1 notes", title: "0.1.1 release notes", blurb: "Release-specific notes for Blitsen 0.1.1." },
+  { file: "RELEASE-NOTES-0.1.2.md", slug: "release-notes-0-1-2", nav: "0.1.2 notes", title: "0.1.2 release notes", blurb: "Release-specific notes for Blitsen 0.1.2." },
+  { file: "RELEASE-NOTES-0.1.3.md", slug: "release-notes-0-1-3", nav: "0.1.3 notes", title: "0.1.3 release notes", blurb: "Release-specific notes for Blitsen 0.1.3." },
+  { file: "RELEASE-NOTES-0.2.0.md", slug: "release-notes-0-2-0", nav: "0.2.0 notes", title: "0.2.0 release notes", blurb: "Release-specific notes for Blitsen 0.2.0." },
+  { file: "RELEASE-NOTES-0.2.1.md", slug: "release-notes-0-2-1", nav: "0.2.1 notes", title: "0.2.1 release notes", blurb: "Release-specific notes for Blitsen 0.2.1." },
   { file: "M0.md", slug: "m0", nav: "M0 record", title: "M0 feasibility record", blurb: "Historical milestone record." },
   { file: "M2.md", slug: "m2", nav: "M2 record", title: "M2 interactive record", blurb: "Historical milestone record." },
   { file: "M3.md", slug: "m3", nav: "M3 record", title: "M3 Pong record", blurb: "Historical milestone record." },
@@ -157,6 +162,11 @@ export const INTERNAL_PAGES: DocPage[] = [
 
 export const GUIDE_PAGES: DocPage[] = GROUPS.flatMap((g) => g.pages);
 export const ALL_PAGES: DocPage[] = [...GUIDE_PAGES, ...INTERNAL_PAGES];
+
+// Source/registry parity is enforced by check.ts. Keep this empty unless a
+// docs/ Markdown source genuinely must not have a site route; every exclusion
+// needs a contributor-facing reason rather than becoming a silent omission.
+export const EXCLUDED_DOCS: ReadonlyMap<string, string> = new Map();
 
 const BY_FILE = new Map(ALL_PAGES.map((p) => [p.file, p]));
 

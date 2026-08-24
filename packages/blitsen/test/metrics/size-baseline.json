@@ -2,18 +2,18 @@
   "thresholdPercent": 2,
   "platforms": {
     "linux-x64": {
-      "recordedAt": "2026-08-23T11:53:58.763Z",
-      "commit": "c6e43ca",
+      "recordedAt": "2026-08-23T22:12:32.457Z",
+      "commit": "8eff7d0",
       "bun": "1.3.14",
       "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
       "host": "blitsen",
-      "installedBytes": 57638189,
-      "compressedBytes": 21632154,
+      "installedBytes": 58381463,
+      "compressedBytes": 21789396,
       "components": {
-        "hostRuntimeBytes": 57529216,
+        "hostRuntimeBytes": 58371456,
         "nativeAddonBytes": 0,
         "applicationBytes": 9535,
-        "packagingBytes": 99438
+        "packagingBytes": 472
       }
     }
   }

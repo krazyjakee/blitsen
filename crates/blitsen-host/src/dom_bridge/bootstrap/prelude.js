@@ -127,6 +127,7 @@
     settleMenus();
     settleHid();
     settleNotifications();
+    settleGamepads();
     const callbacks = animationFrames;
     animationFrames = new Map();
     runningAnimationFrames = callbacks;

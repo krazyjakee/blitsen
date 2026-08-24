@@ -68,7 +68,7 @@ That distinction drives every scoping decision:
 | --- | --- | --- | --- | --- |
 | Renderer you control & ship | ✗ | ✓ | ✗ | ✓ |
 | Consistent across OS versions | ✗ | ✓ | ✗ | ✓ |
-| Bare app size | n/a | **327.4 MB** | **11.9 MB** | **57.8 MB** (§9) |
+| Bare app size | n/a | **327.4 MB** | **11.9 MB** | **58.4 MB** (§9) |
 | Full OS access | ✗ | ✓ | ✓ | ✓ |
 | npm ecosystem | ✓ | ✓ | ✓ | ✓ |
 | Adopt without restructuring the project | n/a | partial | partial | compatible apps: one dev dependency |
@@ -305,7 +305,7 @@ Availability is incremental. A browser having an API does not oblige Blitsen to 
 HTML · CSS · DOM · JS/TS execution · events · `requestAnimationFrame` · `setTimeout`/
 `setInterval` · mouse · keyboard · one native viewport element backed by the GPU.
 
-**v1 — makes real apps possible** — *met, with three members partial*
+**v1 — makes real apps possible** — *met, with two members partial*
 `fetch` · `WebSocket` · images · web fonts · audio playback · pointer events (mouse, touch and
 pen, with pressure, multi-touch and pointer capture) · the first `blitsen/*` modules
 (dialog, clipboard, window, app). The published profile is
@@ -314,14 +314,14 @@ pen, with pressure, multi-touch and pointer capture) · the first `blitsen/*` mo
 | Partial | Why |
 | --- | --- |
 | `dialog.*` | Linux and the BSDs only, by design: macOS and Windows require a file dialog on the main thread, which is the thread kept free to paint. Absent there rather than approximated. |
-| `app.requestSingleInstanceLock` | Unix only. The lock is a Unix domain socket that doubles as the channel a second invocation's `argv` arrives on; Windows wants a mutex plus a named pipe, which is a different design. |
 | `window.create` | Deliberately absent — the context, communication and lifetime contract is settled by #105, but the per-window host state it requires is not implemented. |
 
 **v2 — makes real apps comfortable** — *partly landed early*
 durable `localStorage` and realm-scoped `sessionStorage` · Workers (dedicated, with
 `MessageChannel`, `MessagePort` and `structuredClone`) · clipboard events · drag & drop, where a
 drop reports real filesystem paths in `dataTransfer.paths` rather than browser `File` abstractions,
-have landed. Still open: gamepads · notification activation and management · starting a drag *out*
+have landed. Gamepads—with stable standard snapshots, connection events and conditional
+dual-rumble—have landed on desktop. Still open: remaining Windows/macOS notification activation · starting a drag *out*
 of the window, which winit gives no way to do and which the native matrix records as absent rather
 than approximating. Declarative and runtime tray/menu control, desktop notification submission and
 focused native input snapshots have landed; the generated native matrix records the remaining
@@ -415,11 +415,11 @@ every module an application imports that the target does not have, with the reas
 | `clipboard` | **Absent** | `arboard` has no Android backend and does not compile. `ClipboardManager` would not settle it either: Android refuses a read to an unfocused application, and these readers report an empty clipboard as `null`, so the refusal and the empty clipboard would arrive as the same value. A module shaped for that, over JNI. |
 | `app` | **Absent** | The directories are the Activity's `filesDir`/`cacheDir`; the XDG variables Android does not set would resolve to a path nothing can write to. `relaunch` has no executable to spawn inside an APK. Single-instance ownership is the platform's own — a second launch is an `Intent` to the process already running, not a command line to hand over. |
 | `dialog` | **Absent** | No XDG portal. Already absent off the portal platforms, for its own reasons (#141). |
-| `input` | **Present, partial** | Focus-scoped keyboard and pointer snapshots are fed by the same winit events as desktop. Gamepads and device discovery remain absent everywhere. |
-| `hid` | **Present, unexercised** | `UsbManager` over `jni` (#248): USB HID interfaces enumerate without a grant, the first `open()` of a device raises the system permission dialog and the promise is held until it is answered, and reports, bounds, the protected-collection refusal and the single terminal disconnect are the desktop module's own code over a USB backend. Two things are Android's and are documented as such: `usagePage`/`usage` are `0` until a device is opened, because a report descriptor cannot be read without permission, and a denial is inferred from window focus because an APK with no dex has no `BroadcastReceiver` to register. **No part of it has run on a device or an emulator** — a Blitsen APK cannot start under the CI emulator at all (#151), and a USB HID device cannot be attached to one in any case, so verification needs physical hardware. |
+| `input` | **Present, partial** | Focus-scoped keyboard and pointer snapshots are fed by the same winit events as desktop. Gamepad discovery and vibration are desktop-only; the standard and native members are absent on Android because the maintained backend has no Android implementation. |
+| `hid` | **Present, unexercised** | `UsbManager` over `jni` (#248): USB HID interfaces enumerate without a grant, the first `open()` of a device raises the system permission dialog and the promise is held until it is answered, and reports, bounds, the protected-collection refusal and the single terminal disconnect are the desktop module's own code over a USB backend. Two things are Android's and are documented as such: `usagePage`/`usage` are `0` until a device is opened, because a report descriptor cannot be read without permission, and a denial is inferred from window focus because no HID permission receiver is implemented. **No part of it has run on physical hardware** — a USB HID device cannot be attached to the CI emulator, so verification needs a device. |
 | `tray` | **Absent** | Android has no desktop status item or context-menu surface. A persistent Android notification is not a tray icon under another name. |
 | `menu` | **Absent** | Android has no application menu bar. The app bar's overflow menu and the navigation drawer are views inside the activity's own layout, not a menu the platform owns. Absent on Linux too, and for its own reason (#249). |
-| `notify` | **Present, partial** | `android-activity` and `jni` bridge the platform `NotificationManager`: a stable default channel, API 33 permission, submission, session-stable replacement IDs and close are implemented. A body tap and each action button are a `PendingIntent` that starts the Activity carrying the activation envelope, which keeps `android-activity` the Activity's owner and needs no Java class (#252). Dismissal stays absent rather than approximated: it needs a `BroadcastReceiver`, a receiver needs a class, and an APK declaring `android:hasCode="false"` has none. |
+| `notify` | **Present, lifecycle unexercised** | `android-activity` and `jni` bridge the platform `NotificationManager`: a stable default channel, API 33 permission, submission, session-stable replacement IDs and close are implemented. Body, action and delete PendingIntents target a private receiver in a minimal dex. It persists trusted envelopes before body/actions launch the platform `NativeActivity` with a clean Intent; dismissal does not open it, and the exported launcher reads no activation extras. Rust delivers each envelope once on a frame turn. The manifest, dex build and persisted handoff are covered deterministically, but system-shade activation and dismissal have not run on an emulator or device (#252). |
 
 The two that were load-bearing are `clipboard` and `app`: they are what stood between the
 workspace and a clean `cargo ndk check` without scaffolding.
@@ -442,7 +442,7 @@ workspace and a clean `cargo ndk check` without scaffolding.
 
 | # | Requirement | Target | Notes |
 | --- | --- | --- | --- |
-| P1 | Bare exported app size | **57.8 MB installed, 21.6 MB compressed** — measured on Linux x64 with rustc 1.97.1 after #102 and the durable-storage/native-IME integration. It replaces the stale 55.8/20.9 MB row. CI records the current Phase 2 bare export on all six targets; §9 names the artifacts and remote-only values. | S0's ≤50 MB estimate is withdrawn: the current full runtime is 10.1% above its 52.48 MB floor. On the same Linux host and exact bare HTML, Electron 43.4.1 is 327.4 MB and Tauri 2.11.5 is 11.9 MB; Tauri excludes the system WebView it relies on, while the other two ship their renderer. Android remains P1b, not a seventh value in this row. |
+| P1 | Bare exported app size | **58.4 MB installed, 21.8 MB compressed** — measured on Linux x64 with rustc 1.97.1 after desktop gamepads. CI records Phase 2 on all six targets; §9 separates the current Linux baseline from the last pre-gamepad remote matrix. | S0's ≤50 MB estimate is withdrawn. On the same Linux host and exact bare HTML before the 0.6 MB gamepad addition, Electron 43.4.1 was 327.4 MB and Tauri 2.11.5 was 11.9 MB; Tauri excludes the system WebView it relies on, while the other two ship their renderer. Android remains P1b, not a seventh value in this row. |
 | P1b | Bare APK size, per ABI | **35.2 MB installed, 14.7 MB downloaded** — historical GPU-renderer measurement for `arm64-v8a`, release, on the same bare application P1 uses (#150); the #151 CPU default awaits an NDK remeasurement | The budget is one ABI's, because a device installs one ABI and runs it. The two-ABI APK `blitsen build --android` defaults to is **74.6 MB**, and the half of it the device cannot use is carried anyway — so `--android-abi arm64-v8a` is the shipping build and the default set is the one a developer can also put on an emulator. Both numbers are stated because they answer different questions: the APK is what a sideload transfers, and 14.7 MB is what Play's own `bundletool get-size` reports a per-ABI split delivering. Android's vendored OpenSSL is measured rather than asserted, at **≥3.6 MB** of the library, and it does not show up as a premium: at equal architecture the whole APK is *smaller* than the desktop executable. Play measures every limit on the compressed download, and this is 3% of the 500 MB base-module ceiling — size is not the argument for an AAB. Breakdown, method and limits in §9. |
 | P2 | Cold start to first frame | < 500 ms on mid-range hardware | Should beat Electron decisively or the pitch weakens. |
 | P3 | Idle RAM, bare app | < 100 MB | |
@@ -693,6 +693,19 @@ what the device declared and catches a keyboard collection hiding behind a vendo
 paid by every application, because the runtime is one prebuilt binary — it is under a percent of the
 export, and below the gate's 2% threshold, so the baseline is not re-recorded for it.
 
+**Desktop gamepad discovery, standard snapshots and dual-rumble are +583,360 B installed and
++158,480 B compressed.** These are integrated before/after Phase 2 bare exports on Linux x64 at
+`1896223` and this change, using Bun 1.3.14, rustc 1.98.0 and an explicit
+`BLITSEN_RUNTIME_PATH`: **57,816,997 B / 21,656,685 B** before and
+**58,400,357 B / 21,815,165 B** after. The cost is `gilrs`, its target backend and the bridge; it
+is paid by every desktop app because releases carry one prebuilt runtime. The dependency remains
+desktop-target-gated, so it adds nothing to the Android artifact. The avoidable runtime cost is
+also bounded: controller discovery owns the platform's event worker, but the separate force-
+feedback server that wakes every 50 ms is not initialized until the first nonzero haptic effect.
+The pinned rustc 1.97.1 size gate measured **58,381,463 B installed / 21,789,396 B compressed**
+and passed at +1.29% / +0.73%; that accepted capability cost is the new baseline, so the 2% gate
+does not leave this change as headroom for the next one.
+
 What can still be traded, if the number later matters more than the coverage: currency *names*
 (`currencyDisplay: "name"`), localised time-zone names (`timeZoneName`, and
 `timeStyle: "full"`/`"long"`), and collation are the three largest pieces of data linked, and each
@@ -702,12 +715,15 @@ Worth reading beside the JavaScriptCore comparison above: a self-contained JSC w
 in **36 MB** of ICU for the same class of capability, and this is 12 MB for it.
 
 **Per-target evidence.** CI run 32671156437 built the checkout runtime on every release target and
-measured the same bare application. Installed bytes include the executable and its linked payload;
-gzip is the same level-9 compression proxy used by the size gate, not an installer estimate.
+measured the same bare application immediately before desktop gamepads landed. The current Linux
+x64 rustc 1.97.1 baseline is **58,381,463 B / 21,789,396 B** as measured above; the other five rows
+remain the last audited pre-gamepad matrix until the post-merge artifacts are recorded. Installed
+bytes include the executable and its linked payload; gzip is the same level-9 compression proxy
+used by the size gate, not an installer estimate.
 
 | Release target | Phase 2 installed | gzip -9 |
 | --- | ---: | ---: |
-| Linux x64 | 57,767,261 B | 21,613,383 B |
+| Linux x64 (current) | 58,381,463 B | 21,789,396 B |
 | Linux arm64 | 52,218,492 B | 20,321,073 B |
 | macOS arm64 | 43,069,876 B | 16,883,770 B |
 | macOS x64 | 40,836,060 B | 16,395,515 B |
@@ -720,7 +736,7 @@ therefore excludes the operating system WebView; Blitsen includes both its rende
 
 | Primary runner | Blitsen installed / gzip | Electron installed / gzip | Tauri installed / gzip |
 | --- | ---: | ---: | ---: |
-| Linux x64 | 57,767,261 / 21,613,383 B | 327,377,884 / 124,665,326 B | 11,856,712 / 2,690,593 B |
+| Linux x64 (Blitsen current; comparisons pre-gamepad) | 58,381,463 / 21,789,396 B | 327,377,884 / 124,665,326 B | 11,856,712 / 2,690,593 B |
 | macOS arm64 | 43,069,876 / 16,883,770 B | 307,530,493 / 119,882,734 B | 10,667,696 / 2,576,385 B |
 | Windows x64 | 50,466,013 / 18,338,780 B | 374,142,186 / 149,068,154 B | 8,289,280 / 2,404,649 B |
 
