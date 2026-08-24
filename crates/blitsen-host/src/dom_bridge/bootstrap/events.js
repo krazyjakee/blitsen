@@ -314,7 +314,7 @@
   // the singleton `document` instead of a wrapper for that node.
   const makePropagationHint = (target, rawPath) => {
     if (!Array.isArray(rawPath) || rawPath.length < 2 || !(target instanceof Node)) return null;
-    if (String(rawPath[rawPath.length - 1]) !== String(target[handle])) return null;
+    if (String(nodeHandle(rawPath[rawPath.length - 1])) !== String(target[handle])) return null;
     const path = [globalThis, document, ...rawPath.slice(1).map(wrap)];
     return path[path.length - 1] === target ? { revision: treeRevision, path } : null;
   };
@@ -441,7 +441,7 @@
         screenX: Number(init.screenX ?? 0), screenY: Number(init.screenY ?? 0),
       };
     }
-    const rawTarget = wrap(String(rawHandle));
+    const rawTarget = wrap(rawHandle);
     const hint = inheritedHint ?? makePropagationHint(rawTarget, init.propagationPath);
     const target = pointerLockElement ?? rawTarget;
     // `buttons` is the pointer's state rather than this event's, so an event
@@ -563,7 +563,7 @@
       bubbles: true, cancelable: type !== "pointercancel",
       pointerId, pointerType, isPrimary, pressure, button, buttons: state.buttons };
     processPendingPointerCapture(pointerId, members);
-    const rawTarget = wrap(String(rawHandle));
+    const rawTarget = wrap(rawHandle);
     const hint = makePropagationHint(rawTarget, init.propagationPath);
     const target = pointerLockElement ?? pointerCaptures.get(pointerId) ?? rawTarget;
     const allowed = dispatchTo(target, new PointerEvent(String(type), members), hint);

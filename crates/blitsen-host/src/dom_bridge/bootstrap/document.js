@@ -17,9 +17,10 @@
     form: HTMLFormElement, img: HTMLImageElement, input: HTMLInputElement, link: HTMLLinkElement,
     option: HTMLOptionElement, select: HTMLSelectElement, style: HTMLStyleElement,
     template: HTMLTemplateElement, textarea: HTMLTextAreaElement };
-  const wrap = rawHandle => {
-    if (rawHandle == null) return null;
-    rawHandle = String(rawHandle);
+  const nodeHandle = node => typeof node === "object" && node !== null ? node.handle : node;
+  const wrap = description => {
+    if (description == null) return null;
+    const rawHandle = String(nodeHandle(description));
     const cached = wrapperCache.get(rawHandle);
     const live = cached?.reference.deref();
     if (live) return live;
@@ -27,8 +28,10 @@
     const wrapper = __blitsenWrap(rawHandle);
     if (!(handle in wrapper)) {
       Object.defineProperty(wrapper, handle, { value: rawHandle });
-      Object.setPrototypeOf(wrapper, call("kind", rawHandle) !== "element" ? Node.prototype
-        : (TAG_INTERFACES[call("tagName", rawHandle)] ?? Element).prototype);
+      const kind = description.kind ?? call("kind", rawHandle);
+      const tagName = description.tagName ?? (kind === "element" ? call("tagName", rawHandle) : null);
+      Object.setPrototypeOf(wrapper, kind !== "element" ? Node.prototype
+        : (TAG_INTERFACES[tagName] ?? Element).prototype);
     }
     const token = Symbol();
     wrapperCache.set(rawHandle, { reference: new WeakRef(wrapper), token });

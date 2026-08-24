@@ -11,39 +11,48 @@ pub(super) fn dispatch(
     arguments: &[String],
 ) -> Answer {
     let value = match operation {
-        "createElement" => Ok(serialized(Some(
-            dom.create_element(&element_name(
-                HTML_NAMESPACE,
-                bridge_arg(arguments, 0, "element name")?,
-            )?)
-            .map_err(dom_error)?,
-        ))),
-        "createElementNS" => Ok(serialized(Some(
-            dom.create_element(&element_name(
-                bridge_arg(arguments, 0, "namespace")?,
-                bridge_arg(arguments, 1, "element name")?,
-            )?)
-            .map_err(dom_error)?,
-        ))),
-        "createTextNode" => Ok(serialized(Some(
-            dom.create_text(bridge_arg(arguments, 0, "text")?)
-                .map_err(dom_error)?,
-        ))),
-        "createComment" => Ok(serialized(Some(create_comment(
-            dom,
-            bridge_arg(arguments, 0, "comment data")?,
-        )?))),
-        "createFragment" => Ok(serialized(Some(
-            dom.create_element(&DomName::html(FRAGMENT_TAG))
-                .map_err(dom_error)?,
-        ))),
+        "createElement" => {
+            let node = dom
+                .create_element(&element_name(
+                    HTML_NAMESPACE,
+                    bridge_arg(arguments, 0, "element name")?,
+                )?)
+                .map_err(dom_error)?;
+            serialized(dom, Some(node))
+        }
+        "createElementNS" => {
+            let node = dom
+                .create_element(&element_name(
+                    bridge_arg(arguments, 0, "namespace")?,
+                    bridge_arg(arguments, 1, "element name")?,
+                )?)
+                .map_err(dom_error)?;
+            serialized(dom, Some(node))
+        }
+        "createTextNode" => {
+            let node = dom
+                .create_text(bridge_arg(arguments, 0, "text")?)
+                .map_err(dom_error)?;
+            serialized(dom, Some(node))
+        }
+        "createComment" => {
+            let node = create_comment(dom, bridge_arg(arguments, 0, "comment data")?)?;
+            serialized(dom, Some(node))
+        }
+        "createFragment" => {
+            let node = dom
+                .create_element(&DomName::html(FRAGMENT_TAG))
+                .map_err(dom_error)?;
+            serialized(dom, Some(node))
+        }
         "cloneNode" => {
             let node = handle(runtime, arguments, 0)?;
             let deep = bridge_arg(arguments, 1, "clone depth")? == "true";
-            Ok(serialized(Some(clone_node(dom, node, deep)?)))
+            let clone = clone_node(dom, node, deep)?;
+            serialized(dom, Some(clone))
         }
-        "body" => Ok(serialized(dom.body())),
-        "documentElement" => Ok(serialized(dom.document_element())),
+        "body" => serialized(dom, dom.body()),
+        "documentElement" => serialized(dom, dom.document_element()),
         "appendChild" => {
             let parent = handle(runtime, arguments, 0)?;
             let child = handle(runtime, arguments, 1)?;
@@ -84,14 +93,16 @@ pub(super) fn dispatch(
             dom.replace(node, replacement).map_err(dom_error)?;
             Ok(Value::Null)
         }
-        "parentNode" => Ok(serialized(
+        "parentNode" => serialized(
+            dom,
             dom.parent(handle(runtime, arguments, 0)?)
                 .map_err(dom_error)?,
-        )),
-        "childNodes" => Ok(serialized_all(
+        ),
+        "childNodes" => serialized_all(
+            dom,
             dom.children(handle(runtime, arguments, 0)?)
                 .map_err(dom_error)?,
-        )),
+        ),
         "childElements" => {
             let children = dom
                 .children(handle(runtime, arguments, 0)?)
@@ -102,28 +113,32 @@ pub(super) fn dispatch(
                     elements.push(child);
                 }
             }
-            Ok(serialized_all(elements))
+            serialized_all(dom, elements)
         }
-        "firstChild" => Ok(serialized(
+        "firstChild" => serialized(
+            dom,
             dom.children(handle(runtime, arguments, 0)?)
                 .map_err(dom_error)?
                 .first()
                 .copied(),
-        )),
-        "lastChild" => Ok(serialized(
+        ),
+        "lastChild" => serialized(
+            dom,
             dom.children(handle(runtime, arguments, 0)?)
                 .map_err(dom_error)?
                 .last()
                 .copied(),
-        )),
-        "nextSibling" => Ok(serialized(
+        ),
+        "nextSibling" => serialized(
+            dom,
             dom.next_sibling(handle(runtime, arguments, 0)?)
                 .map_err(dom_error)?,
-        )),
-        "previousSibling" => Ok(serialized(
+        ),
+        "previousSibling" => serialized(
+            dom,
             dom.previous_sibling(handle(runtime, arguments, 0)?)
                 .map_err(dom_error)?,
-        )),
+        ),
         // Walked in the backend rather than hop by hop from JavaScript: a text
         // node between two elements is ordinary in rendered markup, and every
         // one skipped would otherwise be a call of its own.
@@ -139,7 +154,7 @@ pub(super) fn dispatch(
                 match next {
                     None => return Ok(Some(Value::Null)),
                     Some(node) if dom.node_kind(node).map_err(dom_error)? == NodeKind::Element => {
-                        return Ok(Some(serialized(Some(node))));
+                        return Ok(Some(serialized(dom, Some(node))?));
                     }
                     Some(node) => sibling = node,
                 }
@@ -207,7 +222,7 @@ pub(super) fn dispatch(
                 dom.insert_before(parent, *child, reference)
                     .map_err(dom_error)?;
             }
-            Ok(serialized_all(parsed))
+            serialized_all(dom, parsed)
         }
         _ => return Ok(None),
     }?;

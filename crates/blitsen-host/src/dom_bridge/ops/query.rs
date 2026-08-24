@@ -153,14 +153,15 @@ pub(super) fn dispatch(
                 "" => None,
                 _ => Some(handle(runtime, arguments, 0)?),
             };
-            Ok(serialized(
+            serialized(
+                dom,
                 next_focusable(
                     dom,
                     current,
                     bridge_arg(arguments, 1, "focus direction")? == "true",
                 )
                 .map_err(dom_error)?,
-            ))
+            )
         }
         "namespaceUri" => Ok(namespace_uri(
             &dom.element_name(handle(runtime, arguments, 0)?)
@@ -169,43 +170,45 @@ pub(super) fn dispatch(
         )
         .map(|uri| Value::String(uri.to_owned()))
         .unwrap_or(Value::Null)),
-        "querySelector" => Ok(serialized(
+        "querySelector" => serialized(
+            dom,
             dom.query_selector(dom.document(), bridge_arg(arguments, 0, "selector")?)
                 .map_err(dom_error)?,
-        )),
-        "querySelectorAll" => Ok(serialized_all(
+        ),
+        "querySelectorAll" => serialized_all(
+            dom,
             dom.query_selector_all(dom.document(), bridge_arg(arguments, 0, "selector")?)
                 .map_err(dom_error)?,
-        )),
+        ),
         "querySelectorIn" => {
             let node = handle(runtime, arguments, 0)?;
-            Ok(serialized(
+            serialized(
+                dom,
                 dom.query_selector(node, bridge_arg(arguments, 1, "selector")?)
                     .map_err(dom_error)?,
-            ))
+            )
         }
         "querySelectorAllIn" => {
             let node = handle(runtime, arguments, 0)?;
-            Ok(serialized_all(
+            serialized_all(
+                dom,
                 dom.query_selector_all(node, bridge_arg(arguments, 1, "selector")?)
                     .map_err(dom_error)?,
-            ))
+            )
         }
         "elementsByClassName" => {
             let root = dom.document();
-            Ok(serialized_all(elements_by_class_name(
+            serialized_all(
                 dom,
-                root,
-                bridge_arg(arguments, 0, "class names")?,
-            )?))
+                elements_by_class_name(dom, root, bridge_arg(arguments, 0, "class names")?)?,
+            )
         }
         "elementsByClassNameIn" => {
             let node = handle(runtime, arguments, 0)?;
-            Ok(serialized_all(elements_by_class_name(
+            serialized_all(
                 dom,
-                node,
-                bridge_arg(arguments, 1, "class names")?,
-            )?))
+                elements_by_class_name(dom, node, bridge_arg(arguments, 1, "class names")?)?,
+            )
         }
         // Selector matching against a single element is the renderer's own, not
         // an emulation over `querySelectorAll`: a detached element has no scope
@@ -222,11 +225,12 @@ pub(super) fn dispatch(
         "closest" => {
             let node = handle(runtime, arguments, 0)?;
             dom.node_kind(node).map_err(dom_error)?;
-            Ok(serialized(
+            serialized(
+                dom,
                 dom.document_ref()
                     .closest(node, bridge_arg(arguments, 1, "selector")?)
                     .map_err(|error| dom_error(DomError::Syntax(format!("{error:?}"))))?,
-            ))
+            )
         }
         "contains" => {
             let node = handle(runtime, arguments, 0)?;
@@ -239,10 +243,11 @@ pub(super) fn dispatch(
             }
             Ok(Value::Bool(false))
         }
-        "getElementById" => Ok(serialized(
+        "getElementById" => serialized(
+            dom,
             dom.get_element_by_id(bridge_arg(arguments, 0, "id")?)
                 .map_err(dom_error)?,
-        )),
+        ),
         _ => return Ok(None),
     }?;
     Ok(Some(value))

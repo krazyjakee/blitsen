@@ -103,7 +103,10 @@ pub(super) fn dispatch(
             let caret = dom.caret_position(x, y, snapshot).map_err(dom_error)?;
             Ok(json!({
                 "forced": forced,
-                "node": caret.map(|caret| DomRuntime::serialize_handle(caret.node)),
+                "node": match caret {
+                    Some(caret) => described(dom, caret.node)?,
+                    None => Value::Null,
+                },
                 "offset": caret.map_or(0, |caret| caret.offset),
             }))
         }
@@ -159,8 +162,8 @@ pub(super) fn dispatch(
             Ok(match dom.hit_test(x, y, snapshot).map_err(dom_error)? {
                 None => Value::Null,
                 Some(hit) => json!({
-                    "target": DomRuntime::serialize_handle(hit.target),
-                    "path": serialized_all(hit.path),
+                    "target": described(dom, hit.target)?,
+                    "path": serialized_all(dom, hit.path)?,
                     "offsetX": hit.offset_x,
                     "offsetY": hit.offset_y,
                 }),

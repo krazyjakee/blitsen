@@ -69,7 +69,7 @@ pub(super) fn dispatch(
         // it is the `<style>` element that owns it, whose text the cascade is
         // already parsing, so a rule inserted through these operations is in the
         // same stylesheet set Stylo cascades from and cannot be a shadow copy.
-        "styleSheets" => Ok(serialized_all(dom.style_sheets().map_err(dom_error)?)),
+        "styleSheets" => serialized_all(dom, dom.style_sheets().map_err(dom_error)?),
         "sheetRules" => Ok(json!(
             dom.sheet_rules(handle(runtime, arguments, 0)?)
                 .map_err(dom_error)?

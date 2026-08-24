@@ -943,6 +943,75 @@ mod tests {
     }
 
     #[test]
+    fn node_results_choose_interfaces_without_description_calls() {
+        let (mut engine, _) = ime_document(
+            r#"<main id=scope>
+                 <button id=button class=target>go</button>
+                 <canvas class=target></canvas>
+                 <span id=content>text<!--note--></span>
+               </main>"#,
+        );
+        engine
+            .evaluate_script(
+                r##"
+                const kinds = __blitsenDomCallCount("kind");
+                const tags = __blitsenDomCallCount("tagName");
+                const queries = __blitsenDomCallCount("querySelectorAll");
+                const queried = document.querySelectorAll(".target");
+                const queryCalls = __blitsenDomCallCount("querySelectorAll") - queries;
+                const scope = document.getElementById("scope");
+                const content = scope.querySelector("#content");
+                const children = content.childNodes;
+                const added = document.createElement("input");
+                const descriptionKindCalls = __blitsenDomCallCount("kind") - kinds;
+                const descriptionTagCalls = __blitsenDomCallCount("tagName") - tags;
+                globalThis.nodeDescriptionResult = {
+                  interfaces: [
+                    queried[0] instanceof HTMLButtonElement,
+                    queried[1] instanceof HTMLCanvasElement,
+                    children[0] instanceof Text,
+                    children[1] instanceof Comment,
+                    added instanceof HTMLInputElement,
+                  ],
+                  strictIdentity: queried[0] === document.getElementById("button"),
+                  mutationIdentity: false,
+                  queryCalls,
+                  kindCalls: descriptionKindCalls,
+                  tagCalls: descriptionTagCalls,
+                };
+                new MutationObserver(records => {
+                  nodeDescriptionResult.mutationIdentity =
+                    records[0].addedNodes[0] === added && scope.lastChild === added;
+                }).observe(scope, { childList: true });
+                scope.appendChild(added);
+                "##,
+                "blitsen:test-node-result-descriptions",
+            )
+            .unwrap();
+        engine.drain_microtasks().unwrap();
+        let result = engine
+            .evaluate_script(
+                "JSON.stringify(nodeDescriptionResult)",
+                "blitsen:test-node-result-descriptions-result",
+            )
+            .and_then(|value| engine.to_string(&value))
+            .unwrap();
+        let result: serde_json::Value = serde_json::from_str(&result).unwrap();
+
+        assert_eq!(
+            result,
+            serde_json::json!({
+                "interfaces": [true, true, true, true, true],
+                "strictIdentity": true,
+                "mutationIdentity": true,
+                "queryCalls": 1,
+                "kindCalls": 0,
+                "tagCalls": 0,
+            })
+        );
+    }
+
+    #[test]
     fn record_frame_owns_the_filename_png_and_write_error() {
         let directory = tempfile::tempdir().expect("a scratch directory");
 

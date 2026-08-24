@@ -78,21 +78,44 @@ fn handle(_runtime: &DomRuntime, arguments: &[String], index: usize) -> Result<N
         .map_err(|_| JsError::new("invalid DOM node handle"))
 }
 
-fn serialized(node: Option<NodeId>) -> Value {
-    node.map(DomRuntime::serialize_handle)
-        .map(Value::String)
-        .unwrap_or(Value::Null)
+fn serialized(dom: &BlitzDom, node: Option<NodeId>) -> Result<Value, JsError> {
+    node.map(|node| described(dom, node))
+        .transpose()
+        .map(|node| node.unwrap_or(Value::Null))
 }
 
 /// The shape every operation answering with more than one node returns.
-fn serialized_all(nodes: impl IntoIterator<Item = NodeId>) -> Value {
-    Value::Array(
-        nodes
-            .into_iter()
-            .map(DomRuntime::serialize_handle)
-            .map(Value::String)
-            .collect(),
-    )
+fn serialized_all(
+    dom: &BlitzDom,
+    nodes: impl IntoIterator<Item = NodeId>,
+) -> Result<Value, JsError> {
+    nodes
+        .into_iter()
+        .map(|node| described(dom, node))
+        .collect::<Result<Vec<_>, _>>()
+        .map(Value::Array)
+}
+
+/// A node result carries the information JavaScript needs to select its
+/// interface. This is deliberately only a description, not an owning wrapper:
+/// `__blitsenWrap` remains the single identity and lifetime boundary.
+fn described(dom: &BlitzDom, node: NodeId) -> Result<Value, JsError> {
+    let kind = dom.node_kind(node).map_err(dom_error)?;
+    let kind = match kind {
+        NodeKind::Element => "element",
+        NodeKind::Document => "document",
+        NodeKind::Text => "text",
+        NodeKind::Comment => "comment",
+        NodeKind::Fragment => "fragment",
+    };
+    let mut description = json!({
+        "handle": DomRuntime::serialize_handle(node),
+        "kind": kind,
+    });
+    if kind == "element" {
+        description["tagName"] = Value::String(dom.element_name(node).map_err(dom_error)?.local);
+    }
+    Ok(description)
 }
 
 /// An ordinary HTML attribute's name, from the argument at `index`.
