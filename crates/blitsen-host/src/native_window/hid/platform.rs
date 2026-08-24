@@ -121,7 +121,10 @@ impl HidHandle for Handle {
     }
 
     fn write(&self, data: &[u8]) -> Result<(), String> {
-        self.0.write(data).map(|_| ()).map_err(|error| error.to_string())
+        self.0
+            .write(data)
+            .map(|_| ())
+            .map_err(|error| error.to_string())
     }
 
     fn send_feature_report(&self, data: &[u8]) -> Result<(), String> {
@@ -242,7 +245,10 @@ mod tests {
         }
         let rendered = serde_json::to_string(&snapshot).expect("the snapshot serializes");
         for path in enumerated.iter().map(|device| device.path.as_str()) {
-            assert!(!rendered.contains(path), "{rendered} carries a platform path");
+            assert!(
+                !rendered.contains(path),
+                "{rendered} carries a platform path"
+            );
         }
     }
 }

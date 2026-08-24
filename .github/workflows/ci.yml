@@ -77,8 +77,11 @@ jobs:
       - run: npm --prefix packages/blitsen run test:node
 
   # Issue #123: the workspace is tested on all three platforms, not just the one
-  # this project is developed on. Clippy and rustfmt run once — a lint result is
-  # not per-platform — and the tests run everywhere, because behaviour is.
+  # this project is developed on. Clippy and rustfmt run once, on Linux — a lint
+  # result is not per-platform — and the tests run everywhere, because behaviour
+  # is. Until #278 the rustfmt half of that sentence was an intention rather than
+  # a description: the component was installed on every runner and no step ever
+  # called it, so `main` accumulated formatting drift while CI reported green.
   #
   # No engine library is installed on any of them: the runtime links QuickJS-ng
   # statically, so the engine arrives with the Rust build and there is nothing
@@ -113,9 +116,13 @@ jobs:
             libfontconfig1-dev libxkbcommon-dev libwayland-dev \
             libx11-dev libxcursor-dev libxi-dev libxrandr-dev \
             libasound2-dev libudev-dev
+      # Formatting first: it compiles nothing, so an unformatted change is
+      # reported in seconds instead of after clippy has built the whole graph.
       - name: Lint
         if: runner.os == 'Linux'
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: |
+          cargo fmt --all -- --check
+          cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
       # Prime the release-profile dependencies used by acceptance and release.
       # `rust-cache` omits workspace outputs, so consumers still build and test

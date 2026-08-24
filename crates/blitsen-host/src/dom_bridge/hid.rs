@@ -81,24 +81,11 @@ impl Failure {
 
 pub(crate) enum RequestKind {
     Devices,
-    Open {
-        device_id: String,
-    },
-    Close {
-        device_id: String,
-    },
-    Write {
-        device_id: String,
-        data: Vec<u8>,
-    },
-    SendFeatureReport {
-        device_id: String,
-        data: Vec<u8>,
-    },
-    ReceiveFeatureReport {
-        device_id: String,
-        report_id: u8,
-    },
+    Open { device_id: String },
+    Close { device_id: String },
+    Write { device_id: String, data: Vec<u8> },
+    SendFeatureReport { device_id: String, data: Vec<u8> },
+    ReceiveFeatureReport { device_id: String, report_id: u8 },
 }
 
 pub(crate) struct Request {
@@ -114,7 +101,12 @@ pub(crate) struct Message {
 }
 
 impl Message {
-    fn completion(command_id: u64, value: Value, data: Option<Vec<u8>>, error: Option<Failure>) -> Self {
+    fn completion(
+        command_id: u64,
+        value: Value,
+        data: Option<Vec<u8>>,
+        error: Option<Failure>,
+    ) -> Self {
         let (message, name) = match error {
             Some(failure) => (json!(failure.message), json!(failure.name)),
             None => (Value::Null, Value::Null),
@@ -267,7 +259,10 @@ mod tests {
         push(Message::disconnect("d1".into()));
         let messages = take_messages();
         assert_eq!(
-            messages.iter().map(|message| message.value.clone()).collect::<Vec<_>>(),
+            messages
+                .iter()
+                .map(|message| message.value.clone())
+                .collect::<Vec<_>>(),
             vec![
                 json!({"type":"completion","commandId":1,"value":[],"error":null,"errorName":null}),
                 json!({"type":"completion","commandId":2,"value":null,"error":null,"errorName":null}),
@@ -280,8 +275,19 @@ mod tests {
             ]
         );
         assert_eq!(
-            messages.iter().map(|message| message.data.clone()).collect::<Vec<_>>(),
-            vec![None, None, Some(vec![7, 8]), None, Some(vec![1, 2]), None, None]
+            messages
+                .iter()
+                .map(|message| message.data.clone())
+                .collect::<Vec<_>>(),
+            vec![
+                None,
+                None,
+                Some(vec![7, 8]),
+                None,
+                Some(vec![1, 2]),
+                None,
+                None
+            ]
         );
         assert!(!pending());
     }

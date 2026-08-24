@@ -126,7 +126,9 @@ mod tests {
         let described = take_requests()
             .iter()
             .map(|request| match &request.kind {
-                RequestKind::Configure(entries) => (request.id, format!("configure {}", entries.len())),
+                RequestKind::Configure(entries) => {
+                    (request.id, format!("configure {}", entries.len()))
+                }
                 RequestKind::Remove => (request.id, "remove".to_owned()),
             })
             .collect::<Vec<_>>();

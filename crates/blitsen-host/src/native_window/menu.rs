@@ -187,7 +187,11 @@ pub(crate) fn parse_menu(
         submenu_roles: HashSet<SubmenuRole>,
     }
 
-    fn icon(index: Option<usize>, icons: &[Vec<u8>], state: &State) -> Result<Option<Vec<u8>>, String> {
+    fn icon(
+        index: Option<usize>,
+        icons: &[Vec<u8>],
+        state: &State,
+    ) -> Result<Option<Vec<u8>>, String> {
         let Some(index) = index else { return Ok(None) };
         if state.surface == MenuSurface::Application {
             return Err(
@@ -302,9 +306,7 @@ pub(crate) fn parse_menu(
             // anything else outright, and a bare command in a Windows menu bar
             // fires on a single click with no menu ever opening.
             if state.surface == MenuSurface::Application && depth == 1 && kind != "submenu" {
-                return Err(
-                    "every top-level application menu entry must be a submenu".to_owned()
-                );
+                return Err("every top-level application menu entry must be a submenu".to_owned());
             }
             let radio_group =
                 (kind == "radio").then(|| item.group.as_deref().unwrap_or_default().to_owned());
@@ -369,10 +371,8 @@ pub(crate) fn parse_menu(
                         .as_deref()
                         .map(|role| {
                             if state.surface != MenuSurface::Application || depth != 1 {
-                                return Err(
-                                    "only a top-level application submenu carries a role"
-                                        .to_owned(),
-                                );
+                                return Err("only a top-level application submenu carries a role"
+                                    .to_owned());
                             }
                             let parsed = SubmenuRole::parse(role).ok_or_else(|| {
                                 format!("unknown application submenu role: {role}")
@@ -417,11 +417,9 @@ pub(crate) fn parse_menu(
                         )
                     } else {
                         if state.surface == MenuSurface::Application {
-                            return Err(
-                                "show, hide and quit are the tray's built-in actions; an \
+                            return Err("show, hide and quit are the tray's built-in actions; an \
                                  application menu spells quit as a role"
-                                    .to_owned(),
-                            );
+                                .to_owned());
                         }
                         let action = match item.action.as_deref() {
                             Some("show") => TrayAction::Show,
@@ -589,9 +587,15 @@ pub(crate) fn with_required_roles(entries: Vec<MenuEntry>, application: &str) ->
     let window_menu = take(&mut rest, SubmenuRole::Window)
         .unwrap_or_else(|| standard_submenu(SubmenuRole::Window, application));
     let help_menu = take(&mut rest, SubmenuRole::Help);
-    let has_edit = rest
-        .iter()
-        .any(|entry| matches!(entry, MenuEntry::Submenu { role: Some(SubmenuRole::Edit), .. }));
+    let has_edit = rest.iter().any(|entry| {
+        matches!(
+            entry,
+            MenuEntry::Submenu {
+                role: Some(SubmenuRole::Edit),
+                ..
+            }
+        )
+    });
 
     let mut placed = Vec::with_capacity(rest.len() + 4);
     placed.push(application_menu);
@@ -999,7 +1003,11 @@ mod native {
             let entries = self.entries.clone();
 
             let mut bindings = Bindings::new();
-            self.menu = Some(build_menu(&entries, &next_id_prefix("menu"), &mut bindings)?);
+            self.menu = Some(build_menu(
+                &entries,
+                &next_id_prefix("menu"),
+                &mut bindings,
+            )?);
             self.bindings = bindings;
             Ok(())
         }
@@ -1116,9 +1124,11 @@ mod tests {
     #[test]
     fn an_application_menu_is_a_bar_of_submenus() {
         let flat = definition(serde_json::json!([{ "id": "open", "label": "Open" }]));
-        assert!(parse_menu(flat, &[], MenuSurface::Application)
-            .expect_err("a bare command cannot sit in a menu bar")
-            .contains("top-level"));
+        assert!(
+            parse_menu(flat, &[], MenuSurface::Application)
+                .expect_err("a bare command cannot sit in a menu bar")
+                .contains("top-level")
+        );
         let nested = definition(serde_json::json!([
             { "type": "submenu", "label": "File", "menu": [{ "id": "open", "label": "Open" }] },
         ]));
@@ -1141,9 +1151,11 @@ mod tests {
         let quit = definition(serde_json::json!([
             { "type": "submenu", "label": "File", "menu": [{ "action": "quit" }] },
         ]));
-        assert!(parse_menu(quit, &[], MenuSurface::Application)
-            .expect_err("quit is a role in an application menu")
-            .contains("role"));
+        assert!(
+            parse_menu(quit, &[], MenuSurface::Application)
+                .expect_err("quit is a role in an application menu")
+                .contains("role")
+        );
     }
 
     #[test]

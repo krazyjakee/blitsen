@@ -152,7 +152,8 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Ren
         if inputs.is_empty() {
             return;
         }
-        let Some((scale, screen_origin_x, screen_origin_y)) = self.window_geometry(window_id) else {
+        let Some((scale, screen_origin_x, screen_origin_y)) = self.window_geometry(window_id)
+        else {
             return;
         };
 

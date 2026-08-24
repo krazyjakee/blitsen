@@ -294,7 +294,10 @@ fn install_hid<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsError> {
             let mut engine = E::from_value(&call.this);
             let device_id = argument(&mut engine, &call, 0, "HID device id")?;
             let data = report_argument(&mut engine, &call, 1)?;
-            command(&mut engine, super::hid::send_feature_report(device_id, data))
+            command(
+                &mut engine,
+                super::hid::send_feature_report(device_id, data),
+            )
         }),
     )?;
 
@@ -388,8 +391,12 @@ fn parse_tray_menu(
     raw: Vec<TrayBridgeItem>,
     icons: &[Vec<u8>],
 ) -> Result<(Vec<crate::native_window::menu::MenuEntry>, bool), JsError> {
-    crate::native_window::menu::parse_menu(raw, icons, crate::native_window::menu::MenuSurface::Tray)
-        .map_err(JsError::new)
+    crate::native_window::menu::parse_menu(
+        raw,
+        icons,
+        crate::native_window::menu::MenuSurface::Tray,
+    )
+    .map_err(JsError::new)
 }
 
 #[cfg(not(target_os = "android"))]
@@ -493,10 +500,9 @@ fn install_menu<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsError> {
         Box::new(move |call| {
             let mut engine = E::from_value(&call.this);
             let entries: Vec<crate::MenuDefinition> =
-                serde_json::from_str(&argument(&mut engine, &call, 0, "menu entries")?)
-                    .map_err(|error| {
-                        JsError::new(format!("malformed application menu: {error}"))
-                    })?;
+                serde_json::from_str(&argument(&mut engine, &call, 0, "menu entries")?).map_err(
+                    |error| JsError::new(format!("malformed application menu: {error}")),
+                )?;
             // Parsed here rather than when the request is applied, so a tree
             // the platform cannot install is a rejected promise naming what is
             // wrong with it rather than a menu that half appeared.

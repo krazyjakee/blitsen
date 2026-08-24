@@ -328,7 +328,12 @@ fn limits_of(descriptor: &[u8]) -> Option<(ReportLimits, Vec<(u16, u16)>)> {
         .iter()
         .map(|report| report.fields())
         .chain(parsed.output_reports().iter().map(|report| report.fields()))
-        .chain(parsed.feature_reports().iter().map(|report| report.fields()))
+        .chain(
+            parsed
+                .feature_reports()
+                .iter()
+                .map(|report| report.fields()),
+        )
     {
         for field in report {
             for collection in field.collections() {
@@ -622,10 +627,18 @@ impl HidController {
             .name(format!("blitsen-hid-{device_id}"))
             .spawn(move || {
                 worker(
-                    worker_id, handle, limits, receiver, worker_stop, signals, wake,
+                    worker_id,
+                    handle,
+                    limits,
+                    receiver,
+                    worker_stop,
+                    signals,
+                    wake,
                 );
             })
-            .map_err(|error| Failure::operation(format!("could not start a HID reader: {error}")))?;
+            .map_err(|error| {
+                Failure::operation(format!("could not start a HID reader: {error}"))
+            })?;
         self.open.insert(
             device_id.to_owned(),
             OpenDevice {
@@ -697,7 +710,12 @@ impl HidController {
     /// The length check happens here, before anything is copied to a worker or
     /// handed to the platform: an oversized report is a mistake in the call and
     /// must not become an allocation the device asked for.
-    fn queue(&mut self, device_id: &str, command_id: u64, kind: TransferKind) -> Result<(), Failure> {
+    fn queue(
+        &mut self,
+        device_id: &str,
+        command_id: u64,
+        kind: TransferKind,
+    ) -> Result<(), Failure> {
         let Some(device) = self.open.get(device_id) else {
             return Err(Failure::invalid_state(format!(
                 "HID device {device_id} is not open"
@@ -751,7 +769,11 @@ impl HidController {
         command_id: u64,
         report_id: u8,
     ) -> Result<(), Failure> {
-        self.queue(device_id, command_id, TransferKind::ReceiveFeature(report_id))
+        self.queue(
+            device_id,
+            command_id,
+            TransferKind::ReceiveFeature(report_id),
+        )
     }
 
     /// Drains worker signals into the frame-turn queue and rescans hot-plug.
@@ -1115,11 +1137,23 @@ mod tests {
         controller.devices().expect("enumeration succeeds");
         devices.lock().push(device("/dev/hidraw0", 0xff00, 0x0001));
         let third = controller.devices().expect("enumeration succeeds");
-        assert_eq!((&first[0]["id"], &first[0]["usage"]), (&json!("d1"), &json!(1)));
-        assert_eq!((&third[0]["id"], &third[0]["usage"]), (&json!("d1"), &json!(1)));
-        assert_eq!((&third[1]["id"], &third[1]["usage"]), (&json!("d2"), &json!(2)));
+        assert_eq!(
+            (&first[0]["id"], &first[0]["usage"]),
+            (&json!("d1"), &json!(1))
+        );
+        assert_eq!(
+            (&third[0]["id"], &third[0]["usage"]),
+            (&json!("d1"), &json!(1))
+        );
+        assert_eq!(
+            (&third[1]["id"], &third[1]["usage"]),
+            (&json!("d2"), &json!(2))
+        );
         let rendered = serde_json::to_string(&third).expect("the snapshot serializes");
-        assert!(!rendered.contains("hidraw"), "{rendered} names a device path");
+        assert!(
+            !rendered.contains("hidraw"),
+            "{rendered} names a device path"
+        );
     }
 
     #[test]
@@ -1140,7 +1174,10 @@ mod tests {
         });
         controller.devices().expect("enumeration succeeds");
         assert_eq!(
-            controller.open("d2", 1).expect_err("the keyboard node").name,
+            controller
+                .open("d2", 1)
+                .expect_err("the keyboard node")
+                .name,
             "NotSupportedError"
         );
         assert_eq!(
@@ -1156,7 +1193,10 @@ mod tests {
         let (mut controller, _) = controller_over(denied);
         controller.devices().expect("enumeration succeeds");
         assert_eq!(
-            controller.open("d1", 1).expect_err("permission denied").name,
+            controller
+                .open("d1", 1)
+                .expect_err("permission denied")
+                .name,
             "NotAllowedError"
         );
 
@@ -1180,7 +1220,10 @@ mod tests {
         };
         let (mut controller, _) = controller_over(broken);
         assert_eq!(
-            controller.open("d1", 1).expect_err("the backend itself failed").name,
+            controller
+                .open("d1", 1)
+                .expect_err("the backend itself failed")
+                .name,
             "OperationError"
         );
     }
@@ -1239,12 +1282,24 @@ mod tests {
                 .map(|message| (message.value.clone(), message.data.clone()))
                 .collect::<Vec<_>>(),
             vec![
-                (json!({"type":"input","deviceId":"d1","reportId":3}), Some(vec![1, 2, 3])),
-                (json!({"type":"input","deviceId":"d1","reportId":3}), Some(vec![4, 5, 6])),
-                (json!({"type":"input","deviceId":"d1","reportId":3}), Some(vec![7, 8, 9])),
+                (
+                    json!({"type":"input","deviceId":"d1","reportId":3}),
+                    Some(vec![1, 2, 3])
+                ),
+                (
+                    json!({"type":"input","deviceId":"d1","reportId":3}),
+                    Some(vec![4, 5, 6])
+                ),
+                (
+                    json!({"type":"input","deviceId":"d1","reportId":3}),
+                    Some(vec![7, 8, 9])
+                ),
             ]
         );
-        assert!(wakes.load(Ordering::Acquire) >= 3, "the worker woke the loop");
+        assert!(
+            wakes.load(Ordering::Acquire) >= 3,
+            "the worker woke the loop"
+        );
         controller.close("d1").expect("the device closes");
     }
 
@@ -1262,9 +1317,7 @@ mod tests {
             ..FakeBackend::default()
         });
         controller.devices().expect("enumeration succeeds");
-        controller
-            .open("d1", 9)
-            .expect("the vendor device opens");
+        controller.open("d1", 9).expect("the vendor device opens");
         let refused = controller
             .write("d1", 1, vec![0x03; 64])
             .expect_err("64 bytes is past the declared output report");
@@ -1302,9 +1355,7 @@ mod tests {
             ..FakeBackend::default()
         });
         controller.devices().expect("enumeration succeeds");
-        controller
-            .open("d1", 9)
-            .expect("the vendor device opens");
+        controller.open("d1", 9).expect("the vendor device opens");
         controller
             .send_feature_report("d1", 1, vec![0x03, 0x7f])
             .expect("the feature report is within bounds");
@@ -1332,18 +1383,22 @@ mod tests {
             ..FakeBackend::default()
         });
         controller.devices().expect("enumeration succeeds");
-        controller
-            .open("d1", 9)
-            .expect("the vendor device opens");
+        controller.open("d1", 9).expect("the vendor device opens");
         let delivered = settle(&mut controller, 2);
         assert_eq!(delivered.len(), 2);
-        assert_eq!(delivered[1].value, json!({"type":"disconnect","deviceId":"d1"}));
+        assert_eq!(
+            delivered[1].value,
+            json!({"type":"disconnect","deviceId":"d1"})
+        );
         // Poll again: the worker is gone, the entry is gone, and no second
         // terminal event can be produced.
         controller.poll();
         assert!(crate::dom_bridge::hid::take_messages().is_empty());
         assert_eq!(
-            controller.close("d1").expect_err("the handle is closed").name,
+            controller
+                .close("d1")
+                .expect_err("the handle is closed")
+                .name,
             "InvalidStateError"
         );
     }
@@ -1370,7 +1425,10 @@ mod tests {
         });
         controller.devices().expect("enumeration succeeds");
         assert!(
-            controller.open("d1", 1).expect("the dialog is up").is_none(),
+            controller
+                .open("d1", 1)
+                .expect("the dialog is up")
+                .is_none(),
             "an open with no answer yet does not settle in the call that made it"
         );
         assert_eq!(
@@ -1409,7 +1467,12 @@ mod tests {
             ..FakeBackend::default()
         });
         controller.devices().expect("enumeration succeeds");
-        assert!(controller.open("d1", 1).expect("the dialog is up").is_none());
+        assert!(
+            controller
+                .open("d1", 1)
+                .expect("the dialog is up")
+                .is_none()
+        );
         controller.backend = Box::new(FakeBackend {
             devices,
             refuse: Some(Failure::not_allowed("the user dismissed the dialog".into())),
