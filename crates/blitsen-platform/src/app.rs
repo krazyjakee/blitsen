@@ -545,7 +545,8 @@ pub mod single_instance {
 
         let deadline = Instant::now() + READ_TIMEOUT;
         let mut encoded_size = [0; std::mem::size_of::<u32>()];
-        read_exact_until(stream, &mut encoded_size, deadline).map_err(|error| error.to_string())?;
+        read_stream_exact_until(stream, &mut encoded_size, deadline)
+            .map_err(|error| error.to_string())?;
         let size = decoded_size(encoded_size).map_err(|error| error.to_string())?;
 
         // Impersonation uses the security context of the last bytes read from
@@ -556,7 +557,8 @@ pub mod single_instance {
         authenticate_client(stream).map_err(|error| error.to_string())?;
 
         let mut payload = vec![0; size];
-        read_exact_until(stream, &mut payload, deadline).map_err(|error| error.to_string())?;
+        read_stream_exact_until(stream, &mut payload, deadline)
+            .map_err(|error| error.to_string())?;
         serde_json::from_slice(&payload).map_err(|error| error.to_string())
     }
 
@@ -623,9 +625,12 @@ pub mod single_instance {
         writer.flush()
     }
 
-    fn read_acknowledgement(reader: &mut impl Read, timeout: Duration) -> std::io::Result<()> {
+    fn read_acknowledgement(
+        reader: &mut LocalSocketStream,
+        timeout: Duration,
+    ) -> std::io::Result<()> {
         let mut acknowledgement = [0];
-        read_exact_until(reader, &mut acknowledgement, Instant::now() + timeout)?;
+        read_stream_exact_until(reader, &mut acknowledgement, Instant::now() + timeout)?;
         if acknowledgement != [ACKNOWLEDGEMENT] {
             return Err(std::io::Error::new(
                 ErrorKind::InvalidData,
@@ -641,11 +646,11 @@ pub mod single_instance {
     }
 
     fn read_acknowledgement_receipt(
-        reader: &mut impl Read,
+        reader: &mut LocalSocketStream,
         timeout: Duration,
     ) -> std::io::Result<()> {
         let mut receipt = [0];
-        read_exact_until(reader, &mut receipt, Instant::now() + timeout)?;
+        read_stream_exact_until(reader, &mut receipt, Instant::now() + timeout)?;
         if receipt != [ACKNOWLEDGEMENT_RECEIPT] {
             return Err(std::io::Error::new(
                 ErrorKind::InvalidData,
@@ -659,14 +664,11 @@ pub mod single_instance {
         writer: &mut impl Write,
         timeout: Duration,
     ) -> std::io::Result<()> {
-        write_all_until(
-            writer,
-            &[ACKNOWLEDGEMENT_RECEIPT],
-            Instant::now() + timeout,
-        )?;
+        write_all_until(writer, &[ACKNOWLEDGEMENT_RECEIPT], Instant::now() + timeout)?;
         writer.flush()
     }
 
+    #[cfg(any(unix, test))]
     fn read_exact_until(
         reader: &mut impl Read,
         buffer: &mut [u8],
@@ -691,6 +693,44 @@ pub mod single_instance {
             }
         }
         Ok(())
+    }
+
+    fn read_stream_exact_until(
+        stream: &mut LocalSocketStream,
+        buffer: &mut [u8],
+        deadline: Instant,
+    ) -> std::io::Result<()> {
+        #[cfg(unix)]
+        return read_exact_until(stream, buffer, deadline);
+
+        #[cfg(windows)]
+        {
+            let mut read = 0;
+            while read < buffer.len() {
+                if Instant::now() >= deadline {
+                    return Err(std::io::Error::new(
+                        ErrorKind::TimedOut,
+                        "the single-instance invocation frame timed out",
+                    ));
+                }
+                let available = windows::bytes_available(stream)?;
+                if available == 0 {
+                    std::thread::sleep(POLL_INTERVAL);
+                    continue;
+                }
+                let end = read + available.min(buffer.len() - read);
+                match stream.read(&mut buffer[read..end]) {
+                    Ok(0) => return Err(ErrorKind::UnexpectedEof.into()),
+                    Ok(count) => read += count,
+                    Err(error) if error.kind() == ErrorKind::WouldBlock => {
+                        std::thread::sleep(POLL_INTERVAL);
+                    }
+                    Err(error) if error.kind() == ErrorKind::Interrupted => {}
+                    Err(error) => return Err(error),
+                }
+            }
+            Ok(())
+        }
     }
 
     fn write_all_until(
@@ -1053,6 +1093,7 @@ pub mod single_instance {
             GetTokenInformation, OWNER_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID,
             TOKEN_QUERY, TOKEN_USER, TokenUser,
         };
+        use windows_sys::Win32::System::Pipes::PeekNamedPipe;
         use windows_sys::Win32::System::Threading::{
             GetCurrentProcess, GetCurrentThread, OpenProcessToken, OpenThreadToken,
         };
@@ -1200,6 +1241,25 @@ pub mod single_instance {
             let _impersonation = stream.inner().impersonate_client()?;
             let client_sid = current_thread_user_sid()?;
             require_sid(&client_sid, expected_sid, "pipe client")
+        }
+
+        pub(super) fn bytes_available(stream: &LocalSocketStream) -> io::Result<usize> {
+            let LocalSocketStream::NamedPipe(stream) = stream;
+            let mut available = 0;
+            if unsafe {
+                PeekNamedPipe(
+                    stream.as_handle().as_raw_handle(),
+                    ptr::null_mut(),
+                    0,
+                    ptr::null_mut(),
+                    &mut available,
+                    ptr::null_mut(),
+                )
+            } == 0
+            {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(available as usize)
         }
 
         fn require_sid(actual: &str, expected: &str, peer: &str) -> io::Result<()> {
