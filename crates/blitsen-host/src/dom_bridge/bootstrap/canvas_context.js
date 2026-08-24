@@ -41,14 +41,20 @@
   // that never reallocates in steady state is the difference between a canvas
   // that costs a copy per frame and one that costs a copy per command.
   class CanvasStream {
-    constructor() { this.reset(); }
-    reset() {
+    constructor() {
       this.numbers = new Float64Array(1024);
-      this.length = 0;
       this.strings = [];
       this.sources = [];
       this.sourceIndices = new Map();
       this.pixels = [];
+      this.reset();
+    }
+    reset() {
+      this.length = 0;
+      this.strings.length = 0;
+      this.sources.length = 0;
+      this.sourceIndices.clear();
+      this.pixels.length = 0;
       this.pixelLength = 0;
     }
     _reserve(count) {
@@ -197,8 +203,13 @@
       if (this._stream.length === 0 && this._appliedClips === 0) return;
       this._closeClips();
       const [numbers, strings, pixels] = this._stream.build();
-      this._stream.reset();
-      this._call("submit", numbers, strings, pixels);
+      try {
+        this._call("submit", numbers, strings, pixels);
+      } finally {
+        // `build` returns the stream's strings array, so the synchronous bridge
+        // must consume it before reset clears that storage for the next batch.
+        this._stream.reset();
+      }
     }
     // The backing store size, read once per batch. `clearRect` and every
     // composited draw need it, and a draw loop would otherwise ask the renderer

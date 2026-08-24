@@ -707,6 +707,104 @@ mod tests {
     }
 
     #[test]
+    fn canvas_stream_reuses_grown_storage_and_preserves_submissions() {
+        let (mut engine, _) = ime_document("<canvas id=surface width=32 height=16></canvas>");
+        let result = engine
+            .evaluate_script(
+                r##"
+                const surface = document.getElementById("surface");
+                const context = surface.getContext("2d");
+                const stream = context._stream;
+                const numbers = stream.numbers;
+                const strings = stream.strings;
+                const sources = stream.sources;
+                const sourceIndices = stream.sourceIndices;
+                const pixelChunks = stream.pixels;
+
+                // Reset clears every piece of per-batch state without replacing
+                // the storage that a subsequent frame can reuse.
+                stream.text("stale");
+                stream.element(surface);
+                stream.imageData(new ImageData(1, 1));
+                stream.reset();
+                const resetState = {
+                  sameNumbers: stream.numbers === numbers,
+                  sameStrings: stream.strings === strings,
+                  sameSources: stream.sources === sources,
+                  sameSourceIndices: stream.sourceIndices === sourceIndices,
+                  samePixelChunks: stream.pixels === pixelChunks,
+                  length: stream.length,
+                  strings: stream.strings.length,
+                  sources: stream.sources.length,
+                  sourceIndices: stream.sourceIndices.size,
+                  pixelChunks: stream.pixels.length,
+                  pixelLength: stream.pixelLength,
+                };
+
+                context.fillStyle = "#ff0000";
+                for (let index = 0; index < 80; index++) context.fillRect(0, 0, 32, 16);
+                context.fillText("first batch", 1, 10);
+                const grownNumbers = stream.numbers;
+                const grownCapacity = grownNumbers.length;
+                context._flush();
+                const afterFirst = {
+                  grew: grownCapacity > 1024,
+                  sameNumbers: stream.numbers === grownNumbers,
+                  sameStrings: stream.strings === strings,
+                  empty: stream.length === 0 && stream.strings.length === 0,
+                };
+
+                for (let index = 0; index < 80; index++) context.fillRect(0, 0, 32, 16);
+                context.fillText("second batch", 1, 10);
+                const reusedBeforeSubmit = stream.numbers === grownNumbers
+                  && stream.numbers.length === grownCapacity;
+                context._flush();
+                const pixel = Array.from(context.getImageData(20, 8, 1, 1).data);
+                JSON.stringify({
+                  resetState,
+                  afterFirst,
+                  reusedBeforeSubmit,
+                  reusedAfterSubmit: stream.numbers === grownNumbers
+                    && stream.numbers.length === grownCapacity,
+                  pixel,
+                });
+                "##,
+                "blitsen:test-canvas-stream-reuse",
+            )
+            .and_then(|value| engine.to_string(&value))
+            .unwrap();
+        let result: serde_json::Value = serde_json::from_str(&result).unwrap();
+
+        assert_eq!(
+            result,
+            serde_json::json!({
+                "resetState": {
+                    "sameNumbers": true,
+                    "sameStrings": true,
+                    "sameSources": true,
+                    "sameSourceIndices": true,
+                    "samePixelChunks": true,
+                    "length": 0,
+                    "strings": 0,
+                    "sources": 0,
+                    "sourceIndices": 0,
+                    "pixelChunks": 0,
+                    "pixelLength": 0,
+                },
+                "afterFirst": {
+                    "grew": true,
+                    "sameNumbers": true,
+                    "sameStrings": true,
+                    "empty": true,
+                },
+                "reusedBeforeSubmit": true,
+                "reusedAfterSubmit": true,
+                "pixel": [255, 0, 0, 255],
+            })
+        );
+    }
+
+    #[test]
     fn synthetic_ime_events_keep_dom_order_state_and_is_composing() {
         let (mut engine, _) = ime_document("<input id=field>");
         engine
