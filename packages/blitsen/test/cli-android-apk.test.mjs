@@ -507,10 +507,13 @@ describe("the toolchain is detected, never installed", () => {
       await expect(detected(noSigner)).rejects.toThrow("has no apksigner");
       const sdk = await fakeSdk(join(directory, "c"));
       await expect(detectAndroidToolchain({
-        env: { ANDROID_HOME: sdk, LIBCLANG_PATH: "/llvm/lib" }, which: () => null,
+        env: { ANDROID_HOME: sdk, LIBCLANG_PATH: "/llvm/lib" },
+        hostPlatform: "linux",
+        which: () => null,
       })).rejects.toThrow("javac is not on PATH");
       await expect(detectAndroidToolchain({
         env: { ANDROID_HOME: sdk, LIBCLANG_PATH: "/llvm/lib" },
+        hostPlatform: "linux",
         which: name => name === "javac" ? "/jdk/bin/javac" : null,
       })).rejects.toThrow("cargo-ndk is not on PATH");
     });

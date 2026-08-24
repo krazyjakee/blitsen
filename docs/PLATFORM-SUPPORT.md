@@ -160,7 +160,8 @@ Microsoft C runtime is statically linked, so users do not need a separate Visual
 
 Windows packaging writes the application manifest and optional `.ico` beside the executable rather
 than embedding them in the PE file. Keep those files with the executable. The current
-`blitsen/dialog` module and Unix single-instance lock are absent on Windows.
+`blitsen/dialog` module is absent on Windows. Single-instance invocation hand-off uses a per-user
+named pipe whose name includes the user's SID.
 
 `blitsen/hid` opens HID top-level collections through the Windows HID class driver and needs no
 driver installation. Windows reserves some system collections for itself; an open refused that way

@@ -305,7 +305,7 @@ Availability is incremental. A browser having an API does not oblige Blitsen to 
 HTML · CSS · DOM · JS/TS execution · events · `requestAnimationFrame` · `setTimeout`/
 `setInterval` · mouse · keyboard · one native viewport element backed by the GPU.
 
-**v1 — makes real apps possible** — *met, with three members partial*
+**v1 — makes real apps possible** — *met, with two members partial*
 `fetch` · `WebSocket` · images · web fonts · audio playback · pointer events (mouse, touch and
 pen, with pressure, multi-touch and pointer capture) · the first `blitsen/*` modules
 (dialog, clipboard, window, app). The published profile is
@@ -314,7 +314,6 @@ pen, with pressure, multi-touch and pointer capture) · the first `blitsen/*` mo
 | Partial | Why |
 | --- | --- |
 | `dialog.*` | Linux and the BSDs only, by design: macOS and Windows require a file dialog on the main thread, which is the thread kept free to paint. Absent there rather than approximated. |
-| `app.requestSingleInstanceLock` | Unix only. The lock is a Unix domain socket that doubles as the channel a second invocation's `argv` arrives on; Windows wants a mutex plus a named pipe, which is a different design. |
 | `window.create` | Deliberately absent — the context, communication and lifetime contract is settled by #105, but the per-window host state it requires is not implemented. |
 
 **v2 — makes real apps comfortable** — *partly landed early*
