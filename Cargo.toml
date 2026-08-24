@@ -43,7 +43,7 @@ publish = false
 # needs only the crate's allocation support, not its unrelated `std` surface.
 # Hoisted so one crate cannot quietly re-enable defaults for the others through
 # feature unification.
-base64 = { version = "0.22", default-features = false, features = ["alloc"] }
+base64 = { version = "0.23", default-features = false, features = ["alloc"] }
 # Accessibility is deliberately outside v1 (#102). Upstream `blitz` enables
 # its AccessKit platform adapter by default, so every direct user inherits this
 # one explicit feature decision instead. `net` and `tracing` are the other two

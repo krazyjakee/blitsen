@@ -469,7 +469,7 @@ version = "0.0.0"
 dependencies = [
  "anyrender",
  "anyrender_vello_cpu",
- "base64 0.22.1",
+ "base64 0.23.1",
  "blitsen-core",
  "blitsen-dom",
  "blitz",
@@ -513,7 +513,7 @@ dependencies = [
  "anyrender",
  "anyrender_vello",
  "anyrender_vello_cpu",
- "base64 0.22.1",
+ "base64 0.23.1",
  "blitsen-blitz",
  "blitsen-core",
  "blitsen-dom",
@@ -580,7 +580,7 @@ version = "0.0.0"
 name = "blitsen-node"
 version = "0.0.0"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.1",
  "blitsen-core",
  "blitsen-dom",
  "blitsen-host",
