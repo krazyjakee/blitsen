@@ -567,15 +567,21 @@ jobs:
       - name: Check the version is not already published
         id: release_version
         shell: bash
+        env:
+          PUBLISH: ${{ inputs.publish }}
         run: |
           version=$(node -p "require('./packages/blitsen/package.json').version")
           echo "version=$version" >> "$GITHUB_ENV"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           if npm view "blitsen@$version" version >/dev/null 2>&1; then
-            echo "::error::blitsen@$version is already published; bump the version"
-            exit 1
+            if [ "$PUBLISH" = true ]; then
+              echo "::error::blitsen@$version is already published; bump the version"
+              exit 1
+            fi
+            echo "::notice::Dry run is rehearsing already-published blitsen@$version"
+          else
+            echo "Releasing $version"
           fi
-          echo "Releasing $version"
 
       # The npm tarballs are the exact binary distribution, useful both as a
       # durable rehearsal artifact and as downloads beside the GitHub release.
