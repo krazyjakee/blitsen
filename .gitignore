@@ -20,3 +20,7 @@
 # Raw 2048px image-model renders the brand vectors were traced from. Kept locally,
 # not in history — the SVGs in assets/brand/svg are the canonical artifact.
 /assets/brand/[0-9]*.png
+
+# Agent-owned worktrees and metadata are local to the checkout.
+/.codex/
+/.claude/
