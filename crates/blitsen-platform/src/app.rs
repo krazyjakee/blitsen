@@ -515,7 +515,7 @@ pub mod single_instance {
                     "the single-instance client belongs to another user",
                 ));
             }
-            return Ok(());
+            Ok(())
         }
         #[cfg(windows)]
         {
