@@ -213,12 +213,12 @@ export const ANDROID_ABIS = {
 export const DEFAULT_ABIS = ["arm64-v8a", "x86_64"];
 
 /// ABIs that build if asked for and that nothing here claims to have run.
-export const UNPROVEN_ABIS = ["armeabi-v7a"];
+const UNPROVEN_ABIS = ["armeabi-v7a"];
 
 /// The Android debug key, as every SDK install has it.
-export const DEBUG_KEYSTORE = () => join(homedir(), ".android", "debug.keystore");
-export const DEBUG_KEYSTORE_PASSWORD = "android";
-export const DEBUG_KEYSTORE_ALIAS = "androiddebugkey";
+const DEBUG_KEYSTORE = () => join(homedir(), ".android", "debug.keystore");
+const DEBUG_KEYSTORE_PASSWORD = "android";
+const DEBUG_KEYSTORE_ALIAS = "androiddebugkey";
 
 /** The complete Java surface packaged for notification activation (#252). */
 export const NOTIFICATION_BRIDGE_SOURCE = fileURLToPath(

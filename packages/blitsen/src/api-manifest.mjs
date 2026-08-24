@@ -10,14 +10,13 @@ import {
 } from "./api-manifest/source-scanner.mjs";
 import {
   COMPATIBILITY_DOC, checkPublishedTypes, checkTypeDefinitions, readDeclaredNativeMembers,
-  renderCapabilityTiers, renderCompatibilityDoc, renderNativeModules,
+  renderCompatibilityDoc,
 } from "./api-manifest/rendering.mjs";
 import { NATIVE_PLATFORMS } from "./native-modules.mjs";
 
-export { extractRuntimeSurface, readBootstrapScript };
+export { readBootstrapScript };
 export {
-  checkPublishedTypes, checkTypeDefinitions, readDeclaredNativeMembers,
-  renderCapabilityTiers, renderCompatibilityDoc, renderNativeModules,
+  checkTypeDefinitions, readDeclaredNativeMembers, renderCompatibilityDoc,
 };
 
 // Paths rather than URL objects, here and everywhere else this package reads a

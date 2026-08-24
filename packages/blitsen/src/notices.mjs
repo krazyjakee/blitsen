@@ -51,7 +51,7 @@ async function cargoMetadata({ target, manifestPath, run }) {
  * everything else is kept, including build dependencies, because a code
  * generator's licence still applies to the code it generated.
  */
-export function linkedPackages(metadata, root) {
+function linkedPackages(metadata, root) {
   const packages = new Map(metadata.packages.map(entry => [entry.id, entry]));
   const nodes = new Map(metadata.resolve.nodes.map(node => [node.id, node]));
   const start = [...packages.values()].find(entry => entry.name === root);
@@ -153,7 +153,7 @@ export async function collectNotices({
 }
 
 /** Packages whose terms this document cannot honour, and why. */
-export function auditNotices(collected) {
+function auditNotices(collected) {
   const problems = [];
   for (const entry of collected.packages) {
     if (entry.license === null && entry.licenseFile === null && entry.texts.length === 0) {
@@ -167,7 +167,7 @@ export function auditNotices(collected) {
 }
 
 /** The distributable document, as plain text. */
-export function renderNotices(collected, { version = null } = {}) {
+function renderNotices(collected, { version = null } = {}) {
   const lines = [];
   lines.push("THIRD-PARTY NOTICES");
   lines.push("");

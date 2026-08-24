@@ -30,7 +30,7 @@ export function pngDimensions(bytes, path) {
   return { width, height };
 }
 
-export function pngSize(bytes, path) {
+function pngSize(bytes, path) {
   const { width, height } = pngDimensions(bytes, path);
   if (width !== height) throw new Error(`icon must be square, got ${width}x${height}: ${path}`);
   return width;
@@ -290,7 +290,7 @@ function hidEntitlements() {
 
 // The paths step ⑤ will write, so a collision is reported the way the linker
 // reports one rather than silently replacing an existing bundle.
-export function packagePlan({ platform, executable, icon, identifier = null, hid = false }) {
+function packagePlan({ platform, executable, icon, identifier = null, hid = false }) {
   const supported = Object.keys(ICON_FORMATS);
   if (!supported.includes(platform)) {
     throw new Error(`packaging is not supported on ${platform} (expected ${supported.join(", ")})`);

@@ -20,7 +20,7 @@ const CARGO_LIBRARIES = {
 };
 
 export const hostTarget = () => `${process.platform}-${process.arch}`;
-export const runtimePackage = target => `@blitsen/${target}`;
+const runtimePackage = target => `@blitsen/${target}`;
 
 // Single source of truth: the published package manifest, not a literal.
 export async function packageVersion() {
@@ -68,7 +68,7 @@ async function environmentRuntime({ configured, variable, target, executable, on
 // TECH.md §11: the runtime package is pinned to this package's version exactly, so a
 // pair that was never built together is a hard stop rather than a warning — the two
 // halves are one ABI, and a mismatch changes what the application renders.
-export function assertRuntimeVersion(target, expected, found) {
+function assertRuntimeVersion(target, expected, found) {
   if (expected === found) return;
   throw new Error(`runtime version mismatch: blitsen ${expected} requires `
     + `${runtimePackage(target)} ${expected}, but ${found} is installed. `
@@ -379,7 +379,7 @@ export async function resolveRuntime({
 // something only Phase 1 can give it — see `buildStandalone`, which decides
 // from what the export collected. `BLITSEN_HOST` forces either host, for
 // measuring one against the other and for getting out of a regression.
-export const PHASE2_BINARY = "blitsen-runtime";
+const PHASE2_BINARY = "blitsen-runtime";
 
 /** What the Phase 2 executable is called inside a target's platform package. */
 export const phase2Binary = (target = hostTarget()) =>

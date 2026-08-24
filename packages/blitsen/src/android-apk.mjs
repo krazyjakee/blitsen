@@ -232,7 +232,7 @@ export function androidManifest({
 /// Sorted rather than in readdir order because readdir order is the
 /// filesystem's and differs between machines, and a build whose output depends
 /// on that is not reproducible.
-export async function archiveTree(directory, prefix) {
+async function archiveTree(directory, prefix) {
   const found = [];
   const walk = async (at, relative) => {
     const entries = await readdir(at, { withFileTypes: true });

@@ -334,7 +334,7 @@ async function applyConfiguration(options, output) {
 }
 
 /** Whether the argument names a dev server rather than a directory (#67). */
-export function isServerUrl(directory) {
+function isServerUrl(directory) {
   return typeof directory === "string" && /^https?:\/\//i.test(directory.trim());
 }
 
@@ -395,7 +395,7 @@ export function createReloadCoordinator(runtime, output = console, debounceMs = 
   };
 }
 
-export function watchApplication(root, runtime, output = console, debounceMs = 100) {
+function watchApplication(root, runtime, output = console, debounceMs = 100) {
   const coordinator = createReloadCoordinator(runtime, output, debounceMs);
   const watcher = watchFs(root, { recursive: true }, (_event, file) => coordinator.notify(file));
   watcher.on("error", error => output.error(`blitsen: watcher failed: ${error.message}`));

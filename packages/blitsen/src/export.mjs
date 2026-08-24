@@ -269,7 +269,7 @@ try {
 `;
 }
 
-export function defaultOutfile(root) {
+function defaultOutfile(root) {
   return resolve(process.cwd(), basename(root));
 }
 
@@ -279,7 +279,7 @@ function summarize(paths, limit = 5) {
 }
 
 /** What the runtime carries the notices as, inside an export's bundle. */
-export const NOTICES_BUNDLE_FILE = "blitsen.notices.txt.gz";
+const NOTICES_BUNDLE_FILE = "blitsen.notices.txt.gz";
 
 /**
  * The third-party notices shipped beside the runtime being linked (issue #121).
