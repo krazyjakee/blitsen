@@ -8,6 +8,7 @@
 //! second process just added.
 
 use std::collections::HashSet;
+use std::fmt::Write as _;
 #[cfg(unix)]
 use std::fs::File;
 use std::fs::{self, OpenOptions};
@@ -300,7 +301,7 @@ impl LocalStorage {
     fn item_path(&self, key: &str) -> PathBuf {
         self.root
             .join(ITEMS)
-            .join(format!("{:x}.json", Sha256::digest(key.as_bytes())))
+            .join(format!("{}.json", sha256_hex(key.as_bytes())))
     }
 
     fn quarantine(&self, path: &Path) {
@@ -326,7 +327,16 @@ impl LocalStorage {
 }
 
 fn namespace(identity: &str) -> String {
-    format!("app-{:x}", Sha256::digest(identity.as_bytes()))
+    format!("app-{}", sha256_hex(identity.as_bytes()))
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    let digest = Sha256::digest(bytes);
+    let mut encoded = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        write!(&mut encoded, "{byte:02x}").expect("writing to a String cannot fail");
+    }
+    encoded
 }
 
 fn unique(keys: &[String]) -> bool {
