@@ -18,6 +18,7 @@ use serde_json::{Value, json};
 use crate::DomRuntime;
 
 mod audio;
+mod canvas;
 mod event_source;
 mod fetch;
 pub(crate) mod gamepad;
@@ -28,7 +29,6 @@ mod intl;
 // `native_window/menu.rs` — and in the test build everywhere, because the
 // public FIFO shape this settles is not a platform decision and a queue only
 // two targets could compile would be a queue nothing here checks.
-mod canvas;
 #[cfg(any(target_os = "windows", target_os = "macos", test))]
 pub(crate) mod menu;
 mod native;
