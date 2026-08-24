@@ -378,10 +378,12 @@ mod tests {
 
     use super::*;
 
+    type Vibration = (String, f64, f64, u32, u32);
+
     struct FakeBackend {
         polls: Rc<RefCell<usize>>,
         frames: VecDeque<BackendFrame>,
-        vibrations: Rc<RefCell<Vec<(String, f64, f64, u32, u32)>>>,
+        vibrations: Rc<RefCell<Vec<Vibration>>>,
     }
 
     impl Backend for FakeBackend {
