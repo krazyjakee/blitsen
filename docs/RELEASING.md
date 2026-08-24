@@ -225,12 +225,14 @@ from the checked native bytes.
 
 Every matrix row prints the unsigned size and SHA-256 of both artifacts. To keep the gate useful
 without doubling all six builds, `linux-x64`, `darwin-x64` and `win32-x64` each compile from two
-independent clean clones into separate clean target directories, with compiler caching disabled.
-The clones occupy the same canonical source pathname sequentially. This holds the one source-path
-input MSVC retains as UTF-16 in release objects constant while source contents, build outputs and
-compiler processes remain independent. That is one pinned native runner per executable format and
-OS; the arm64 sibling uses the same source and platform linker family and retains its recorded
-hashes. A mismatch reports both hashes and sizes, the first differing byte and surrounding bytes.
+independent clean clones and target directories, with compiler caching disabled. The builds occupy
+the same canonical source and target pathnames sequentially; after the first build its entire
+target directory is moved aside, and the second build recreates both directories from empty. This
+holds the path inputs MSVC retains as UTF-16 in release objects constant while source contents,
+build outputs and compiler processes remain independent. That is one pinned native runner per
+executable format and OS; the arm64 sibling uses the same source and platform linker family and
+retains its recorded hashes. A mismatch reports both hashes and sizes, the first differing byte and
+surrounding bytes.
 
 `--remap-path-prefix` maps Rust source and target paths to `/src/blitsen` and `/build/blitsen`, and
 the native compiler gets the equivalent `-ffile-prefix-map` or MSVC `/pathmap`. Both roots matter:
@@ -245,10 +247,11 @@ Windows additionally uses MSVC `/Brepro`, alongside the existing static CRT flag
 metadata otherwise owns a build timestamp. `/PDBALTPATH:%_PDB%` keeps only the stable PDB basename
 in the PE debug record. The first Windows reproducibility run exposed different checkout roots
 there; after remapping those, MSVC still retained the source root elsewhere as a UTF-16 object
-input. The sequential canonical source pathname makes that otherwise unremappable compiler input
-identical without rewriting either output. No post-build normalisation is allowed: a passing
-comparison is evidence about the files that proceed to signing, while a failing one preserves the
-difference for diagnosis.
+input. It also retains the target directory's parent in a separate UTF-16 record. The sequential
+canonical source and target pathnames make those otherwise unremappable compiler inputs identical
+without rewriting either output. No post-build normalisation is allowed: a passing comparison is
+evidence about the files that proceed to signing, while a failing one preserves the difference for
+diagnosis.
 
 ## What CI covers, and what only a release build touches
 

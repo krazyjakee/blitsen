@@ -171,14 +171,17 @@ jobs:
           # release objects even with rustc remapping and cl.exe /pathmap.
           if [ "${{ matrix.reproducible }}" = true ]; then
             reproducible_source="$RUNNER_TEMP/blitsen-repro-source"
+            reproducible_target="$RUNNER_TEMP/blitsen-repro-target"
             git clone --quiet --no-hardlinks "$GITHUB_WORKSPACE" "$reproducible_source"
             git -C "$reproducible_source" checkout --quiet --detach "$GITHUB_SHA"
             (
               cd "$reproducible_source"
               unset RUSTC_WRAPPER
-              CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target" \
+              CARGO_TARGET_DIR="$reproducible_target" \
                 bash scripts/build-release-runtime.sh "${{ matrix.target }}"
             )
+            test ! -e "$GITHUB_WORKSPACE/target"
+            mv "$reproducible_target" "$GITHUB_WORKSPACE/target"
           else
             CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target" \
               bash scripts/build-release-runtime.sh "${{ matrix.target }}"
