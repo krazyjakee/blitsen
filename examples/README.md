@@ -7,7 +7,7 @@ it work and, where necessary, which fallback an application still needs.
 ## Static applications
 
 Each of these directories is already built output. With the published CLI available, open one
-from the repository root with `npx blitsen examples/<name>`. The runner names below are for a
+from the repository root with `blitsen examples/<name>`. The runner names below are for a
 source checkout: `bun run --cwd packages/blitsen <runner>` builds the local addon before opening
 the example.
 
@@ -22,7 +22,7 @@ the example.
 | [native-view](native-view/) | An application-drawn `blitsen-view` surface composited with DOM content | `example:native-view` |
 | [pong](pong/) | A complete two-player game driven by keyboard input and animation frames | `example:pong` |
 | [responsive](responsive/) | Media queries, responsive grid layout, resize events and `ResizeObserver` | — |
-| [todo](todo/) | A bounded virtual list over 10,000 tasks, search, filters and native window controls | `example:todo` |
+| [todo](todo/) | A persistent task list with priorities, search, filters and native window controls | `example:todo` |
 
 The binary files in the assets example are committed so it runs without a generation step. They
 were built by [`assets/generate.py`](assets/generate.py), which requires `fonttools` and `brotli`.
@@ -41,7 +41,7 @@ locked dependencies and build them before pointing Blitsen at `dist`:
 cd examples/monaco # or examples/reactflow
 npm ci
 npm run build
-npx blitsen dist
+blitsen dist
 ```
 
 The React acceptance example uses its Bun lockfile instead:
@@ -50,7 +50,7 @@ The React acceptance example uses its Bun lockfile instead:
 cd examples/vite-react
 bun install --frozen-lockfile
 bun run build
-npx blitsen dist
+blitsen dist
 ```
 
 | Example | What it demonstrates |

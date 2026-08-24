@@ -44,7 +44,7 @@ npm run dev
 ```
 
 ```sh
-npx blitsen http://localhost:5173
+blitsen http://localhost:5173
 ```
 
 If Vite's HMR client cannot infer its socket address, set `server.hmr.host` and `clientPort` in
@@ -56,7 +56,7 @@ If Vite's HMR client cannot infer its socket address, set `server.hmr.host` and 
 Files reached only through computed names are not visible to the collector. Include them explicitly:
 
 ```sh
-npx blitsen build dist \
+blitsen build dist \
   --include 'locales/**' \
   --include 'models/*.bin'
 ```
@@ -122,9 +122,9 @@ export async function chooseProject() {
 Grade each release target as well as testing the member at runtime:
 
 ```sh
-npx blitsen doctor dist --target linux-x64
-npx blitsen doctor dist --target darwin-arm64
-npx blitsen doctor dist --target win32-x64
+blitsen doctor dist --target linux-x64
+blitsen doctor dist --target darwin-arm64
+blitsen doctor dist --target win32-x64
 ```
 
 ## GPU output
@@ -166,7 +166,7 @@ a display list instead of uploading a frame.
 Use side-loaded assets when content needs to change without relinking the executable:
 
 ```sh
-npx blitsen build dist --assets side-loaded --out MyApp
+blitsen build dist --assets side-loaded --out MyApp
 ```
 
 Distribute `MyApp` and `MyApp.assets/` together. On macOS, when the build produces a `.app` bundle
@@ -194,7 +194,7 @@ Keep this output available to recipients and read [Licensing](LICENSING.md) befo
 Choose one of the six target triples:
 
 ```sh
-npx blitsen build dist --target win32-x64 --out MyApp.exe
+blitsen build dist --target win32-x64 --out MyApp.exe
 ```
 
 Blitsen downloads the exact matching runtime package and caches it. Move the result to the target

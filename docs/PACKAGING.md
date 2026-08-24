@@ -8,13 +8,13 @@ platform packaging. The default desktop result embeds the application in one exe
 From project configuration:
 
 ```sh
-npx blitsen build
+blitsen build
 ```
 
 From an existing output directory:
 
 ```sh
-npx blitsen build dist --name "My App" --out MyApp
+blitsen build dist --name "My App" --out MyApp
 ```
 
 The build stops rather than replacing an existing output. Pass `--force` only when replacement is
@@ -29,13 +29,13 @@ application path is compatible.
 The default embeds reachable application files:
 
 ```sh
-npx blitsen build dist --assets embedded
+blitsen build dist --assets embedded
 ```
 
 Choose side-loaded assets for large or replaceable content:
 
 ```sh
-npx blitsen build dist --assets side-loaded
+blitsen build dist --assets side-loaded
 ```
 
 This writes `<output>.assets/` beside the executable. Distribute both together. On macOS, when the
@@ -48,7 +48,7 @@ repeatable `--include` globs.
 ## Names, icons and versions
 
 ```sh
-npx blitsen build dist \
+blitsen build dist \
   --name "My App" \
   --out MyApp \
   --icon assets/icon.png \
@@ -116,7 +116,7 @@ an activation handed to an identity-less process is refused with a message sayin
 argument:
 
 ```sh
-npx blitsen build dist --sign 'codesign --force --sign "Developer ID Application: Example"'
+blitsen build dist --sign 'codesign --force --sign "Developer ID Application: Example"'
 ```
 
 On macOS the argument is the `.app` bundle; elsewhere it is the executable. A non-zero signing
@@ -133,7 +133,7 @@ interpreter executing a script, so it does not, and `blitsen/notify` rejects the
 submitting under some other application's name.
 
 ```sh
-npx blitsen --dev-bundle
+blitsen --dev-bundle
 ```
 
 This builds a small `.app` around a copy of the interpreter, ad-hoc signs it with `codesign`, and
@@ -149,7 +149,7 @@ must not revoke the other. Name your own with `--bundle-id`, and replace the ad-
 re-sign would drop:
 
 ```sh
-npx blitsen --dev-bundle --bundle-id com.example.pong.dev \
+blitsen --dev-bundle --bundle-id com.example.pong.dev \
   --sign 'codesign --force --sign "Developer ID Application: Example"'
 ```
 
@@ -159,7 +159,7 @@ delivery to a bundle identifier, and a build already produces a bundle of its ow
 ## Build for another desktop target
 
 ```sh
-npx blitsen build dist --target win32-x64 --out MyApp.exe
+blitsen build dist --target win32-x64 --out MyApp.exe
 ```
 
 Supported triples are:
@@ -177,7 +177,7 @@ for realistic testing and usually for signing/notarization.
 Carry a Node-API addon with project configuration or a repeatable flag:
 
 ```sh
-npx blitsen build dist --addon native/physics.node
+blitsen build dist --addon native/physics.node
 ```
 
 An application containing a `.node` addon uses the Bun-based host because the standard runtime has
@@ -195,7 +195,7 @@ or translate it.
 Android is a separate artifact selected by `--android`, not a desktop target triple:
 
 ```sh
-npx blitsen build dist --android --android-abi arm64-v8a --out MyApp.apk
+blitsen build dist --android --android-abi arm64-v8a --out MyApp.apk
 ```
 
 The current Android entry crate is not published. Run from a Blitsen source checkout or point the
@@ -203,7 +203,7 @@ CLI at one:
 
 ```sh
 BLITSEN_ANDROID_CRATE=/path/to/blitsen/crates/blitsen-android \
-  npx blitsen build dist --android --out MyApp.apk
+  blitsen build dist --android --out MyApp.apk
 ```
 
 The build machine needs:
@@ -221,7 +221,7 @@ distributable. Supply release credentials without putting passwords on the comma
 
 ```sh
 BLITSEN_ANDROID_KEYSTORE_PASSWORD='...' \
-  npx blitsen build dist \
+  blitsen build dist \
   --android \
   --android-abi arm64-v8a \
   --android-package com.example.myapp \

@@ -22,7 +22,7 @@ use napi::{Env, Status};
 use napi_derive::napi;
 
 pub(crate) use engine::napi_error;
-pub use engine::{NodeApiEngine, NodeClass, NodeWeakRef};
+pub use engine::{NodeApiEngine, NodeClass, NodeStrongRef, NodeWeakRef};
 pub use exports::*;
 
 /// JavaScript-facing engine owner loaded by `new Engine()`.

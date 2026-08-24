@@ -11,10 +11,10 @@ Chromium or use the operating system WebView.
 
 ## Quick start
 
-Install Blitsen in an existing web project:
+Install the Blitsen CLI:
 
 ```sh
-npm install -D blitsen
+npm install -g blitsen
 ```
 
 Tell Blitsen how to produce and find the static build in `package.json`:
@@ -35,13 +35,13 @@ Tell Blitsen how to produce and find the static build in `package.json`:
 Open the built application in a native window:
 
 ```sh
-npx blitsen
+blitsen
 ```
 
 Check it against Blitsen's supported surface, then export it:
 
 ```sh
-npx blitsen doctor dist
+blitsen doctor dist
 npm run native
 ```
 
@@ -49,15 +49,22 @@ The default desktop build produces a single executable containing the runtime an
 application assets. For plain HTML with no build step, point the CLI directly at its directory:
 
 ```sh
-npx blitsen .
-npx blitsen build . --name "My App"
+blitsen .
+blitsen build . --name "My App"
 ```
 
 During development, Blitsen can replace the browser tab while Vite or another server continues to
 handle transforms and hot reload:
 
 ```sh
-npx blitsen http://localhost:5173
+blitsen http://localhost:5173
+```
+
+Install `blitsen` as a project dev dependency as well if application code imports its native
+modules or types, or if the project needs to pin the CLI version for CI:
+
+```sh
+npm install -D --save-exact blitsen
 ```
 
 ## What Blitsen expects

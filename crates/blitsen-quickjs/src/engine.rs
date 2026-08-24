@@ -66,6 +66,7 @@ impl<'js> IntoJsFunc<'js, CallbackParams> for CallbackAdapter {
 
 impl JsEngine for QuickJs {
     type Value = QjsValue;
+    type StrongRef = QjsValue;
     type WeakRef = QjsWeakRef;
     type Class = QjsClass;
 
@@ -185,6 +186,14 @@ impl JsEngine for QuickJs {
 
     fn set_global(&mut self, name: &str, value: &Self::Value) -> Result<(), JsError> {
         self.with_result(|ctx| ctx.globals().set(name, value.restore(ctx)?))
+    }
+
+    fn retain(&mut self, value: &Self::Value) -> Result<Self::StrongRef, JsError> {
+        Ok(value.clone())
+    }
+
+    fn retained_value(&mut self, reference: &Self::StrongRef) -> Result<Self::Value, JsError> {
+        Ok(reference.clone())
     }
 
     fn define_function(

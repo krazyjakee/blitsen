@@ -4,6 +4,7 @@
 //! an engine over it, and serialize the result. The assertions themselves are
 //! the host's, so Phase 2 runs the same ones without going through Node-API.
 
+use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 
 use base64::Engine as _;
@@ -19,7 +20,11 @@ use napi::{Env, Status, sys};
 use napi_derive::napi;
 
 use crate::engine::{check, raw};
-use crate::{NodeApiEngine, NodeWeakRef, napi_error};
+use crate::{NodeApiEngine, NodeStrongRef, NodeWeakRef, napi_error};
+
+thread_local! {
+    static RETAINED_SMOKE_CALLBACK: RefCell<Option<NodeStrongRef>> = const { RefCell::new(None) };
+}
 
 fn engine(env: Env) -> NodeApiEngine {
     NodeApiEngine::new(env)
@@ -623,9 +628,27 @@ pub fn node_api_smoke(env: Env) -> napi::Result<bool> {
     if is_bun {
         smoke_large_module(&mut engine)?;
     }
+    let callback = engine
+        .evaluate_script("() => 42", "blitsen:retained-value-smoke")
+        .and_then(|value| engine.retain(&value))
+        .map_err(napi_error)?;
+    RETAINED_SMOKE_CALLBACK.with(|retained| *retained.borrow_mut() = Some(callback));
     engine.drain_microtasks().map_err(napi_error)?;
     engine.pump_event_loop().map_err(napi_error)?;
     Ok(true)
+}
+
+/// Calls the value retained by [`node_api_smoke`] from a later addon entry.
+#[napi]
+pub fn retained_node_api_smoke(env: Env) -> napi::Result<bool> {
+    let callback = RETAINED_SMOKE_CALLBACK
+        .with(|retained| retained.borrow_mut().take())
+        .ok_or_else(|| failure("node_api_smoke retained no callback"))?;
+    let mut engine = NodeApiEngine::new(env);
+    let function = engine.retained_value(&callback).map_err(napi_error)?;
+    let result = engine.call(&function, None, &[]).map_err(napi_error)?;
+    let answer = engine.to_number(&result).map_err(napi_error)?;
+    smoke_check(answer == 42.0, "retained callback returned the wrong value").map(|()| true)
 }
 
 #[cfg(test)]

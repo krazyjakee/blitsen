@@ -4,7 +4,7 @@
 
 import { BASE, GROUPS, REPO } from "./content.ts";
 
-const INSTALL = `npm install -D blitsen`;
+const INSTALL = `npm install -g blitsen`;
 
 const CONFIG = `{
   "blitsen": {
@@ -14,9 +14,9 @@ const CONFIG = `{
   }
 }`;
 
-const COMMANDS = `npx blitsen                       # build and open a native window
-npx blitsen doctor dist           # check the built application
-npx blitsen build                 # create a desktop executable`;
+const COMMANDS = `blitsen                       # build and open a native window
+blitsen doctor dist           # check the built application
+blitsen build                 # create a desktop executable`;
 
 function docCards(): string {
   return GROUPS.map((group) => {
@@ -81,7 +81,7 @@ export function landingBody(crestSvg: string): string {
   </p>
   <figure class="code"><span class="code-lang">json</span><pre><code>${CONFIG}</code></pre></figure>
   <p class="band-note">
-    Plain HTML needs no configuration: <code>npx blitsen .</code> opens the directory
+    Plain HTML needs no configuration: <code>blitsen .</code> opens the directory
     containing <code>index.html</code>.
   </p>
 </section>

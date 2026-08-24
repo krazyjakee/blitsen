@@ -12,8 +12,8 @@ ship, and neither is anything else — the export is one file.
 Nothing. Install the same package, keep the same `"blitsen"` config, run the same commands.
 
 ```sh
-npm i -D blitsen
-npx blitsen build
+npm install -g blitsen
+blitsen build
 ```
 
 ## What changes

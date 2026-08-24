@@ -70,6 +70,20 @@ pub struct NodeWeakRef {
     reference: sys::napi_ref,
 }
 
+/// Persistent Node-API reference resolved into a fresh handle for each call.
+pub struct NodeStrongRef {
+    env: Env,
+    reference: Option<UnknownRef>,
+}
+
+impl Drop for NodeStrongRef {
+    fn drop(&mut self) {
+        if let Some(reference) = self.reference.take() {
+            let _ = reference.unref(&self.env);
+        }
+    }
+}
+
 impl Drop for NodeWeakRef {
     fn drop(&mut self) {
         // SAFETY: the reference belongs to this environment and is deleted once.
@@ -121,7 +135,8 @@ impl Drop for InstanceData {
 /// [`JsEngine`] implementation backed exclusively by ABI-stable Node-API.
 ///
 /// Values are scoped Node-API handles. Persistent bridge state must retain
-/// objects through [`NodeWeakRef`] or a JavaScript-owned property.
+/// objects through [`NodeStrongRef`], [`NodeWeakRef`], or a JavaScript-owned
+/// property.
 ///
 /// Cloning produces another view of the same environment. The environment
 /// pointer outlives every addon call, so a clone may be stored; the handles it
@@ -195,6 +210,7 @@ impl NodeApiEngine {
 
 impl JsEngine for NodeApiEngine {
     type Value = Unknown<'static>;
+    type StrongRef = NodeStrongRef;
     type WeakRef = NodeWeakRef;
     type Class = NodeClass;
 
@@ -418,6 +434,23 @@ impl JsEngine for NodeApiEngine {
     fn set_global(&mut self, name: &str, value: &Self::Value) -> Result<(), JsError> {
         let global = self.env.get_global().map_err(js_error)?.to_unknown();
         self.set_property(&global, name, value)
+    }
+
+    fn retain(&mut self, value: &Self::Value) -> Result<Self::StrongRef, JsError> {
+        Ok(NodeStrongRef {
+            env: self.env,
+            reference: Some((*value).create_ref().map_err(js_error)?),
+        })
+    }
+
+    fn retained_value(&mut self, reference: &Self::StrongRef) -> Result<Self::Value, JsError> {
+        let value = reference
+            .reference
+            .as_ref()
+            .expect("strong reference was already released")
+            .get_value(&self.env)
+            .map_err(js_error)?;
+        Ok(self.value_from_scoped(value))
     }
 
     fn define_function(

@@ -1,7 +1,9 @@
 <!doctype html>
-<html>
+<html lang="en">
   <head>
     <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
     <title>Blitsen Tasks</title>
     <link rel="stylesheet" href="./styles.css">
   </head>
@@ -9,9 +11,9 @@
     <main class="app">
       <header id="titlebar" class="titlebar">
         <div id="drag-region" class="drag-region">
-          <span class="app-mark"><span class="app-mark-core"></span></span>
+          <span class="app-mark" aria-hidden="true"><span class="app-mark-core"></span></span>
           <span class="window-title">Blitsen Tasks</span>
-          <span class="window-context">Scale workspace</span>
+          <span class="window-context">Personal workspace</span>
         </div>
         <div class="window-controls" aria-label="Window controls">
           <button id="window-min" class="window-control" type="button" aria-label="Minimize">
@@ -29,14 +31,13 @@
       <section class="workspace">
         <header class="workspace-head">
           <div>
-            <span class="eyebrow">OPERATIONS / TASKS</span>
-            <h1>Work queue</h1>
-            <p class="subtitle">A stable view over a growing dataset.</p>
+            <span class="eyebrow">MY TASKS</span>
+            <h1>Task list</h1>
+            <p class="subtitle">Plan your work and keep moving.</p>
           </div>
-          <div class="scale-badge">
-            <span class="live-dot"></span>
-            <span id="dataset-size">10,000</span>
-            <span>records</span>
+          <div id="save-badge" class="scale-badge">
+            <span class="live-dot" aria-hidden="true"></span>
+            <span id="save-state">Saved locally</span>
           </div>
         </header>
 
@@ -58,56 +59,76 @@
           </div>
         </section>
 
-        <section class="compose" aria-label="Add a task">
-          <span class="compose-mark">+</span>
+        <form id="compose" class="compose" aria-label="Add a task">
+          <span class="compose-mark" aria-hidden="true">+</span>
           <span class="field">
-            <span id="entry-ghost" class="ghost">Add a task to the front of the queue…</span>
-            <input id="entry" type="text" autocomplete="off" aria-label="New task">
+            <span id="entry-ghost" class="ghost">What needs to be done?</span>
+            <label class="sr-only" for="entry">Task description</label>
+            <input id="entry" type="text" autocomplete="off" maxlength="160"
+              aria-describedby="entry-help">
+            <span id="entry-help" class="sr-only">Press Enter or choose Add task to create it.</span>
           </span>
-          <button id="add" class="primary-button" type="button">Add task</button>
-        </section>
+          <div class="priority-field">
+            <span>Priority</span>
+            <button id="entry-priority" class="priority-trigger normal" type="button"
+              data-priority="normal" aria-haspopup="menu" aria-expanded="false"
+              aria-controls="priority-menu">Normal</button>
+          </div>
+          <button id="add" class="primary-button" type="submit" disabled>Add task</button>
+        </form>
 
-        <section class="list-panel">
+        <section class="list-panel" aria-labelledby="view-label">
           <div class="toolbar">
             <nav id="filters" class="filters" aria-label="Task filters">
-              <span id="thumb" class="thumb"></span>
-              <button type="button" data-filter="all" class="on">All</button>
-              <button type="button" data-filter="active">Active</button>
-              <button type="button" data-filter="done">Done</button>
+              <span id="thumb" class="thumb" aria-hidden="true"></span>
+              <button type="button" data-filter="all" class="on" aria-pressed="true">All</button>
+              <button type="button" data-filter="active" aria-pressed="false">Active</button>
+              <button type="button" data-filter="done" aria-pressed="false">Done</button>
             </nav>
-            <label class="search">
-              <span class="search-icon"></span>
-              <span id="search-ghost" class="search-ghost">Search 10,000 tasks</span>
-              <input id="search" type="text" autocomplete="off" aria-label="Search tasks">
-              <button id="clear-search" class="clear-search" type="button" aria-label="Clear search">×</button>
-            </label>
+            <div class="search">
+              <span class="search-icon" aria-hidden="true"></span>
+              <span id="search-ghost" class="search-ghost">Search tasks</span>
+              <label class="sr-only" for="search">Search tasks</label>
+              <input id="search" type="text" autocomplete="off">
+              <button id="clear-search" class="clear-search" type="button"
+                aria-label="Clear search" title="Clear search">×</button>
+            </div>
           </div>
 
           <div class="list-heading">
-            <span id="view-label">All tasks</span>
-            <span id="view-count">10,000 results</span>
+            <h2 id="view-label">All tasks</h2>
+            <span id="view-count" aria-live="polite">1 result</span>
           </div>
 
-          <div id="viewport" class="viewport" tabindex="0">
-            <ul id="list" class="list">
-              <li id="pad-top" class="spacer"></li>
-              <li id="pad-bottom" class="spacer"></li>
+          <div id="viewport" class="viewport" tabindex="0" aria-label="Task list">
+            <ul id="list" class="list" aria-label="Tasks">
+              <li id="pad-top" class="spacer" role="presentation" aria-hidden="true"></li>
+              <li id="pad-bottom" class="spacer" role="presentation" aria-hidden="true"></li>
             </ul>
-            <div id="empty" class="empty">
-              <span class="empty-mark">✓</span>
+            <div id="empty" class="empty" role="status" aria-live="polite">
+              <span class="empty-mark" aria-hidden="true">✓</span>
               <strong id="empty-title">No tasks found</strong>
               <span id="empty-text">Try another filter or search.</span>
             </div>
           </div>
 
           <footer class="statusbar">
-            <span><strong id="mounted-count">0</strong> rows mounted</span>
-            <span class="status-separator"></span>
-            <span>Virtualized for constant DOM size</span>
+            <span><strong id="task-count">1</strong> <span id="task-label">task total</span></span>
             <button id="clear-completed" type="button">Clear completed</button>
           </footer>
         </section>
       </section>
+
+      <div id="toast" class="toast">
+        <span id="toast-message" role="status" aria-live="polite" aria-atomic="true"></span>
+        <button id="toast-action" type="button"></button>
+      </div>
+
+      <div id="priority-menu" class="priority-menu" role="menu" aria-label="Choose priority">
+        <button type="button" role="menuitemradio" data-priority="normal">Normal</button>
+        <button type="button" role="menuitemradio" data-priority="medium">Medium</button>
+        <button type="button" role="menuitemradio" data-priority="high">High</button>
+      </div>
     </main>
 
     <script type="module" src="./app.js"></script>

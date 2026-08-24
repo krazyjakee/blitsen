@@ -243,6 +243,8 @@ pub enum LoopTurn {
 pub trait JsEngine {
     /// Opaque, engine-owned JavaScript value handle.
     type Value: Clone;
+    /// Strong reference to a value retained across separate host calls.
+    type StrongRef;
     /// Opaque weak reference to a JavaScript value.
     type WeakRef;
     /// Opaque registered native-class handle.
@@ -300,6 +302,11 @@ pub trait JsEngine {
     ) -> Result<(), JsError>;
     /// Installs a value on the JavaScript global object.
     fn set_global(&mut self, name: &str, value: &Self::Value) -> Result<(), JsError>;
+
+    /// Keeps a value alive and addressable after the current host call returns.
+    fn retain(&mut self, value: &Self::Value) -> Result<Self::StrongRef, JsError>;
+    /// Resolves a retained value into a handle valid for the current host call.
+    fn retained_value(&mut self, reference: &Self::StrongRef) -> Result<Self::Value, JsError>;
 
     /// Creates a JavaScript function backed by a Rust callback.
     fn define_function(

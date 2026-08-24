@@ -8,7 +8,7 @@ stage and exits non-zero instead of continuing with a partial artifact.
 Pass a directory containing `index.html`:
 
 ```sh
-npx blitsen dist
+blitsen dist
 ```
 
 Or add a `blitsen` object with an `output` directory to `package.json` and run without a directory.
@@ -22,7 +22,7 @@ than the project root:
 ```sh
 npm run build
 ls dist/index.html
-npx blitsen dist
+blitsen dist
 ```
 
 ## Source files or bare imports are refused
@@ -32,13 +32,13 @@ instead of browser-ready output. Build first:
 
 ```sh
 npm run build
-npx blitsen dist
+blitsen dist
 ```
 
 For development source, point Blitsen at the development server rather than its source directory:
 
 ```sh
-npx blitsen http://localhost:5173
+blitsen http://localhost:5173
 ```
 
 ## The development-server window is blank
@@ -76,7 +76,7 @@ does not implement the missing feature.
 The collector starts at `index.html`. If JavaScript computes a filename at runtime, include it:
 
 ```sh
-npx blitsen build dist --include 'locales/**'
+blitsen build dist --include 'locales/**'
 ```
 
 Use relative URLs and check the build's omitted-file report. For side-loaded assets, keep the
@@ -93,7 +93,7 @@ Remote scripts and modules are deliberately not fetched by the runtime.
 Choose a different `--out` path or use `--force` when replacing the existing artifact is intended:
 
 ```sh
-npx blitsen build dist --out MyApp --force
+blitsen build dist --out MyApp --force
 ```
 
 Packaging may create several related outputs, such as a Linux `.desktop` file, a Windows manifest
@@ -101,14 +101,17 @@ or a macOS `.app`; an existing companion can also trigger this refusal.
 
 ## The target runtime is missing or mismatched
 
-Reinstall the CLI with its optional dependencies enabled and keep the lockfile intact:
+Reinstall the global CLI with its optional dependencies enabled:
 
 ```sh
-npm install -D --save-exact blitsen
+npm install -g blitsen
 ```
 
 The CLI and native runtime must have exactly the same version. Do not independently update an
 `@blitsen/<target>` package.
+
+For an exact project-local installation, use `npm install -D --save-exact blitsen` instead and
+keep the lockfile intact.
 
 A cross-target build may need registry/network access to download the target runtime. If the cache
 is damaged, remove only the version/target entry reported by the error or set `BLITSEN_CACHE_DIR`
@@ -150,7 +153,7 @@ replaced; hybrid or unrecognized graphics keep full driver discovery.
 Support varies by version and target. Feature-detect the member and grade the intended target:
 
 ```sh
-npx blitsen doctor dist --target win32-x64
+blitsen doctor dist --target win32-x64
 ```
 
 Dialogs are Linux-only in this release; the single-instance lock uses a Unix socket or Windows
@@ -164,7 +167,7 @@ macOS grants notification permission to an application identity, and a developme
 interpreter executing a script, so it has none. Give the development host one of its own:
 
 ```sh
-npx blitsen --dev-bundle
+blitsen --dev-bundle
 ```
 
 That builds a signed development `.app` around the interpreter and re-runs the same command inside
@@ -206,8 +209,8 @@ available through the checkout or `BLITSEN_ANDROID_CRATE`.
 
 ## Get more diagnostic detail
 
-- Run `npx blitsen --version` and record the target OS/architecture.
-- Run `npx blitsen doctor dist --json` and keep the complete report.
+- Run `blitsen --version` and record the target OS/architecture.
+- Run `blitsen doctor dist --json` and keep the complete report.
 - Keep the full build output, including the numbered stage where it stopped.
 - Reduce the failure to a static `index.html` and its reachable assets if possible.
 - Search or open an issue in the [Blitsen repository](https://github.com/krazyjakee/blitsen/issues)

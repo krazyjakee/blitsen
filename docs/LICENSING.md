@@ -60,7 +60,7 @@ then provide it through `BLITSEN_NOTICES_PATH` when building:
 
 ```sh
 BLITSEN_NOTICES_PATH=/path/to/NOTICES.txt \
-  npx blitsen build dist --android --out MyApp.apk
+  blitsen build dist --android --out MyApp.apk
 ```
 
 Without an audited notice file, the build reports that the APK is not cleared for redistribution.

@@ -20,13 +20,22 @@ tool produces.
 
 ## Install Blitsen
 
-From your project directory:
+Install the CLI globally so the `blitsen` command is available from any project:
 
 ```sh
-npm install -D blitsen
+npm install -g blitsen
 ```
 
-The same commands work through another package manager's equivalent executor.
+If application code imports `blitsen/*` native modules or types, install the package in that
+project too. A local exact version is also useful when a team or CI must reproduce the same
+toolchain:
+
+```sh
+npm install -D --save-exact blitsen
+```
+
+Package scripts automatically prefer that local executable. The same installations work through
+another package manager's equivalents.
 
 ## Try a plain HTML application
 
@@ -57,13 +66,13 @@ Create a directory containing `index.html`:
 Open the directory in a native window:
 
 ```sh
-npx blitsen .
+blitsen .
 ```
 
 Use `--width`, `--height` and `--title` to change the development window:
 
 ```sh
-npx blitsen . --width 1024 --height 720 --title "Hello"
+blitsen . --width 1024 --height 720 --title "Hello"
 ```
 
 ## Add Blitsen to an existing project
@@ -89,14 +98,14 @@ output; `output` is that directory, relative to `package.json`.
 Run Blitsen without a directory to execute the configured build and open its output:
 
 ```sh
-npx blitsen
+blitsen
 ```
 
 Passing a directory bypasses the configured build command:
 
 ```sh
 npm run build
-npx blitsen dist
+blitsen dist
 ```
 
 See [Configuration](CONFIGURATION.md) for every supported key.
@@ -107,7 +116,7 @@ Start your usual server, then point Blitsen at it:
 
 ```sh
 npm run dev
-npx blitsen http://localhost:5173
+blitsen http://localhost:5173
 ```
 
 The server continues to transform source and provide hot reload. Blitsen supplies the window and
@@ -124,7 +133,7 @@ Run `doctor` against static output, not source code or a development-server URL:
 
 ```sh
 npm run build
-npx blitsen doctor dist
+blitsen doctor dist
 ```
 
 Errors identify output that cannot survive in the current runtime and block export. Warnings name
@@ -134,7 +143,7 @@ if your application calls the reported API without a fallback.
 For CI or other tools, request JSON:
 
 ```sh
-npx blitsen doctor dist --json
+blitsen doctor dist --json
 ```
 
 ## Export a desktop application
@@ -148,7 +157,7 @@ npm run native
 Or build a directory directly:
 
 ```sh
-npx blitsen build dist --name "My App" --out MyApp
+blitsen build dist --name "My App" --out MyApp
 ```
 
 Embedded assets are the default, so the result is one executable. Run that artifact on the target

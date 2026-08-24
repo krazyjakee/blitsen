@@ -69,8 +69,9 @@ const MOUSE_POINTER_ID: i64 = 1;
 ///
 /// Blitsen exposes wheel events in pixel mode (`deltaMode === 0`), so a platform
 /// line delta needs one stable conversion before it reaches both the event and
-/// its default scroll action. Pixel deltas are already in that established
-/// coordinate space and pass through unchanged.
+/// its default scroll action. winit reports the direction the content should
+/// move, while the DOM reports the direction the scroll offset should move, so
+/// both forms also change sign at this boundary.
 const WHEEL_CSS_PIXELS_PER_LINE: f64 = 40.0;
 
 /// DOM `pointerId`s, allocated per contact and retired when the contact ends.
@@ -348,10 +349,10 @@ pub(crate) enum PointerAction {
 fn wheel_delta_in_css_pixels(delta: &MouseScrollDelta) -> (f64, f64) {
     match delta {
         MouseScrollDelta::LineDelta(x, y) => (
-            f64::from(*x) * WHEEL_CSS_PIXELS_PER_LINE,
-            f64::from(*y) * WHEEL_CSS_PIXELS_PER_LINE,
+            -f64::from(*x) * WHEEL_CSS_PIXELS_PER_LINE,
+            -f64::from(*y) * WHEEL_CSS_PIXELS_PER_LINE,
         ),
-        MouseScrollDelta::PixelDelta(position) => (position.x, position.y),
+        MouseScrollDelta::PixelDelta(position) => (-position.x, -position.y),
     }
 }
 
@@ -506,20 +507,20 @@ mod tests {
     }
 
     #[test]
-    fn wheel_lines_use_the_named_pixel_policy_and_preserve_axis_signs() {
+    fn wheel_lines_use_the_named_pixel_policy_and_dom_axis_signs() {
         assert_eq!(
             classified_wheel(MouseScrollDelta::LineDelta(-2.0, 1.5)),
-            (-80.0, 60.0)
+            (80.0, -60.0)
         );
     }
 
     #[test]
-    fn wheel_pixels_pass_through_with_axis_signs_unchanged() {
+    fn wheel_pixels_change_from_content_motion_to_dom_scroll_direction() {
         assert_eq!(
             classified_wheel(MouseScrollDelta::PixelDelta(PhysicalPosition::new(
                 -3.25, 7.5,
             ))),
-            (-3.25, 7.5)
+            (3.25, -7.5)
         );
     }
 

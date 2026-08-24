@@ -203,7 +203,7 @@ pub(crate) fn install_with_hooks<E: JsEngine + 'static>(
     engine: &mut E,
     runtime: DomRuntime,
     options: InstallOptions,
-) -> Result<InstalledDom<E::Value>, JsError> {
+) -> Result<InstalledDom<E::StrongRef>, JsError> {
     let InstallOptions {
         width,
         height,
@@ -329,7 +329,10 @@ pub(crate) fn install_with_hooks<E: JsEngine + 'static>(
     let test_harness = engine.boolean(mode.is_test_harness());
     engine.set_global("__blitsenTestHarness", &test_harness)?;
     let hooks = engine.evaluate_script(BOOTSTRAP, "blitsen:dom-bootstrap")?;
-    let host_hooks = HostHooks::resolve(|name| engine.get_property(&hooks, name))?;
+    let host_hooks = HostHooks::resolve(|name| {
+        let hook = engine.get_property(&hooks, name)?;
+        engine.retain(&hook)
+    })?;
 
     let document = engine.evaluate_script("globalThis.document", "blitsen:document-value")?;
     let window_state = Rc::new(RefCell::new(WindowState::new(
@@ -970,7 +973,7 @@ mod tests {
 
     use super::*;
 
-    type Hooks = HostHooks<<QuickJs as JsEngine>::Value>;
+    type Hooks = HostHooks<<QuickJs as JsEngine>::StrongRef>;
 
     fn realm() -> (
         QuickJs,

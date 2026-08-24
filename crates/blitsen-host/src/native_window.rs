@@ -14,10 +14,10 @@ use blitz::dom::{DocGuard, DocGuardMut, Document as BlitzDocument};
 use blitz::shell::BlitzApplication;
 use winit::application::ApplicationHandler;
 use winit::cursor::CursorIcon;
-use winit::event::{DeviceEvent, StartCause, WindowEvent};
+use winit::event::{ButtonSource, DeviceEvent, ElementState, MouseButton, StartCause, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::ModifiersState;
-use winit::window::WindowId;
+use winit::window::{ResizeDirection, Window, WindowId};
 
 #[cfg(target_os = "macos")]
 use winit::application::macos::ApplicationHandlerExtMacOS;
@@ -37,6 +37,73 @@ pub(crate) mod tray;
 use input::{ImeTarget, PendingKeyboardInput};
 pub(crate) use input::{InputBootstrap, ModifierFlags, css_pointer_coordinates, take_queued_for};
 pub use session::WindowSession;
+
+/// Width of the resize border supplied for an undecorated window, in logical
+/// pixels. Native decorations normally own this hit area; without them the
+/// application surface reaches the window edge and the runtime must provide it.
+const BORDERLESS_RESIZE_INSET: f64 = 6.0;
+
+fn resize_direction_at(
+    physical_x: f64,
+    physical_y: f64,
+    width: u32,
+    height: u32,
+    scale: f64,
+) -> Option<ResizeDirection> {
+    let inset = (BORDERLESS_RESIZE_INSET * scale).max(1.0);
+    let horizontal = if physical_x < inset {
+        Some(ResizeDirection::West)
+    } else if physical_x >= f64::from(width) - inset {
+        Some(ResizeDirection::East)
+    } else {
+        None
+    };
+    let vertical = if physical_y < inset {
+        Some(ResizeDirection::North)
+    } else if physical_y >= f64::from(height) - inset {
+        Some(ResizeDirection::South)
+    } else {
+        None
+    };
+    match (horizontal, vertical) {
+        (Some(ResizeDirection::West), Some(ResizeDirection::North)) => {
+            Some(ResizeDirection::NorthWest)
+        }
+        (Some(ResizeDirection::East), Some(ResizeDirection::North)) => {
+            Some(ResizeDirection::NorthEast)
+        }
+        (Some(ResizeDirection::West), Some(ResizeDirection::South)) => {
+            Some(ResizeDirection::SouthWest)
+        }
+        (Some(ResizeDirection::East), Some(ResizeDirection::South)) => {
+            Some(ResizeDirection::SouthEast)
+        }
+        (Some(direction), None) | (None, Some(direction)) => Some(direction),
+        _ => None,
+    }
+}
+
+fn borderless_resize_direction(
+    window: &dyn Window,
+    physical_x: f64,
+    physical_y: f64,
+) -> Option<ResizeDirection> {
+    if window.is_decorated()
+        || !window.is_resizable()
+        || window.is_maximized()
+        || window.fullscreen().is_some()
+    {
+        return None;
+    }
+    let size = window.surface_size();
+    resize_direction_at(
+        physical_x,
+        physical_y,
+        size.width,
+        size.height,
+        window.scale_factor(),
+    )
+}
 
 /// The window renderer safe for this target.
 ///
@@ -120,9 +187,9 @@ pub struct WindowApplication<Rend: anyrender::WindowRenderer, E: JsEngine + Clon
     pub(crate) error: Rc<RefCell<Option<JsError>>>,
     pub(crate) started_at: Instant,
     pub(crate) document: Rc<RefCell<BlitzDom>>,
-    /// Host dispatch callbacks are engine values retained by Rust, never names
-    /// application JavaScript can invoke or replace.
-    pub(crate) host_hooks: crate::dom_bridge::HostHooks<E::Value>,
+    /// Host dispatch callbacks are strong engine references retained by Rust,
+    /// never names application JavaScript can invoke or replace.
+    pub(crate) host_hooks: crate::dom_bridge::HostHooks<E::StrongRef>,
     pub(crate) pending_pointer_input: Vec<(WindowId, PendingPointerInput)>,
     /// Raw device deltas waiting for the frame that delivers them to the
     /// pointer-lock element. Device events have no DOM target and must not be
@@ -276,7 +343,8 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Ren
         }
         let result = (|| {
             let mut engine = self.engine.clone();
-            let pending = engine.call(&self.host_hooks.animation_frames_pending, None, &[])?;
+            let hook = engine.retained_value(&self.host_hooks.animation_frames_pending)?;
+            let pending = engine.call(&hook, None, &[])?;
             engine.to_boolean(&pending)
         })();
         match result {
@@ -296,7 +364,8 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Ren
         let result = (|| {
             let mut engine = self.engine.clone();
             let timestamp = engine.number(timestamp);
-            engine.call(&self.host_hooks.animation_frame_tick, None, &[timestamp])?;
+            let hook = engine.retained_value(&self.host_hooks.animation_frame_tick)?;
+            engine.call(&hook, None, &[timestamp])?;
             engine.drain_microtasks()?;
             Ok(())
         })();
@@ -310,12 +379,11 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Ren
             return;
         }
         *self.state.borrow_mut() = WindowState::new(width, height, device_pixel_ratio);
-        let result = {
+        let result = (|| {
             let mut engine = self.engine.clone();
-            self.state
-                .borrow()
-                .sync(&mut engine, &self.host_hooks.window)
-        };
+            let window = engine.retained_value(&self.host_hooks.window)?;
+            self.state.borrow().sync(&mut engine, &window)
+        })();
         if let Err(error) = result {
             self.park_error(error);
         }
@@ -340,14 +408,30 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Ren
         let Some(&(physical_x, physical_y)) = self.pointer_positions.get(&window_id) else {
             return;
         };
-        let Some(scale) = self
-            .inner
-            .windows
-            .get(&window_id)
-            .map(|view| f64::from(view.doc.inner().viewport().hidpi_scale))
-        else {
+        let Some((scale, resize_direction)) = self.inner.windows.get(&window_id).map(|view| {
+            (
+                f64::from(view.doc.inner().viewport().hidpi_scale),
+                borderless_resize_direction(view.window.as_ref(), physical_x, physical_y),
+            )
+        }) else {
             return;
         };
+        // The runtime owns the otherwise-missing frame of an undecorated
+        // window. Its resize cursor therefore takes precedence over CSS in the
+        // narrow edge hit area, just as an operating-system decoration does.
+        if let Some(direction) = resize_direction {
+            self.cursor_resolved_from.remove(&window_id);
+            let cursor_icon = CursorIcon::from(direction);
+            let icon = Some(cursor_icon);
+            if self.applied_cursor.get(&window_id) != Some(&icon) {
+                self.applied_cursor.insert(window_id, icon);
+                if let Some(view) = self.inner.windows.get(&window_id) {
+                    view.window.set_cursor(cursor_icon.into());
+                    view.window.set_cursor_visible(true);
+                }
+            }
+            return;
+        }
         let client_x = physical_x / scale;
         let client_y = physical_y / scale;
         let revision = match self.document.borrow_mut().flush_layout() {
@@ -391,6 +475,38 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Ren
         }
     }
 
+    /// Starts the platform resize loop for a press in the implicit frame of an
+    /// undecorated window. The press belongs to that frame, not to the DOM.
+    fn start_borderless_resize(&self, window_id: WindowId, event: &WindowEvent) -> bool {
+        if crate::dom_bridge::window::web_pointer_locked() {
+            return false;
+        }
+        let WindowEvent::PointerButton {
+            position,
+            state: ElementState::Pressed,
+            button: ButtonSource::Mouse(MouseButton::Left),
+            ..
+        } = event
+        else {
+            return false;
+        };
+        let Some(view) = self.inner.windows.get(&window_id) else {
+            return false;
+        };
+        let Some(direction) =
+            borderless_resize_direction(view.window.as_ref(), position.x, position.y)
+        else {
+            return false;
+        };
+        match view.window.drag_resize_window(direction) {
+            Ok(()) => true,
+            Err(error) => {
+                eprintln!("blitsen: could not start borderless window resize: {error}");
+                false
+            }
+        }
+    }
+
     pub(crate) fn sync_native_window(&self, window_id: WindowId) {
         let Some((width, height, scale)) = self.inner.windows.get(&window_id).map(|view| {
             let document = view.doc.inner();
@@ -411,7 +527,8 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Ren
         }
         let mut engine = self.engine.clone();
         let event_type = engine.string(event_type)?;
-        let result = engine.call(&self.host_hooks.lifecycle, None, &[event_type])?;
+        let hook = engine.retained_value(&self.host_hooks.lifecycle)?;
+        let result = engine.call(&hook, None, &[event_type])?;
         engine.to_boolean(&result)
     }
 
@@ -679,6 +796,9 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> ApplicationHandler
         if matches!(&event, WindowEvent::Focused(false)) {
             self.release_web_window_modes(window_id, "focus-loss");
         }
+        if self.start_borderless_resize(window_id, &event) {
+            return;
+        }
         let suppress_absolute_pointer = crate::dom_bridge::window::web_pointer_locked()
             && matches!(
                 &event,
@@ -848,5 +968,34 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> ApplicationHandlerExt
     ) {
         self.inner
             .standard_key_binding(event_loop, window_id, action);
+    }
+}
+
+#[cfg(test)]
+mod borderless_resize_tests {
+    use super::{ResizeDirection, resize_direction_at};
+
+    #[test]
+    fn resolves_each_edge_and_corner() {
+        let direction = |x, y| resize_direction_at(x, y, 200, 100, 1.0);
+
+        assert_eq!(direction(100.0, 50.0), None);
+        assert_eq!(direction(3.0, 50.0), Some(ResizeDirection::West));
+        assert_eq!(direction(197.0, 50.0), Some(ResizeDirection::East));
+        assert_eq!(direction(100.0, 3.0), Some(ResizeDirection::North));
+        assert_eq!(direction(100.0, 97.0), Some(ResizeDirection::South));
+        assert_eq!(direction(3.0, 3.0), Some(ResizeDirection::NorthWest));
+        assert_eq!(direction(197.0, 3.0), Some(ResizeDirection::NorthEast));
+        assert_eq!(direction(3.0, 97.0), Some(ResizeDirection::SouthWest));
+        assert_eq!(direction(197.0, 97.0), Some(ResizeDirection::SouthEast));
+    }
+
+    #[test]
+    fn resize_inset_is_scaled_to_physical_pixels() {
+        assert_eq!(
+            resize_direction_at(10.0, 100.0, 400, 200, 2.0),
+            Some(ResizeDirection::West)
+        );
+        assert_eq!(resize_direction_at(12.0, 100.0, 400, 200, 2.0), None);
     }
 }

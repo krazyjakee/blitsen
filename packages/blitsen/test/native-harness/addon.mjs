@@ -15,6 +15,8 @@ export const testDir = join(import.meta.dir, "..");
 export const native = createRequire(import.meta.url)(addonPath);
 
 assert.equal(native.nodeApiSmoke(), true, "Bun implements the load-bearing Node-API subset");
+assert.equal(native.retainedNodeApiSmoke(), true,
+  "Node-API references survive the addon call that created them");
 
 // Issue #136: whether the table drains is a property of the runner, not of the
 // platform — `linux-x64` and `darwin-arm64` finish, `win32-x64` and

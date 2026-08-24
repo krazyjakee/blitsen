@@ -121,22 +121,22 @@ file. Its local `node_modules/.bin` is placed on `PATH`, like a package-manager 
 Running either command with no directory applies the configuration:
 
 ```sh
-npx blitsen
-npx blitsen build
+blitsen
+blitsen build
 ```
 
 A directory argument means "use this output as it is" and skips both configuration discovery and
 the configured build command:
 
 ```sh
-npx blitsen dist
-npx blitsen build dist
+blitsen dist
+blitsen build dist
 ```
 
 `doctor` is always explicit because silently checking the wrong directory would be dangerous:
 
 ```sh
-npx blitsen doctor dist
+blitsen doctor dist
 ```
 
 ## Build commands
@@ -177,7 +177,9 @@ For a one-off build, repeat `--addon` instead.
 
 Blitsen validates with its own validator; the equivalent JSON Schema is published as
 `blitsen/config.schema.json` for editors and generic JSON Schema validators. JavaScript tooling
-can validate the same object with `defineConfig`:
+can validate the same object with `defineConfig`. These package imports require a project-local
+`blitsen` dev dependency; the global CLI alone is sufficient when configuration stays in
+`package.json`:
 
 ```js
 import { defineConfig } from "blitsen";

@@ -9,24 +9,31 @@ system WebView.
 ## Install
 
 ```sh
-npm install -D blitsen
+npm install -g blitsen
 ```
 
 The package installs the CLI and the prebuilt runtime for the current Linux, macOS or Windows
 platform. Installation does not compile Rust.
+
+Projects that import `blitsen/*` native modules or types should also install an exact local dev
+dependency. This is also the reproducible option for CI:
+
+```sh
+npm install -D --save-exact blitsen
+```
 
 ## Run an application
 
 Open a directory containing built `index.html`:
 
 ```sh
-npx blitsen dist
+blitsen dist
 ```
 
 Or use a running development server and keep its transforms and hot reload:
 
 ```sh
-npx blitsen http://localhost:5173
+blitsen http://localhost:5173
 ```
 
 Blitsen accepts built static output. It does not transpile TypeScript/JSX/framework source or
@@ -52,8 +59,8 @@ Put the build command and output directory in `package.json`:
 Then run without a directory:
 
 ```sh
-npx blitsen
-npx blitsen doctor dist
+blitsen
+blitsen doctor dist
 npm run native
 ```
 
@@ -86,7 +93,7 @@ package.
 - [Web API support](https://blitsen.dev/docs/web-apis/)
 - [Troubleshooting](https://blitsen.dev/docs/troubleshooting/)
 
-Run `npx blitsen --help` for every option. The source repository and issue tracker are at
+Run `blitsen --help` for every option. The source repository and issue tracker are at
 [github.com/krazyjakee/blitsen](https://github.com/krazyjakee/blitsen).
 
 Blitsen is independently built on [Blitz](https://github.com/DioxusLabs/blitz). It is not an

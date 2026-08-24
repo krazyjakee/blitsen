@@ -36,8 +36,8 @@ resize, and on pages that repaint frequently.
 Run the check against build output, not source:
 
 ```sh
-npx blitsen doctor dist
-npx blitsen doctor dist --json
+blitsen doctor dist
+blitsen doctor dist --json
 ```
 
 `doctor` exits non-zero for profile errors. A build repeats every diagnostic and **fails on any
@@ -1289,7 +1289,7 @@ Whatever is left over is listed at the end of the build and dropped, because an 
 is pure export size. Keep some of it with a repeatable glob (`*` stops at `/`, `**` does not):
 
 ```sh
-npx blitsen build dist --include 'assets/*.wasm' --include 'locales/**'
+blitsen build dist --include 'assets/*.wasm' --include 'locales/**'
 ```
 
 That is also the escape hatch for a file only a runtime-computed URL reaches.

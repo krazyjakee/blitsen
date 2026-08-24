@@ -900,7 +900,7 @@ Config in `package.json` lets Blitsen invoke the existing build first, so the us
 { "blitsen": { "build": "vite build", "output": "dist", "name": "My App" } }
 ```
 
-`npx blitsen build` with no directory shells out to `build`, then ingests `output`. It never
+`blitsen build` with no directory shells out to `build`, then ingests `output`. It never
 inspects or configures the build tool itself — that coupling is exactly what the design avoids
 (structural constraint 6). The command is handed to the platform shell exactly as written, run
 from the directory holding that `package.json` with `node_modules/.bin` on `PATH`, and a non-zero
@@ -922,8 +922,8 @@ wrapping entirely, and every CLI flag overrides the configured value.
 Both skip ③–⑤ entirely.
 
 ```bash
-npx blitsen .                        # ① directory mode: watch files, reload
-npx blitsen http://localhost:5173    # ② proxy mode: load from a running dev server
+blitsen .                            # ① directory mode: watch files, reload
+blitsen http://localhost:5173        # ② proxy mode: load from a running dev server
 ```
 
 **Proxy mode is the strategically important one.** The runtime fetches the document and its

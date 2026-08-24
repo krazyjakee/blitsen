@@ -185,7 +185,7 @@ pub(crate) fn execute_window_scripts_from<E: JsEngine + 'static>(
     runtime: DomRuntime,
     scripts: Vec<DocumentScript>,
     options: WindowScriptOptions<'_>,
-) -> Result<dom_bridge::InstalledDom<E::Value>, JsError> {
+) -> Result<dom_bridge::InstalledDom<E::StrongRef>, JsError> {
     let WindowScriptOptions {
         entrypoint,
         width,

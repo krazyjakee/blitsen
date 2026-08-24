@@ -10,13 +10,14 @@ blitsen build [directory] [options]
 blitsen doctor <directory> [--target <triple>] [--json]
 ```
 
-Use `npx blitsen`, a package-manager equivalent, or a script in `package.json`.
+After a global install, use `blitsen` directly. A project-local install can instead be invoked by
+a script in `package.json` or a package-manager executor such as `npx`.
 
 ## Run
 
 ```sh
-npx blitsen dist
-npx blitsen http://localhost:5173
+blitsen dist
+blitsen http://localhost:5173
 ```
 
 A directory must contain `index.html`. A URL must use HTTP or HTTPS and points the runtime at an
@@ -39,7 +40,7 @@ Use a development bundle when exercising a macOS capability whose identity belon
 application bundle, notably Notification Center:
 
 ```sh
-npx blitsen dist --dev-bundle --bundle-id com.example.myapp
+blitsen dist --dev-bundle --bundle-id com.example.myapp
 ```
 
 `--dev-bundle` is rejected by `build`, `doctor`, and non-macOS hosts. In run mode, `--bundle-id`
@@ -49,9 +50,9 @@ for those options to describe.
 ## Doctor
 
 ```sh
-npx blitsen doctor dist
-npx blitsen doctor dist --target win32-x64
-npx blitsen doctor dist --json
+blitsen doctor dist
+blitsen doctor dist --target win32-x64
+blitsen doctor dist --json
 ```
 
 Doctor scans built static output against the compatibility profile. It exits non-zero for errors;
@@ -64,7 +65,7 @@ Desktop targets are `darwin-arm64`, `darwin-x64`, `linux-arm64`, `linux-x64`, `w
 ## Build
 
 ```sh
-npx blitsen build dist --name "My App" --out MyApp
+blitsen build dist --name "My App" --out MyApp
 ```
 
 Build runs the same compatibility scan, collects reachable assets, links the runtime and packages

@@ -527,7 +527,7 @@ pub(crate) fn load_window_document<E: JsEngine + Clone + 'static>(
     files: &AppFiles,
     net_provider: Arc<dyn NetProvider>,
     options: LoadOptions,
-) -> Result<LoadedWindowDocument<E::Value>, JsError> {
+) -> Result<LoadedWindowDocument<E::StrongRef>, JsError> {
     let LoadOptions {
         width,
         height,

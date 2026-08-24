@@ -8,7 +8,7 @@ browser. Build-time checks and runtime feature detection are both part of using 
 Run doctor against built output:
 
 ```sh
-npx blitsen doctor dist
+blitsen doctor dist
 ```
 
 Errors block export because the scanner found either a server-root `fetch` whose resource is not
@@ -19,8 +19,8 @@ result in Blitsen.
 For a machine-readable report or a different target:
 
 ```sh
-npx blitsen doctor dist --json
-npx blitsen doctor dist --target win32-x64
+blitsen doctor dist --json
+blitsen doctor dist --target win32-x64
 ```
 
 ## Supported areas

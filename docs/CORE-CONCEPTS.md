@@ -19,7 +19,7 @@ dist/
 Point Blitsen at the output directory, not the repository root:
 
 ```sh
-npx blitsen dist
+blitsen dist
 ```
 
 Blitsen does not transpile `.ts`, `.tsx`, `.jsx`, `.vue` or `.svelte` files. It also does not
@@ -84,7 +84,7 @@ Reachable files are included; unreferenced files are reported and omitted.
 Keep a runtime-loaded file with a repeatable include glob:
 
 ```sh
-npx blitsen build dist --include 'locales/**' --include 'models/*.bin'
+blitsen build dist --include 'locales/**' --include 'models/*.bin'
 ```
 
 Use `*` within one path segment and `**` across directories. Prefer relative URLs in HTML, CSS and

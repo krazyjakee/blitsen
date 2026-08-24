@@ -23,7 +23,7 @@ export links into, and the third-party notices for that target's dependency grap
 six is installed on any machine.
 
 ```sh
-npm i -D blitsen
+npm install -g blitsen
 ```
 
 `os` and `cpu` on each runtime package are what make your package manager download only the one
@@ -38,8 +38,8 @@ required.
 
 The GitHub release also keeps the seven package tarballs (`.tgz`) as durable release assets,
 alongside `SHA256SUMS` for independent integrity checks. They are a recoverable snapshot of what
-was published, not a second installation channel: `npm install blitsen` remains the normal way to
-install and resolve the runtime for the current machine.
+was published, not a second installation channel: `npm install -g blitsen` remains the normal way
+to install and resolve the runtime for the current machine.
 
 ## Every platform is unsigned
 

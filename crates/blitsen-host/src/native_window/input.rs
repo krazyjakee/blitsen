@@ -255,7 +255,7 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Ren
             serde_json::to_string(arguments).map_err(|error| JsError::new(error.to_string()))?;
         let mut engine = self.engine.clone();
         let arguments = engine.string(&arguments)?;
-        let hook = bootstrap.hook(&self.host_hooks).clone();
+        let hook = engine.retained_value(bootstrap.hook(&self.host_hooks))?;
         let result = engine.call(&hook, None, &[arguments])?;
         engine.to_boolean(&result)
     }
@@ -396,7 +396,7 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Ren
                         let reason = engine.string(&reason)?;
                         let pointer = engine.boolean(*pointer);
                         let fullscreen = engine.boolean(*fullscreen);
-                        let hook = self.host_hooks.release_window_modes.clone();
+                        let hook = engine.retained_value(&self.host_hooks.release_window_modes)?;
                         let value = engine.call(&hook, None, &[pointer, fullscreen, reason])?;
                         engine.to_boolean(&value)
                     })
@@ -420,7 +420,13 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Ren
         };
 
         if current.map(|target| target.node) != next.map(|(node, _)| node) {
-            if current.is_some() {
+            // Blitz updates IME state synchronously when its focused node
+            // changes. Reconcile against the window's real state rather than
+            // our last frame: otherwise a newly focused input has already
+            // enabled IME and the Enable below fails with AlreadyEnabled.
+            // Replacing it also upgrades Blitz's capability-less request with
+            // the cursor-area capability Blitsen needs for later updates.
+            if view.window.ime_capabilities().is_some() {
                 view.window
                     .request_ime_update(ImeRequest::Disable)
                     .map_err(|error| JsError::new(format!("could not disable IME: {error}")))?;
@@ -465,7 +471,7 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Ren
                 let mut engine = self.engine.clone();
                 let x = engine.number(x);
                 let y = engine.number(y);
-                let hook = self.host_hooks.locked_pointer_motion.clone();
+                let hook = engine.retained_value(&self.host_hooks.locked_pointer_motion)?;
                 let value = engine.call(&hook, None, &[x, y])?;
                 engine.to_boolean(&value)
             })();

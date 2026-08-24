@@ -536,6 +536,7 @@ any other unresolved package specifier.
 
 ## TypeScript
 
-Installing `blitsen` provides native-module types and Blitsen's supported DOM additions. The
-runtime surface is narrower than the browser's `lib.dom.d.ts`, so TypeScript cannot prove overall
+Install `blitsen` as a project dev dependency when using native-module types or Blitsen's supported
+DOM additions; a global CLI install is not visible to the project's module resolver. The runtime
+surface is narrower than the browser's `lib.dom.d.ts`, so TypeScript cannot prove overall
 compatibility. Continue to run `blitsen doctor` against built output.

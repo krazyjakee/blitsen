@@ -109,7 +109,7 @@ browser engine.
 2. **Target existing projects, with compatibility stated up front.** Blitsen is an export target
    that consumes static web output, not a framework you start a project in. The developer keeps
    their bundler and framework. For applications inside the published compatibility profile,
-   adoption is one dev dependency and one script line; `blitsen doctor` must name unsupported
+   adoption is one global CLI and one script line; `blitsen doctor` must name unsupported
    features before export.
 3. **Web-standard API before bespoke API.** If the web already names a thing, use that name and
    that shape. Invent new surface only where the web has no answer (the OS).
@@ -126,12 +126,13 @@ browser engine.
 
 ### Blitsen is an export target, not a framework to start projects in
 
-The distribution model is a **dev dependency that acts as a native export toolchain**, while the
+The distribution model is a **global CLI that acts as a native export toolchain**, while the
 application stays an ordinary web project. Nothing about the project's shape, bundler or
-framework is prescribed.
+framework is prescribed. A project dependency is needed only when application code imports
+Blitsen's native modules or types, or when a team deliberately pins the toolchain for CI.
 
 ```bash
-npm install -D blitsen
+npm install -g blitsen
 ```
 
 An existing project is unchanged:
@@ -194,7 +195,7 @@ Configuration can absorb the existing build command so there is one step:
 ```
 
 ```bash
-npx blitsen build
+blitsen build
 ```
 
 ```
@@ -219,8 +220,8 @@ npx blitsen build
 No export needed while developing:
 
 ```bash
-npx blitsen .                          # open index.html in a native window
-npx blitsen http://localhost:5173      # point at a running Vite dev server
+blitsen .                              # open index.html in a native window
+blitsen http://localhost:5173          # point at a running Vite dev server
 ```
 
 The second form matters: developers keep their existing dev server, HMR and tooling exactly as
@@ -446,8 +447,8 @@ workspace and a clean `cargo ndk check` without scaffolding.
 | P6 | Render consistency | Byte-identical layout across platforms for the test corpus | The core advantage over WebView-based tools. Font inputs are part of that corpus: byte identity requires its pinned/author fonts. Layout that resolves through system fonts is host-dependent and carries no cross-platform golden. |
 | P7 | npm compatibility | Pure-JS packages install and import unmodified | Native Node addons: best-effort. |
 | P8 | No runtime dependency on an installed browser or WebView | Absolute | |
-| P9 | Install | `npm i -D blitsen` fetches only the host platform's runtime | No Rust toolchain, no compile step, no postinstall build. |
-| P10 | Adoption cost | One dev dependency + one script line, zero source changes, for an app already building to static output **and inside the published compatibility profile** | `blitsen doctor` must identify unsupported web APIs and renderer features. |
+| P9 | Install | `npm install -g blitsen` fetches only the host platform's runtime | No Rust toolchain, no compile step, no postinstall build. |
+| P10 | Adoption cost | One global CLI + one script line, zero source changes, for an app already building to static output **and inside the published compatibility profile** | A local package remains optional unless the app imports `blitsen/*`; `blitsen doctor` must identify unsupported web APIs and renderer features. |
 
 ---
 
@@ -804,7 +805,7 @@ blocking the export.
 See the [M3b evidence](M3B.md) and [published v1 profile](COMPATIBILITY.md) for the deviations
 each application renders with.
 
-**M4 — Ships.** `npm i -D blitsen` resolves the correct runtime on all six platform targets,
+**M4 — Ships.** `npm install -g blitsen` resolves the correct runtime on all six platform targets,
 `blitsen build` produces distributable artifacts, and a non-trivial third-party app (an editor or
 dashboard) is built by someone who is not us.
 

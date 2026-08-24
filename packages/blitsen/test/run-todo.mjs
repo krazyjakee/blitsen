@@ -3,9 +3,9 @@ import { buildAddon, repository } from "./build-addon.mjs";
 
 const addon = await buildAddon({ purpose: "todo demo" });
 
-console.log("Todo scale demo: 10,000 tasks with a bounded virtual list, search and filters.");
-console.log("Resize, scroll quickly, and use the custom borderless window controls. The header,");
-console.log("toolbar and status bar should stay fixed while only the visible rows are mounted.");
+console.log("Todo example: a persistent task list with priorities, search and filters.");
+console.log("Tasks are saved locally between launches. Resize the app and use the custom");
+console.log("borderless window controls to exercise its responsive desktop layout.");
 const application = Bun.spawnSync({
   cmd: [
     process.execPath,
