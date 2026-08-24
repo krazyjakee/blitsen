@@ -27,12 +27,12 @@ edition = "2024"
 # Target-specific dependencies count towards this number and were checked, not
 # assumed: the highest of them is macOS's `mac-usernotifications` 0.3.1 at 1.90,
 # which is under the floor `sysinfo` already sets and so asks for nothing. That
-# is also why the `msrv` job in .github/workflows/ci.yml can enforce this from
-# Linux alone — `cargo metadata` resolves every target's dependencies whatever
-# the host is, and the crate that decides the number is on all of them anyway.
+# remains enforced from Linux because the `msrv` job parses locked metadata and
+# rejects every resolved package whose declared minimum exceeds this one; Cargo
+# reports dependencies behind other platforms' target predicates in metadata.
 #
-# That job compiles the workspace with exactly this compiler, so the next
-# dependency that raises the real floor fails CI instead of a user's build.
+# The job also compiles the active Linux graph with exactly this compiler. The
+# normal matrix compiles the platform-specific graphs on Linux, macOS and Windows.
 rust-version = "1.95"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/krazyjakee/blitsen"

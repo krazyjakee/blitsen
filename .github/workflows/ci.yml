@@ -140,11 +140,11 @@ jobs:
   # the workspace with exactly the declared minimum, which is the only way that
   # number stops being a guess.
   #
-  # One job rather than a fourth column of the matrix above: the floor is a
-  # property of the dependency graph, not of a platform, and `cargo metadata`
-  # resolves every target's `rust-version` whatever the host is. The macOS-only
-  # `mac-usernotifications` is therefore accounted for in the number even though
-  # only Linux compiles anything here.
+  # One job rather than a fourth column of the matrix above. A locked metadata
+  # check compares every resolved package's declared minimum, including packages
+  # behind non-Linux target predicates, with our floor. The compile that follows
+  # then proves the active Linux graph with that exact compiler; the current
+  # matrix separately compiles the platform-specific graphs on all three hosts.
   #
   # `cargo check` and not `cargo test`: what the floor decides is whether the
   # graph compiles at all. Behaviour on the current compiler is the matrix's
@@ -182,6 +182,15 @@ jobs:
           cache-targets: true
           cache-bin: false
           save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+      # A Linux `cargo check` does not activate dependencies behind macOS or
+      # Windows target predicates. Metadata contains them regardless of host,
+      # so enforce their declared floors explicitly before compiling anything.
+      - name: Resolved dependencies support the declared floor
+        run: |
+          set -euo pipefail
+          declared=$(grep -m1 '^rust-version' Cargo.toml | cut -d'"' -f2)
+          cargo metadata --format-version 1 --locked \
+            | node scripts/check-rust-version.mjs "$declared"
       # A workspace check compiles the same Linux graph the matrix does, down to
       # Blitz's font enumeration and the audio backend, so it wants the same
       # system libraries.
