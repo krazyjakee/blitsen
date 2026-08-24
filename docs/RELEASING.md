@@ -232,9 +232,10 @@ compiler processes remain independent. That is one pinned native runner per exec
 OS; the arm64 sibling uses the same source and platform linker family and retains its recorded
 hashes. A mismatch reports both hashes and sizes, the first differing byte and surrounding bytes.
 
-`--remap-path-prefix` maps Rust paths to `/src/blitsen`, and the native compiler gets the equivalent
-`-ffile-prefix-map` or MSVC `/pathmap`, because QuickJS-ng's C `__FILE__` strings otherwise retain
-its Cargo output directory after symbols are stripped.
+`--remap-path-prefix` maps Rust source and target paths to `/src/blitsen` and `/build/blitsen`, and
+the native compiler gets the equivalent `-ffile-prefix-map` or MSVC `/pathmap`. Both roots matter:
+QuickJS-ng's C `__FILE__` strings otherwise retain its Cargo output directory after symbols are
+stripped.
 `SOURCE_DATE_EPOCH` is the commit timestamp for native build scripts that observe the standard.
 The macOS addon also carries the stable install name `@rpath/blitsen.node`; otherwise Apple's
 linker copies the absolute output path into `LC_ID_DYLIB`, changing the load-command size between
