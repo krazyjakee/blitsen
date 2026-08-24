@@ -209,6 +209,32 @@ fn connection_error(error: &reqwest::Error) -> String {
     }
 }
 
+impl AppSource for DevServer {
+    fn read(&self, path: &str) -> Option<Vec<u8>> {
+        match self.request(path) {
+            Ok(bytes) => {
+                if bytes.is_none() {
+                    *self.last_error.lock() = Some(format!("{} answered 404", self.url_for(path)));
+                }
+                bytes
+            }
+            Err(error) => {
+                // A dev server restarting mid-session is the ordinary case, not
+                // an exceptional one: the read fails, the reason is on stderr
+                // once, and the next read after it comes back succeeds. Nothing
+                // here takes the window down.
+                let message = format!("{}: {error}", self.url_for(path));
+                let mut last = self.last_error.lock();
+                if last.as_deref() != Some(message.as_str()) {
+                    eprintln!("blitsen: {message}");
+                    *last = Some(message);
+                }
+                None
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -240,31 +266,5 @@ mod tests {
             "http://localhost:5173///evil.example/x",
             "a message about a refused path still names it, on the origin"
         );
-    }
-}
-
-impl AppSource for DevServer {
-    fn read(&self, path: &str) -> Option<Vec<u8>> {
-        match self.request(path) {
-            Ok(bytes) => {
-                if bytes.is_none() {
-                    *self.last_error.lock() = Some(format!("{} answered 404", self.url_for(path)));
-                }
-                bytes
-            }
-            Err(error) => {
-                // A dev server restarting mid-session is the ordinary case, not
-                // an exceptional one: the read fails, the reason is on stderr
-                // once, and the next read after it comes back succeeds. Nothing
-                // here takes the window down.
-                let message = format!("{}: {error}", self.url_for(path));
-                let mut last = self.last_error.lock();
-                if last.as_deref() != Some(message.as_str()) {
-                    eprintln!("blitsen: {message}");
-                    *last = Some(message);
-                }
-                None
-            }
-        }
     }
 }
