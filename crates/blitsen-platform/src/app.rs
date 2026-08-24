@@ -206,6 +206,8 @@ pub mod single_instance {
     const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
     const POLL_INTERVAL: Duration = Duration::from_millis(5);
     const MAX_INVOCATION_BYTES: usize = 1024 * 1024;
+    const ACKNOWLEDGEMENT: u8 = 1;
+    const ACKNOWLEDGEMENT_RECEIPT: u8 = 2;
 
     struct Endpoint {
         name: Name<'static>,
@@ -481,7 +483,19 @@ pub mod single_instance {
                                     // Keep a real secondary alive until Windows
                                     // has authenticated its connected pipe token
                                     // and the invocation is durably owned here.
-                                    let _ = write_acknowledgement(&mut stream, WRITE_TIMEOUT);
+                                    if let Err(error) =
+                                        write_acknowledgement(&mut stream, WRITE_TIMEOUT)
+                                    {
+                                        eprintln!(
+                                            "could not acknowledge single-instance hand-off: {error}"
+                                        );
+                                    } else if let Err(error) =
+                                        read_acknowledgement_receipt(&mut stream, READ_TIMEOUT)
+                                    {
+                                        eprintln!(
+                                            "single-instance acknowledgement was not received: {error}"
+                                        );
+                                    }
                                 }
                                 Err(error) => {
                                     eprintln!("rejected single-instance hand-off: {error}");
@@ -583,6 +597,11 @@ pub mod single_instance {
                 "the single-instance owner did not acknowledge this invocation: {error}"
             ))
         })?;
+        write_acknowledgement_receipt(&mut stream, WRITE_TIMEOUT).map_err(|error| {
+            PlatformError::new(format!(
+                "could not confirm the single-instance acknowledgement: {error}"
+            ))
+        })?;
         Ok(Instance::Secondary)
     }
 
@@ -607,7 +626,7 @@ pub mod single_instance {
     fn read_acknowledgement(reader: &mut impl Read, timeout: Duration) -> std::io::Result<()> {
         let mut acknowledgement = [0];
         read_exact_until(reader, &mut acknowledgement, Instant::now() + timeout)?;
-        if acknowledgement != [1] {
+        if acknowledgement != [ACKNOWLEDGEMENT] {
             return Err(std::io::Error::new(
                 ErrorKind::InvalidData,
                 "the single-instance owner sent an invalid acknowledgement",
@@ -617,7 +636,34 @@ pub mod single_instance {
     }
 
     fn write_acknowledgement(writer: &mut impl Write, timeout: Duration) -> std::io::Result<()> {
-        write_all_until(writer, &[1], Instant::now() + timeout)?;
+        write_all_until(writer, &[ACKNOWLEDGEMENT], Instant::now() + timeout)?;
+        writer.flush()
+    }
+
+    fn read_acknowledgement_receipt(
+        reader: &mut impl Read,
+        timeout: Duration,
+    ) -> std::io::Result<()> {
+        let mut receipt = [0];
+        read_exact_until(reader, &mut receipt, Instant::now() + timeout)?;
+        if receipt != [ACKNOWLEDGEMENT_RECEIPT] {
+            return Err(std::io::Error::new(
+                ErrorKind::InvalidData,
+                "the single-instance client sent an invalid acknowledgement receipt",
+            ));
+        }
+        Ok(())
+    }
+
+    fn write_acknowledgement_receipt(
+        writer: &mut impl Write,
+        timeout: Duration,
+    ) -> std::io::Result<()> {
+        write_all_until(
+            writer,
+            &[ACKNOWLEDGEMENT_RECEIPT],
+            Instant::now() + timeout,
+        )?;
         writer.flush()
     }
 
@@ -982,6 +1028,10 @@ pub mod single_instance {
             let mut payload = vec![0; size];
             read_exact_until(&mut server, &mut payload, deadline).unwrap();
             assert_eq!(payload, br#"{"argv":[],"cwd":"C:\\"}"#);
+            write_acknowledgement(&mut server, Duration::from_secs(1)).unwrap();
+            read_acknowledgement(&mut client, Duration::from_secs(1)).unwrap();
+            write_acknowledgement_receipt(&mut client, Duration::from_secs(1)).unwrap();
+            read_acknowledgement_receipt(&mut server, Duration::from_secs(1)).unwrap();
         }
     }
 
