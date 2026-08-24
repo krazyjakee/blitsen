@@ -68,15 +68,6 @@ pub(crate) enum InputBootstrap {
 }
 
 impl InputBootstrap {
-    fn script_name(self) -> &'static str {
-        match self {
-            Self::Keyboard => "blitsen:native-keyboard-event",
-            Self::Ime => "blitsen:native-ime-event",
-            Self::Pointer | Self::Mouse => "blitsen:native-pointer-input",
-            Self::Drag => "blitsen:native-drag-input",
-        }
-    }
-
     fn hook<V>(self, hooks: &crate::dom_bridge::HostHooks<V>) -> &V {
         match self {
             Self::Keyboard => &hooks.keyboard,
@@ -263,10 +254,9 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Ren
         let arguments =
             serde_json::to_string(arguments).map_err(|error| JsError::new(error.to_string()))?;
         let mut engine = self.engine.clone();
-        let arguments = engine.evaluate_script(&arguments, bootstrap.script_name())?;
-        let arguments = engine.to_array(&arguments)?;
+        let arguments = engine.string(&arguments)?;
         let hook = bootstrap.hook(&self.host_hooks).clone();
-        let result = engine.call(&hook, None, &arguments)?;
+        let result = engine.call(&hook, None, &[arguments])?;
         engine.to_boolean(&result)
     }
 
@@ -392,16 +382,7 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Ren
                 ),
                 PendingKeyboardInput::Ime(event) => self.dispatch_ime_event(event.clone()),
                 PendingKeyboardInput::WindowFocus(focused) => {
-                    let mut engine = self.engine.clone();
-                    engine
-                        .evaluate_script(
-                            &format!(
-                                "globalThis.dispatchEvent(new Event({}))",
-                                if *focused { "\"focus\"" } else { "\"blur\"" }
-                            ),
-                            "blitsen:native-window-focus",
-                        )
-                        .and_then(|value| engine.to_boolean(&value))
+                    self.dispatch_window_event(if *focused { "focus" } else { "blur" })
                 }
                 PendingKeyboardInput::WindowModeRelease {
                     pointer,

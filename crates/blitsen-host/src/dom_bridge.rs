@@ -129,8 +129,28 @@ pub(crate) struct HostHooks<V> {
     pub(crate) locked_pointer_motion: V,
     pub(crate) release_window_modes: V,
     pub(crate) drag: V,
+    pub(crate) lifecycle: V,
     pub(crate) animation_frame_tick: V,
     pub(crate) animation_frames_pending: V,
+    pub(crate) window: V,
+}
+
+impl<V> HostHooks<V> {
+    fn resolve(mut property: impl FnMut(&str) -> Result<V, JsError>) -> Result<Self, JsError> {
+        Ok(Self {
+            mouse: property("mouse")?,
+            pointer: property("pointer")?,
+            keyboard: property("keyboard")?,
+            ime: property("ime")?,
+            locked_pointer_motion: property("lockedPointerMotion")?,
+            release_window_modes: property("releaseWindowModes")?,
+            drag: property("drag")?,
+            lifecycle: property("lifecycle")?,
+            animation_frame_tick: property("animationFrameTick")?,
+            animation_frames_pending: property("animationFramesPending")?,
+            window: property("window")?,
+        })
+    }
 }
 
 /// Observable window state plus the private native-to-DOM dispatch boundary.
@@ -307,17 +327,7 @@ pub(crate) fn install_with_hooks<E: JsEngine + 'static>(
     let test_harness = engine.boolean(mode.is_test_harness());
     engine.set_global("__blitsenTestHarness", &test_harness)?;
     let hooks = engine.evaluate_script(BOOTSTRAP, "blitsen:dom-bootstrap")?;
-    let host_hooks = HostHooks {
-        mouse: engine.get_property(&hooks, "mouse")?,
-        pointer: engine.get_property(&hooks, "pointer")?,
-        keyboard: engine.get_property(&hooks, "keyboard")?,
-        ime: engine.get_property(&hooks, "ime")?,
-        locked_pointer_motion: engine.get_property(&hooks, "lockedPointerMotion")?,
-        release_window_modes: engine.get_property(&hooks, "releaseWindowModes")?,
-        drag: engine.get_property(&hooks, "drag")?,
-        animation_frame_tick: engine.get_property(&hooks, "animationFrameTick")?,
-        animation_frames_pending: engine.get_property(&hooks, "animationFramesPending")?,
-    };
+    let host_hooks = HostHooks::resolve(|name| engine.get_property(&hooks, name))?;
 
     let document = engine.evaluate_script("globalThis.document", "blitsen:document-value")?;
     let window_state = Rc::new(RefCell::new(WindowState::new(
@@ -944,4 +954,124 @@ fn string_arguments<E: JsEngine>(
 pub(crate) fn json_value<E: JsEngine>(engine: &mut E, value: &Value) -> Result<E::Value, JsError> {
     let value = serde_json::to_string(value).map_err(|error| JsError::new(error.to_string()))?;
     engine.string(&value)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use blitsen_blitz::BlitzDom;
+    use blitsen_js::JsEngine;
+    use blitsen_quickjs::QuickJs;
+    use blitz::dom::DocumentConfig;
+    use blitz::traits::shell::{ColorScheme, Viewport};
+
+    use super::*;
+
+    type Hooks = HostHooks<<QuickJs as JsEngine>::Value>;
+
+    fn realm() -> (
+        QuickJs,
+        crate::runtime_services::RuntimeServices<QuickJs>,
+        Hooks,
+    ) {
+        let mut engine = QuickJs::new().expect("an engine");
+        let services = crate::runtime_services::RuntimeServices::install(&mut engine)
+            .expect("runtime services");
+        let dom = BlitzDom::from_html(
+            "<!doctype html><html><body></body></html>",
+            DocumentConfig {
+                viewport: Some(Viewport::new(200, 100, 1.0, ColorScheme::Light)),
+                ..Default::default()
+            },
+        );
+        let installed = install_with_hooks(
+            &mut engine,
+            crate::DomRuntime::new(dom),
+            InstallOptions::new(200, 100, 1.0, DocumentMode::TestHarness, None),
+        )
+        .expect("the DOM bridge installs");
+        (engine, services, installed.host_hooks)
+    }
+
+    fn number(engine: &mut QuickJs, source: &str) -> f64 {
+        let value = engine
+            .evaluate_script(source, "blitsen:cached-hook-test")
+            .expect("the probe evaluates");
+        engine.to_number(&value).expect("the probe is numeric")
+    }
+
+    #[test]
+    fn host_hooks_are_resolved_once_and_then_retained() {
+        let mut lookups = BTreeMap::new();
+        let hooks = HostHooks::resolve(|name| {
+            *lookups.entry(name.to_owned()).or_insert(0) += 1;
+            Ok(name.to_owned())
+        })
+        .expect("all hooks resolve");
+
+        for _ in 0..4 {
+            assert_eq!(hooks.keyboard, "keyboard");
+            assert_eq!(hooks.animation_frame_tick, "animationFrameTick");
+            assert_eq!(hooks.animation_frames_pending, "animationFramesPending");
+        }
+        assert_eq!(lookups.values().copied().collect::<Vec<_>>(), vec![1; 11]);
+    }
+
+    #[test]
+    fn retained_input_hook_parses_json_without_evaluating_it_as_source() {
+        let (mut engine, _services, hooks) = realm();
+        engine
+            .evaluate_script(
+                "globalThis.__seenKey = null; document.body.addEventListener('keydown', event => __seenKey = event.key)",
+                "blitsen:cached-input-setup",
+            )
+            .expect("the listener installs");
+        let serialized = engine
+            .string(r#"["keydown",{"key":"'); throw new Error('compiled') //","code":"KeyA"}]"#)
+            .expect("the input is a string");
+
+        let allowed = engine
+            .call(&hooks.keyboard, None, &[serialized])
+            .expect("the cached hook accepts serialized input");
+        assert!(engine.to_boolean(&allowed).expect("the result is boolean"));
+        let seen = engine
+            .evaluate_script("globalThis.__seenKey", "blitsen:cached-input-result")
+            .expect("the observed key is readable");
+        assert_eq!(
+            engine.to_string(&seen).expect("the key is text"),
+            "'); throw new Error('compiled') //"
+        );
+    }
+
+    #[test]
+    fn animation_tick_does_not_repeat_the_turn_pending_query() {
+        let (mut engine, _services, hooks) = realm();
+        let before = number(
+            &mut engine,
+            "globalThis.__blitsenDomCallCount('isAnimating')",
+        );
+
+        for timestamp in [1.0, 2.0, 3.0] {
+            let timestamp = engine.number(timestamp);
+            engine
+                .call(&hooks.animation_frame_tick, None, &[timestamp])
+                .expect("the cached frame tick runs");
+            engine
+                .call(&hooks.animation_frames_pending, None, &[])
+                .expect("the cached pending query runs");
+        }
+
+        let after = number(
+            &mut engine,
+            "globalThis.__blitsenDomCallCount('isAnimating')",
+        );
+        assert_eq!(after - before, 3.0);
+    }
+
+    #[test]
+    fn windowed_steady_state_contains_no_script_evaluation() {
+        assert!(!include_str!("native_window.rs").contains("evaluate_script"));
+        assert!(!include_str!("native_window/input.rs").contains("evaluate_script"));
+    }
 }

@@ -288,24 +288,20 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Ren
         }
     }
 
-    fn run_animation_frame(&self) -> bool {
+    fn run_animation_frame(&self) {
         if self.has_parked_error() {
-            return false;
+            return;
         }
         let timestamp = self.started_at.elapsed().as_secs_f64() * 1_000.0;
         let result = (|| {
             let mut engine = self.engine.clone();
             let timestamp = engine.number(timestamp);
-            let pending = engine.call(&self.host_hooks.animation_frame_tick, None, &[timestamp])?;
+            engine.call(&self.host_hooks.animation_frame_tick, None, &[timestamp])?;
             engine.drain_microtasks()?;
-            Ok(engine.to_number(&pending)? > 0.0)
+            Ok(())
         })();
-        match result {
-            Ok(pending) => pending,
-            Err(error) => {
-                self.park_error(error);
-                false
-            }
+        if let Err(error) = result {
+            self.park_error(error);
         }
     }
 
@@ -314,11 +310,12 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Ren
             return;
         }
         *self.state.borrow_mut() = WindowState::new(width, height, device_pixel_ratio);
-        let result = (|| {
+        let result = {
             let mut engine = self.engine.clone();
-            let window = engine.evaluate_script("globalThis", "blitsen:window-resize-target")?;
-            self.state.borrow().sync(&mut engine, &window)
-        })();
+            self.state
+                .borrow()
+                .sync(&mut engine, &self.host_hooks.window)
+        };
         if let Err(error) = result {
             self.park_error(error);
         }
@@ -412,13 +409,9 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Ren
         if let Some(error) = self.parked_error() {
             return Err(error);
         }
-        let event_type =
-            serde_json::to_string(event_type).map_err(|error| JsError::new(error.to_string()))?;
         let mut engine = self.engine.clone();
-        let result = engine.evaluate_script(
-            &format!("globalThis.__blitsenDispatchLifecycleEvent({event_type})"),
-            "blitsen:native-window-event",
-        )?;
+        let event_type = engine.string(event_type)?;
+        let result = engine.call(&self.host_hooks.lifecycle, None, &[event_type])?;
         engine.to_boolean(&result)
     }
 
@@ -728,10 +721,9 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> ApplicationHandler
         // dispatching redraws entirely while the app is stopped; the desktop
         // backends have no such gate, so the rule is applied here instead and
         // means the same thing on every target (see `surface_lifecycle`).
-        let animation_pending = redraw
-            && !self.surface.is_lost()
-            && (self.startup_revealed || startup_paint)
-            && self.run_animation_frame();
+        if redraw && !self.surface.is_lost() && (self.startup_revealed || startup_paint) {
+            self.run_animation_frame();
+        }
         // A startup rAF is allowed to discover another critical resource. Do
         // not let blitz-shell paint (or the platform map) until it has settled.
         let startup_paint = startup_paint
@@ -775,9 +767,6 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> ApplicationHandler
                 view.window.request_redraw();
             }
         }
-        if animation_pending && let Some(view) = self.inner.windows.get(&window_id) {
-            view.window.request_redraw();
-        }
         if (queued_pointer_input || queued_keyboard_input || queued_drag_input)
             && let Some(view) = self.inner.windows.get(&window_id)
         {
@@ -820,8 +809,8 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> ApplicationHandler
         }
         self.maybe_dispatch_load();
         // The surface is asked before JavaScript is: a window that cannot
-        // present has no frame to ask for, and the question below costs a
-        // script evaluation on every turn of the loop.
+        // present has no frame to ask for. This retained callback is the turn's
+        // single pending-work query, after the frame and native work settle.
         if !self.surface.is_lost() && self.animation_frames_pending() {
             for view in self.inner.windows.values() {
                 view.window.request_redraw();

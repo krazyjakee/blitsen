@@ -257,14 +257,21 @@
     try { delete globalThis[key]; } catch {}
   }
   if (!Notification) try { delete globalThis.Notification; } catch {}
+  // Native input crosses as one JSON string. Parsing that string here keeps it
+  // data: evaluating the serialization as source would make every input event
+  // pay QuickJS's parser and compiler before this retained callback can run.
+  const serializedInput = dispatch => serializedArguments =>
+    dispatch(...JSON.parse(String(serializedArguments)));
   return Object.freeze({
-    mouse: dispatchMouseEvent,
-    pointer: dispatchPointerEvent,
-    keyboard: dispatchKeyboardEvent,
-    ime: dispatchImeEvent,
+    mouse: serializedInput(dispatchMouseEvent),
+    pointer: serializedInput(dispatchPointerEvent),
+    keyboard: serializedInput(dispatchKeyboardEvent),
+    ime: serializedInput(dispatchImeEvent),
     lockedPointerMotion: dispatchLockedPointerMotion,
     releaseWindowModes,
-    drag: dispatchDragEvent,
+    drag: serializedInput(dispatchDragEvent),
+    lifecycle: dispatchLifecycleEvent,
     animationFrameTick,
     animationFramesPending,
+    window: globalThis,
   });

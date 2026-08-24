@@ -144,19 +144,4 @@
     if (__blitsenDevLayoutWarnings && forcedLayoutsThisFrame > 0)
       console.warn(`Blitsen: ${forcedLayoutsThisFrame} forced synchronous layout(s) in this frame`);
     forcedLayoutsThisFrame = 0;
-    // In-flight requests, live sockets and event streams, undecoded images,
-    // unfetched stylesheets and undelivered resize observations keep the host
-    // turning: their landing point is this function, so a loop that stopped
-    // would never deliver them.
-    // A running CSS animation is owed a frame for the same reason — the clock
-    // only moves when this is called, so a loop that idled would freeze it
-    // part-way through. An open dialog is the same argument twice over: its
-    // answer lands here, and the window has to go on painting behind it rather
-    // than freeze until it is dismissed.
-    return animationFrames.size + inflightFetches.size + liveSockets.size
-      + liveEventSources.size
-      + pendingResizeObservations() + waitingImages() + waitingLinks()
-      + (audioPending() ? 1 : 0)
-      + (call("isAnimating") ? 1 : 0) + (nativeDialogPending() ? 1 : 0)
-      + (portsPending() ? 1 : 0);
   };
