@@ -347,7 +347,10 @@ pub fn wrapper_identity_smoke(env: Env) -> napi::Result<u32> {
     // report what survived either way.
     for _ in 0..32 {
         engine
-            .evaluate_script("Bun.gc(true)", "blitsen:identity-gc")
+            .evaluate_script(
+                "globalThis.Bun?.gc?.(true) ?? globalThis.gc?.()",
+                "blitsen:identity-gc",
+            )
             .map_err(napi_error)?;
         table.prune_collected(&mut engine).map_err(napi_error)?;
         if table.is_empty() {
@@ -382,12 +385,54 @@ fn smoke_values(engine: &mut NodeApiEngine) -> napi::Result<()> {
         engine.to_array(&array).map_err(napi_error)?.len() == 2,
         "array round trip returned the wrong length",
     )?;
-    let typed = TypedArray::new(TypedArrayKind::Uint8, vec![1, 2, 3]).map_err(napi_error)?;
-    let typed = engine.typed_array(&typed).map_err(napi_error)?;
+    let object = engine.object().map_err(napi_error)?;
+    let property = engine.string("nul-safe").map_err(napi_error)?;
+    engine
+        .set_property(&object, "before\0after", &property)
+        .map_err(napi_error)?;
+    let property = engine
+        .get_property(&object, "before\0after")
+        .and_then(|value| engine.to_string(&value))
+        .map_err(napi_error)?;
     smoke_check(
-        engine.to_typed_array(&typed).map_err(napi_error)?.bytes == [1, 2, 3],
-        "typed-array round trip changed its bytes",
+        property == "nul-safe",
+        "property access changed an embedded-NUL name",
     )?;
+    for (kind, bytes) in [
+        (TypedArrayKind::Int8, vec![0x80, 0x7f]),
+        (TypedArrayKind::Uint8, vec![1, 2, 3]),
+        (TypedArrayKind::Uint8Clamped, vec![0, 127, 255]),
+        (TypedArrayKind::Int16, (-12_345_i16).to_ne_bytes().to_vec()),
+        (TypedArrayKind::Uint16, 54_321_u16.to_ne_bytes().to_vec()),
+        (
+            TypedArrayKind::Int32,
+            (-123_456_789_i32).to_ne_bytes().to_vec(),
+        ),
+        (
+            TypedArrayKind::Uint32,
+            3_000_000_000_u32.to_ne_bytes().to_vec(),
+        ),
+        (TypedArrayKind::Float32, (-12.5_f32).to_ne_bytes().to_vec()),
+        (
+            TypedArrayKind::Float64,
+            std::f64::consts::PI.to_ne_bytes().to_vec(),
+        ),
+        (
+            TypedArrayKind::BigInt64,
+            (-9_000_000_000_i64).to_ne_bytes().to_vec(),
+        ),
+        (
+            TypedArrayKind::BigUint64,
+            18_000_000_000_u64.to_ne_bytes().to_vec(),
+        ),
+    ] {
+        let expected = TypedArray::new(kind, bytes).map_err(napi_error)?;
+        let value = engine.typed_array(&expected).map_err(napi_error)?;
+        smoke_check(
+            engine.to_typed_array(&value).map_err(napi_error)? == expected,
+            &format!("{kind:?} round trip changed its kind or bytes"),
+        )?;
+    }
     let result = engine
         .evaluate_script("21 * 2", "smoke.js")
         .and_then(|value| engine.to_number(&value))
@@ -405,6 +450,22 @@ fn smoke_values(engine: &mut NodeApiEngine) -> napi::Result<()> {
     smoke_check(
         result == "callback",
         "native callback argument/result round trip changed the value",
+    )?;
+
+    let strict_receiver = engine
+        .evaluate_script(
+            "(function () { 'use strict'; return this; })",
+            "receiver-smoke.js",
+        )
+        .map_err(napi_error)?;
+    let receiver = engine.number(17.0);
+    let result = engine
+        .call(&strict_receiver, Some(&receiver), &[])
+        .and_then(|value| engine.to_number(&value))
+        .map_err(napi_error)?;
+    smoke_check(
+        result == 17.0,
+        "function invocation changed a primitive receiver",
     )
 }
 
@@ -498,6 +559,22 @@ fn smoke_error_propagation(engine: &mut NodeApiEngine) -> napi::Result<()> {
     smoke_check(
         error.message().contains("native callback failed"),
         "native callback error lost its message",
+    )?;
+
+    let throwing = engine
+        .evaluate_script(
+            "(function () { throw new Error('receiver call failed'); })",
+            "receiver-error-smoke.js",
+        )
+        .map_err(napi_error)?;
+    let receiver = engine.object().map_err(napi_error)?;
+    let error = match engine.call(&throwing, Some(&receiver), &[]) {
+        Ok(_) => return Err(failure("the JavaScript function did not throw")),
+        Err(error) => error,
+    };
+    smoke_check(
+        error.message().contains("receiver call failed"),
+        "JavaScript callback error with a receiver lost its message",
     )
 }
 
@@ -538,7 +615,16 @@ pub fn node_api_smoke(env: Env) -> napi::Result<bool> {
     smoke_class_and_weak_ref(&mut engine)?;
     smoke_globals_and_window(&mut engine)?;
     smoke_error_propagation(&mut engine)?;
-    smoke_large_module(&mut engine)?;
+    let is_bun = engine
+        .evaluate_script("typeof Bun !== 'undefined'", "blitsen:host-check")
+        .and_then(|value| engine.to_boolean(&value))
+        .map_err(napi_error)?;
+    // The value/reference/function half is portable Node-API and runs in both
+    // hosts. Module loading deliberately exercises Bun's createRequire support
+    // for Blob URLs, so it remains a Bun-only capability check.
+    if is_bun {
+        smoke_large_module(&mut engine)?;
+    }
     engine.drain_microtasks().map_err(napi_error)?;
     engine.pump_event_loop().map_err(napi_error)?;
     Ok(true)

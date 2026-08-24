@@ -4,7 +4,6 @@
 //! so the rest of the addon can speak in engine terms rather than in handles.
 
 use std::cell::RefCell;
-use std::ffi::c_void;
 use std::path::{Path, PathBuf};
 use std::ptr;
 
@@ -14,8 +13,13 @@ use blitsen_js::{
     ExternalId, JsEngine, JsError, JsType, LoopTurn, NativeCall, NativeCallback, NativeClass,
     TypedArray, TypedArrayKind,
 };
-use napi::bindgen_prelude::{FromNapiValue, Unknown};
-use napi::{Env, JsValue, Status, ValueType, sys};
+use napi::bindgen_prelude::{
+    Array, ArrayBuffer, BigInt64ArraySlice, BigUint64ArraySlice, Float32ArraySlice,
+    Float64ArraySlice, FromNapiValue, Function, Int8ArraySlice, Int16ArraySlice, Int32ArraySlice,
+    JsObjectValue, JsValuesTupleIntoVec, Object, ToNapiValue, Uint8ArraySlice, Uint8ClampedArray,
+    Uint16ArraySlice, Uint32ArraySlice, Unknown,
+};
+use napi::{Env, JsValue, Status, UnknownRef, ValueType, sys};
 use url::Url;
 
 #[cfg(target_os = "macos")]
@@ -39,37 +43,25 @@ pub(crate) fn check(status: sys::napi_status, operation: &str) -> Result<(), JsE
     }
 }
 
-pub(crate) fn check_call(
-    env: sys::napi_env,
-    status: sys::napi_status,
-    operation: &str,
-) -> Result<(), JsError> {
-    if status != sys::Status::napi_pending_exception {
-        return check(status, operation);
-    }
-
-    let mut exception = ptr::null_mut();
-    // SAFETY: Node-API reported a pending exception for this environment.
-    check(
-        unsafe { sys::napi_get_and_clear_last_exception(env, &mut exception) },
-        "capture JavaScript exception",
-    )?;
-    let mut string = ptr::null_mut();
-    check(
-        unsafe { sys::napi_coerce_to_string(env, exception, &mut string) },
-        "stringify JavaScript exception",
-    )?;
-    let message = unsafe { String::from_napi_value(env, string) }.map_err(js_error)?;
-    Err(JsError::new(message))
-}
-
 pub(crate) fn unknown(env: sys::napi_env, value: sys::napi_value) -> Unknown<'static> {
-    // SAFETY: every value passed here was returned by Node-API for this env.
+    // SAFETY: `JsEngine::Value` cannot carry a callback-scope lifetime. Every
+    // handle passed here belongs to `env` and is only used during the active
+    // addon call; values that outlive it are retained by JavaScript or a
+    // Node-API reference. Keep this trait-forced erasure in one place.
     unsafe { Unknown::from_raw_unchecked(env, value) }
 }
 
 pub(crate) fn raw(value: &Unknown<'static>) -> sys::napi_value {
     value.raw()
+}
+
+struct DynamicArguments(Vec<Unknown<'static>>);
+
+impl JsValuesTupleIntoVec for DynamicArguments {
+    fn into_vec(self, env: sys::napi_env) -> napi::Result<Vec<sys::napi_value>> {
+        debug_assert!(self.0.iter().all(|value| value.value().env == env));
+        Ok(self.0.iter().map(JsValue::raw).collect())
+    }
 }
 
 /// A weak Node-API reference. A zero refcount does not keep its target alive.
@@ -87,26 +79,25 @@ impl Drop for NodeWeakRef {
 
 /// Persistent handle to a registered native constructor.
 pub struct NodeClass {
-    env: sys::napi_env,
-    reference: sys::napi_ref,
+    env: Env,
+    reference: Option<UnknownRef>,
 }
 
 impl NodeClass {
-    fn value(&self) -> Result<sys::napi_value, JsError> {
-        let mut value = ptr::null_mut();
-        // SAFETY: the class owns a live strong reference in this environment.
-        check(
-            unsafe { sys::napi_get_reference_value(self.env, self.reference, &mut value) },
-            "read native class reference",
-        )?;
-        Ok(value)
+    fn value(&self) -> Result<Unknown<'_>, JsError> {
+        self.reference
+            .as_ref()
+            .expect("native class reference was already released")
+            .get_value(&self.env)
+            .map_err(js_error)
     }
 }
 
 impl Drop for NodeClass {
     fn drop(&mut self) {
-        // SAFETY: the reference belongs to this environment and is deleted once.
-        unsafe { sys::napi_delete_reference(self.env, self.reference) };
+        if let Some(reference) = self.reference.take() {
+            let _ = reference.unref(&self.env);
+        }
     }
 }
 
@@ -115,12 +106,15 @@ pub(crate) struct InstanceData {
     finalizer: Option<Box<dyn FnOnce(ExternalId) + 'static>>,
 }
 
-unsafe extern "C" fn finalize_instance(_env: sys::napi_env, data: *mut c_void, _hint: *mut c_void) {
-    // SAFETY: `instantiate` gives ownership of exactly one boxed InstanceData
-    // to napi_wrap, which invokes this callback at most once.
-    let mut data = unsafe { Box::from_raw(data.cast::<InstanceData>()) };
-    if let Some(finalizer) = data.finalizer.take() {
-        finalizer(data.id);
+impl Drop for InstanceData {
+    fn drop(&mut self) {
+        if let Some(finalizer) = self.finalizer.take() {
+            // napi-rs drops wrapped values from an extern "C" finalizer. A
+            // user finalizer must never unwind through that boundary.
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                finalizer(self.id);
+            }));
+        }
     }
 }
 
@@ -154,6 +148,49 @@ impl NodeApiEngine {
     fn value_from_raw(&self, value: sys::napi_value) -> Unknown<'static> {
         unknown(self.raw_env(), value)
     }
+
+    fn value_from_scoped(&self, value: Unknown<'_>) -> Unknown<'static> {
+        self.value_from_raw(value.raw())
+    }
+
+    fn object_from_value<'env>(value: &Unknown<'env>) -> Result<Object<'env>, JsError> {
+        match value.get_type().map_err(js_error)? {
+            ValueType::Object | ValueType::Function => {
+                Ok(Object::from_raw(value.value().env, value.raw()))
+            }
+            _ => Err(JsError::new("value is not an object")),
+        }
+    }
+
+    fn function_from_value<'env>(
+        value: &Unknown<'env>,
+    ) -> Result<Function<'env, DynamicArguments, Unknown<'static>>, JsError> {
+        if value.get_type().map_err(js_error)? != ValueType::Function {
+            return Err(JsError::new("value is not a function"));
+        }
+        Function::from_unknown(*value).map_err(js_error)
+    }
+
+    fn capture_pending<T>(&self, result: napi::Result<T>) -> Result<T, JsError> {
+        match result {
+            Ok(value) => Ok(value),
+            Err(error) if error.status == Status::PendingException => {
+                let mut exception = ptr::null_mut();
+                // SAFETY: `Function::apply` currently reports pending-exception
+                // status without retrieving it (unlike `Function::call`). The
+                // status proves this environment owns one live exception, and
+                // Node-API initializes the output handle before returning OK.
+                check(
+                    unsafe {
+                        sys::napi_get_and_clear_last_exception(self.raw_env(), &mut exception)
+                    },
+                    "capture JavaScript exception",
+                )?;
+                Err(js_error(napi::Error::from(self.value_from_raw(exception))))
+            }
+            Err(error) => Err(js_error(error)),
+        }
+    }
 }
 
 impl JsEngine for NodeApiEngine {
@@ -168,31 +205,25 @@ impl JsEngine for NodeApiEngine {
     }
 
     fn undefined(&mut self) -> Self::Value {
-        let mut value = ptr::null_mut();
-        // SAFETY: the output pointer is valid and the environment is current.
-        unsafe { sys::napi_get_undefined(self.raw_env(), &mut value) };
-        self.value_from_raw(value)
+        let value = ().into_unknown(&self.env).expect("create undefined");
+        self.value_from_scoped(value)
     }
 
     fn null(&mut self) -> Self::Value {
-        let mut value = ptr::null_mut();
-        // SAFETY: the output pointer is valid and the environment is current.
-        unsafe { sys::napi_get_null(self.raw_env(), &mut value) };
-        self.value_from_raw(value)
+        let value = napi::bindgen_prelude::Null
+            .into_unknown(&self.env)
+            .expect("create null");
+        self.value_from_scoped(value)
     }
 
     fn boolean(&mut self, boolean: bool) -> Self::Value {
-        let mut value = ptr::null_mut();
-        // SAFETY: the output pointer is valid and the environment is current.
-        unsafe { sys::napi_get_boolean(self.raw_env(), boolean, &mut value) };
-        self.value_from_raw(value)
+        let value = boolean.into_unknown(&self.env).expect("create boolean");
+        self.value_from_scoped(value)
     }
 
     fn number(&mut self, number: f64) -> Self::Value {
-        let mut value = ptr::null_mut();
-        // SAFETY: the output pointer is valid and the environment is current.
-        unsafe { sys::napi_create_double(self.raw_env(), number, &mut value) };
-        self.value_from_raw(value)
+        let value = self.env.create_double(number).expect("create number");
+        self.value_from_scoped(value.to_unknown())
     }
 
     fn string(&mut self, string: &str) -> Result<Self::Value, JsError> {
@@ -201,75 +232,78 @@ impl JsEngine for NodeApiEngine {
     }
 
     fn object(&mut self) -> Result<Self::Value, JsError> {
-        let mut value = ptr::null_mut();
-        check(
-            unsafe { sys::napi_create_object(self.raw_env(), &mut value) },
-            "create object",
-        )?;
-        Ok(self.value_from_raw(value))
+        let value = Object::new(&self.env).map_err(js_error)?;
+        Ok(self.value_from_scoped(value.to_unknown()))
     }
 
     fn array(&mut self, values: &[Self::Value]) -> Result<Self::Value, JsError> {
-        let mut array = ptr::null_mut();
-        // SAFETY: output and element handles belong to the current environment.
-        check(
-            unsafe { sys::napi_create_array_with_length(self.raw_env(), values.len(), &mut array) },
-            "create array",
-        )?;
-        for (index, value) in values.iter().enumerate() {
-            check(
-                unsafe { sys::napi_set_element(self.raw_env(), array, index as u32, raw(value)) },
-                "set array element",
-            )?;
-        }
-        Ok(self.value_from_raw(array))
+        let array = Array::from_ref_vec(&self.env, values).map_err(js_error)?;
+        Ok(self.value_from_scoped(array.to_unknown()))
     }
 
     fn typed_array(&mut self, typed: &TypedArray) -> Result<Self::Value, JsError> {
-        let mut buffer = ptr::null_mut();
-        let mut data = ptr::null_mut();
-        // SAFETY: Node-API initializes the buffer and its writable data pointer.
-        check(
-            unsafe {
-                sys::napi_create_arraybuffer(
-                    self.raw_env(),
-                    typed.bytes.len(),
-                    &mut data,
-                    &mut buffer,
-                )
-            },
-            "create typed-array buffer",
-        )?;
-        if !typed.bytes.is_empty() {
-            // SAFETY: the arraybuffer allocation is exactly bytes.len() bytes.
-            unsafe {
-                ptr::copy_nonoverlapping(typed.bytes.as_ptr(), data.cast(), typed.bytes.len())
-            };
+        let value = match typed.kind {
+            TypedArrayKind::Int8 => Int8ArraySlice::from_data(
+                &self.env,
+                typed
+                    .bytes
+                    .iter()
+                    .map(|byte| *byte as i8)
+                    .collect::<Vec<_>>(),
+            )
+            .map(|value| value.to_unknown()),
+            TypedArrayKind::Uint8 => Uint8ArraySlice::from_data(&self.env, typed.bytes.clone())
+                .map(|value| value.to_unknown()),
+            TypedArrayKind::Uint8Clamped => {
+                Uint8ClampedArray::new(typed.bytes.clone()).into_unknown(&self.env)
+            }
+            TypedArrayKind::Int16 => Int16ArraySlice::from_data(
+                &self.env,
+                values_from_bytes::<2, _, _>(&typed.bytes, i16::from_ne_bytes),
+            )
+            .map(|value| value.to_unknown()),
+            TypedArrayKind::Uint16 => Uint16ArraySlice::from_data(
+                &self.env,
+                values_from_bytes::<2, _, _>(&typed.bytes, u16::from_ne_bytes),
+            )
+            .map(|value| value.to_unknown()),
+            TypedArrayKind::Int32 => Int32ArraySlice::from_data(
+                &self.env,
+                values_from_bytes::<4, _, _>(&typed.bytes, i32::from_ne_bytes),
+            )
+            .map(|value| value.to_unknown()),
+            TypedArrayKind::Uint32 => Uint32ArraySlice::from_data(
+                &self.env,
+                values_from_bytes::<4, _, _>(&typed.bytes, u32::from_ne_bytes),
+            )
+            .map(|value| value.to_unknown()),
+            TypedArrayKind::Float32 => Float32ArraySlice::from_data(
+                &self.env,
+                values_from_bytes::<4, _, _>(&typed.bytes, f32::from_ne_bytes),
+            )
+            .map(|value| value.to_unknown()),
+            TypedArrayKind::Float64 => Float64ArraySlice::from_data(
+                &self.env,
+                values_from_bytes::<8, _, _>(&typed.bytes, f64::from_ne_bytes),
+            )
+            .map(|value| value.to_unknown()),
+            TypedArrayKind::BigInt64 => BigInt64ArraySlice::from_data(
+                &self.env,
+                values_from_bytes::<8, _, _>(&typed.bytes, i64::from_ne_bytes),
+            )
+            .map(|value| value.to_unknown()),
+            TypedArrayKind::BigUint64 => BigUint64ArraySlice::from_data(
+                &self.env,
+                values_from_bytes::<8, _, _>(&typed.bytes, u64::from_ne_bytes),
+            )
+            .map(|value| value.to_unknown()),
         }
-        let mut value = ptr::null_mut();
-        check(
-            unsafe {
-                sys::napi_create_typedarray(
-                    self.raw_env(),
-                    typed_array_type(typed.kind),
-                    typed.len(),
-                    buffer,
-                    0,
-                    &mut value,
-                )
-            },
-            "create typed array",
-        )?;
-        Ok(self.value_from_raw(value))
+        .map_err(js_error)?;
+        Ok(self.value_from_scoped(value))
     }
 
     fn value_type(&mut self, value: &Self::Value) -> Result<JsType, JsError> {
-        let mut value_type = -1;
-        check(
-            unsafe { sys::napi_typeof(self.raw_env(), raw(value), &mut value_type) },
-            "read value type",
-        )?;
-        match ValueType::from(value_type) {
+        match value.get_type().map_err(js_error)? {
             ValueType::Undefined => Ok(JsType::Undefined),
             ValueType::Null => Ok(JsType::Null),
             ValueType::Boolean => Ok(JsType::Boolean),
@@ -277,19 +311,10 @@ impl JsEngine for NodeApiEngine {
             ValueType::String => Ok(JsType::String),
             ValueType::Function => Ok(JsType::Function),
             ValueType::Object => {
-                let mut yes = false;
-                check(
-                    unsafe { sys::napi_is_array(self.raw_env(), raw(value), &mut yes) },
-                    "check array type",
-                )?;
-                if yes {
+                if value.is_array().map_err(js_error)? {
                     return Ok(JsType::Array);
                 }
-                check(
-                    unsafe { sys::napi_is_typedarray(self.raw_env(), raw(value), &mut yes) },
-                    "check typed-array type",
-                )?;
-                Ok(if yes {
+                Ok(if value.is_typedarray().map_err(js_error)? {
                     JsType::TypedArray
                 } else {
                     JsType::Object
@@ -306,36 +331,32 @@ impl JsEngine for NodeApiEngine {
     }
 
     fn to_number(&mut self, value: &Self::Value) -> Result<f64, JsError> {
-        let coerced = value.coerce_to_number().map_err(js_error)?;
-        // SAFETY: coercion returned a number in this environment.
-        unsafe { f64::from_napi_value(self.raw_env(), coerced.raw()) }.map_err(js_error)
+        value
+            .coerce_to_number()
+            .and_then(|number| number.get_double())
+            .map_err(js_error)
     }
 
     fn to_string(&mut self, value: &Self::Value) -> Result<String, JsError> {
-        let coerced = value.coerce_to_string().map_err(js_error)?;
-        // SAFETY: coercion returned a string in this environment.
-        unsafe { String::from_napi_value(self.raw_env(), coerced.raw()) }.map_err(js_error)
+        value
+            .coerce_to_string()
+            .and_then(|string| string.into_utf8())
+            .and_then(|string| string.into_owned())
+            .map_err(js_error)
     }
 
     fn to_array(&mut self, value: &Self::Value) -> Result<Vec<Self::Value>, JsError> {
         if self.value_type(value)? != JsType::Array {
             return Err(JsError::new("value is not an array"));
         }
-        let mut length = 0;
-        check(
-            unsafe { sys::napi_get_array_length(self.raw_env(), raw(value), &mut length) },
-            "read array length",
-        )?;
+        let object = Self::object_from_value(value)?;
+        let length = object.get_array_length().map_err(js_error)?;
         (0..length)
             .map(|index| {
-                let mut element = ptr::null_mut();
-                check(
-                    unsafe {
-                        sys::napi_get_element(self.raw_env(), raw(value), index, &mut element)
-                    },
-                    "read array element",
-                )?;
-                Ok(self.value_from_raw(element))
+                object
+                    .get_element::<Unknown<'_>>(index)
+                    .map(|element| self.value_from_scoped(element))
+                    .map_err(js_error)
             })
             .collect()
     }
@@ -346,6 +367,9 @@ impl JsEngine for NodeApiEngine {
         let mut data = ptr::null_mut();
         let mut buffer = ptr::null_mut();
         let mut offset = 0;
+        // SAFETY: napi-rs exposes each concrete typed-array class, but no safe
+        // dynamically typed view that reports the class required by JsEngine.
+        // `value` is live for this call; Node-API fills all output pointers.
         check(
             unsafe {
                 sys::napi_get_typedarray_info(
@@ -372,13 +396,11 @@ impl JsEngine for NodeApiEngine {
     }
 
     fn get_property(&mut self, object: &Self::Value, name: &str) -> Result<Self::Value, JsError> {
-        let key = self.string(name)?;
-        let mut result = ptr::null_mut();
-        check(
-            unsafe { sys::napi_get_property(self.raw_env(), raw(object), raw(&key), &mut result) },
-            "read object property",
-        )?;
-        Ok(self.value_from_raw(result))
+        let key = self.env.create_string(name).map_err(js_error)?;
+        Self::object_from_value(object)?
+            .get_property_unchecked::<_, Unknown<'_>>(key)
+            .map(|value| self.value_from_scoped(value))
+            .map_err(js_error)
     }
 
     fn set_property(
@@ -387,11 +409,10 @@ impl JsEngine for NodeApiEngine {
         name: &str,
         value: &Self::Value,
     ) -> Result<(), JsError> {
-        let key = self.string(name)?;
-        check(
-            unsafe { sys::napi_set_property(self.raw_env(), raw(object), raw(&key), raw(value)) },
-            "write object property",
-        )
+        let key = self.env.create_string(name).map_err(js_error)?;
+        Self::object_from_value(object)?
+            .set_property(key, *value)
+            .map_err(js_error)
     }
 
     fn set_global(&mut self, name: &str, value: &Self::Value) -> Result<(), JsError> {
@@ -413,7 +434,7 @@ impl JsEngine for NodeApiEngine {
                 move |context| {
                     let this = context.this::<Unknown<'static>>()?;
                     let arguments = context.arguments::<Unknown<'static>>()?;
-                    let external = external_from_raw(context.env.raw(), this.raw()).ok();
+                    let external = external_from_value(&this).ok();
                     callback.borrow_mut()(NativeCall {
                         this,
                         arguments,
@@ -432,24 +453,14 @@ impl JsEngine for NodeApiEngine {
         this: Option<&Self::Value>,
         arguments: &[Self::Value],
     ) -> Result<Self::Value, JsError> {
-        let receiver = this.copied().unwrap_or_else(|| self.undefined());
-        let argument_values: Vec<_> = arguments.iter().map(raw).collect();
-        let mut result = ptr::null_mut();
-        check_call(
-            self.raw_env(),
-            unsafe {
-                sys::napi_call_function(
-                    self.raw_env(),
-                    raw(&receiver),
-                    raw(function),
-                    argument_values.len(),
-                    argument_values.as_ptr(),
-                    &mut result,
-                )
-            },
-            "call JavaScript function",
-        )?;
-        Ok(self.value_from_raw(result))
+        let function = Self::function_from_value(function)?;
+        let arguments = DynamicArguments(arguments.to_vec());
+        let result = match this {
+            Some(receiver) => function.apply(*receiver, arguments),
+            None => function.call(arguments),
+        };
+        let result = self.capture_pending(result)?;
+        Ok(self.value_from_scoped(result))
     }
 
     fn register_class(
@@ -462,16 +473,10 @@ impl JsEngine for NodeApiEngine {
             let function = self.define_function(&method.name, method.callback)?;
             self.set_property(&prototype, &method.name, &function)?;
         }
-        let mut reference = ptr::null_mut();
-        check(
-            unsafe {
-                sys::napi_create_reference(self.raw_env(), raw(&constructor), 1, &mut reference)
-            },
-            "retain native class",
-        )?;
+        let reference = constructor.create_ref().map_err(js_error)?;
         Ok(NodeClass {
-            env: self.raw_env(),
-            reference,
+            env: self.env,
+            reference: Some(reference),
         })
     }
 
@@ -481,57 +486,42 @@ impl JsEngine for NodeApiEngine {
         external: ExternalId,
         finalizer: Option<Box<dyn FnOnce(ExternalId) + 'static>>,
     ) -> Result<Self::Value, JsError> {
-        let mut instance = ptr::null_mut();
-        check(
-            unsafe {
-                sys::napi_new_instance(
-                    self.raw_env(),
-                    class.value()?,
-                    0,
-                    ptr::null(),
-                    &mut instance,
-                )
-            },
-            "instantiate native class",
-        )?;
-        let data = Box::into_raw(Box::new(InstanceData {
-            id: external,
-            finalizer,
-        }));
-        let status = unsafe {
-            sys::napi_wrap(
-                self.raw_env(),
-                instance,
-                data.cast(),
-                Some(finalize_instance),
-                ptr::null_mut(),
-                ptr::null_mut(),
+        let constructor_value = class.value()?;
+        let constructor = Self::function_from_value(&constructor_value)?;
+        let instance = constructor
+            .new_instance(DynamicArguments(Vec::new()))
+            .map_err(js_error)?;
+        let mut instance = Object::from_raw(self.raw_env(), instance.raw());
+        instance
+            .wrap(
+                InstanceData {
+                    id: external,
+                    finalizer,
+                },
+                None,
             )
-        };
-        if let Err(error) = check(status, "attach native instance data") {
-            // SAFETY: napi_wrap rejected ownership of the allocation.
-            drop(unsafe { Box::from_raw(data) });
-            return Err(error);
-        }
-        Ok(self.value_from_raw(instance))
+            .map_err(js_error)?;
+        Ok(self.value_from_scoped(instance.to_unknown()))
     }
 
     fn external_id(&mut self, value: &Self::Value) -> Result<ExternalId, JsError> {
-        external_from_raw(self.raw_env(), raw(value))
+        external_from_value(value)
     }
 
     fn detach_array_buffer(&mut self, buffer: &Self::Value) -> Result<(), JsError> {
-        // Node-API refuses a value that is not an ArrayBuffer, so the status is
-        // the check: a transfer list that quietly detached nothing is exactly
-        // the failure this call exists to prevent.
-        check(
-            unsafe { sys::napi_detach_arraybuffer(self.raw_env(), raw(buffer)) },
-            "detach an ArrayBuffer",
-        )
+        if !buffer.is_arraybuffer().map_err(js_error)? {
+            return Err(JsError::new("value is not an ArrayBuffer"));
+        }
+        let buffer = ArrayBuffer::from_unknown(*buffer).map_err(js_error)?;
+        buffer.detach().map_err(js_error)
     }
 
     fn downgrade(&mut self, value: &Self::Value) -> Result<Self::WeakRef, JsError> {
         let mut reference = ptr::null_mut();
+        // SAFETY: napi-rs references always start strong (refcount 1). A
+        // zero-refcount reference is the Node-API weak-handle primitive, so this
+        // unsupported constructor remains raw. The handle belongs to this env
+        // and NodeWeakRef deletes it exactly once.
         check(
             unsafe { sys::napi_create_reference(self.raw_env(), raw(value), 0, &mut reference) },
             "create weak reference",
@@ -544,6 +534,8 @@ impl JsEngine for NodeApiEngine {
 
     fn upgrade(&mut self, reference: &Self::WeakRef) -> Result<Option<Self::Value>, JsError> {
         let mut value = ptr::null_mut();
+        // SAFETY: `reference` was created by `downgrade` in this environment
+        // and stays live for the call. Node-API returns null after collection.
         check(
             unsafe {
                 sys::napi_get_reference_value(self.raw_env(), reference.reference, &mut value)
@@ -763,37 +755,24 @@ fn document_file_url(path: &Path, entrypoint: &str, fragment: &str) -> Option<St
     Some(format!("{url}{query}{fragment}"))
 }
 
-pub(crate) fn external_from_raw(
-    env: sys::napi_env,
-    object: sys::napi_value,
-) -> Result<ExternalId, JsError> {
-    let mut data = ptr::null_mut();
-    check(
-        unsafe { sys::napi_unwrap(env, object, &mut data) },
-        "read native instance data",
-    )?;
-    if data.is_null() {
-        return Err(JsError::new("object has no native instance data"));
-    }
-    // SAFETY: successful napi_unwrap returns the InstanceData pointer supplied
-    // by this module's instantiate method.
-    Ok(unsafe { (*data.cast::<InstanceData>()).id })
+pub(crate) fn external_from_value(value: &Unknown<'_>) -> Result<ExternalId, JsError> {
+    NodeApiEngine::object_from_value(value)?
+        .unwrap::<InstanceData>()
+        .map(|data| data.id)
+        .map_err(js_error)
 }
 
-pub(crate) fn typed_array_type(kind: TypedArrayKind) -> sys::napi_typedarray_type {
-    match kind {
-        TypedArrayKind::Int8 => sys::TypedarrayType::int8_array,
-        TypedArrayKind::Uint8 => sys::TypedarrayType::uint8_array,
-        TypedArrayKind::Uint8Clamped => sys::TypedarrayType::uint8_clamped_array,
-        TypedArrayKind::Int16 => sys::TypedarrayType::int16_array,
-        TypedArrayKind::Uint16 => sys::TypedarrayType::uint16_array,
-        TypedArrayKind::Int32 => sys::TypedarrayType::int32_array,
-        TypedArrayKind::Uint32 => sys::TypedarrayType::uint32_array,
-        TypedArrayKind::Float32 => sys::TypedarrayType::float32_array,
-        TypedArrayKind::Float64 => sys::TypedarrayType::float64_array,
-        TypedArrayKind::BigInt64 => sys::TypedarrayType::bigint64_array,
-        TypedArrayKind::BigUint64 => sys::TypedarrayType::biguint64_array,
-    }
+fn values_from_bytes<const WIDTH: usize, T, F>(bytes: &[u8], decode: F) -> Vec<T>
+where
+    F: Fn([u8; WIDTH]) -> T,
+{
+    bytes
+        .as_chunks::<WIDTH>()
+        .0
+        .iter()
+        .copied()
+        .map(decode)
+        .collect()
 }
 
 pub(crate) fn from_typed_array_type(
@@ -822,8 +801,20 @@ mod tests {
     use std::path::Path;
 
     use blitsen_core::inline_script_identifier;
+    use blitsen_js::ExternalId;
 
-    use super::{document_file_url, document_url, uses_document_script_scope};
+    use super::{InstanceData, document_file_url, document_url, uses_document_script_scope};
+
+    #[test]
+    fn a_panicking_instance_finalizer_cannot_escape_the_node_api_boundary() {
+        let outcome = std::panic::catch_unwind(|| {
+            drop(InstanceData {
+                id: ExternalId(7),
+                finalizer: Some(Box::new(|_| panic!("intentional finalizer panic"))),
+            });
+        });
+        assert!(outcome.is_ok());
+    }
 
     /// Issue #125: an inline module's `import.meta.url` is the document's URL,
     /// as it is in a browser, so `new URL('./x', import.meta.url)` names a file
