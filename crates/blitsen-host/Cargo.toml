@@ -34,7 +34,7 @@ futures-util = { version = "0.3", default-features = false, features = ["std", "
 # rather than a PRNG seeded from it: this is the entropy an application's UUIDs
 # and tokens are built on. Already in the tree behind `rand_core`, so linking it
 # directly compiles no new crate.
-getrandom = "0.3"
+getrandom = "0.4"
 # `Intl` (#237). CLDR through ICU4X, which is what a browser's own ICU build
 # reads: the placement of a currency symbol, the minor units a currency has and
 # the name of a time zone in a locale are data, and an implementation that

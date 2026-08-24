@@ -526,7 +526,7 @@ dependencies = [
  "fixed_decimal",
  "flate2",
  "futures-util",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "gilrs",
  "hidapi",
  "hidreport",
