@@ -158,10 +158,12 @@ pub enum Instance {
 /// Unix endpoints live in a mode-0700 per-user runtime directory. Linux uses
 /// `XDG_RUNTIME_DIR` when it is absolute, owned by the effective user and not
 /// group/world accessible; the fallback is `<temp>/blitsen-<uid>`. macOS uses
-/// `<per-user temp>/blitsen-ipc`. Socket files are mode 0600 on Linux and the
-/// private parent is the permission boundary on macOS, where pre-bind socket
-/// modes are unsupported. A short advisory lock serializes stale-file recovery,
-/// but binding the socket remains the persistent ownership claim.
+/// `<per-user temp>/blitsen-ipc`; its short socket filename is a deterministic
+/// hash of the full application name because Darwin's `sun_path` is only 104
+/// bytes. Socket files are mode 0600 on Linux and the private parent is the
+/// permission boundary on macOS, where pre-bind socket modes are unsupported.
+/// A short advisory lock serializes stale-file recovery, but binding the socket
+/// remains the persistent ownership claim.
 ///
 /// Windows endpoints are discoverable as
 /// `\\.\pipe\blitsen-<user SID>-<application>`. Their protected DACL grants only
@@ -305,7 +307,11 @@ pub mod single_instance {
     #[cfg(unix)]
     fn endpoint(name: &str) -> Result<Endpoint, PlatformError> {
         let name = validated_name(name)?;
-        let path = unix_runtime_directory()?.join(format!("blitsen-{name}.sock"));
+        #[cfg(target_os = "macos")]
+        let filename = format!("b-{:016x}.sock", stable_name_hash(&name));
+        #[cfg(not(target_os = "macos"))]
+        let filename = format!("blitsen-{name}.sock");
+        let path = unix_runtime_directory()?.join(filename);
         // `sun_path` is 104 bytes on macOS and 108 on Linux; a name that does not
         // fit has to fail here rather than inside `bind`.
         if path.as_os_str().len() >= 100 {
@@ -325,6 +331,18 @@ pub mod single_instance {
             name: socket_name,
             path,
         })
+    }
+
+    #[cfg(target_os = "macos")]
+    fn stable_name_hash(name: &str) -> u64 {
+        // FNV-1a keeps this endpoint stable across processes and toolchains
+        // without adding a shipping dependency. The full validated name feeds
+        // all 64 bits; this is an identity key, not an authenticity boundary.
+        name.as_bytes()
+            .iter()
+            .fold(0xcbf29ce484222325, |hash, byte| {
+                (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3)
+            })
     }
 
     #[cfg(windows)]
@@ -964,6 +982,15 @@ pub mod single_instance {
             assert_eq!(request(&name, &invocation(0)).unwrap(), Instance::Primary);
             reset();
             assert!(!endpoint.path.exists());
+        }
+
+        #[cfg(target_os = "macos")]
+        #[test]
+        fn macos_hashes_long_application_names_below_the_socket_limit() {
+            let first = endpoint(&"a".repeat(80)).unwrap();
+            let second = endpoint(&format!("{}b", "a".repeat(79))).unwrap();
+            assert!(first.path.as_os_str().len() < 100);
+            assert_ne!(first.path, second.path);
         }
 
         #[cfg(windows)]
