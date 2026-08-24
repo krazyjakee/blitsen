@@ -28,8 +28,9 @@
 // Writing a stored-only zip is about eighty lines because a stored entry has no
 // codec: a local header, the bytes, a central directory record, an end record.
 // `zipalign -p 4` then inserts the padding — 4 bytes for everything, a page for
-// an uncompressed `.so` — and `apksigner` signs the result. Both ship in the
-// SDK build-tools that were already a prerequisite.
+// an uncompressed `.so` — and `apksigner` signs the result. Those tools and D8,
+// which compiles #252's small activation bridge, ship in the SDK build-tools
+// that were already a prerequisite.
 //
 // # Why the timestamps are constant
 //
@@ -157,10 +158,11 @@ const escapeXml = text => String(text)
 /**
  * The whole of the Java side of a Blitsen application.
  *
- * There is none: `android:hasCode="false"` is the claim that there is no dex in
- * the archive, and it is true because #142 selected `android-activity`'s
- * `native-activity` backend, whose activity class ships with the platform. All
- * this file does is name a shared object for `NativeActivity` to `dlopen`.
+ * NativeActivity still owns the application lifecycle, but #252 needs two
+ * a callback the platform class does not provide: a private receiver that can
+ * persist notification activation before optionally launching NativeActivity.
+ * The exported launcher never sees the trusted envelope, so another package
+ * cannot forge one by explicitly starting that public component.
  *
  * `android:extractNativeLibs="false"` is the reason the archive is written the
  * way it is. It tells the installer to leave the `.so` inside the APK and map
@@ -203,7 +205,7 @@ export function androidManifest({
 
     <application
         android:label="${escapeXml(label)}"
-        android:hasCode="false"${debuggable ? "\n        android:debuggable=\"true\"" : ""}
+        android:hasCode="true"${debuggable ? "\n        android:debuggable=\"true\"" : ""}
         android:extractNativeLibs="false">
         <activity
             android:name="android.app.NativeActivity"
@@ -217,6 +219,9 @@ export function androidManifest({
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <receiver
+            android:name="com.blitsen.runtime.NotificationBridge$ActivationReceiver"
+            android:exported="false" />
     </application>
 </manifest>
 `;
@@ -245,11 +250,11 @@ export async function archiveTree(directory, prefix) {
  * Everything that goes into the APK, in the order it is written.
  *
  * `linked` is the directory `aapt2 link --output-to-dir` wrote, which holds the
- * binary manifest and `resources.arsc` and nothing else — this build compiles
- * no resources, because there are none: no layouts, no strings and, until
+ * binary manifest and `resources.arsc`; D8 separately supplies `classes.dex`.
+ * This build compiles no resources, because there are none: no layouts, no strings and, until
  * `--icon` grows an Android answer, no drawables.
  */
-export async function apkEntries({ linked, libraries, assets }) {
+export async function apkEntries({ linked, dex, libraries, assets }) {
   const entries = [];
   for (const name of ["AndroidManifest.xml", "resources.arsc"]) {
     const data = await readFile(join(linked, name)).catch(() => null);
@@ -258,6 +263,12 @@ export async function apkEntries({ linked, libraries, assets }) {
     }
     entries.push({ name, data });
   }
+  const classes = await readFile(dex).catch(() => null);
+  if (classes === null) {
+    throw new Error(`d8 produced no classes.dex at ${dex}, so notification activation callbacks `
+      + "would be absent from the APK");
+  }
+  entries.push({ name: "classes.dex", data: classes });
   for (const library of [...libraries].sort((left, right) =>
     (left.entry < right.entry ? -1 : 1))) {
     const data = await readFile(library.source).catch(() => null);

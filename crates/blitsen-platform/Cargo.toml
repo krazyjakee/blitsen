@@ -1,6 +1,6 @@
 [package]
 name = "blitsen-platform"
-description = "Window, GPU, audio, network, and filesystem services for Blitsen"
+description = "JavaScript-free application, clipboard, dialog, and OS services for Blitsen"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -33,6 +33,12 @@ arboard = { version = "3.6", features = ["wayland-data-control"] }
 # platform-aware implementation rather than interpreting environment variables
 # in the application bridge.
 dirs = "6"
+# One byte-stream API over filesystem Unix sockets and Windows named pipes. The
+# application still owns framing, serialization, queueing and ownership; this
+# crate only replaces the two platform transports.
+interprocess = "2.4"
+# The application and dialog queues deliberately survive a panicking worker.
+parking_lot.workspace = true
 # The battery, which `sysinfo` above does not read at any feature level — it has
 # no battery feature to turn on, so this is a second library rather than a
 # heavier configuration of the one already here. Power is a fourth source on
@@ -45,11 +51,24 @@ dirs = "6"
 # reading there is `BatteryManager` over JNI and is not this.
 starship-battery = "0.11"
 
-# The process queues in `app` deliberately survive a panicking hand-off thread.
-# Only Unix builds compile that single-instance implementation; the XDG dialog
-# queue is narrower still, so this keeps the direct dependency off other targets.
+# The filesystem endpoint's recovery election uses the standard library's file
+# lock, while the effective uid authenticates its directory and peers. `libc`
+# is already in the Unix graph through `interprocess`.
 [target.'cfg(all(unix, not(target_os = "android")))'.dependencies]
-parking_lot.workspace = true
+libc = "0.2"
+
+# A named pipe is system-wide, so its discoverable name and protected DACL use
+# the caller's Windows SID. These are already `interprocess` dependencies on
+# Windows; listing them directly adds no crate to that target graph.
+[target.'cfg(windows)'.dependencies]
+widestring = "1"
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_System_Pipes",
+    "Win32_System_Threading",
+] }
 
 # Dialogs exist only where the XDG desktop portal does; see `src/dialog.rs` for
 # why macOS and Windows are absent rather than approximated. `rfd` speaks the

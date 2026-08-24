@@ -90,7 +90,12 @@ pub struct WindowSession<E: JsEngine + Clone> {
 
 impl<E: JsEngine + Clone> Drop for WindowSession<E> {
     fn drop(&mut self) {
-        self.application.notify.clear();
+        // A notification is platform-owned once shown and deliberately
+        // outlives a graceful process exit: that is what leaves something for
+        // #252's registered entry point to activate. Reload calls `clear`
+        // explicitly because it replaces one live document/session with
+        // another; dropping the process only detaches callback state.
+        self.application.notify.detach();
     }
 }
 
@@ -113,6 +118,7 @@ impl<E: JsEngine + Clone + 'static> WindowSession<E> {
         // already recorded it as delivered.
         super::notify::install(&options.activation, &options.title).map_err(JsError::new)?;
         crate::dom_bridge::hid::reset();
+        crate::dom_bridge::gamepad::reset();
         crate::dom_bridge::input::reset();
         let storage = crate::storage::LocalStorage::for_application(&options.storage_identity)
             .map_err(JsError::new)?;
@@ -241,6 +247,7 @@ impl<E: JsEngine + Clone + 'static> WindowSession<E> {
             app_menu,
             notify,
             hid: super::hid::controller(event_loop.create_proxy()),
+            gamepads: super::gamepad::Controller::platform(),
             quit_requested: false,
         };
         drop(guard);
@@ -269,6 +276,7 @@ impl<E: JsEngine + Clone + 'static> WindowSession<E> {
         // reloaded application cannot open.
         self.application.hid = super::hid::controller(self.event_loop.create_proxy());
         crate::dom_bridge::hid::reset();
+        crate::dom_bridge::gamepad::reset();
         crate::dom_bridge::input::reset();
         let window_id = self
             .application
@@ -417,6 +425,14 @@ impl<E: JsEngine + Clone + 'static> WindowSession<E> {
         self.event_loop
             .pump_app_events(timeout, &mut self.application);
         self.application.notify.poll();
+        #[cfg(target_os = "linux")]
+        if self.application.notify.take_present_request() {
+            for view in self.application.inner.windows.values() {
+                view.window.focus_window();
+                view.window
+                    .request_user_attention(Some(winit::window::UserAttentionType::Informational));
+            }
+        }
         if crate::dom_bridge::notify::pending() {
             self.request_redraw();
         }
@@ -425,6 +441,9 @@ impl<E: JsEngine + Clone + 'static> WindowSession<E> {
         self.apply_menu_requests();
         self.apply_notify_requests();
         self.apply_hid_requests();
+        if self.application.gamepads.apply_requests() {
+            self.request_redraw();
+        }
         self.application.hid.poll();
         if crate::dom_bridge::hid::pending() {
             self.request_redraw();

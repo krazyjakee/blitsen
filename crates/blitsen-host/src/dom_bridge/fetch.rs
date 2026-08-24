@@ -500,16 +500,17 @@ mod tests {
     }
 
     /// A directory of application files, and a host that can read them.
-    fn application(name: &str, files: &[(&str, &[u8])]) -> (std::path::PathBuf, FetchHost) {
-        let root =
-            std::env::temp_dir().join(format!("blitsen-fetch-{name}-{}", std::process::id()));
-        std::fs::create_dir_all(&root).unwrap();
+    fn application(name: &str, files: &[(&str, &[u8])]) -> (tempfile::TempDir, FetchHost) {
+        let root = tempfile::Builder::new()
+            .prefix(&format!("blitsen-fetch-{name}-"))
+            .tempdir()
+            .unwrap();
         for (path, bytes) in files {
-            let target = root.join(path);
+            let target = root.path().join(path);
             std::fs::create_dir_all(target.parent().unwrap()).unwrap();
             std::fs::write(target, bytes).unwrap();
         }
-        let files = crate::app::AppFiles::directory(root.join("index.html")).unwrap();
+        let files = crate::app::AppFiles::directory(root.path().join("index.html")).unwrap();
         (root, FetchHost::new(Some(files.reader())).unwrap())
     }
 
@@ -523,7 +524,7 @@ mod tests {
             .message()
             .to_owned();
 
-        let (root, application) = application("outside-message", &[("index.html", b"<p>hi")]);
+        let (_root, application) = application("outside-message", &[("index.html", b"<p>hi")]);
         application.start(&spec(url, "GET", &[]), None).unwrap();
         let asynchronous = drain(&application)["completed"][0]["error"]["message"]
             .as_str()
@@ -536,7 +537,6 @@ mod tests {
             "fetch reaches http, https, and the files this application shipped; \
              blitsen://other/data.json is none of them"
         );
-        std::fs::remove_dir_all(&root).ok();
     }
 
     #[test]
@@ -551,7 +551,7 @@ mod tests {
         );
         // The spelling an application actually writes:
         // `new URL('./blip.wav', import.meta.url).href`.
-        let url = format!("file://{}/blip.wav", root.to_string_lossy());
+        let url = format!("file://{}/blip.wav", root.path().to_string_lossy());
         let id = host.start(&spec(&url, "GET", &[]), None).unwrap();
         let completed = drain(&host);
         let record = &completed["completed"][0];
@@ -571,12 +571,11 @@ mod tests {
             .unwrap();
         drain(&host);
         assert_eq!(host.take_body(id).unwrap(), b"{\"ok\":true}");
-        std::fs::remove_dir_all(&root).ok();
     }
 
     #[test]
     fn a_path_the_application_does_not_ship_is_a_404_and_one_outside_it_is_refused() {
-        let (root, host) = application("missing", &[("index.html", b"<p>hi")]);
+        let (_root, host) = application("missing", &[("index.html", b"<p>hi")]);
         let id = host
             .start(&spec("blitsen://app/nope.json", "GET", &[]), None)
             .unwrap();
@@ -595,7 +594,6 @@ mod tests {
             .as_str()
             .unwrap();
         assert!(message.contains("is none of them"), "{message}");
-        std::fs::remove_dir_all(&root).ok();
     }
 
     #[test]

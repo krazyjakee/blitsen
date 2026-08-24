@@ -1,7 +1,8 @@
 # Blitz rendering gaps — standing list
 
-Blitsen renders through [Blitz](https://github.com/DioxusLabs/blitz), pinned at `1efe22d`. This is
-the live list of rendering divergences we know about, with status. It supersedes the frozen
+Blitsen renders through [Blitz](https://github.com/DioxusLabs/blitz), at the exact revision declared
+by the workspace [`Cargo.toml`](../Cargo.toml). This is the live list of rendering divergences we
+know about, with status. It supersedes the frozen
 catalogue in [`spikes/s6/README.md`](../spikes/s6/README.md), which was a dated snapshot from one
 run and is kept only as the evidence behind the initial triage.
 

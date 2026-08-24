@@ -58,6 +58,7 @@
     getComputedStyle, matchMedia, MediaQueryList, MediaQueryListEvent,
     Event, MouseEvent, KeyboardEvent, CompositionEvent, CustomEvent, SubmitEvent, PopStateEvent, HashChangeEvent,
     MessageEvent, CloseEvent, ErrorEvent, FocusEvent, InputEvent, PointerEvent, WheelEvent,
+    Gamepad, GamepadButton, GamepadEvent, GamepadHapticActuator,
     ClipboardEvent, DragEvent, DataTransfer,
     Worker, MessagePort, MessageChannel, structuredClone,
     postMessage: windowPostMessage,
@@ -80,7 +81,8 @@
       || waitingImages() > 0 || waitingLinks() > 0
       || nativePending() || nativeDialogPending() || nativeTrayWorkPending()
       || nativeMenuWorkPending()
-      || nativeNotifyWorkPending() || nativeHidWorkPending() || call("isAnimating")
+      || nativeNotifyWorkPending() || nativeHidWorkPending() || gamepadWorkPending()
+      || call("isAnimating")
       // A canvas drawn outside a frame callback is owed a paint, and nothing
       // else here would ask for one.
       || canvasPaintPending
@@ -200,6 +202,10 @@
     return { allowed, target: wrap(hit.target), path: hit.path.map(wrap) };
   };
   Object.assign(globalThis, globals);
+  if (!gamepadInstalled) try { delete globalThis.Gamepad; } catch {}
+  if (!gamepadInstalled) try { delete globalThis.GamepadButton; } catch {}
+  if (!gamepadInstalled) try { delete globalThis.GamepadEvent; } catch {}
+  if (!gamepadInstalled) try { delete globalThis.GamepadHapticActuator; } catch {}
   globalThis.window = globalThis;
   // `self` is the global under the name code shares with a worker, which is why
   // library configuration is written through it — `self.MonacoEnvironment` is

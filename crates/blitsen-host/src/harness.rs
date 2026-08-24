@@ -662,18 +662,10 @@ mod tests {
 
     #[test]
     fn record_frame_owns_the_filename_png_and_write_error() {
-        let unique = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("time moves forwards")
-            .as_nanos();
-        let directory = std::env::temp_dir().join(format!(
-            "blitsen-record-frame-{}-{unique}",
-            std::process::id()
-        ));
-        std::fs::create_dir(&directory).expect("a scratch directory");
+        let directory = tempfile::tempdir().expect("a scratch directory");
 
         let pixels = [0x12, 0x34, 0x56, 0xff];
-        let path = record_frame(&directory, 12, &pixels, 1, 1).expect("the frame records");
+        let path = record_frame(directory.path(), 12, &pixels, 1, 1).expect("the frame records");
         assert_eq!(
             path.file_name().and_then(|name| name.to_str()),
             Some("frame-00012.png")
@@ -684,12 +676,11 @@ mod tests {
                 .starts_with(&[0x89, b'P', b'N', b'G'])
         );
 
-        let blocker = directory.join("not-a-directory");
+        let blocker = directory.path().join("not-a-directory");
         std::fs::write(&blocker, []).expect("the blocker is written");
         let error =
             record_frame(&blocker, 13, &pixels, 1, 1).expect_err("writing below a file fails");
         assert!(error.message().starts_with("could not record frame 13:"));
-        std::fs::remove_dir_all(directory).expect("the scratch directory is removed");
     }
 
     #[test]

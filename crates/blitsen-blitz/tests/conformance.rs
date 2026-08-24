@@ -494,6 +494,9 @@ fn layout_conformance_corpus() {
         .get("fingerprint")
         .is_some_and(|it| *it == fingerprint);
 
+    // Deliberately not a `TempDir`: this is a stable persisted test artifact,
+    // retained after failure so CI can upload it and a developer can inspect it.
+    // A new run replaces the previous artifact at the same documented path.
     let divergence = divergence_directory();
     let _ = std::fs::remove_dir_all(&divergence);
     let mut failures = Vec::new();

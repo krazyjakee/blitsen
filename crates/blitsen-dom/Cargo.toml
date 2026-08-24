@@ -1,6 +1,6 @@
 [package]
 name = "blitsen-dom"
-description = "DOM backend boundary and Blitz adapter for Blitsen"
+description = "Renderer-independent DOM and backend contracts for Blitsen"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

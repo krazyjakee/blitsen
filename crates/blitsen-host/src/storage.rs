@@ -428,14 +428,11 @@ mod tests {
 
     use super::*;
 
-    fn directory(name: &str) -> PathBuf {
-        let path = std::env::temp_dir().join(format!(
-            "blitsen-storage-{name}-{}-{}",
-            std::process::id(),
-            TEMP_ID.fetch_add(1, Ordering::Relaxed)
-        ));
-        fs::create_dir_all(&path).unwrap();
-        path
+    fn directory(name: &str) -> tempfile::TempDir {
+        tempfile::Builder::new()
+            .prefix(&format!("blitsen-storage-{name}-"))
+            .tempdir()
+            .unwrap()
     }
 
     fn in_realm(storage: LocalStorage, script: &str) -> Result<(), JsError> {
@@ -462,60 +459,57 @@ mod tests {
     #[test]
     fn injected_directory_reopens_the_same_application_and_separates_another() {
         let root = directory("reopen");
-        LocalStorage::open(&root, "app-a")
+        LocalStorage::open(root.path(), "app-a")
             .unwrap()
             .set("theme", "dark")
             .unwrap();
         assert_eq!(
-            LocalStorage::open(&root, "app-a")
+            LocalStorage::open(root.path(), "app-a")
                 .unwrap()
                 .get("theme")
                 .unwrap(),
             Some("dark".into())
         );
         assert_eq!(
-            LocalStorage::open(&root, "app-b")
+            LocalStorage::open(root.path(), "app-b")
                 .unwrap()
                 .get("theme")
                 .unwrap(),
             None
         );
-        fs::remove_dir_all(root).ok();
     }
 
     #[test]
     fn a_corrupt_index_is_rebuilt_and_a_corrupt_value_is_removed() {
         let root = directory("corrupt");
-        let storage = LocalStorage::open(&root, "app").unwrap();
+        let storage = LocalStorage::open(root.path(), "app").unwrap();
         storage.set("good", "kept").unwrap();
         storage.set("bad", "lost").unwrap();
         fs::write(storage.root().join(INDEX), "not json").unwrap();
         fs::write(storage.item_path("bad"), "not json").unwrap();
-        let reopened = LocalStorage::open(&root, "app").unwrap();
+        let reopened = LocalStorage::open(root.path(), "app").unwrap();
         assert_eq!(reopened.get("good").unwrap(), Some("kept".into()));
         assert_eq!(reopened.get("bad").unwrap(), None);
         assert_eq!(reopened.keys().unwrap(), vec!["good"]);
-        fs::remove_dir_all(root).ok();
     }
 
     #[test]
     fn sustained_writes_replace_one_value_without_growing_the_key_set() {
         let root = directory("writes");
-        let storage = LocalStorage::open(&root, "app").unwrap();
+        let storage = LocalStorage::open(root.path(), "app").unwrap();
         for value in 0..500 {
             storage.set("sample", &value.to_string()).unwrap();
         }
         assert_eq!(storage.get("sample").unwrap(), Some("499".into()));
         assert_eq!(storage.keys().unwrap(), vec!["sample"]);
         assert_eq!(fs::read_dir(storage.root().join(ITEMS)).unwrap().count(), 1);
-        fs::remove_dir_all(root).ok();
     }
 
     #[test]
     fn independently_opened_writers_do_not_lose_each_others_keys() {
         let root = directory("concurrent");
-        let first = LocalStorage::open(&root, "app").unwrap();
-        let second = LocalStorage::open(&root, "app").unwrap();
+        let first = LocalStorage::open(root.path(), "app").unwrap();
+        let second = LocalStorage::open(root.path(), "app").unwrap();
         let barrier = Arc::new(std::sync::Barrier::new(2));
         let writer =
             |prefix: &'static str, storage: LocalStorage, barrier: Arc<std::sync::Barrier>| {
@@ -533,17 +527,16 @@ mod tests {
         left.join().unwrap();
         right.join().unwrap();
 
-        let reopened = LocalStorage::open(&root, "app").unwrap();
+        let reopened = LocalStorage::open(root.path(), "app").unwrap();
         assert_eq!(reopened.keys().unwrap().len(), 40);
         assert_eq!(reopened.get("left-19").unwrap(), Some("19".into()));
         assert_eq!(reopened.get("right-19").unwrap(), Some("19".into()));
-        fs::remove_dir_all(root).ok();
     }
 
     #[test]
     fn key_order_remove_clear_and_string_values_match_web_storage() {
         let root = directory("parity");
-        let storage = LocalStorage::open(&root, "app").unwrap();
+        let storage = LocalStorage::open(root.path(), "app").unwrap();
         storage.set("theme", "dark").unwrap();
         storage.set("count", "2").unwrap();
         storage.set("theme", "light").unwrap();
@@ -553,13 +546,12 @@ mod tests {
         assert_eq!(storage.keys().unwrap(), vec!["count"]);
         storage.clear().unwrap();
         assert!(storage.keys().unwrap().is_empty());
-        fs::remove_dir_all(root).ok();
     }
 
     #[test]
     fn javascript_property_and_method_keys_share_the_durable_store_but_not_the_session() {
         let root = directory("javascript-parity");
-        let storage = LocalStorage::open(&root, "app").unwrap();
+        let storage = LocalStorage::open(root.path(), "app").unwrap();
         in_realm(
             storage.clone(),
             r#"
@@ -578,7 +570,7 @@ mod tests {
         .unwrap();
         assert_eq!(storage.keys().unwrap(), vec!["theme", "count"]);
         in_realm(
-            LocalStorage::open(&root, "app").unwrap(),
+            LocalStorage::open(root.path(), "app").unwrap(),
             r#"
               if (localStorage.theme !== "dark" || localStorage.count !== "2")
                 throw new Error("localStorage did not survive a realm");
@@ -590,6 +582,5 @@ mod tests {
             "#,
         )
         .unwrap();
-        fs::remove_dir_all(root).ok();
     }
 }

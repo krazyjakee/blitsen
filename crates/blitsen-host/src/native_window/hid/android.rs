@@ -18,14 +18,13 @@
 //! leading report ID of zero means "this device does not use report IDs" and is
 //! stripped from the wire rather than sent.
 //!
-//! ## Why there is no `BroadcastReceiver`
+//! ## Why HID has no `BroadcastReceiver`
 //!
 //! The documented shape of `UsbManager.requestPermission` is a `PendingIntent`
-//! whose broadcast a `BroadcastReceiver` catches. Blitsen cannot register one:
-//! `android:hasCode="false"` is a load-bearing claim about the APK (#142) — the
-//! archive contains no dex, the activity class is the platform's own, and JNI
-//! cannot define a Java class on Android. A receiver would mean shipping a dex
-//! and a second Activity owner, which #248 rules out and #142 chose against.
+//! whose broadcast a `BroadcastReceiver` catches. The APK's deliberately small
+//! dex contains only notification activation callbacks (#252), not a second
+//! permission protocol for HID. Adding one is unnecessary because the answer
+//! can be read without owning the broadcast, as described below.
 //!
 //! What replaces it is the state the broadcast would have reported, read from
 //! the source the system keeps anyway: `UsbManager.hasPermission`. That is

@@ -23,7 +23,7 @@ requested runtime separately and stores it in the platform cache.
 ## Linux requirements
 
 Published Linux runtimes are built on Ubuntu 22.04 and require glibc 2.35 or newer. The machine
-must also provide ALSA, OpenSSL 3, fontconfig and the display libraries needed by its active X11 or
+must also provide ALSA, OpenSSL 3, fontconfig, libudev and the display libraries needed by its active X11 or
 Wayland session.
 
 Minimal containers and headless Linux systems commonly omit these libraries. Blitsen is a windowed
@@ -41,6 +41,14 @@ borderless on the monitor containing the window (primary fallback), never an exc
 switch. Both modes release on Escape, focus loss, surface loss, or target disconnection. Physical
 multi-monitor placement and grab behavior still require acceptance on Windows and macOS, with
 fullscreen acceptance separately required on X11 and Wayland.
+Gamepad snapshots and connect/disconnect events are available on Linux, macOS and Windows through
+the target-gated `gilrs` backend. Controllers are sampled once per application redraw, so an idle
+window performs no application-side controller polling and learns about a hot-plug on its next
+frame. The backend still owns its platform event worker; the additional 50 ms force-feedback loop
+is initialized lazily, on the first nonzero effect rather than for controller-free applications.
+Standard dual-rumble is exposed only where the device and driver advertise it. Synthetic tests
+cover slot, normalization, event, backend-completion and command semantics; physical hot-plug,
+mapping and motor behavior still require representative X11, Wayland, Windows and macOS hardware.
 `os.batteries` reads the machine's own batteries on every desktop target and answers an empty list
 where there are none; `os.displays` and `os.idleTime` are absent by decision, the monitors being
 `window.monitors()` and idle time having no answer a Wayland client can trust.
@@ -94,14 +102,19 @@ first frame turn, as an `activation` event on `notify.onEvent`, and never replay
 delivered—see [Native APIs](NATIVE-APIS.md#cold-start-activation). What each platform does to
 produce it differs, and only the parts named here exist:
 
-- **Linux** — `blitsen build` writes a desktop entry declaring `X-GNOME-UsesNotifications=true` and
-  an `Exec` that takes one argument, and every notification carries that entry's name in the
-  freedesktop `desktop-entry` hint. That is what attributes a notification to an installed
-  application and lists it in the desktop's notification settings. It is not enough to start a
-  stopped one: the freedesktop notification service delivers an activation to the sender's own D-Bus
-  connection, and a sender that has exited has none. Starting the application instead would need a
-  D-Bus-activatable service and a notification submitted through `org.gtk.Notifications` or the
-  portal, which is a second submission backend rather than an entry point.
+- **Linux** — an export with `--bundle-id` uses the launch-capable notification portal. The build
+  writes `<id>.desktop` with `DBusActivatable=true` and `<id>.service`; once an installer puts those
+  in the standard applications and session-service directories, the runtime owns the same bus name,
+  registers its host connection as that portal application ID (again whenever the portal service
+  restarts) and exports
+  `org.freedesktop.Application.ActivateAction`. Body and named-action targets carry the persisted
+  envelope, and the portal starts a stopped service before invoking it. Calls from any D-Bus peer
+  other than the current `org.freedesktop.portal.Desktop` owner are refused. A development run has no
+  identity and retains the freedesktop live-process backend. The portal has no dismissal/expiry
+  callback or timeout field, and image-file icons require a sealed descriptor this API does not
+  transport, so a packaged app accepts an installed icon-theme name and receives body/action
+  activation and explicit `close`, while presentation lifetime and user-dismissal reporting are the
+  desktop's policy.
 - **Windows** — an export built with `--bundle-id` registers that AppUserModelID with the
   notification platform at startup, which is what gives it a notifier of its own and a permission
   state to read. Windows starts a stopped desktop application for a toast only through a registered
@@ -111,16 +124,17 @@ produce it differs, and only the parts named here exist:
   delivered to the `UNUserNotificationCenter` delegate. The delegate Blitsen's notification library
   installs discards a response for a notification the running process did not itself submit, so a
   cold-start response is not surfaced.
-- **Android** — a body tap and each action button are a `PendingIntent` that starts the Activity
-  with the activation envelope in an extra. Dismissal is not reported: it would need a
-  `BroadcastReceiver`, a receiver needs a Java class, and a Blitsen APK declares
-  `android:hasCode="false"` and carries no `classes.dex`. A tap while the Activity is alive is
-  delivered when the Activity is next created, because `NativeActivity` does not forward
-  `onNewIntent`.
+- **Android** — body, action and delete `PendingIntent`s target a private receiver in the minimal
+  `classes.dex`. It persists the activation before body/actions launch the platform
+  `NativeActivity` with a clean Intent; swipe dismissal does not open it. The exported launcher
+  never reads activation extras, so another application cannot forge an event by explicitly
+  starting it. The inbox reaches the current session on its next frame or a later launch, and
+  nonces deduplicate repeated delivery.
 
-Where a platform, distribution or installer can hand an envelope over itself, the entry point is
+Where a platform, distribution or installer uses a command-line envelope, the entry point is
 `--notification-activation <envelope>` on the application's own command line; both hosts read it,
-and a launch without one is an ordinary launch.
+and a launch without one is an ordinary launch. Linux portal actions carry the same envelope as the
+target of `ActivateAction` instead.
 
 ## macOS requirements
 
@@ -146,7 +160,8 @@ Microsoft C runtime is statically linked, so users do not need a separate Visual
 
 Windows packaging writes the application manifest and optional `.ico` beside the executable rather
 than embedding them in the PE file. Keep those files with the executable. The current
-`blitsen/dialog` module and Unix single-instance lock are absent on Windows.
+`blitsen/dialog` module is absent on Windows. Single-instance invocation hand-off uses a per-user
+named pipe whose name includes the user's SID.
 
 `blitsen/hid` opens HID top-level collections through the Windows HID class driver and needs no
 driver installation. Windows reserves some system collections for itself; an open refused that way
@@ -166,13 +181,16 @@ than reporting a state nobody chose.
 
 Android output is an APK built from a Blitsen source checkout. It supports `arm64-v8a` and `x86_64`
 by default; `armeabi-v7a` can be requested but has not been run by this project. Android supports
-the focus-scoped `input.snapshot` member and `blitsen/notify`. Notifications use Android's stable
+the focus-scoped `input.snapshot` member and `blitsen/notify`. Gamepad globals,
+`navigator.getGamepads`, `input.onDeviceChange` and `input.vibrateGamepad` are absent: `gilrs` has no
+Android backend, and an always-empty registry would make feature detection lie. Notifications use Android's stable
 `blitsen.default` channel; API 33+ requests `POST_NOTIFICATIONS`, while API 26–32 reports permission
-as granted. Submission, same-session replacement, close, body taps and action buttons are
-supported; dismissal is not, because a swipe-away needs a `BroadcastReceiver` and an APK carrying no
-`classes.dex` has no class for one to be. The standard Web `Notification` global appears only where
-that lifecycle contract is present. Android does not support Blitsen's app, clipboard, dialog,
-window, tray or menu native modules in this release.
+as granted. Submission, same-session replacement, close, body taps, action buttons and swipe
+dismissal are implemented through the packaged activation bridge. Its manifest, dex build and
+persisted handoff are covered deterministically; system-shade interaction and stopped-process
+delivery have not yet run on an emulator or device. The standard Web `Notification` global appears
+only where that lifecycle contract is present. Android does not support Blitsen's app, clipboard,
+dialog, window, tray or menu native modules in this release.
 
 Android rasterises native windows on the CPU and presents the finished buffer through
 `ANativeWindow`. This is the shipping default rather than an adapter probe: the API 32/33 CI

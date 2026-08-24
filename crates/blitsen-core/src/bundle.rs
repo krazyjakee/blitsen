@@ -574,16 +574,10 @@ fn read_u64(bytes: &[u8]) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::TempDir;
 
-    fn temporary(name: &str) -> std::path::PathBuf {
-        let directory =
-            std::env::temp_dir().join(format!("blitsen-bundle-{}-{name}", std::process::id()));
-        std::fs::create_dir_all(&directory).unwrap();
-        directory.join(name)
-    }
-
-    fn runtime_stub(name: &str) -> std::path::PathBuf {
-        let path = temporary(name);
+    fn runtime_stub(directory: &TempDir, name: &str) -> std::path::PathBuf {
+        let path = directory.path().join(name);
         let mut file = File::create(&path).unwrap();
         file.write_all(&vec![0x7f_u8; 4096]).unwrap();
         path
@@ -599,8 +593,9 @@ mod tests {
 
     #[test]
     fn a_linked_executable_reads_back_every_file_it_carries() {
-        let runtime = runtime_stub("runtime-readback");
-        let output = temporary("app-readback");
+        let directory = tempfile::tempdir().unwrap();
+        let runtime = runtime_stub(&directory, "runtime-readback");
+        let output = directory.path().join("app-readback");
         let written = write_bundle(&runtime, &output, &sample()).unwrap();
         assert!(written > 0);
 
@@ -630,14 +625,16 @@ mod tests {
 
     #[test]
     fn an_executable_without_a_bundle_reports_no_bundle_rather_than_an_error() {
-        let runtime = runtime_stub("runtime-bare");
+        let directory = tempfile::tempdir().unwrap();
+        let runtime = runtime_stub(&directory, "runtime-bare");
         assert!(AppBundle::open(&runtime).unwrap().is_none());
     }
 
     #[test]
     fn a_signature_appended_after_the_trailer_does_not_hide_it() {
-        let runtime = runtime_stub("runtime-signed");
-        let output = temporary("app-signed");
+        let directory = tempfile::tempdir().unwrap();
+        let runtime = runtime_stub(&directory, "runtime-signed");
+        let output = directory.path().join("app-signed");
         write_bundle(&runtime, &output, &sample()).unwrap();
         // What `codesign` and `signtool` do: more bytes after everything else.
         let mut file = std::fs::OpenOptions::new()
@@ -658,8 +655,9 @@ mod tests {
 
     #[test]
     fn a_damaged_payload_fails_verification_rather_than_serving_wrong_bytes() {
-        let runtime = runtime_stub("runtime-damaged");
-        let output = temporary("app-damaged");
+        let directory = tempfile::tempdir().unwrap();
+        let runtime = runtime_stub(&directory, "runtime-damaged");
+        let output = directory.path().join("app-damaged");
         write_bundle(&runtime, &output, &sample()).unwrap();
         let mut bytes = std::fs::read(&output).unwrap();
         let last = bytes.len() - TRAILER_SIZE - 1;
@@ -674,7 +672,8 @@ mod tests {
     fn the_magic_appearing_in_the_runtime_itself_is_not_mistaken_for_a_bundle() {
         // The real case: this crate carries `TRAILER_MAGIC` in its read-only
         // data, so every unbundled `blitsen-runtime` contains a copy of it.
-        let path = temporary("runtime-selfreference");
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("runtime-selfreference");
         let mut file = File::create(&path).unwrap();
         file.write_all(&vec![0x7f_u8; 2048]).unwrap();
         file.write_all(TRAILER_MAGIC).unwrap();
@@ -684,7 +683,7 @@ mod tests {
         assert!(AppBundle::open(&path).unwrap().is_none());
 
         // And it is still found when a real bundle follows the decoy.
-        let output = temporary("app-selfreference");
+        let output = directory.path().join("app-selfreference");
         write_bundle(&path, &output, &sample()).unwrap();
         let bundle = AppBundle::open(&output).unwrap().unwrap();
         assert_eq!(bundle.len(), 3);
@@ -693,8 +692,9 @@ mod tests {
 
     #[test]
     fn a_newer_format_is_named_rather_than_misread() {
-        let runtime = runtime_stub("runtime-future");
-        let output = temporary("app-future");
+        let directory = tempfile::tempdir().unwrap();
+        let runtime = runtime_stub(&directory, "runtime-future");
+        let output = directory.path().join("app-future");
         write_bundle(&runtime, &output, &sample()).unwrap();
         let mut bytes = std::fs::read(&output).unwrap();
         let version_at = bytes.len() - TRAILER_SIZE + 48;
@@ -711,8 +711,9 @@ mod tests {
     #[test]
     fn a_path_that_escapes_the_application_is_refused_when_the_index_is_read() {
         for escape in ["../secret", "/etc/passwd", "a/../../b", "", "a//b"] {
-            let runtime = runtime_stub("runtime-escape");
-            let output = temporary("app-escape");
+            let directory = tempfile::tempdir().unwrap();
+            let runtime = runtime_stub(&directory, "runtime-escape");
+            let output = directory.path().join("app-escape");
             write_bundle(&runtime, &output, &[(escape.to_owned(), b"x".to_vec())]).unwrap();
             let error = AppBundle::open(&output).unwrap_err();
             assert!(
