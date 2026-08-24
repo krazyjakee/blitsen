@@ -54,7 +54,8 @@
       // its temporary move/up listeners on the window during a drag.
       const members = { view: options.view ?? null };
       for (const property of ["clientX", "clientY", "offsetX", "offsetY", "screenX", "screenY",
-        "button", "buttons", "deltaX", "deltaY"]) members[property] = Number(options[property] ?? 0);
+        "movementX", "movementY", "button", "buttons", "deltaX", "deltaY"])
+        members[property] = Number(options[property] ?? 0);
       for (const property of ["ctrlKey", "shiftKey", "altKey", "metaKey"])
         members[property] = Boolean(options[property]);
       defineMembers(this, members);
@@ -402,8 +403,19 @@
     return state;
   };
 
+  // Pointer lock holds these coordinates constant while raw device movement is
+  // reported separately as movementX/Y. The last absolute event is the least
+  // surprising fixed point and is also what a browser preserves on entry.
+  let lastMousePosition = { clientX: 0, clientY: 0, screenX: 0, screenY: 0 };
+
   const dispatchMouseEvent = (type, rawHandle, init) => {
-    const target = wrap(String(rawHandle));
+    if (pointerLockElement === null) {
+      lastMousePosition = {
+        clientX: Number(init.clientX ?? 0), clientY: Number(init.clientY ?? 0),
+        screenX: Number(init.screenX ?? 0), screenY: Number(init.screenY ?? 0),
+      };
+    }
+    const target = pointerLockElement ?? wrap(String(rawHandle));
     // `buttons` is the pointer's state rather than this event's, so an event
     // that does not carry one — a wheel, which no pointer produced — reads it
     // off the mouse pointer instead of reporting nothing held.
@@ -485,6 +497,17 @@
     const pointerId = Number(init.pointerId ?? MOUSE_POINTER_ID);
     const pointerType = String(init.pointerType ?? "mouse");
     const isPrimary = init.isPrimary === undefined ? true : Boolean(init.isPrimary);
+    // Remember the absolute point before a pointerdown listener can lock it;
+    // the compatibility mousedown is dispatched after that listener returns.
+    if (pointerLockElement === null && pointerType === "mouse") {
+      lastMousePosition = {
+        clientX: Number(init.clientX ?? 0), clientY: Number(init.clientY ?? 0),
+        screenX: Number(init.screenX ?? 0), screenY: Number(init.screenY ?? 0),
+      };
+    }
+    // Activation begins at the trusted press. A release is not a new gesture.
+    if (isPrimary && type === "pointerdown")
+      grantWindowModeActivation();
     // `button` names the button that *changed*, which on a move or a
     // cancellation is none of them. That is a property of the event type rather
     // than of the input, so it is settled here and not left to the caller.
@@ -512,7 +535,7 @@
       bubbles: true, cancelable: type !== "pointercancel",
       pointerId, pointerType, isPrimary, pressure, button, buttons: state.buttons };
     processPendingPointerCapture(pointerId, members);
-    const target = pointerCaptures.get(pointerId) ?? wrap(String(rawHandle));
+    const target = pointerLockElement ?? pointerCaptures.get(pointerId) ?? wrap(String(rawHandle));
     const allowed = target.dispatchEvent(new PointerEvent(String(type), members));
     if (type === "pointerdown" && !allowed) state.compatibilitySuppressed = true;
     const compatibility = COMPATIBILITY_MOUSE_EVENT[type];
@@ -552,6 +575,15 @@
   };
 
   const dispatchKeyboardEvent = (type, init) => {
+    // Escape is an always-available user-agent exit. Native restoration and
+    // DOM state clearing happen before application listeners; preventDefault
+    // cannot retain either security-sensitive mode.
+    if (type === "keydown" && init.key === "Escape" && !init.repeat) {
+      releasePointerLock(false, "escape");
+      void releaseFullscreen(false, "escape");
+    }
+    if (type === "keydown" && init.key !== "Escape" && !init.repeat)
+      grantWindowModeActivation();
     const event = new KeyboardEvent(String(type), init);
     const target = activeElement ?? document.body ?? document;
     const allowed = target.dispatchEvent(event);

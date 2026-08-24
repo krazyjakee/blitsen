@@ -89,7 +89,9 @@ const CATALOGUE = {
     "KeyboardEvent", "FocusEvent", "InputEvent", "CompositionEvent", "PointerEvent", "WheelEvent",
     "addEventListener", "removeEventListener", "dispatchEvent", "ErrorEvent",
     "Element.setPointerCapture", "Element.releasePointerCapture",
-    "Element.hasPointerCapture"],
+    "Element.hasPointerCapture", "Element.requestPointerLock", "Element.requestFullscreen",
+    "Document.pointerLockElement", "Document.exitPointerLock",
+    "Document.fullscreenElement", "Document.fullscreenEnabled", "Document.exitFullscreen"],
   // Clipboard events and drag and drop (issue #93), which are one group because
   // they are one object: a `DataTransfer` reaches an application either as
   // `clipboardData` or as `dataTransfer` and behaves the same in both.

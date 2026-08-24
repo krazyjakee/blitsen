@@ -13,7 +13,7 @@ use std::sync::Arc;
 use anyrender::{PaintScene as _, render_to_buffer};
 use anyrender_vello_cpu::VelloCpuImageRenderer;
 use blitsen_blitz::{BlitzDom, resources::LocalResources};
-use blitsen_core::{DocumentScript, WindowState, execute_collected_document_scripts_from};
+use blitsen_core::{DocumentScript, execute_collected_document_scripts_from};
 use blitsen_dom::{DomBackend, LayoutSnapshot, Rect as DomRect};
 use blitsen_js::{JsEngine, JsError};
 use blitz::dom::{Attribute, DocumentConfig, ElementData, Node, NodeId, util::Color};
@@ -185,7 +185,7 @@ pub(crate) fn execute_window_scripts_from<E: JsEngine + 'static>(
     runtime: DomRuntime,
     scripts: Vec<DocumentScript>,
     options: WindowScriptOptions<'_>,
-) -> Result<Rc<RefCell<WindowState>>, JsError> {
+) -> Result<dom_bridge::InstalledDom<E::Value>, JsError> {
     let WindowScriptOptions {
         entrypoint,
         width,
@@ -228,7 +228,7 @@ pub(crate) fn execute_window_scripts_from<E: JsEngine + 'static>(
     if let Some(storage) = storage {
         install = install.with_storage(storage);
     }
-    let window_state = dom_bridge::install(engine, runtime, install)?;
+    let installed = dom_bridge::install_with_hooks(engine, runtime, install)?;
     engine.evaluate_script(
         r#"(() => {
               if (!globalThis.__blitsenRuntimeBaseline) {
@@ -258,7 +258,7 @@ pub(crate) fn execute_window_scripts_from<E: JsEngine + 'static>(
         "globalThis.__blitsenDispatchLifecycleEvent('DOMContentLoaded')",
         "blitsen:dom-content-loaded",
     )?;
-    Ok(window_state)
+    Ok(installed)
 }
 
 /// Boots a document at a fixed viewport, installs the bridge, and runs `script`.
@@ -600,7 +600,7 @@ mod tests {
         dom_bridge::install(
             &mut engine,
             runtime,
-            InstallOptions::new(400, 160, 1.0, DocumentMode::Application, None),
+            InstallOptions::new(400, 160, 1.0, DocumentMode::TestHarness, None),
         )
         .expect("the DOM bridge installs");
         document

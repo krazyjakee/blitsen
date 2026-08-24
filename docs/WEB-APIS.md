@@ -30,7 +30,8 @@ lists individual globals, classes and members.
 | Area | Current support |
 | --- | --- |
 | DOM | Documents, elements, text, fragments, templates, attributes, selectors, mutation observers and common traversal/mutation APIs |
-| Events | Event targets, custom, mouse, keyboard, focus, input, pointer, wheel, error, submit, clipboard and drag events |
+| Events | Event targets, custom, mouse, keyboard, focus, input, pointer, wheel, error, submit, clipboard and drag events; Windows/macOS pointer lock with relative mouse movement |
+| Window modes | Windows/macOS pointer lock and root-element fullscreen on desktop, with standard promises, state properties and change/error events |
 | Forms | Basic input, textarea, select, option, button and form state; keyboard editing and selection |
 | Layout reads | Bounding rectangles, client/offset geometry, computed style, scrolling, ranges, carets and selection |
 | Scheduling | `requestAnimationFrame`, timeouts and intervals |
@@ -64,6 +65,7 @@ lists individual globals, classes and members.
 | Video and text tracks | Absent; audio is supported |
 | Accessibility tree | Deliberately not exported: screen readers receive no roles, names, focus state or live regions; DOM keyboard focus remains separate and supported |
 | Full IME and complex text editing | `<input>`/`<textarea>` preedit, commit and bounded undo/redo are implemented; `contenteditable`, form reset, surrounding-text deletion and native CJK/RTL workflows remain unverified |
+| Fullscreen top layer | `document.documentElement.requestFullscreen()` is supported on desktop. Arbitrary-element fullscreen is rejected because Blitsen does not yet promote a subtree into a Fullscreen top layer |
 
 ## Dropped files are paths
 
@@ -112,6 +114,37 @@ if (dialog.openFile) {
 
 Do not infer support from TypeScript's browser library. A package can add Blitsen declarations but
 cannot remove unsupported names from `lib.dom.d.ts`; doctor checks the built application instead.
+
+## Pointer lock and fullscreen
+
+On Windows and macOS, `Element.requestPointerLock()` is available; root-element fullscreen is
+available on every desktop. Both it and `document.documentElement.requestFullscreen()` require a
+native pointer or keyboard activation.
+They return promises, update `document.pointerLockElement` or `document.fullscreenElement`, and
+raise the corresponding `pointerlockchange`/`pointerlockerror` or
+`fullscreenchange`/`fullscreenerror` events. Losing window focus, losing the render surface, or
+suspending the application, pressing Escape, or disconnecting the target releases the affected
+mode. While locked, absolute cursor hit testing stops and winit device deltas arrive as
+`mousemove.movementX`/`movementY` on the locked element. The `unadjustedMovement: true` option is
+rejected with `NotSupportedError`: winit exposes relative device deltas, but does not provide the
+cross-platform acceleration-control guarantee that option promises.
+
+The standard fullscreen path is always **borderless fullscreen on the monitor containing the
+window at request time**, falling back to the primary monitor when the platform cannot identify a
+current one. It never selects exclusive fullscreen: the Web API provides no video-mode,
+resolution, or refresh-rate selector, so choosing an exclusive mode would be arbitrary and could
+reconfigure the display. Use the native window API for application-controlled window state, but it
+also intentionally exposes borderless rather than exclusive fullscreen.
+
+Linux and Android expose no pointer lock. Pinned winit cannot provide `Locked` cursor grab on X11,
+so Linux is capability-scoped out rather than sometimes claiming an API its selected backend will
+refuse. Android also has no desktop cursor to lock, and its activity surface already
+uses platform-managed fullscreen/immersive policy. `document.fullscreenEnabled` is false there and
+requests reject with `NotSupportedError`. Physical multi-monitor placement and compositor-specific
+grab behavior still need acceptance on the supported backends; a refused cursor grab rejects rather
+than pretending the lock succeeded. DOM modes temporarily override `native:window` fullscreen,
+cursor visibility and cursor-grab settings; changes made through the native API while a DOM mode is
+active become the state restored when that DOM mode exits or a document reloads.
 
 ## Notifications
 

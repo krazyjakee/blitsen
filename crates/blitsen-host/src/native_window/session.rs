@@ -164,7 +164,7 @@ impl<E: JsEngine + Clone + 'static> WindowSession<E> {
             Arc::new(blitz::net::Provider::new(Some(Arc::new(proxy.clone()))))
                 as Arc<dyn NetProvider>
         });
-        let document = crate::app::load_document(
+        let document = crate::app::load_window_document(
             engine,
             &files,
             net_provider,
@@ -217,7 +217,9 @@ impl<E: JsEngine + Clone + 'static> WindowSession<E> {
             error: Rc::clone(&error),
             started_at,
             document: document.document,
+            host_hooks: document.host_hooks,
             pending_pointer_input: Vec::new(),
+            pending_locked_pointer_movement: Vec::new(),
             pending_keyboard_input: Vec::new(),
             ime_targets: HashMap::new(),
             pending_drag_input: Vec::new(),
@@ -276,6 +278,10 @@ impl<E: JsEngine + Clone + 'static> WindowSession<E> {
             .copied()
             .next()
             .ok_or_else(|| JsError::new("native window is not ready"))?;
+        // A replaced document cannot own a cursor grab or fullscreen window.
+        // Release the platform immediately; its DOM is about to be discarded,
+        // so there is no old-document event to queue.
+        crate::dom_bridge::window::release_web_modes();
         let viewport = self.application.inner.windows[&window_id]
             .doc
             .inner()
@@ -288,7 +294,7 @@ impl<E: JsEngine + Clone + 'static> WindowSession<E> {
         let net_provider = self.files.net_provider().unwrap_or_else(|| {
             Arc::new(blitz::net::Provider::new(Some(Arc::new(proxy)))) as Arc<dyn NetProvider>
         });
-        let document = crate::app::load_document(
+        let document = crate::app::load_window_document(
             engine,
             &self.files,
             net_provider,
@@ -321,8 +327,10 @@ impl<E: JsEngine + Clone + 'static> WindowSession<E> {
         let application = &mut self.application;
         application.state = document.window_state;
         application.document = document.document;
+        application.host_hooks = document.host_hooks;
         application.started_at = Instant::now();
         application.pending_pointer_input.clear();
+        application.pending_locked_pointer_movement.clear();
         application.pending_keyboard_input.clear();
         application.pending_drag_input.clear();
         application.drag_paths = std::rc::Rc::from([]);

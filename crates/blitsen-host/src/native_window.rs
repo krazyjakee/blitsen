@@ -118,7 +118,14 @@ pub struct WindowApplication<Rend: anyrender::WindowRenderer, E: JsEngine + Clon
     pub(crate) error: Rc<RefCell<Option<JsError>>>,
     pub(crate) started_at: Instant,
     pub(crate) document: Rc<RefCell<BlitzDom>>,
+    /// Host dispatch callbacks are engine values retained by Rust, never names
+    /// application JavaScript can invoke or replace.
+    pub(crate) host_hooks: crate::dom_bridge::HostHooks<E::Value>,
     pub(crate) pending_pointer_input: Vec<(WindowId, PendingPointerInput)>,
+    /// Raw device deltas waiting for the frame that delivers them to the
+    /// pointer-lock element. Device events have no DOM target and must not be
+    /// folded into absolute pointer hit testing.
+    pub(crate) pending_locked_pointer_movement: Vec<(WindowId, (f64, f64))>,
     pub(crate) pending_keyboard_input: Vec<(WindowId, PendingKeyboardInput)>,
     /// The editable control each native window has enabled its IME for, and
     /// the last candidate-window area sent with it.
@@ -194,6 +201,11 @@ pub(crate) enum PendingKeyboardInput {
     },
     Ime(Ime),
     WindowFocus(bool),
+    WindowModeRelease {
+        pointer: bool,
+        fullscreen: bool,
+        reason: &'static str,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -234,6 +246,7 @@ pub(crate) enum InputBootstrap {
 }
 
 impl InputBootstrap {
+    #[cfg(test)]
     fn entry_point(self) -> &'static str {
         match self {
             Self::Keyboard => "__blitsenDispatchKeyboardEvent",
@@ -250,6 +263,16 @@ impl InputBootstrap {
             Self::Ime => "blitsen:native-ime-event",
             Self::Pointer | Self::Mouse => "blitsen:native-pointer-input",
             Self::Drag => "blitsen:native-drag-input",
+        }
+    }
+
+    fn hook<V>(self, hooks: &crate::dom_bridge::HostHooks<V>) -> &V {
+        match self {
+            Self::Keyboard => &hooks.keyboard,
+            Self::Ime => &hooks.ime,
+            Self::Pointer => &hooks.pointer,
+            Self::Mouse => &hooks.mouse,
+            Self::Drag => &hooks.drag,
         }
     }
 }
@@ -386,6 +409,7 @@ fn park_first_error<Error>(parked_error: &RefCell<Option<Error>>, error: Error) 
     }
 }
 
+#[cfg(test)]
 fn input_call_script(
     bootstrap: InputBootstrap,
     arguments: &impl Serialize,
@@ -514,9 +538,13 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Ren
         if let Some(error) = self.parked_error() {
             return Err(error);
         }
-        let script = input_call_script(bootstrap, arguments)?;
+        let arguments =
+            serde_json::to_string(arguments).map_err(|error| JsError::new(error.to_string()))?;
         let mut engine = self.engine.clone();
-        let result = engine.evaluate_script(&script, bootstrap.script_name())?;
+        let arguments = engine.evaluate_script(&arguments, bootstrap.script_name())?;
+        let arguments = engine.to_array(&arguments)?;
+        let hook = bootstrap.hook(&self.host_hooks).clone();
+        let result = engine.call(&hook, None, &arguments)?;
         engine.to_boolean(&result)
     }
 
@@ -595,7 +623,7 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Ren
         self.call_input_bootstrap(InputBootstrap::Ime, &(kind, init))
     }
 
-    fn drain_keyboard_input(&mut self, window_id: WindowId) {
+    pub(crate) fn drain_keyboard_input(&mut self, window_id: WindowId) {
         let Some(inputs) = take_queued_for(
             self.error.as_ref(),
             &mut self.pending_keyboard_input,
@@ -649,6 +677,23 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Ren
                         )
                         .and_then(|value| engine.to_boolean(&value))
                 }
+                PendingKeyboardInput::WindowModeRelease {
+                    pointer,
+                    fullscreen,
+                    reason,
+                } => {
+                    let reason = serde_json::to_string(reason)
+                        .map_err(|error| JsError::new(error.to_string()));
+                    reason.and_then(|reason| {
+                        let mut engine = self.engine.clone();
+                        let reason = engine.string(&reason)?;
+                        let pointer = engine.boolean(*pointer);
+                        let fullscreen = engine.boolean(*fullscreen);
+                        let hook = self.host_hooks.release_window_modes.clone();
+                        let value = engine.call(&hook, None, &[pointer, fullscreen, reason])?;
+                        engine.to_boolean(&value)
+                    })
+                }
             };
             if let Err(error) = result {
                 self.park_error(error);
@@ -698,6 +743,48 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Ren
             self.ime_targets.insert(window_id, ImeTarget { node, area });
         }
         Ok(())
+    }
+
+    fn drain_locked_pointer_movement(&mut self, window_id: WindowId) {
+        let Some(movements) = take_queued_for(
+            self.error.as_ref(),
+            &mut self.pending_locked_pointer_movement,
+            &window_id,
+        ) else {
+            return;
+        };
+        for (x, y) in movements {
+            let result = (|| {
+                let mut engine = self.engine.clone();
+                let x = engine.number(x);
+                let y = engine.number(y);
+                let hook = self.host_hooks.locked_pointer_motion.clone();
+                let value = engine.call(&hook, None, &[x, y])?;
+                engine.to_boolean(&value)
+            })();
+            if let Err(error) = result {
+                self.park_error(error);
+                return;
+            }
+        }
+    }
+
+    /// Restores security-sensitive window modes immediately, then queues their
+    /// observable DOM changes in the same ordered frame input stream as focus.
+    pub(crate) fn release_web_window_modes(&mut self, window_id: WindowId, reason: &'static str) {
+        let (pointer, fullscreen) = crate::dom_bridge::window::release_web_modes();
+        if !pointer && !fullscreen {
+            return;
+        }
+        self.pending_locked_pointer_movement.clear();
+        self.pending_keyboard_input.push((
+            window_id,
+            PendingKeyboardInput::WindowModeRelease {
+                pointer,
+                fullscreen,
+                reason,
+            },
+        ));
     }
 
     fn animation_frames_pending(&self) -> bool {
@@ -1118,7 +1205,18 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> ApplicationHandler
             }
             return;
         }
-        let queued_pointer_input = self.queue_pointer_input(window_id, &event);
+        if matches!(&event, WindowEvent::Focused(false)) {
+            self.release_web_window_modes(window_id, "focus-loss");
+        }
+        let suppress_absolute_pointer = crate::dom_bridge::window::web_pointer_locked()
+            && matches!(
+                &event,
+                WindowEvent::PointerMoved { .. }
+                    | WindowEvent::PointerEntered { .. }
+                    | WindowEvent::PointerLeft { .. }
+            );
+        let queued_pointer_input =
+            !suppress_absolute_pointer && self.queue_pointer_input(window_id, &event);
         let queued_keyboard_input = self.queue_keyboard_input(window_id, &event);
         let queued_drag_input = self.queue_drag_input(window_id, &event);
         // Blitz has its own editor-side IME handler, but it knows nothing about
@@ -1138,6 +1236,7 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> ApplicationHandler
             // Before the frame rather than after it: a redraw that painted the
             // size before last would be a frame the drag visibly lagged by.
             self.apply_pending_resize(event_loop, window_id);
+            self.drain_locked_pointer_movement(window_id);
             self.drain_pointer_input(window_id);
             self.drain_keyboard_input(window_id);
             self.drain_drag_input(window_id);
@@ -1178,7 +1277,7 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> ApplicationHandler
         }
         // After Blitz has had the frame, because painting it re-resolves Blitz's
         // own hover state and sets a cursor from it.
-        if redraw {
+        if redraw && !crate::dom_bridge::window::web_pointer_locked() {
             self.sync_cursor(window_id);
         }
         if viewport_changed {
@@ -1212,6 +1311,13 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> ApplicationHandler
     ) {
         if let DeviceEvent::PointerMotion { delta: (x, y) } = &event {
             crate::dom_bridge::input::pointer_movement(*x, *y);
+            if crate::dom_bridge::window::web_pointer_locked()
+                && let Some((&window_id, view)) = self.inner.windows.iter().next()
+            {
+                self.pending_locked_pointer_movement
+                    .push((window_id, (*x, *y)));
+                view.window.request_redraw();
+            }
         }
         self.inner.device_event(event_loop, device_id, event);
     }

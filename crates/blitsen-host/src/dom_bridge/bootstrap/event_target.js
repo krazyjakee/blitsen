@@ -30,6 +30,7 @@
     return false;
   };
   const notifyMutation = record => {
+    windowModesTreeMutation();
     for (const observer of mutationObservers) {
       if (!observer._observations.some(({ target, options }) =>
         options[record.type] && isObservedTarget(target, record.target, options.subtree))) continue;
@@ -73,4 +74,3 @@
     }
     takeRecords() { return this._records.splice(0); }
   }
-

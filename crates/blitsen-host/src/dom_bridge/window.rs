@@ -54,13 +54,145 @@ thread_local! {
     /// bridge cannot remove the window in-place. The session consumes this at
     /// the end of the same pump turn instead.
     static CLOSE_REQUESTED: Cell<bool> = const { Cell::new(false) };
+    /// Modes entered through the standard DOM APIs, kept separately from the
+    /// native window module so lifecycle loss only undoes modes it owns.
+    static WEB_POINTER_LOCKED: Cell<bool> = const { Cell::new(false) };
+    static WEB_FULLSCREEN: Cell<bool> = const { Cell::new(false) };
+    /// Desired state owned by `native:window`. DOM modes temporarily override
+    /// these values and restore the latest desired state on exit.
+    #[cfg(not(target_os = "android"))]
+    static NATIVE_CURSOR_GRAB: Cell<CursorGrabMode> = const { Cell::new(CursorGrabMode::None) };
+    static NATIVE_CURSOR_VISIBLE: Cell<bool> = const { Cell::new(true) };
+    static NATIVE_FULLSCREEN: Cell<bool> = const { Cell::new(false) };
 }
 
 /// Publishes the window `native:` calls act on, or `None` once it has gone.
 pub(crate) fn publish(window: Option<Arc<dyn Window>>) {
+    #[cfg(not(target_os = "android"))]
+    if CURRENT.with_borrow(|current| current.is_none())
+        && let Some(window) = window.as_deref()
+    {
+        NATIVE_CURSOR_GRAB.set(CursorGrabMode::None);
+        NATIVE_CURSOR_VISIBLE.set(true);
+        NATIVE_FULLSCREEN.set(window.fullscreen().is_some());
+    }
     CURRENT.with_borrow_mut(|current| *current = window);
     APPLIED_RESIZE.set(None);
     CLOSE_REQUESTED.set(false);
+    if CURRENT.with_borrow(|current| current.is_none()) {
+        WEB_POINTER_LOCKED.set(false);
+        WEB_FULLSCREEN.set(false);
+    }
+}
+
+/// Applies one standard web window-mode command.
+#[cfg(not(target_os = "android"))]
+pub(crate) fn web_mode(action: &str) -> Result<(), JsError> {
+    match action {
+        "lockPointer" => with(|window| {
+            window
+                .set_cursor_grab(CursorGrabMode::Locked)
+                .map_err(|error| JsError::new(format!("could not lock the pointer: {error}")))?;
+            window.set_cursor_visible(false);
+            WEB_POINTER_LOCKED.set(true);
+            Ok(())
+        }),
+        "unlockPointer" => {
+            let released = with(|window| {
+                let result = window
+                    .set_cursor_grab(NATIVE_CURSOR_GRAB.get())
+                    .map_err(|error| {
+                        JsError::new(format!("could not release the pointer: {error}"))
+                    });
+                window.set_cursor_visible(NATIVE_CURSOR_VISIBLE.get());
+                result
+            });
+            // Stop raw routing even if the compositor refused the restoration;
+            // an explicit exit has ended the DOM lock either way.
+            WEB_POINTER_LOCKED.set(false);
+            released
+        }
+        "enterFullscreen" => with(|window| {
+            // The web API has no resolution/refresh-rate selector. Choosing an
+            // exclusive video mode here would therefore be arbitrary and can
+            // reconfigure the display. Use the monitor containing this window,
+            // with winit's primary/default fallback when it cannot identify one.
+            let monitor = window
+                .current_monitor()
+                .or_else(|| window.primary_monitor());
+            window.set_fullscreen(Some(Fullscreen::Borderless(monitor)));
+            WEB_FULLSCREEN.set(true);
+            Ok(())
+        }),
+        "exitFullscreen" => with(|window| {
+            window.set_fullscreen(
+                NATIVE_FULLSCREEN
+                    .get()
+                    .then_some(Fullscreen::Borderless(None)),
+            );
+            WEB_FULLSCREEN.set(false);
+            Ok(())
+        }),
+        other => Err(JsError::new(format!(
+            "unknown web window mode action: {other}"
+        ))),
+    }
+}
+
+#[cfg(target_os = "android")]
+pub(crate) fn web_mode(_action: &str) -> Result<(), blitsen_js::JsError> {
+    Err(blitsen_js::JsError::new(
+        "pointer lock and the standard fullscreen API are not supported on Android",
+    ))
+}
+
+/// Whether raw device motion should be routed to the locked DOM element.
+pub(crate) fn web_pointer_locked() -> bool {
+    WEB_POINTER_LOCKED.get()
+}
+
+#[cfg(not(target_os = "android"))]
+fn native_fullscreen_requested(on: bool) -> bool {
+    NATIVE_FULLSCREEN.set(on);
+    !WEB_FULLSCREEN.get()
+}
+
+#[cfg(not(target_os = "android"))]
+fn native_cursor_visibility_requested(on: bool) -> bool {
+    NATIVE_CURSOR_VISIBLE.set(on);
+    !WEB_POINTER_LOCKED.get()
+}
+
+#[cfg(not(target_os = "android"))]
+fn native_cursor_grab_requested(mode: CursorGrabMode) -> bool {
+    NATIVE_CURSOR_GRAB.set(mode);
+    !WEB_POINTER_LOCKED.get()
+}
+
+/// Releases modes owned by the web APIs, returning which DOM states changed.
+///
+/// The flags are cleared even if a platform release reports an error: focus or
+/// surface loss is a security boundary and raw movement must stop immediately.
+pub(crate) fn release_web_modes() -> (bool, bool) {
+    let pointer = WEB_POINTER_LOCKED.replace(false);
+    let fullscreen = WEB_FULLSCREEN.replace(false);
+    #[cfg(not(target_os = "android"))]
+    CURRENT.with_borrow(|current| {
+        if let Some(window) = current.as_deref() {
+            if pointer {
+                let _ = window.set_cursor_grab(NATIVE_CURSOR_GRAB.get());
+                window.set_cursor_visible(NATIVE_CURSOR_VISIBLE.get());
+            }
+            if fullscreen {
+                window.set_fullscreen(
+                    NATIVE_FULLSCREEN
+                        .get()
+                        .then_some(Fullscreen::Borderless(None)),
+                );
+            }
+        }
+    });
+    (pointer, fullscreen)
 }
 
 /// Takes the size winit resized the surface to without raising an event.
@@ -180,7 +312,9 @@ pub(super) fn set(property: &str, value: &str) -> Result<(), JsError> {
     with(|window| {
         match setting {
             Setting::Fullscreen(on) => {
-                window.set_fullscreen(on.then_some(Fullscreen::Borderless(None)));
+                if native_fullscreen_requested(on) {
+                    window.set_fullscreen(on.then_some(Fullscreen::Borderless(None)));
+                }
             }
             Setting::Decorations(on) => window.set_decorations(on),
             Setting::Minimized(on) => window.set_minimized(on),
@@ -191,10 +325,20 @@ pub(super) fn set(property: &str, value: &str) -> Result<(), JsError> {
                 WindowLevel::Normal
             }),
             Setting::Cursor(icon) => window.set_cursor(icon.into()),
-            Setting::CursorVisible(on) => window.set_cursor_visible(on),
-            Setting::CursorGrab(mode) => window
-                .set_cursor_grab(mode)
-                .map_err(|error| JsError::new(format!("could not grab the cursor: {error}")))?,
+            Setting::CursorVisible(on) => {
+                if native_cursor_visibility_requested(on) {
+                    window.set_cursor_visible(on);
+                }
+            }
+            Setting::CursorGrab(mode) => {
+                let previous = NATIVE_CURSOR_GRAB.get();
+                if native_cursor_grab_requested(mode)
+                    && let Err(error) = window.set_cursor_grab(mode)
+                {
+                    NATIVE_CURSOR_GRAB.set(previous);
+                    return Err(JsError::new(format!("could not grab the cursor: {error}")));
+                }
+            }
         }
         Ok(())
     })
@@ -338,5 +482,41 @@ mod tests {
         ] {
             assert!(error.message().contains("no application window"));
         }
+    }
+
+    #[test]
+    fn dom_modes_preserve_and_arbitrate_native_window_state() {
+        // A mode that was native before the DOM request remains the baseline.
+        NATIVE_FULLSCREEN.set(true);
+        NATIVE_CURSOR_GRAB.set(CursorGrabMode::Confined);
+        NATIVE_CURSOR_VISIBLE.set(false);
+        WEB_FULLSCREEN.set(true);
+        WEB_POINTER_LOCKED.set(true);
+        assert!(NATIVE_FULLSCREEN.get());
+        assert_eq!(NATIVE_CURSOR_GRAB.get(), CursorGrabMode::Confined);
+        assert!(!NATIVE_CURSOR_VISIBLE.get());
+
+        // Native calls made during a DOM-owned mode update the state to restore
+        // but are not applied over the active DOM mode.
+        assert!(!native_fullscreen_requested(false));
+        assert!(!native_cursor_grab_requested(CursorGrabMode::Locked));
+        assert!(!native_cursor_visibility_requested(true));
+        assert!(!NATIVE_FULLSCREEN.get());
+        assert_eq!(NATIVE_CURSOR_GRAB.get(), CursorGrabMode::Locked);
+        assert!(NATIVE_CURSOR_VISIBLE.get());
+
+        // Reload uses this same release path. Even without a live test window,
+        // ownership is cleared and the desired native baseline is retained for
+        // the real-window restoration performed inside the function.
+        assert_eq!(release_web_modes(), (true, true));
+        assert!(!WEB_FULLSCREEN.get());
+        assert!(!WEB_POINTER_LOCKED.get());
+        assert!(!NATIVE_FULLSCREEN.get());
+        assert_eq!(NATIVE_CURSOR_GRAB.get(), CursorGrabMode::Locked);
+        assert!(NATIVE_CURSOR_VISIBLE.get());
+
+        // Leave process-thread state at its default for later unit tests.
+        NATIVE_CURSOR_GRAB.set(CursorGrabMode::None);
+        NATIVE_CURSOR_VISIBLE.set(true);
     }
 }

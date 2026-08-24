@@ -1,5 +1,10 @@
   const testHarness = Boolean(globalThis.__blitsenTestHarness);
   delete globalThis.__blitsenTestHarness;
+  // Native window-mode authority is captured inside this bootstrap closure.
+  // Application code never receives the callback itself, so it cannot put the
+  // platform in a mode that disagrees with the DOM's state machine.
+  const hostWindowMode = globalThis.__blitsenWindowMode;
+  if (!testHarness) delete globalThis.__blitsenWindowMode;
   const hostSetTimeout = globalThis.setTimeout.bind(globalThis);
   const hostClearTimeout = globalThis.clearTimeout.bind(globalThis);
   const hostSetInterval = globalThis.setInterval.bind(globalThis);
@@ -30,6 +35,10 @@
     contextIntervals.delete(id);
     hostClearInterval(id);
   };
+  // Filled in once the window-mode fragment has been evaluated. Tree mutation
+  // helpers live earlier in this one closure, and call this after changing the
+  // backing tree so a locked/fullscreen target is released at disconnection.
+  let windowModesTreeMutation = () => {};
   // The host's own `URL`, kept before the bridge installs Blitsen's over it.
   // Object URLs belong to the host rather than to the application — there is no
   // origin behind one to hang a `blob:` on — and the Phase 1 loader needs them

@@ -445,6 +445,13 @@ pub struct LoadedDocument {
     pub window_state: Rc<RefCell<WindowState>>,
 }
 
+/// A window document additionally carrying its private native dispatch hooks.
+pub(crate) struct LoadedWindowDocument<V> {
+    pub(crate) document: Rc<RefCell<BlitzDom>>,
+    pub(crate) window_state: Rc<RefCell<WindowState>>,
+    pub(crate) host_hooks: crate::dom_bridge::HostHooks<V>,
+}
+
 /// Viewport and JavaScript environment for loading one document.
 pub struct LoadOptions {
     width: u32,
@@ -507,6 +514,20 @@ pub fn load_document<E: JsEngine + Clone + 'static>(
     net_provider: Arc<dyn NetProvider>,
     options: LoadOptions,
 ) -> Result<LoadedDocument, JsError> {
+    let loaded = load_window_document(engine, files, net_provider, options)?;
+    Ok(LoadedDocument {
+        document: loaded.document,
+        window_state: loaded.window_state,
+    })
+}
+
+/// Loads a document for a real window, retaining private native input hooks.
+pub(crate) fn load_window_document<E: JsEngine + Clone + 'static>(
+    engine: &mut E,
+    files: &AppFiles,
+    net_provider: Arc<dyn NetProvider>,
+    options: LoadOptions,
+) -> Result<LoadedWindowDocument<E::Value>, JsError> {
     let LoadOptions {
         width,
         height,
@@ -549,7 +570,7 @@ pub fn load_document<E: JsEngine + Clone + 'static>(
         .map_err(crate::dom_error)?;
     let entrypoint = files.entrypoint_name();
     let loader = files.script_loader();
-    let window_state = crate::harness::execute_window_scripts_from(
+    let installed = crate::harness::execute_window_scripts_from(
         engine,
         dom_runtime,
         scripts,
@@ -567,9 +588,10 @@ pub fn load_document<E: JsEngine + Clone + 'static>(
         .borrow_mut()
         .flush_layout()
         .map_err(crate::dom_error)?;
-    Ok(LoadedDocument {
+    Ok(LoadedWindowDocument {
         document,
-        window_state,
+        window_state: installed.window_state,
+        host_hooks: installed.host_hooks,
     })
 }
 

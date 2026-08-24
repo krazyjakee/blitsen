@@ -24,6 +24,11 @@
   };
 
   class Document extends EventTarget {
+    get pointerLockElement() { return pointerLockElement; }
+    exitPointerLock() { exitPointerLock(); }
+    get fullscreenElement() { return fullscreenElement; }
+    get fullscreenEnabled() { return fullscreenSupported; }
+    exitFullscreen() { return exitFullscreen(); }
     get nodeType() { return 9; }
     get nodeName() { return '#document'; }
     get ownerDocument() { return null; }

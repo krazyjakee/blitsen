@@ -1424,6 +1424,69 @@
       "pattern": null
     },
     {
+      "api": "Element.requestPointerLock",
+      "kind": "member",
+      "owner": "Element.prototype",
+      "member": "requestPointerLock",
+      "status": "implemented",
+      "code": "WEB_EVENTS",
+      "pattern": null
+    },
+    {
+      "api": "Element.requestFullscreen",
+      "kind": "member",
+      "owner": "Element.prototype",
+      "member": "requestFullscreen",
+      "status": "implemented",
+      "code": "WEB_EVENTS",
+      "pattern": null
+    },
+    {
+      "api": "Document.pointerLockElement",
+      "kind": "member",
+      "owner": "Document.prototype",
+      "member": "pointerLockElement",
+      "status": "implemented",
+      "code": "WEB_EVENTS",
+      "pattern": null
+    },
+    {
+      "api": "Document.exitPointerLock",
+      "kind": "member",
+      "owner": "Document.prototype",
+      "member": "exitPointerLock",
+      "status": "implemented",
+      "code": "WEB_EVENTS",
+      "pattern": null
+    },
+    {
+      "api": "Document.fullscreenElement",
+      "kind": "member",
+      "owner": "Document.prototype",
+      "member": "fullscreenElement",
+      "status": "implemented",
+      "code": "WEB_EVENTS",
+      "pattern": null
+    },
+    {
+      "api": "Document.fullscreenEnabled",
+      "kind": "member",
+      "owner": "Document.prototype",
+      "member": "fullscreenEnabled",
+      "status": "implemented",
+      "code": "WEB_EVENTS",
+      "pattern": null
+    },
+    {
+      "api": "Document.exitFullscreen",
+      "kind": "member",
+      "owner": "Document.prototype",
+      "member": "exitFullscreen",
+      "status": "implemented",
+      "code": "WEB_EVENTS",
+      "pattern": null
+    },
+    {
       "api": "ClipboardEvent",
       "kind": "global",
       "status": "implemented",
