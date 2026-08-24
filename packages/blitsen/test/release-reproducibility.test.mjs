@@ -157,6 +157,10 @@ describe("release reproducibility", () => {
     expect(selected).toEqual(["linux-x64", "darwin-x64", "win32-x64"]);
     expect(workflow).toContain("scripts/build-release-runtime.sh");
     expect(workflow).toContain("scripts/compare-release-builds.mjs --compare");
+    expect(workflow.match(/RUNNER_TEMP\/blitsen-repro-source/g)).toHaveLength(2);
+    expect(workflow).toContain('mv "$second_source" "$first_source"');
+    expect(workflow).toContain('CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target"');
+    expect(workflow).toContain('CARGO_TARGET_DIR="$second_target"');
     expect(workflow.indexOf("name: Verify unsigned reproducibility"))
       .toBeLessThan(workflow.indexOf("name: Sign (macOS)"));
     expect(build).toContain("--remap-path-prefix=");

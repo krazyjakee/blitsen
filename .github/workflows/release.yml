@@ -165,10 +165,24 @@ jobs:
         shell: bash
         run: |
           # The selected reproducibility rows must compile independently rather
-          # than receiving an earlier job's object bytes from sccache.
-          if [ "${{ matrix.reproducible }}" = true ]; then unset RUSTC_WRAPPER; fi
-          CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target" \
-            bash scripts/build-release-runtime.sh "${{ matrix.target }}"
+          # than receiving an earlier job's object bytes from sccache. Build the
+          # first copy through the same canonical source pathname that the
+          # second clean clone will use. MSVC retains that pathname as UTF-16 in
+          # release objects even with rustc remapping and cl.exe /pathmap.
+          if [ "${{ matrix.reproducible }}" = true ]; then
+            reproducible_source="$RUNNER_TEMP/blitsen-repro-source"
+            git clone --quiet --no-hardlinks "$GITHUB_WORKSPACE" "$reproducible_source"
+            git -C "$reproducible_source" checkout --quiet --detach "$GITHUB_SHA"
+            (
+              cd "$reproducible_source"
+              unset RUSTC_WRAPPER
+              CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target" \
+                bash scripts/build-release-runtime.sh "${{ matrix.target }}"
+            )
+          else
+            CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target" \
+              bash scripts/build-release-runtime.sh "${{ matrix.target }}"
+          fi
 
       # A platform package is its committed manifest plus exactly these artifacts.
       - name: Stage the runtime
@@ -204,16 +218,19 @@ jobs:
         shell: bash
         run: |
           second_source="$RUNNER_TEMP/blitsen-repro-source"
+          first_source="$RUNNER_TEMP/blitsen-repro-first-source"
+          second_target="$RUNNER_TEMP/blitsen-repro-target"
+          mv "$second_source" "$first_source"
           git clone --quiet --no-hardlinks "$GITHUB_WORKSPACE" "$second_source"
           git -C "$second_source" checkout --quiet --detach "$GITHUB_SHA"
           (
             cd "$second_source"
             unset RUSTC_WRAPPER
-            CARGO_TARGET_DIR="$second_source/target" \
+            CARGO_TARGET_DIR="$second_target" \
               bash scripts/build-release-runtime.sh "${{ matrix.target }}"
           )
           bun scripts/compare-release-builds.mjs --compare \
-            "target/release" "$second_source/target/release" \
+            "target/release" "$second_target/release" \
             "${{ matrix.library }}" "${{ matrix.executable }}"
 
       # Ubuntu 22.04 is the oldest hosted image available for both Linux

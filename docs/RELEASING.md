@@ -224,26 +224,30 @@ GitHub's artifact zip are packaging envelopes and are outside it too; their cont
 from the checked native bytes.
 
 Every matrix row prints the unsigned size and SHA-256 of both artifacts. To keep the gate useful
-without doubling all six builds, `linux-x64`, `darwin-x64` and `win32-x64` each compile once in the
-shipping checkout and once in a second clean source and target directory, with compiler caching
-disabled. That is one pinned native runner per executable format and OS; the arm64 sibling uses the
-same source and platform linker family and retains its recorded hashes. A mismatch reports both
-hashes and sizes, the first differing byte and surrounding bytes.
+without doubling all six builds, `linux-x64`, `darwin-x64` and `win32-x64` each compile from two
+independent clean clones into separate clean target directories, with compiler caching disabled.
+The clones occupy the same canonical source pathname sequentially. This holds the one source-path
+input MSVC retains as UTF-16 in release objects constant while source contents, build outputs and
+compiler processes remain independent. That is one pinned native runner per executable format and
+OS; the arm64 sibling uses the same source and platform linker family and retains its recorded
+hashes. A mismatch reports both hashes and sizes, the first differing byte and surrounding bytes.
 
-The source roots differ deliberately. `--remap-path-prefix` maps Rust paths to `/src/blitsen`, and
-the native compiler gets the equivalent `-ffile-prefix-map` or MSVC `/pathmap`, because QuickJS-ng's
-C `__FILE__` strings otherwise retain its Cargo output directory after symbols are stripped.
+`--remap-path-prefix` maps Rust paths to `/src/blitsen`, and the native compiler gets the equivalent
+`-ffile-prefix-map` or MSVC `/pathmap`, because QuickJS-ng's C `__FILE__` strings otherwise retain
+its Cargo output directory after symbols are stripped.
 `SOURCE_DATE_EPOCH` is the commit timestamp for native build scripts that observe the standard.
 The macOS addon also carries the stable install name `@rpath/blitsen.node`; otherwise Apple's
 linker copies the absolute output path into `LC_ID_DYLIB`, changing the load-command size between
-the shipping checkout and the deliberately different second checkout. Node loads the addon by its
-actual file path, so this identity changes no runtime resolution.
+the deliberately different target directories. Node loads the addon by its actual file path, so
+this identity changes no runtime resolution.
 Windows additionally uses MSVC `/Brepro`, alongside the existing static CRT flag, because PE linker
 metadata otherwise owns a build timestamp. `/PDBALTPATH:%_PDB%` keeps only the stable PDB basename
-in the PE debug record; MSVC's default absolute PDB path exposed both deliberately different
-checkout roots in the first Windows reproducibility run. No post-build normalisation is allowed: a
-passing comparison is evidence about the files that proceed to signing, while a failing one
-preserves the difference for diagnosis.
+in the PE debug record. The first Windows reproducibility run exposed different checkout roots
+there; after remapping those, MSVC still retained the source root elsewhere as a UTF-16 object
+input. The sequential canonical source pathname makes that otherwise unremappable compiler input
+identical without rewriting either output. No post-build normalisation is allowed: a passing
+comparison is evidence about the files that proceed to signing, while a failing one preserves the
+difference for diagnosis.
 
 ## What CI covers, and what only a release build touches
 
