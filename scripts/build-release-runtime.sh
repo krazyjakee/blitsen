@@ -55,6 +55,12 @@ case "$target" in
     append_rustflag "target-feature=+crt-static"
     append_rustflag "-C"
     append_rustflag "link-arg=/Brepro"
+    # MSVC otherwise records the absolute PDB location in the PE image. The
+    # PDB itself is not shipped, and its basename is stable across the two
+    # builds, so keep the useful debugger hint without retaining either
+    # checkout root.
+    append_rustflag "-C"
+    append_rustflag 'link-arg=/PDBALTPATH:%_PDB%'
     ;;
 esac
 

@@ -139,7 +139,8 @@ describe("release reproducibility", () => {
     expect(stdout).toContain("--cfg\ninherited\n");
     expect(stdout).toContain("--remap-path-prefix=D:/a/blitsen/blitsen=/src/blitsen\n");
     expect(stdout).toContain("--remap-path-prefix=D:\\a\\blitsen\\blitsen=/src/blitsen\n");
-    expect(stdout).toContain("-C\ntarget-feature=+crt-static\n-C\nlink-arg=/Brepro");
+    expect(stdout).toContain("-C\ntarget-feature=+crt-static\n-C\nlink-arg=/Brepro"
+      + "\n-C\nlink-arg=/PDBALTPATH:%_PDB%");
     expect(stdout).toContain("CFLAGS=/pathmap:D:/a/blitsen/blitsen=/src/blitsen ");
     expect(stdout).toContain("/pathmap:D:\\a\\blitsen\\blitsen=/src/blitsen");
   });
@@ -162,6 +163,7 @@ describe("release reproducibility", () => {
     expect(build).toContain("-ffile-prefix-map=");
     expect(build).toContain("/pathmap:");
     expect(build).toContain("/Brepro");
+    expect(build).toContain("/PDBALTPATH:%_PDB%");
     expect(build).toContain("SOURCE_DATE_EPOCH");
     expect(addonBuild).toContain("rustc-cdylib-link-arg=-Wl,-install_name,@rpath/blitsen.node");
   });
