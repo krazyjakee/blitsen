@@ -92,7 +92,7 @@ png = "0.18"
 reqwest = { version = "0.13", default-features = false, features = ["charset", "native-tls", "stream"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
-sha2 = "0.10"
+sha2 = "0.11"
 # Runtime diagnostics consume the mappings a user's bundler emitted. The crate
 # owns Source Map v3 decoding (including indexed maps); Blitsen keeps URL and
 # sourceMappingURL policy because those are application-loader concerns.
