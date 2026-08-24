@@ -1,6 +1,6 @@
 [package]
 name = "blitsen-platform"
-description = "Window, GPU, audio, network, and filesystem services for Blitsen"
+description = "JavaScript-free application, clipboard, dialog, and OS services for Blitsen"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
