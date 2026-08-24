@@ -10,6 +10,19 @@ before it can do any of it.
 `@blitsen/<target>` and pinned to `blitsen`'s version **exactly** — the two halves are one ABI, so
 a range would allow a pair that was never built together (TECH.md §11, issue #73).
 
+The main `packages/blitsen/package.json` version is the release's authoritative version. The release
+build helper first requires all six platform manifests to match it, then passes that value to Rust
+as `BLITSEN_RELEASE_VERSION`. Both `blitsen-runtime --version` and the runtime's own standalone
+report use the resulting `blitsen-runtime <version>` identity (and `navigator.userAgent` uses the
+same value). After each native build, the workflow executes the runtime from its selected platform
+package and compares its report with both manifests. A disagreement stops the build before signing,
+packing or publishing.
+
+This stamp belongs only to a release build. A direct `cargo build` from a checkout has no npm
+package identity and explicitly reports `blitsen-runtime checkout`; the workspace crate version is
+never presented as a distribution version. To produce a correctly stamped local release artifact,
+use `scripts/build-release-runtime.sh <target>` rather than invoking Cargo directly.
+
 That pin is what makes the ordering matter. `blitsen`'s `optionalDependencies` name exact versions,
 so the six platform packages publish **first** and `blitsen` **last**: its own publish is what makes
 the release visible to a user at all, and a half-published set would resolve to nothing installable.
