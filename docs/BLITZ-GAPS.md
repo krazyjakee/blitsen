@@ -401,9 +401,9 @@ ancestor had. That inverts the author's meaning in the one pattern the property 
 container that takes no hits holding elements that declare that they do. React Flow ships exactly
 that — `.react-flow__nodes { pointer-events: none }` around `.react-flow__node { pointer-events:
 all }`, and `.react-flow__handle { pointer-events: none }` overridden by
-`.connectionindicator { pointer-events: all }` — so on the reactflow example *nothing on the canvas
-was hit-testable at all*: not `elementFromPoint`, not a click, not the cursor. It is the second half
-of issue #128, and the reason the first half alone did not fix it.
+`.connectionindicator { pointer-events: all }` — so on the [React Flow example](../examples/reactflow)
+*nothing on the canvas was hit-testable at all*: not `elementFromPoint`, not a click, not the
+cursor. It is the second half of issue #128, and the reason the first half alone did not fix it.
 
 Worked around in `crates/blitsen-blitz/src/pointer_events.rs`, which rewrites the nine dropped
 values to `auto` as CSS enters the document — the parsed tree, a `<style>` element's text, a `style`

@@ -79,6 +79,7 @@ available from a source checkout and requires the Android/Rust toolchain. See
 | If you want to… | Read |
 | --- | --- |
 | Run your first application | [Getting started](docs/GETTING-STARTED.md) |
+| Browse runnable source examples | [Examples](examples/README.md) |
 | Understand what Blitsen loads | [Core concepts](docs/CORE-CONCEPTS.md) |
 | Configure a project | [Configuration](docs/CONFIGURATION.md) |
 | Use dialogs, the clipboard, window controls or OS data | [Native APIs](docs/NATIVE-APIS.md) |

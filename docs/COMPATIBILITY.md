@@ -916,11 +916,11 @@ scroll — a space typed into one does not page the document down behind it.
 **Focus moves on `mousedown`, not on `click`**, because that is the event it is the default action
 of and the only one an application can still refuse. A component that focuses something of its own
 from a `mousedown` handler and then cancels the event keeps it — which is how every editor that
-paints its own text and funnels keys through one off-screen `<textarea>` works, Monaco included.
-Taking focus at `click` instead handed it back to the nearest focusable ancestor one event later,
-so those keystrokes went to the body. Activation — a checkbox toggling, a submit button submitting
-— stays on `click`, where HTML puts it. A press that lands on nothing focusable still blurs what
-was focused, as it does in a browser.
+paints its own text and funnels keys through one off-screen `<textarea>` works, including the
+[Monaco example](../examples/monaco). Taking focus at `click` instead handed it back to the nearest
+focusable ancestor one event later, so those keystrokes went to the body. Activation — a checkbox
+toggling, a submit button submitting — stays on `click`, where HTML puts it. A press that lands on
+nothing focusable still blurs what was focused, as it does in a browser.
 
 `selectionStart`, `selectionEnd`, `selectionDirection`, `setSelectionRange()` and `select()` are
 implemented on `<textarea>` and on the single-line-text input types, and are `null` on the rest:
