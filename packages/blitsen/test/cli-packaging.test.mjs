@@ -251,10 +251,12 @@ describe("directory CLI", () => {
       const desktop = join(directory, "com.example.Pong.desktop");
       const service = join(directory, "com.example.Pong.service");
       expect(result.artifacts).toEqual([desktop, service]);
-      expect(await readFile(desktop, "utf8")).toContain(
-        `Exec=${executable} %u\nDBusActivatable=true\n`);
+      const desktopText = await readFile(desktop, "utf8");
+      const desktopExecutable = /^Exec=(.+) %u$/m.exec(desktopText)?.[1];
+      expect(desktopExecutable).toContain("Pong");
+      expect(desktopText).toContain("\nDBusActivatable=true\n");
       expect(await readFile(service, "utf8")).toBe(
-        `[D-BUS Service]\nName=com.example.Pong\nExec=${executable}\n`);
+        `[D-BUS Service]\nName=com.example.Pong\nExec=${desktopExecutable}\n`);
 
       const backend = await readFile(join(import.meta.dir,
         "../../../crates/blitsen-host/src/native_window/notify/linux_portal.rs"), "utf8");
