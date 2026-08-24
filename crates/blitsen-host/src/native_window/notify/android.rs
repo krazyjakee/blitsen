@@ -866,6 +866,6 @@ impl NotifyController {
     pub(crate) fn detach(&mut self) {
         self.records.clear();
         self.permission_prompt = None;
-        crate::dom_bridge::net_lock(&self.permission_errors).clear();
+        self.permission_errors.lock().clear();
     }
 }

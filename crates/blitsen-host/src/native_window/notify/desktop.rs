@@ -74,7 +74,7 @@ struct Record {
 enum LinuxHandle {
     /// Development runs have no installed identity and retain the original
     /// freedesktop notification backend and its live-process response stream.
-    Freedesktop(notify_rust::NotificationHandle),
+    Freedesktop(Box<notify_rust::NotificationHandle>),
     /// Packaged identities submit through the portal, which can D-Bus-activate
     /// the application after this process and its connection have exited.
     Portal,
@@ -595,7 +595,7 @@ impl NotifyController {
                             );
                         }
                     });
-                    LinuxHandle::Freedesktop(handle)
+                    LinuxHandle::Freedesktop(Box::new(handle))
                 }
                 Err(error) => return Err(error.clone()),
             };
@@ -658,7 +658,7 @@ impl NotifyController {
                     let native_id = handle.id();
                     let mut spec = notification(&record.options)?;
                     spec.id(native_id);
-                    **handle = spec;
+                    ***handle = spec;
                     handle.update().map_err(|error| {
                         format!("could not update notification {public_id}: {error}")
                     })?;

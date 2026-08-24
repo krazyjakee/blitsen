@@ -28,6 +28,8 @@ use zbus::zvariant::{OwnedValue, Value};
 use super::ActivationStore;
 use crate::dom_bridge::notify::{Activation, NotificationOptions};
 
+type ActivationBatch = (Result<Vec<Activation>, String>, Vec<(String, String)>);
+
 const PORTAL_DESTINATION: &str = "org.freedesktop.portal.Desktop";
 const PORTAL_PATH: &str = "/org/freedesktop/portal/desktop";
 const PORTAL_INTERFACE: &str = "org.freedesktop.portal.Notification";
@@ -394,7 +396,7 @@ impl LinuxPortal {
             .map_err(|error| format!("could not close notification through the portal: {error}"))
     }
 
-    pub(crate) fn take(&self) -> (Result<Vec<Activation>, String>, Vec<(String, String)>) {
+    pub(crate) fn take(&self) -> ActivationBatch {
         let activations = self.store.lock().take();
         let errors = self.errors.lock().drain(..).collect();
         (activations, errors)

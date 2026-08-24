@@ -164,6 +164,7 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     result
 }
 
+#[cfg(any(target_os = "android", test))]
 fn safe_nonce(nonce: &str) -> bool {
     !nonce.is_empty()
         && nonce.len() <= 96
@@ -259,6 +260,7 @@ impl ActivationStore {
     /// A successfully recorded file is removed. An unreadable file remains for
     /// a later frame or launch; malformed data is removed after one diagnostic
     /// because retrying bytes that cannot parse can never recover them.
+    #[cfg(any(target_os = "android", test))]
     pub(crate) fn record_inbox(&self, inbox: &Path) -> Vec<(String, String)> {
         let mut failures = Vec::new();
         let mut entries = match std::fs::read_dir(inbox) {
