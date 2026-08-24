@@ -59,6 +59,23 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun test packages/blitsen
 
+  # The CLI is published for Node as well as used from Bun in this repository.
+  # Pack and install it offline so both ends of engines.node exercise the exact
+  # files users receive, including import.meta.dirname in runtime resolution.
+  node-package:
+    name: Packed CLI (Node ${{ matrix.node-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: ["20.11.0", "node"]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ matrix.node-version }}
+      - run: npm --prefix packages/blitsen run test:node
+
   # Issue #123: the workspace is tested on all three platforms, not just the one
   # this project is developed on. Clippy and rustfmt run once — a lint result is
   # not per-platform — and the tests run everywhere, because behaviour is.
