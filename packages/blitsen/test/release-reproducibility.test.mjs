@@ -116,19 +116,27 @@ describe("release reproducibility", () => {
     const script = join(repository, "scripts/build-release-runtime.sh");
     const child = Bun.spawn([
       "bash", "-c", `
+        fixture_target=$(mktemp -d)
+        trap 'rm -rf "$fixture_target"' EXIT
+        export fixture_target
         cargo() {
           printf '%s' "$CARGO_ENCODED_RUSTFLAGS" | tr '\\037' '\\n'
           printf '\\nCFLAGS=%s\\n' "$CFLAGS"
         }
         pwd() {
           if [[ "\${1:-}" = -W ]]; then
-            printf 'D:/a/blitsen/blitsen\\n'
+            if [[ "$PWD" = "$fixture_target" ]]; then
+              printf 'D:/a/blitsen/target\\n'
+            else
+              printf 'D:/a/blitsen/blitsen\\n'
+            fi
           else
             builtin pwd "$@"
           fi
         }
         export -f cargo pwd
-        OSTYPE=msys RUSTFLAGS='--cfg inherited' bash "$1" win32-x64
+        OSTYPE=msys CARGO_TARGET_DIR="$fixture_target" \
+          RUSTFLAGS='--cfg inherited' bash "$1" win32-x64
       `, "release-build-test", script,
     ], { cwd: repository, stdout: "pipe", stderr: "pipe" });
     const [stdout, stderr, exitCode] = await Promise.all([
@@ -139,10 +147,18 @@ describe("release reproducibility", () => {
     expect(stdout).toContain("--cfg\ninherited\n");
     expect(stdout).toContain("--remap-path-prefix=D:/a/blitsen/blitsen=/src/blitsen\n");
     expect(stdout).toContain("--remap-path-prefix=D:\\a\\blitsen\\blitsen=/src/blitsen\n");
+    expect(stdout).toContain("--remap-path-prefix=\\\\?\\D:\\a\\blitsen\\blitsen=/src/blitsen\n");
+    expect(stdout).toContain("--remap-path-prefix=D:/a/blitsen/target=/build/blitsen\n");
+    expect(stdout).toContain("--remap-path-prefix=D:\\a\\blitsen\\target=/build/blitsen\n");
+    expect(stdout).toContain("--remap-path-prefix=\\\\?\\D:\\a\\blitsen\\target=/build/blitsen\n");
     expect(stdout).toContain("-C\ntarget-feature=+crt-static\n-C\nlink-arg=/Brepro"
       + "\n-C\nlink-arg=/PDBALTPATH:%_PDB%");
-    expect(stdout).toContain("CFLAGS=/pathmap:D:/a/blitsen/blitsen=/src/blitsen ");
-    expect(stdout).toContain("/pathmap:D:\\a\\blitsen\\blitsen=/src/blitsen");
+    expect(stdout).toContain("CFLAGS='/pathmap:D:/a/blitsen/blitsen=/src/blitsen' ");
+    expect(stdout).toContain("'/pathmap:D:\\a\\blitsen\\blitsen=/src/blitsen'");
+    expect(stdout).toContain("'/pathmap:\\\\?\\D:\\a\\blitsen\\blitsen=/src/blitsen'");
+    expect(stdout).toContain("'/pathmap:D:/a/blitsen/target=/build/blitsen'");
+    expect(stdout).toContain("'/pathmap:D:\\a\\blitsen\\target=/build/blitsen'");
+    expect(stdout).toContain("'/pathmap:\\\\?\\D:\\a\\blitsen\\target=/build/blitsen'");
   });
 
   test("gates one pinned native runner per executable format before signing", async () => {
@@ -155,6 +171,13 @@ describe("release reproducibility", () => {
     expect(selected).toEqual(["linux-x64", "darwin-x64", "win32-x64"]);
     expect(workflow).toContain("scripts/build-release-runtime.sh");
     expect(workflow).toContain("scripts/compare-release-builds.mjs --compare");
+    expect(workflow.match(/RUNNER_TEMP\/blitsen-repro-source/g)).toHaveLength(2);
+    expect(workflow.match(/RUNNER_TEMP\/blitsen-repro-target/g)).toHaveLength(2);
+    expect(workflow).toContain('mv "$second_source" "$first_source"');
+    expect(workflow).toContain('mv "$reproducible_target" "$GITHUB_WORKSPACE/target"');
+    expect(workflow).toContain('CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target"');
+    expect(workflow).toContain('CARGO_TARGET_DIR="$reproducible_target"');
+    expect(workflow).toContain('CARGO_TARGET_DIR="$second_target"');
     expect(workflow.indexOf("name: Verify unsigned reproducibility"))
       .toBeLessThan(workflow.indexOf("name: Sign (macOS)"));
     expect(build).toContain("--remap-path-prefix=");

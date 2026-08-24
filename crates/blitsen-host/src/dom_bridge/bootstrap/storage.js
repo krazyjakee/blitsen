@@ -83,6 +83,7 @@
     get platform() { return navigatorFacts.platform; }
     get language() { return navigatorFacts.language; }
     get languages() { return Object.freeze([navigatorFacts.language]); }
+    getGamepads() { return gamepadSnapshots(); }
   }
 
   const navigator = Object.create(Navigator.prototype);

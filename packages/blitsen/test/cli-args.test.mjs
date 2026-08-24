@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { main, packageVersion, parseArgs, resolveApplication } from "../src/cli.mjs";
+import { HELP, main, packageVersion, parseArgs, resolveApplication } from "../src/cli.mjs";
 import { TARGETS } from "../src/runtime.mjs";
 import { capture } from "./cli-support.mjs";
 
@@ -9,6 +10,18 @@ describe("directory CLI", () => {
     const { lines, output } = capture();
     expect(await main(["--help"], output)).toBe(0);
     expect(lines[0][1]).toContain("Usage: blitsen [directory|url]");
+  });
+
+  test("documents every public option and the run-only development bundle flags", async () => {
+    const reference = await readFile(join(import.meta.dir, "../../../docs/CLI.md"), "utf8");
+    const publicOptions = new Set(HELP.match(/--[a-z][a-z-]*/g));
+    for (const option of publicOptions) expect(reference, `${option} is in the CLI reference`).toContain(option);
+    const run = reference.slice(reference.indexOf("## Run"), reference.indexOf("## Doctor"));
+    for (const option of ["--dev-bundle", "--bundle-id", "--sign"]) {
+      expect(run, `${option} is documented under Run`).toContain(option);
+    }
+    expect(run).toContain("macOS run mode only");
+    expect(run).toContain("rejected unless `--dev-bundle` is also present");
   });
 
   test("parses native window flags", () => {

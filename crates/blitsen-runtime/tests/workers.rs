@@ -18,25 +18,25 @@ fn runtime_binary() -> Option<PathBuf> {
     path.is_file().then_some(path)
 }
 
-/// An application directory, removed when the test that made it ends.
-struct App(PathBuf);
-
-impl Drop for App {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
+/// A unique application directory removed when the test that made it ends.
+struct App(tempfile::TempDir);
 
 impl App {
     fn new(name: &str, files: &[(&str, &str)]) -> Self {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../target/tmp")
-            .join(format!("workers-{}-{name}", std::process::id()));
-        std::fs::create_dir_all(&root).expect("application directory");
+        let scratch = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/tmp");
+        std::fs::create_dir_all(&scratch).expect("application directory root");
+        let root = tempfile::Builder::new()
+            .prefix(&format!("workers-{name}-"))
+            .tempdir_in(scratch)
+            .expect("application directory");
         for (path, source) in files {
-            std::fs::write(root.join(path), source).expect("write application file");
+            std::fs::write(root.path().join(path), source).expect("write application file");
         }
         Self(root)
+    }
+
+    fn path(&self) -> &Path {
+        self.0.path()
     }
 }
 
@@ -48,7 +48,7 @@ impl App {
 fn run(app: &App) -> Option<String> {
     let runtime = runtime_binary()?;
     let output = Command::new(runtime)
-        .arg(&app.0)
+        .arg(app.path())
         .env("BLITSEN_STANDALONE_CHECK", "1")
         // Long enough for a thread to start, load a module graph and answer.
         .env("BLITSEN_STANDALONE_CHECK_DELAY", "1500")

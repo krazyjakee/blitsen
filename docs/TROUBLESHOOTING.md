@@ -129,8 +129,9 @@ Support varies by version and target. Feature-detect the member and grade the in
 npx blitsen doctor dist --target win32-x64
 ```
 
-Dialogs are Linux-only in this release; the Unix single-instance lock is absent on Windows; app,
-window, dialog and clipboard native modules are absent on Android. See [Native APIs](NATIVE-APIS.md).
+Dialogs are Linux-only in this release; the single-instance lock uses a Unix socket or Windows
+named pipe; app, window, dialog and clipboard native modules are absent on Android. See
+[Native APIs](NATIVE-APIS.md).
 
 ## macOS notifications need an application bundle identity
 

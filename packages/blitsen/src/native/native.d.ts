@@ -32,7 +32,8 @@ export interface NativeApp {
    * already holds it — in which case this invocation was handed to that
    * instance and this process should `process.exit(0)`.
    *
-   * Unix only.
+   * Available on desktop Unix and Windows; Android delivers second launches
+   * through its Activity lifecycle instead.
    */
   requestSingleInstanceLock?(
     name: string,
@@ -486,10 +487,31 @@ export interface NativeInputSnapshot {
   readonly pointer: NativePointerState;
 }
 
+/** A standard gamepad arriving or leaving the per-frame registry. */
+export interface NativeGamepadDeviceChange {
+  readonly type: "connected" | "disconnected";
+  readonly index: number;
+  readonly id: string;
+}
+
+/** A dual-rumble request for one connected standard gamepad slot. */
+export interface NativeGamepadVibrationOptions {
+  /** Effect length in milliseconds, from 0 through 60,000. */
+  duration?: number;
+  /** Low-frequency motor magnitude, from 0 through 1. */
+  strongMagnitude?: number;
+  /** High-frequency motor magnitude, from 0 through 1. */
+  weakMagnitude?: number;
+}
+
 /** `blitsen/input`: polling state that complements ordinary DOM input events. */
 export interface NativeInput {
   /** Reads held state and consumes accumulated movement and wheel deltas. */
   snapshot?(): NativeInputSnapshot;
+  /** Starts or stops dual-rumble on a connected `navigator.getGamepads()` slot. */
+  vibrateGamepad?(index: number, options?: NativeGamepadVibrationOptions): Promise<void>;
+  /** Listens for standard gamepads arriving and leaving; returns an unsubscribe function. */
+  onDeviceChange?(listener: (event: NativeGamepadDeviceChange) => void): () => void;
 }
 
 /** One top-level collection a HID device exposes. */
@@ -599,7 +621,7 @@ export interface NativeNotificationOptions {
   /** Milliseconds before expiry; zero requests a persistent notification. */
   timeout?: number;
   urgency?: "low" | "normal" | "critical";
-  /** Icon name or absolute image path. Rejected on macOS, whose centre uses the app icon. */
+  /** Platform icon name or image path. Packaged Linux accepts names only; macOS rejects this. */
   icon?: string;
   /** Buttons whose identifiers are returned by `onEvent`. */
   actions?: readonly NativeNotificationAction[];

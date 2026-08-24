@@ -110,18 +110,10 @@ fn main() {
         return;
     }
 
-    let directory =
-        std::env::temp_dir().join(format!("blitsen-surface-lifecycle-{}", std::process::id()));
-    std::fs::create_dir_all(&directory).expect("a fixture directory");
-    let entrypoint = directory.join("index.html");
+    let directory = tempfile::tempdir().expect("a fixture directory");
+    let entrypoint = directory.path().join("index.html");
     std::fs::write(&entrypoint, DOCUMENT).expect("the fixture writes");
-    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        run_cycle(&entrypoint);
-    }));
-    let _ = std::fs::remove_dir_all(&directory);
-    if let Err(panic) = outcome {
-        std::panic::resume_unwind(panic);
-    }
+    run_cycle(&entrypoint);
     println!("surface cycle verified: ten destroy/recreate rounds, no leak");
 }
 

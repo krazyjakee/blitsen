@@ -20,6 +20,7 @@ use crate::DomRuntime;
 mod audio;
 mod event_source;
 mod fetch;
+pub(crate) mod gamepad;
 pub(crate) mod hid;
 pub(crate) mod input;
 mod intl;
@@ -76,6 +77,7 @@ const BOOTSTRAP: &str = concat!(
     include_str!("dom_bridge/bootstrap/history.js"),
     include_str!("dom_bridge/bootstrap/url.js"),
     include_str!("dom_bridge/bootstrap/storage.js"),
+    include_str!("dom_bridge/bootstrap/gamepad.js"),
     include_str!("dom_bridge/bootstrap/native.js"),
     include_str!("dom_bridge/bootstrap/transfer.js"),
     include_str!("dom_bridge/bootstrap/globals.js"),
@@ -290,6 +292,7 @@ pub(crate) fn install_with_hooks<E: JsEngine + 'static>(
     install_event_source(engine)?;
     install_intl(engine)?;
     storage::install(engine, storage)?;
+    gamepad::install(engine)?;
     window_modes::install(engine, mode.is_test_harness())?;
     native::install(engine)?;
     let dev_layout_warnings = std::env::var("BLITSEN_DEV_LAYOUT_WARNINGS").is_ok_and(|value| {
@@ -437,7 +440,7 @@ fn navigator_state() -> Value {
         .filter(|locale| !locale.is_empty() && locale != "C" && locale != "POSIX")
         .unwrap_or_else(|| "en-US".to_owned());
     json!({
-        "userAgent": format!("Blitsen/{} ({platform})", env!("CARGO_PKG_VERSION")),
+        "userAgent": format!("Blitsen/{} ({platform})", blitsen_core::RELEASE_VERSION),
         "platform": platform,
         "language": language,
     })

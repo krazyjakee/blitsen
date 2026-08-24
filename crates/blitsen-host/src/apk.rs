@@ -359,14 +359,17 @@ impl std::fmt::Debug for ApkAssets {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::TempDir;
 
     /// An APK's `assets/` laid out as a directory, which is what it is once the
     /// platform has mounted it.
-    fn packaged(name: &str, files: &[(&str, &[u8])]) -> PathBuf {
-        let root = std::env::temp_dir().join(format!("blitsen-apk-{}-{name}", std::process::id()));
-        std::fs::remove_dir_all(&root).ok();
+    fn packaged(name: &str, files: &[(&str, &[u8])]) -> TempDir {
+        let root = tempfile::Builder::new()
+            .prefix(&format!("blitsen-apk-{name}-"))
+            .tempdir()
+            .expect("an APK fixture directory");
         for (path, bytes) in files {
-            let target = root.join(path);
+            let target = root.path().join(path);
             std::fs::create_dir_all(target.parent().expect("a parent")).unwrap();
             std::fs::write(target, bytes).unwrap();
         }
@@ -394,7 +397,7 @@ mod tests {
                 ("other/thing.txt", b"not ours"),
             ],
         );
-        let assets = ApkAssets::open_directory(&root, DEFAULT_ASSET_ROOT);
+        let assets = ApkAssets::open_directory(root.path(), DEFAULT_ASSET_ROOT);
 
         assert_eq!(assets.read("index.html").unwrap(), b"<p>hi");
         assert_eq!(assets.read("assets/app.js").unwrap(), b"globalThis.ran = 1");
@@ -409,7 +412,6 @@ mod tests {
         // The application is under its own root, so a sibling in `assets/` is
         // not reachable by naming it.
         assert!(assets.read("other/thing.txt").is_none());
-        std::fs::remove_dir_all(&root).ok();
     }
 
     #[test]
@@ -418,7 +420,7 @@ mod tests {
             "escape",
             &[("blitsen/index.html", b"<p>hi"), ("secret.txt", b"no")],
         );
-        let assets = ApkAssets::open_directory(&root, DEFAULT_ASSET_ROOT);
+        let assets = ApkAssets::open_directory(root.path(), DEFAULT_ASSET_ROOT);
         for escape in [
             "../secret.txt",
             "assets/../../secret.txt",
@@ -429,7 +431,6 @@ mod tests {
             assert!(assets.read(escape).is_none(), "{escape} was served");
             assert!(!assets.contains(escape), "{escape} was found");
         }
-        std::fs::remove_dir_all(&root).ok();
     }
 
     #[test]
@@ -443,7 +444,7 @@ mod tests {
                 ("blitsen/blitsen.assets.json", &listing),
             ],
         );
-        let assets = ApkAssets::open_directory(&root, DEFAULT_ASSET_ROOT);
+        let assets = ApkAssets::open_directory(root.path(), DEFAULT_ASSET_ROOT);
         assert!(assets.is_indexed());
         assert_eq!(assets.len(), 2);
         assert_eq!(
@@ -464,13 +465,12 @@ mod tests {
         for absent in ["payloadBytes", "digest", "verified"] {
             assert!(report.get(absent).is_none(), "{absent} was reported");
         }
-        std::fs::remove_dir_all(&root).ok();
     }
 
     #[test]
     fn a_package_without_an_index_still_reads_its_files() {
         let root = packaged("unindexed", &[("blitsen/index.html", b"<p>hi")]);
-        let assets = ApkAssets::open_directory(&root, DEFAULT_ASSET_ROOT);
+        let assets = ApkAssets::open_directory(root.path(), DEFAULT_ASSET_ROOT);
         assert_eq!(assets.read("index.html").unwrap(), b"<p>hi");
         assert!(!assets.is_indexed());
         assert_eq!(assets.len(), 0);
@@ -479,7 +479,6 @@ mod tests {
         assert_eq!(report["bundled"], true);
         assert_eq!(report["indexed"], false);
         assert!(report.get("files").is_none());
-        std::fs::remove_dir_all(&root).ok();
     }
 
     /// A newer index is ignored rather than half-read: an unknown format that
@@ -499,19 +498,17 @@ mod tests {
                 ("blitsen/blitsen.assets.json", &listing),
             ],
         );
-        let assets = ApkAssets::open_directory(&root, DEFAULT_ASSET_ROOT);
+        let assets = ApkAssets::open_directory(root.path(), DEFAULT_ASSET_ROOT);
         assert!(!assets.is_indexed());
         // And the application still runs, because reading never needed it.
         assert_eq!(assets.read("index.html").unwrap(), b"<p>hi");
-        std::fs::remove_dir_all(&root).ok();
     }
 
     #[test]
     fn an_application_at_the_root_of_assets_needs_no_prefix() {
         let root = packaged("bare", &[("index.html", b"<p>hi")]);
-        let assets = ApkAssets::open_directory(&root, "");
+        let assets = ApkAssets::open_directory(root.path(), "");
         assert_eq!(assets.root(), "");
         assert_eq!(assets.read("index.html").unwrap(), b"<p>hi");
-        std::fs::remove_dir_all(&root).ok();
     }
 }

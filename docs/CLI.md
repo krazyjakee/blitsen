@@ -31,6 +31,20 @@ Run accepts:
 | `--width <pixels>` | `800` | Initial logical window width |
 | `--height <pixels>` | `600` | Initial logical window height |
 | `--title <text>` | application name or `Blitsen` | Native window title |
+| `--dev-bundle` | off | macOS run mode only: wrap the development host in a signed `.app` and relaunch it |
+| `--bundle-id <id>` | generated development ID | With `--dev-bundle`, set that `.app`'s `CFBundleIdentifier` |
+| `--sign <command>` | ad-hoc signing | With `--dev-bundle`, replace the ad-hoc signature; the `.app` is the command's only argument |
+
+Use a development bundle when exercising a macOS capability whose identity belongs to an
+application bundle, notably Notification Center:
+
+```sh
+npx blitsen dist --dev-bundle --bundle-id com.example.myapp
+```
+
+`--dev-bundle` is rejected by `build`, `doctor`, and non-macOS hosts. In run mode, `--bundle-id`
+and `--sign` are rejected unless `--dev-bundle` is also present; ordinary runs have no artifact
+for those options to describe.
 
 ## Doctor
 

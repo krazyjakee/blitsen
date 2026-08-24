@@ -653,10 +653,10 @@ fn install_app<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsError> {
     install_single_instance(engine)
 }
 
-// Android is a unix and this would compile there, which is exactly why the
-// predicate names it: the module it reaches into is absent on Android, and a
-// lock nobody is racing for is not a capability. See the no-op `install_app`.
-#[cfg(all(unix, not(target_os = "android")))]
+// Android is the one platform where the OS delivers a second launch to the
+// existing Activity. Desktop Unix uses domain sockets and Windows named pipes
+// behind the same platform API.
+#[cfg(not(target_os = "android"))]
 fn install_single_instance<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsError> {
     use blitsen_platform::app::{Instance, Invocation, single_instance};
 
@@ -698,13 +698,6 @@ fn install_single_instance<E: JsEngine + 'static>(engine: &mut E) -> Result<(), 
             json_value(&mut engine, &json!(single_instance::take()))
         }),
     )
-}
-
-// Nothing to install: a named mutex and a pipe are a different design, not this
-// one with the socket swapped out.
-#[cfg(not(unix))]
-fn install_single_instance<E: JsEngine + 'static>(_engine: &mut E) -> Result<(), JsError> {
-    Ok(())
 }
 
 // Nothing to install. Android is a unix, so the socket above would bind and the

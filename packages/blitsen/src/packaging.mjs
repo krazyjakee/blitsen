@@ -125,18 +125,27 @@ function desktopExec(path) {
     : path;
 }
 
-function desktopEntry({ name, executable, icon }) {
+const DBUS_NAME = /^[A-Za-z_][A-Za-z0-9_-]*(\.[A-Za-z_][A-Za-z0-9_-]*)+$/;
+
+function linuxIdentity(identifier) {
+  if (identifier && !DBUS_NAME.test(identifier)) {
+    throw new Error(`--bundle-id ${JSON.stringify(identifier)} is not a Linux D-Bus application `
+      + "name: use at least two dot-separated components, each beginning with a letter or _");
+  }
+  return identifier;
+}
+
+function desktopEntry({ name, executable, icon, identity }) {
   return [
     "[Desktop Entry]",
     "Type=Application",
     "Version=1.0",
     `Name=${name.replace(/\n/g, " ")}`,
-    // `%u` so the entry can be started with a single argument, which is the
-    // shape a notification activation arrives in: `--notification-activation
-    // <envelope>` is what the runtime reads it from (#252). An ordinary launch
-    // substitutes nothing and the field disappears, which is what the Desktop
-    // Entry Specification says an unsatisfied field code does.
+    // `%u` preserves the existing one-URI fallback for desktops that ignore
+    // DBusActivatable and for protocol registration. Notification actions on a
+    // D-Bus-aware desktop use ActivateAction rather than this field (#252).
     `Exec=${desktopExec(executable)} %u`,
+    ...identity ? ["DBusActivatable=true"] : [],
     ...icon ? [`Icon=${icon}`] : [],
     "Terminal=false",
     // The entry a notification's `desktop-entry` hint names is this file, and
@@ -145,6 +154,15 @@ function desktopEntry({ name, executable, icon }) {
     // application in GNOME's notification settings rather than leaving the user
     // with a switch they cannot find.
     "X-GNOME-UsesNotifications=true",
+    "",
+  ].join("\n");
+}
+
+function dbusService({ identity, executable }) {
+  return [
+    "[D-BUS Service]",
+    `Name=${identity}`,
+    `Exec=${desktopExec(executable)}`,
     "",
   ].join("\n");
 }
@@ -159,15 +177,15 @@ function desktopEntry({ name, executable, icon }) {
  * every other platform identity in this file is.
  *
  * `entry` is what the platform's own notification service knows the entry point
- * by, which is the identity everywhere except Linux — there it is the desktop
- * entry, and a desktop entry is named after the executable rather than after the
- * application, so the two genuinely differ.
+ * by. Linux deliberately uses the identity too: the desktop filename, D-Bus
+ * service name and well-known bus name must all agree for activation.
  */
 export function activationEntryPoint({ platform, identifier, executable }) {
   if (!identifier) return null;
+  if (platform === "linux") linuxIdentity(identifier);
   return {
     identity: identifier,
-    entry: platform === "linux" ? basename(executable) : identifier,
+    entry: identifier,
   };
 }
 
@@ -272,13 +290,14 @@ function hidEntitlements() {
 
 // The paths step ⑤ will write, so a collision is reported the way the linker
 // reports one rather than silently replacing an existing bundle.
-export function packagePlan({ platform, executable, icon, hid = false }) {
+export function packagePlan({ platform, executable, icon, identifier = null, hid = false }) {
   const supported = Object.keys(ICON_FORMATS);
   if (!supported.includes(platform)) {
     throw new Error(`packaging is not supported on ${platform} (expected ${supported.join(", ")})`);
   }
   const directory = dirname(executable);
   const name = basename(executable, platform === "win32" ? ".exe" : "");
+  if (platform === "linux") linuxIdentity(identifier);
   const resource = icon ? iconFile(platform, icon, name) : null;
   if (platform === "darwin") {
     const bundle = join(directory, `${name}.app`);
@@ -295,7 +314,8 @@ export function packagePlan({ platform, executable, icon, hid = false }) {
   const artifacts = platform === "win32"
     ? [`${executable}.manifest`, ...resource ? [join(directory, resource)] : []]
     : [
-      join(directory, `${name}.desktop`),
+      join(directory, `${identifier ?? name}.desktop`),
+      ...identifier ? [join(directory, `${identifier}.service`)] : [],
       ...resource ? [join(directory, resource)] : [],
       ...hid ? [join(directory, `${name}.hid.rules`)] : [],
     ];
@@ -309,7 +329,7 @@ export async function packageBuild({
   platform, executable, title, icon = null, identifier = null, version = null,
   assetDirectory = null, force = false, hid = false,
 }) {
-  const plan = packagePlan({ platform, executable, icon, hid });
+  const plan = packagePlan({ platform, executable, icon, identifier, hid });
   const resource = icon ? await iconResource(platform, icon, plan.name) : null;
   for (const artifact of plan.artifacts) {
     if (!await stat(artifact).catch(() => null)) continue;
@@ -363,9 +383,16 @@ export async function packageBuild({
       iconPath = join(dirname(executable), resource.file);
       await writeFile(iconPath, resource.bytes);
     }
-    const entry = join(dirname(executable), `${plan.name}.desktop`);
-    await writeFile(entry, desktopEntry({ name: title, executable, icon: iconPath }));
-    written.push(entry, ...iconPath ? [iconPath] : []);
+    const identity = linuxIdentity(identifier);
+    const entry = join(dirname(executable), `${identity ?? plan.name}.desktop`);
+    await writeFile(entry, desktopEntry({ name: title, executable, icon: iconPath, identity }));
+    written.push(entry);
+    if (identity) {
+      const service = join(dirname(executable), `${identity}.service`);
+      await writeFile(service, dbusService({ identity, executable }));
+      written.push(service);
+    }
+    written.push(...iconPath ? [iconPath] : []);
     if (hid) {
       const rules = join(dirname(executable), `${plan.name}.hid.rules`);
       await writeFile(rules, hidUdevRule(title));
