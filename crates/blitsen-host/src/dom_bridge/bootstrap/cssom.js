@@ -260,11 +260,17 @@
     return pending;
   };
   const notifyResizeObservers = () => {
+    const handles = new Set();
+    for (const observer of resizeObservers)
+      for (const target of observer._targets.keys()) handles.add(target[handle]);
+    if (handles.size === 0) return;
+    const metricsByHandle = new Map(call("resizeObserverMetrics",
+      JSON.stringify([...handles])).map(metrics => [metrics.handle, metrics]));
     for (const observer of resizeObservers) {
       const entries = [];
       for (const [target, record] of observer._targets) {
-        if (!target.isConnected) continue;
-        const metrics = call("layoutMetrics", target[handle]);
+        const metrics = metricsByHandle.get(target[handle]);
+        if (metrics === undefined) continue;
         const signature = resizeSignature(metrics, record.box);
         if (signature === record.reported) continue;
         record.reported = signature;

@@ -633,6 +633,133 @@ mod tests {
         (engine, document)
     }
 
+    fn json_result(engine: &mut QuickJs, script: &str) -> serde_json::Value {
+        let result = engine
+            .evaluate_script(script, "blitsen:test-result")
+            .and_then(|value| engine.to_string(&value))
+            .expect("the test script evaluates");
+        serde_json::from_str(&result).expect("the test result is JSON")
+    }
+
+    #[test]
+    fn resize_observers_measure_all_targets_in_one_bridge_call_per_frame() {
+        let markup = (0..100)
+            .map(|index| format!("<div id=target-{index}></div>"))
+            .collect::<String>();
+        let (mut engine, _) = ime_document(&markup);
+        let result = json_result(
+            &mut engine,
+            r#"
+                const targets = [...document.querySelectorAll("div")];
+                const deliveries = [];
+                const observer = new ResizeObserver(entries => deliveries.push(entries.length));
+                for (const target of targets) observer.observe(target);
+                __blitsenAnimationFrameTick(0);
+                __blitsenAnimationFrameTick(16);
+                JSON.stringify({
+                  deliveries,
+                  batches: __blitsenDomCallCount("resizeObserverMetrics"),
+                  individualMetrics: __blitsenDomCallCount("layoutMetrics"),
+                  connectedChecks: __blitsenDomCallCount("isConnected"),
+                });
+            "#,
+        );
+
+        assert_eq!(result["deliveries"], serde_json::json!([100]));
+        assert_eq!(result["batches"], 2, "one metrics batch is made per frame");
+        assert_eq!(result["individualMetrics"], 0);
+        assert_eq!(result["connectedChecks"], 0);
+    }
+
+    #[test]
+    fn batched_resize_observation_preserves_boxes_targets_and_animation_changes() {
+        let (mut engine, _) = ime_document(
+            r#"<style>
+                 @keyframes grow { from { width: 20px } to { width: 60px } }
+                 #static { box-sizing: content-box; width: 40px; height: 20px;
+                           padding: 3px; border: 2px solid black }
+                 #second { width: 30px; height: 10px }
+                 #animated { width: 20px; height: 10px; animation: grow 1s linear both }
+               </style>
+               <div id=static></div><div id=second></div><div id=animated></div>"#,
+        );
+        let result = json_result(
+            &mut engine,
+            r#"
+                const fixed = document.getElementById("static");
+                const second = document.getElementById("second");
+                const animated = document.getElementById("animated");
+                const deliveries = [];
+                const record = name => entries => deliveries.push([name, entries.map(entry => ({
+                  id: entry.target.id,
+                  content: [entry.contentRect.width, entry.contentRect.height],
+                  contentBox: [entry.contentBoxSize[0].inlineSize,
+                               entry.contentBoxSize[0].blockSize],
+                  borderBox: [entry.borderBoxSize[0].inlineSize,
+                              entry.borderBoxSize[0].blockSize],
+                }))]);
+                const content = new ResizeObserver(record("content"));
+                const border = new ResizeObserver(record("border"));
+                content.observe(fixed);
+                content.observe(second);
+                content.observe(animated);
+                border.observe(fixed, { box: "border-box" });
+
+                __blitsenAnimationFrameTick(0);
+                fixed.style.borderWidth = "4px";
+                __blitsenAnimationFrameTick(0);
+                fixed.style.width = "50px";
+                second.style.width = "35px";
+                __blitsenAnimationFrameTick(0);
+
+                content.unobserve(second);
+                second.style.width = "70px";
+                __blitsenAnimationFrameTick(0);
+                fixed.remove();
+                fixed.style.width = "80px";
+                __blitsenAnimationFrameTick(0);
+
+                // No DOM mutation occurs between these frames. Advancing only
+                // the CSS animation clock must still produce new geometry.
+                __blitsenAnimationFrameTick(500);
+                const beforeDisconnect = deliveries.length;
+                content.disconnect();
+                border.disconnect();
+                __blitsenAnimationFrameTick(750);
+                JSON.stringify({ deliveries, beforeDisconnect,
+                  afterDisconnect: deliveries.length });
+            "#,
+        );
+
+        assert_eq!(
+            result["deliveries"],
+            serde_json::json!([
+                ["content", [
+                    {"id":"static", "content":[40,20], "contentBox":[40,20], "borderBox":[50,30]},
+                    {"id":"second", "content":[30,10], "contentBox":[30,10], "borderBox":[30,10]},
+                    {"id":"animated", "content":[20,10], "contentBox":[20,10], "borderBox":[20,10]}
+                ]],
+                ["border", [
+                    {"id":"static", "content":[40,20], "contentBox":[40,20], "borderBox":[50,30]}
+                ]],
+                ["border", [
+                    {"id":"static", "content":[40,20], "contentBox":[40,20], "borderBox":[54,34]}
+                ]],
+                ["content", [
+                    {"id":"static", "content":[50,20], "contentBox":[50,20], "borderBox":[64,34]},
+                    {"id":"second", "content":[35,10], "contentBox":[35,10], "borderBox":[35,10]}
+                ]],
+                ["border", [
+                    {"id":"static", "content":[50,20], "contentBox":[50,20], "borderBox":[64,34]}
+                ]],
+                ["content", [
+                    {"id":"animated", "content":[40,10], "contentBox":[40,10], "borderBox":[40,10]}
+                ]]
+            ])
+        );
+        assert_eq!(result["beforeDisconnect"], result["afterDisconnect"]);
+    }
+
     #[test]
     fn element_view_preserves_tree_and_attribute_order() {
         let mut document = BlitzDom::from_html(

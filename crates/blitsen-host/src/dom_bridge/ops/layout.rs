@@ -34,6 +34,42 @@ pub(super) fn dispatch(
                 "scrollTop": metrics.scroll_top,
             }))
         }
+        "resizeObserverMetrics" => {
+            let handles: Vec<String> =
+                serde_json::from_str(bridge_arg(arguments, 0, "resize observer handles")?)
+                    .map_err(|_| JsError::new("invalid resize observer handles"))?;
+            let mut connected = Vec::with_capacity(handles.len());
+            for raw in handles {
+                let node = raw
+                    .parse::<u64>()
+                    .map(NodeId::from_u64)
+                    .map_err(|_| JsError::new("invalid DOM node handle"))?;
+                if dom.is_connected(node).map_err(dom_error)? {
+                    connected.push((raw, node));
+                }
+            }
+            if connected.is_empty() {
+                Ok(Value::Array(Vec::new()))
+            } else {
+                let snapshot = dom.flush_layout().map_err(dom_error)?;
+                connected
+                    .into_iter()
+                    .map(|(handle, node)| {
+                        let metrics = dom.layout_metrics(node, snapshot).map_err(dom_error)?;
+                        Ok(json!({
+                            "handle": handle,
+                            "width": metrics.rect.width,
+                            "height": metrics.rect.height,
+                            "contentX": metrics.content_rect.x,
+                            "contentY": metrics.content_rect.y,
+                            "contentWidth": metrics.content_rect.width,
+                            "contentHeight": metrics.content_rect.height,
+                        }))
+                    })
+                    .collect::<Result<Vec<_>, JsError>>()
+                    .map(Value::Array)
+            }
+        }
         "clientRects" => {
             let forced = dom.layout_is_dirty();
             let node = handle(runtime, arguments, 0)?;
