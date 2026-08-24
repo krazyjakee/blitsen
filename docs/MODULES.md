@@ -82,10 +82,11 @@ Resolution and source are the host's. **Linking** — instantiating records, wir
 ordering evaluation, breaking cycles — is the engine's, and no JavaScript engine exposes it to be
 reimplemented from outside.
 
-QuickJS-ng exposes that seam in its stock public API: `JS_SetModuleLoaderFunc` takes a normaliser
-and a loader, which is exactly the pair this design needs — the host answers "what does this
-specifier mean" and "what is the source", and the engine does the rest. The runtime links the
-engine statically, so the hook is a property of the build and cannot be missing at run time.
+QuickJS-ng exposes that seam in its stock public API, and rquickjs wraps it with its safe
+`Resolver` and `Loader` traits. That pair is exactly what this design needs — the host answers
+"what does this specifier mean" and "what is the source", and the engine does the rest. The
+runtime links the engine statically, so the hook is a property of the build and cannot be missing
+at run time.
 
 **This was the hard part under the previous engine, and the decision that changed it.** The public
 JavaScriptCore C API has no module loader hook at all — measured against the system library this

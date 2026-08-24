@@ -645,8 +645,7 @@ mod tests {
 
         let error = engine
             .evaluate_module(r#"import "node:fs";"#, &url_of("index.js"))
-            .err()
-            .expect("the unsupported builtin rejects module evaluation");
+            .expect_err("the unsupported builtin rejects module evaluation");
         assert_eq!(
             error.message(),
             "Error: the shipped Blitsen runtime implements no node:fs. Node and Bun builtins are \
