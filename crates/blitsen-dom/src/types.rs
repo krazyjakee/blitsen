@@ -7,38 +7,6 @@
 use std::error::Error;
 use std::fmt;
 
-/// Generational node handle in its stable wire representation.
-///
-/// The slot selects backend storage and the generation prevents a stale handle
-/// from resolving to an unrelated node after that storage is reused. The
-/// backend owns the tree; this is only how a handle is packed for the opaque
-/// external of a JavaScript wrapper and unpacked again on the way back.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub struct NodeId {
-    slot: u32,
-    generation: u32,
-}
-
-impl NodeId {
-    /// Creates a handle from its stable wire representation.
-    pub const fn new(slot: u32, generation: u32) -> Self {
-        Self { slot, generation }
-    }
-
-    /// Packs the handle for opaque storage in a JavaScript wrapper.
-    pub const fn to_u64(self) -> u64 {
-        (self.generation as u64) << 32 | self.slot as u64
-    }
-
-    /// Restores a handle previously produced by [`NodeId::to_u64`].
-    pub const fn from_u64(value: u64) -> Self {
-        Self {
-            slot: value as u32,
-            generation: (value >> 32) as u32,
-        }
-    }
-}
-
 /// Namespace of an element or attribute name.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum Namespace {
@@ -612,11 +580,5 @@ mod tests {
     fn names_make_namespace_choice_explicit() {
         assert_eq!(DomName::html("div").namespace, Namespace::Html);
         assert_eq!(DomName::attribute("class").namespace, Namespace::None);
-    }
-
-    #[test]
-    fn node_handles_have_a_stable_external_representation() {
-        let node = NodeId::new(123, 456);
-        assert_eq!(NodeId::from_u64(node.to_u64()), node);
     }
 }

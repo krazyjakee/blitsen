@@ -17,8 +17,7 @@ pub use types::{
     CANVAS_TAG, CanvasCommands, CanvasEncoding, CanvasSurface, CanvasTextMetrics, CanvasTextStyle,
     CaretPosition, DomError, DomName, HitTest, ImageState, LayoutMetrics, LayoutSnapshot,
     LinkState, MediaQueryMatch, NATIVE_VIEWPORT_BYTES_PER_PIXEL, NATIVE_VIEWPORT_TAG, Namespace,
-    NodeId, NodeKind, Rect, SelectionDirection, TextEdit, TextMotion, TextSelection,
-    ViewportSurface,
+    NodeKind, Rect, SelectionDirection, TextEdit, TextMotion, TextSelection, ViewportSurface,
 };
 
 /// Boundary implemented by every DOM and renderer backend.

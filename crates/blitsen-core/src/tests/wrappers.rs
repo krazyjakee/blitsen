@@ -4,10 +4,10 @@ use super::*;
 fn repeated_lookups_preserve_strict_object_identity() {
     let table = WrapperTable::new();
     let mut engine = MockEngine;
-    let node = NodeId::new(4, 2);
+    let node = 4_u64;
     let first = table
         .get_or_create(&mut engine, node, |_, finalizer| {
-            Ok(wrapper(ExternalId(node.to_u64()), finalizer))
+            Ok(wrapper(ExternalId(node), finalizer))
         })
         .unwrap();
     let second = table
@@ -26,10 +26,10 @@ fn repeated_lookups_preserve_strict_object_identity() {
 fn finalizers_remove_only_the_wrapper_generation_they_own() {
     let table = WrapperTable::new();
     let mut engine = MockEngine;
-    let node = NodeId::new(1, 0);
+    let node = 1_u64;
     let live_wrapper = table
         .get_or_create(&mut engine, node, |_, finalizer| {
-            Ok(wrapper(ExternalId(node.to_u64()), finalizer))
+            Ok(wrapper(ExternalId(node), finalizer))
         })
         .unwrap();
     assert_eq!(table.len(), 1);
@@ -38,7 +38,7 @@ fn finalizers_remove_only_the_wrapper_generation_they_own() {
 
     let replacement = table
         .get_or_create(&mut engine, node, |_, finalizer| {
-            Ok(wrapper(ExternalId(node.to_u64()), finalizer))
+            Ok(wrapper(ExternalId(node), finalizer))
         })
         .unwrap();
     assert_eq!(table.len(), 1);
@@ -50,11 +50,10 @@ fn finalizers_remove_only_the_wrapper_generation_they_own() {
 fn churning_one_hundred_thousand_nodes_does_not_grow_the_table() {
     let table = WrapperTable::new();
     let mut engine = MockEngine;
-    for slot in 0..100_000 {
-        let node = NodeId::new(slot, 0);
+    for node in 0..100_000_u64 {
         let wrapper = table
             .get_or_create(&mut engine, node, |_, finalizer| {
-                Ok(wrapper(ExternalId(node.to_u64()), finalizer))
+                Ok(wrapper(ExternalId(node), finalizer))
             })
             .unwrap();
         drop(wrapper);

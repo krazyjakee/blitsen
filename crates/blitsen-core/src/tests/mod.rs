@@ -10,7 +10,6 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::rc::{Rc, Weak};
 
-use blitsen_dom::NodeId;
 use blitsen_js::{ExternalId, JsError};
 
 use super::*;
