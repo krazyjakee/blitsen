@@ -18,7 +18,22 @@ resolver = "2"
 [workspace.package]
 version = "0.0.0"
 edition = "2024"
-rust-version = "1.89"
+# The floor a source builder can actually use, rather than an aspiration. This
+# said 1.89 until #277, and the locked graph had already outgrown it: `sysinfo`,
+# which `blitsen-platform` depends on unconditionally, declares 1.95, so anyone
+# who selected 1.89 out of this metadata failed inside a dependency before
+# reaching a line of Blitsen. Nothing tested 1.89 either, which is how it drifted.
+#
+# Target-specific dependencies count towards this number and were checked, not
+# assumed: the highest of them is macOS's `mac-usernotifications` 0.3.1 at 1.90,
+# which is under the floor `sysinfo` already sets and so asks for nothing. That
+# is also why the `msrv` job in .github/workflows/ci.yml can enforce this from
+# Linux alone — `cargo metadata` resolves every target's dependencies whatever
+# the host is, and the crate that decides the number is on all of them anyway.
+#
+# That job compiles the workspace with exactly this compiler, so the next
+# dependency that raises the real floor fails CI instead of a user's build.
+rust-version = "1.95"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/krazyjakee/blitsen"
 publish = false

@@ -8,7 +8,7 @@ on:
 permissions:
   contents: read
 
-# Ten jobs across six runner labels is enough that two runs of the same branch
+# Twelve jobs across six runner labels is enough that two runs of the same branch
 # queue behind each other, and the older one is answering a question nobody is
 # asking any more. Superseded runs are cancelled — except on `main`, where every
 # commit's result is the record of that commit.
@@ -19,6 +19,10 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   RUST_VERSION: 1.98.0
+  # The compiler the `msrv` job installs, which is `rust-version` in the root
+  # Cargo.toml written a second time because a toolchain has to be named before
+  # anything can read a manifest with it. That job asserts the two agree (#277).
+  RUST_MSRV: 1.95.0
   # Primary-platform jobs restore dependency artifacts from `rust-cache`.
   # sccache remains read-only: its per-object writes created thousands of cache
   # entries, exhausted the repository quota and were routinely rate-limited.
@@ -128,6 +132,71 @@ jobs:
       # `rust-cache` omits workspace outputs, so consumers still build and test
       # Blitsen itself while avoiding another full dependency compilation.
       - run: cargo build --release -p blitsen-node -p blitsen-runtime
+
+  # Issue #277: `rust-version` is a promise made to whoever builds Blitsen from
+  # source, and until now nothing here had ever kept it. Every other Rust job in
+  # this file installs a current compiler, so the declared floor was free to fall
+  # behind the locked graph — and it had, by six minor releases. This job builds
+  # the workspace with exactly the declared minimum, which is the only way that
+  # number stops being a guess.
+  #
+  # One job rather than a fourth column of the matrix above: the floor is a
+  # property of the dependency graph, not of a platform, and `cargo metadata`
+  # resolves every target's `rust-version` whatever the host is. The macOS-only
+  # `mac-usernotifications` is therefore accounted for in the number even though
+  # only Linux compiles anything here.
+  #
+  # `cargo check` and not `cargo test`: what the floor decides is whether the
+  # graph compiles at all. Behaviour on the current compiler is the matrix's
+  # question and it is already asked on three platforms.
+  msrv:
+    name: Minimum supported Rust
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Before the toolchain, because it needs no toolchain and because a job
+      # that spent forty minutes proving a floor the manifest stopped declaring
+      # would be worse than no job at all. Both spellings of the same version
+      # are accepted: rustup wants a full triple of numbers, Cargo does not.
+      - name: The pinned toolchain is the declared floor
+        run: |
+          set -euo pipefail
+          declared=$(grep -m1 '^rust-version' Cargo.toml | cut -d'"' -f2)
+          case "$RUST_MSRV" in
+            "$declared"|"$declared".*) echo "floor: $declared" ;;
+            *) echo "Cargo.toml declares $declared; this job installs $RUST_MSRV"
+               exit 1 ;;
+          esac
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+        with:
+          toolchain: ${{ env.RUST_MSRV }}
+      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+        with:
+          version: v0.17.0
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          # Its own archive: artifacts built by a different compiler are of no
+          # use to `cargo-native`, and sharing the key would have the two jobs
+          # take turns evicting each other.
+          shared-key: cargo-msrv
+          cache-targets: true
+          cache-bin: false
+          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+      # A workspace check compiles the same Linux graph the matrix does, down to
+      # Blitz's font enumeration and the audio backend, so it wants the same
+      # system libraries.
+      - name: Install Blitz system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libfontconfig1-dev libxkbcommon-dev libwayland-dev \
+            libx11-dev libxcursor-dev libxi-dev libxrandr-dev \
+            libasound2-dev libudev-dev
+      # `--locked`, because the floor being tested is the one the lockfile
+      # describes; a resolution free to pick older dependencies would quietly
+      # test a graph nobody ships. `--all-targets` so tests and benches, which
+      # are also built from source by anyone running them, are held to it too.
+      - run: cargo check --workspace --all-targets --locked
 
   # The M3 acceptance evidence, and the P5/P6 claim it stands on. Both harnesses
   # are headless: the bridge harness renders through the CPU rasterizer, and the
