@@ -9,6 +9,28 @@ const trayActionProperties = {
   type: { const: "action" }, label: trayString, enabled: trayEnabled,
   accelerator: trayString, icon: { ...trayString, pattern: "\\.png$" },
 };
+// The item shapes both menu surfaces accept verbatim: the host parses one
+// model for the tray and the application menu, so the separator, checkbox and
+// radio variants are declared once and referenced from both oneOf lists.
+const separatorMenuItem = {
+  type: "object", additionalProperties: false, required: ["type"],
+  properties: { type: { const: "separator" } },
+};
+const checkboxMenuItem = {
+  type: "object", additionalProperties: false, required: ["type", "id", "label"],
+  properties: {
+    type: { const: "checkbox" }, id: trayString, label: trayString,
+    enabled: trayEnabled, checked: { type: "boolean" }, accelerator: trayString,
+  },
+};
+const radioMenuItem = {
+  type: "object", additionalProperties: false,
+  required: ["type", "id", "label", "group"],
+  properties: {
+    type: { const: "radio" }, id: trayString, label: trayString, group: trayString,
+    enabled: trayEnabled, checked: { type: "boolean" }, accelerator: trayString,
+  },
+};
 const trayMenuItem = {
   oneOf: [
     {
@@ -28,25 +50,9 @@ const trayMenuItem = {
         action: { const: "separator" }, label: trayString, enabled: trayEnabled,
       },
     },
-    {
-      type: "object", additionalProperties: false, required: ["type"],
-      properties: { type: { const: "separator" } },
-    },
-    {
-      type: "object", additionalProperties: false, required: ["type", "id", "label"],
-      properties: {
-        type: { const: "checkbox" }, id: trayString, label: trayString,
-        enabled: trayEnabled, checked: { type: "boolean" }, accelerator: trayString,
-      },
-    },
-    {
-      type: "object", additionalProperties: false,
-      required: ["type", "id", "label", "group"],
-      properties: {
-        type: { const: "radio" }, id: trayString, label: trayString, group: trayString,
-        enabled: trayEnabled, checked: { type: "boolean" }, accelerator: trayString,
-      },
-    },
+    separatorMenuItem,
+    checkboxMenuItem,
+    radioMenuItem,
     {
       type: "object", additionalProperties: false, required: ["type", "label", "menu"],
       properties: {
@@ -74,10 +80,7 @@ const menuItem = {
       type: "object", additionalProperties: false, required: ["type", "role"],
       properties: { type: { const: "role" }, role: { type: "string", enum: menuRoles } },
     },
-    {
-      type: "object", additionalProperties: false, required: ["type"],
-      properties: { type: { const: "separator" } },
-    },
+    separatorMenuItem,
     {
       type: "object", additionalProperties: false, required: ["id", "label"],
       properties: {
@@ -85,21 +88,8 @@ const menuItem = {
         enabled: trayEnabled, accelerator: trayString,
       },
     },
-    {
-      type: "object", additionalProperties: false, required: ["type", "id", "label"],
-      properties: {
-        type: { const: "checkbox" }, id: trayString, label: trayString,
-        enabled: trayEnabled, checked: { type: "boolean" }, accelerator: trayString,
-      },
-    },
-    {
-      type: "object", additionalProperties: false,
-      required: ["type", "id", "label", "group"],
-      properties: {
-        type: { const: "radio" }, id: trayString, label: trayString, group: trayString,
-        enabled: trayEnabled, checked: { type: "boolean" }, accelerator: trayString,
-      },
-    },
+    checkboxMenuItem,
+    radioMenuItem,
     {
       type: "object", additionalProperties: false, required: ["type", "label", "menu"],
       properties: {
@@ -321,15 +311,27 @@ export function validateConfig(config, source) {
   return config;
 }
 
-/// Applies the semantics the recursive schema cannot state, as the host does.
-function validateApplicationMenu(menu, fail) {
+// The limits the host enforces on either menu surface. The failure sentences
+// below spell the numbers out rather than interpolating these constants,
+// because test/menu-parity.test.mjs reads the "at most N levels/entries"
+// sentences from this source and holds them equal to the Rust parser's.
+const MENU_MAX_DEPTH = 16;
+const MENU_MAX_ITEMS = 512;
+// The accelerator grammar: zero or more unique modifiers, then exactly one key.
+const ACCELERATOR_MODIFIERS = new Set([
+  "ctrl", "control", "alt", "option", "shift", "cmd", "command", "super", "meta",
+  "cmdorctrl", "commandorcontrol",
+]);
+
+// Applies the semantics the recursive schema cannot state, as the host does.
+// One walk serves the tray and the application menu: the shared frame is the
+// depth and item limits, the object-shape guard, radio-group consecutiveness
+// and the exactly-one-checked sweep, while `rules` carries what the surfaces
+// genuinely do not share — item vocabularies, message wording and the menu
+// bar's top-level-submenu-only rule.
+function validateMenuTree(menu, fail, rules) {
   const ids = new Set();
-  const roles = new Set();
   let count = 0;
-  const modifiers = new Set([
-    "ctrl", "control", "alt", "option", "shift", "cmd", "command", "super", "meta",
-    "cmdorctrl", "commandorcontrol",
-  ]);
   const nonEmpty = (value, description) => {
     if (typeof value !== "string" || value.trim().length === 0) fail(`${description} must not be empty`);
   };
@@ -338,52 +340,87 @@ function validateApplicationMenu(menu, fail) {
       if (!allowed.includes(key)) fail(`${description}.${key} is not allowed`);
     }
   };
-  const common = (item, description) => {
+  const accelerator = (value, description) => {
+    nonEmpty(value, `${description}.accelerator`);
+    const parts = value.split("+").map(part => part.trim().toLowerCase());
+    if (parts.some(part => !part)
+      || ACCELERATOR_MODIFIERS.has(parts.at(-1))
+      || parts.slice(0, -1).some(part => !ACCELERATOR_MODIFIERS.has(part))
+      || new Set(parts.slice(0, -1)).size !== parts.length - 1) {
+      fail(`${description}.accelerator must put unique modifiers before exactly one key`);
+    }
+  };
+  const enabled = (item, description) => {
     if ("enabled" in item && typeof item.enabled !== "boolean") {
       fail(`${description}.enabled must be a boolean`);
     }
   };
+  const uniqueId = id => {
+    if (ids.has(id)) fail(rules.duplicateId);
+    ids.add(id);
+  };
   const level = (items, depth) => {
-    if (!Array.isArray(items)) fail("application menus and their submenus must be arrays");
-    if (depth > 16) fail("application menus may be nested at most 16 levels");
+    if (!Array.isArray(items)) fail(rules.arrays);
+    if (depth > MENU_MAX_DEPTH) fail(rules.depth);
     let activeRadio = null;
     const closedRadios = new Set();
     const checkedRadios = new Map();
+    const tools = {
+      nonEmpty, keys, accelerator, enabled, uniqueId,
+      recurse: nested => level(nested, depth + 1),
+      radio: (item, description) => {
+        nonEmpty(item.group, `${description}.group`);
+        checkedRadios.set(item.group, (checkedRadios.get(item.group) ?? 0) + Number(item.checked === true));
+      },
+    };
     for (const [index, item] of items.entries()) {
-      const description = `menu.menu item ${index + 1} at depth ${depth}`;
-      if (++count > 512) fail("application menus may contain at most 512 entries");
+      const description = `${rules.subject} item ${index + 1} at depth ${depth}`;
+      if (++count > MENU_MAX_ITEMS) fail(rules.count);
       if (typeof item !== "object" || item === null || Array.isArray(item)) {
         fail(`${description} must be an object`);
       }
-      const type = item.type ?? "action";
-      // A menu bar holds submenus and nothing else: macOS refuses anything
-      // else, and a bare command in a Windows menu bar fires on one click with
-      // no menu ever opening.
-      if (depth === 1 && type !== "submenu") {
-        fail("every top-level entry of \"menu.menu\" must be a submenu");
-      }
+      const type = rules.typeOf(item);
+      rules.beforeItem?.(type, depth);
       const radio = type === "radio" ? item.group : null;
       if (radio !== activeRadio) {
         if (activeRadio !== null) closedRadios.add(activeRadio);
-        if (radio !== null && closedRadios.has(radio)) {
-          fail("items in a menu radio group must be consecutive at one menu level");
-        }
+        if (radio !== null && closedRadios.has(radio)) fail(rules.consecutive);
         activeRadio = radio;
       }
-      if ("accelerator" in item) {
-        nonEmpty(item.accelerator, `${description}.accelerator`);
-        const parts = item.accelerator.split("+").map(part => part.trim().toLowerCase());
-        if (parts.some(part => !part)
-          || modifiers.has(parts.at(-1))
-          || parts.slice(0, -1).some(part => !modifiers.has(part))
-          || new Set(parts.slice(0, -1)).size !== parts.length - 1) {
-          fail(`${description}.accelerator must put unique modifiers before exactly one key`);
-        }
+      rules.visit(item, type, description, depth, tools);
+    }
+    for (const [group, checked] of checkedRadios) {
+      if (checked !== 1) fail(`${rules.radioGroup} ${JSON.stringify(group)} must have exactly one checked item`);
+    }
+  };
+  level(menu, 1);
+}
+
+function validateApplicationMenu(menu, fail) {
+  const roles = new Set();
+  validateMenuTree(menu, fail, {
+    subject: "menu.menu",
+    arrays: "application menus and their submenus must be arrays",
+    depth: "application menus may be nested at most 16 levels",
+    count: "application menus may contain at most 512 entries",
+    consecutive: "items in a menu radio group must be consecutive at one menu level",
+    duplicateId: "menu item ids must be unique across the whole menu tree",
+    radioGroup: "menu radio group",
+    typeOf: item => item.type ?? "action",
+    // A menu bar holds submenus and nothing else: macOS refuses anything
+    // else, and a bare command in a Windows menu bar fires on one click with
+    // no menu ever opening.
+    beforeItem: (type, depth) => {
+      if (depth === 1 && type !== "submenu") {
+        fail("every top-level entry of \"menu.menu\" must be a submenu");
       }
+    },
+    visit: (item, type, description, depth, t) => {
+      if ("accelerator" in item) t.accelerator(item.accelerator, description);
       if (type === "submenu") {
-        keys(item, ["type", "label", "enabled", "role", "menu"], description);
-        nonEmpty(item.label, `${description}.label`);
-        common(item, description);
+        t.keys(item, ["type", "label", "enabled", "role", "menu"], description);
+        t.nonEmpty(item.label, `${description}.label`);
+        t.enabled(item, description);
         if ("role" in item) {
           if (depth !== 1) fail("only a top-level submenu of \"menu.menu\" carries a role");
           if (!menuSubmenuRoles.includes(item.role)) {
@@ -393,157 +430,106 @@ function validateApplicationMenu(menu, fail) {
           roles.add(item.role);
         }
         if (!("menu" in item)) fail(`${description}.menu is required`);
-        level(item.menu, depth + 1);
-        continue;
+        t.recurse(item.menu);
+        return;
       }
       if (type === "role") {
-        keys(item, ["type", "role"], description);
+        t.keys(item, ["type", "role"], description);
         if (!menuRoles.includes(item.role)) {
           fail(`${description}.role must be one of ${menuRoles.join(", ")}`);
         }
-        continue;
+        return;
       }
       if (type === "separator") {
-        keys(item, ["type"], description);
-        continue;
+        t.keys(item, ["type"], description);
+        return;
       }
       if (type !== "action" && type !== "checkbox" && type !== "radio") {
         fail(`${description}.type is unknown: ${JSON.stringify(type)}`);
       }
-      keys(item, type === "action"
+      t.keys(item, type === "action"
         ? ["type", "id", "label", "enabled", "accelerator"]
         : ["type", "id", "label", "enabled", "checked", "group", "accelerator"], description);
-      nonEmpty(item.id, `${description}.id`);
-      nonEmpty(item.label, `${description}.label`);
-      if (ids.has(item.id)) fail("menu item ids must be unique across the whole menu tree");
-      ids.add(item.id);
-      common(item, description);
+      t.nonEmpty(item.id, `${description}.id`);
+      t.nonEmpty(item.label, `${description}.label`);
+      t.uniqueId(item.id);
+      t.enabled(item, description);
       if ("checked" in item && typeof item.checked !== "boolean") {
         fail(`${description}.checked must be a boolean`);
       }
       if (type === "checkbox" && "group" in item) {
         fail(`${description}.group is only valid on radio items`);
       }
-      if (type === "radio") {
-        nonEmpty(item.group, `${description}.group`);
-        checkedRadios.set(item.group, (checkedRadios.get(item.group) ?? 0) + Number(item.checked === true));
-      }
-    }
-    for (const [group, checked] of checkedRadios) {
-      if (checked !== 1) fail(`menu radio group ${JSON.stringify(group)} must have exactly one checked item`);
-    }
-  };
-  level(menu, 1);
+      if (type === "radio") t.radio(item, description);
+    },
+  });
 }
 
 function validateTrayMenu(menu, fail) {
-  const ids = new Set();
-  let count = 0;
   let hasQuit = false;
-  const modifiers = new Set([
-    "ctrl", "control", "alt", "option", "shift", "cmd", "command", "super", "meta",
-    "cmdorctrl", "commandorcontrol",
-  ]);
-  const nonEmpty = (value, description) => {
-    if (typeof value !== "string" || value.trim().length === 0) fail(`${description} must not be empty`);
-  };
-  const keys = (item, allowed, description) => {
-    for (const key of Object.keys(item)) {
-      if (!allowed.includes(key)) fail(`${description}.${key} is not allowed`);
-    }
-  };
-  const common = (item, description) => {
-    if ("enabled" in item && typeof item.enabled !== "boolean") fail(`${description}.enabled must be a boolean`);
-    if ("accelerator" in item) {
-      nonEmpty(item.accelerator, `${description}.accelerator`);
-      const parts = item.accelerator.split("+").map(part => part.trim().toLowerCase());
-      if (parts.some(part => !part)
-        || modifiers.has(parts.at(-1))
-        || parts.slice(0, -1).some(part => !modifiers.has(part))
-        || new Set(parts.slice(0, -1)).size !== parts.length - 1) {
-        fail(`${description}.accelerator must put unique modifiers before exactly one key`);
-      }
-    }
-    if ("icon" in item) {
-      nonEmpty(item.icon, `${description}.icon`);
-      if (!/\.png$/.test(item.icon)) fail(`${description}.icon must name a PNG file`);
-    }
-  };
-  const level = (items, depth) => {
-    if (!Array.isArray(items)) fail("tray context menus and submenu menus must be arrays");
-    if (depth > 16) fail("tray menus may be nested at most 16 levels");
-    let activeRadio = null;
-    const closedRadios = new Set();
-    const checkedRadios = new Map();
-    for (const [index, item] of items.entries()) {
-      const description = `tray.contextMenu item ${index + 1} at depth ${depth}`;
-      if (++count > 512) fail("tray menus may contain at most 512 entries");
-      if (typeof item !== "object" || item === null || Array.isArray(item)) {
-        fail(`${description} must be an object`);
-      }
-      const type = item.type ?? (item.action === "separator" ? "separator" : "action");
-      const radio = type === "radio" ? item.group : null;
-      if (radio !== activeRadio) {
-        if (activeRadio !== null) closedRadios.add(activeRadio);
-        if (radio !== null && closedRadios.has(radio)) {
-          fail("items in a tray radio group must be consecutive at one menu level");
+  validateMenuTree(menu, fail, {
+    subject: "tray.contextMenu",
+    arrays: "tray context menus and submenu menus must be arrays",
+    depth: "tray menus may be nested at most 16 levels",
+    count: "tray menus may contain at most 512 entries",
+    consecutive: "items in a tray radio group must be consecutive at one menu level",
+    duplicateId: "tray menu item ids must be unique across the whole menu tree",
+    radioGroup: "tray radio group",
+    typeOf: item => item.type ?? (item.action === "separator" ? "separator" : "action"),
+    visit: (item, type, description, depth, t) => {
+      const common = () => {
+        t.enabled(item, description);
+        if ("accelerator" in item) t.accelerator(item.accelerator, description);
+        if ("icon" in item) {
+          t.nonEmpty(item.icon, `${description}.icon`);
+          if (!/\.png$/.test(item.icon)) fail(`${description}.icon must name a PNG file`);
         }
-        activeRadio = radio;
-      }
+      };
       if (type === "separator") {
         const legacy = item.action === "separator" && item.type === undefined;
-        keys(item, legacy ? ["action", "label", "enabled"] : ["type"], description);
+        t.keys(item, legacy ? ["action", "label", "enabled"] : ["type"], description);
         if (!legacy && item.type !== "separator") fail(`${description} is an ambiguous separator`);
-        if (legacy && "label" in item) nonEmpty(item.label, `${description}.label`);
+        if (legacy && "label" in item) t.nonEmpty(item.label, `${description}.label`);
         if (legacy && "enabled" in item && typeof item.enabled !== "boolean") {
           fail(`${description}.enabled must be a boolean`);
         }
-        continue;
+        return;
       }
       if (type === "submenu") {
-        keys(item, ["type", "label", "enabled", "icon", "menu"], description);
-        nonEmpty(item.label, `${description}.label`);
-        common(item, description);
+        t.keys(item, ["type", "label", "enabled", "icon", "menu"], description);
+        t.nonEmpty(item.label, `${description}.label`);
+        common();
         if (!("menu" in item)) fail(`${description}.menu is required`);
-        level(item.menu, depth + 1);
-        continue;
+        t.recurse(item.menu);
+        return;
       }
       if (type === "checkbox" || type === "radio") {
-        keys(item, ["type", "id", "label", "enabled", "checked", "group", "accelerator"], description);
-        nonEmpty(item.id, `${description}.id`);
-        nonEmpty(item.label, `${description}.label`);
-        if (ids.has(item.id)) fail("tray menu item ids must be unique across the whole menu tree");
-        ids.add(item.id);
+        t.keys(item, ["type", "id", "label", "enabled", "checked", "group", "accelerator"], description);
+        t.nonEmpty(item.id, `${description}.id`);
+        t.nonEmpty(item.label, `${description}.label`);
+        t.uniqueId(item.id);
         if ("checked" in item && typeof item.checked !== "boolean") fail(`${description}.checked must be a boolean`);
         if (type === "checkbox" && "group" in item) fail(`${description}.group is only valid on radio items`);
-        if (type === "radio") {
-          nonEmpty(item.group, `${description}.group`);
-          checkedRadios.set(item.group, (checkedRadios.get(item.group) ?? 0) + Number(item.checked === true));
-        }
-        common(item, description);
-        continue;
+        if (type === "radio") t.radio(item, description);
+        common();
+        return;
       }
       if (type !== "action") fail(`${description}.type is unknown: ${JSON.stringify(type)}`);
-      keys(item, ["type", "id", "action", "label", "enabled", "accelerator", "icon"], description);
+      t.keys(item, ["type", "id", "action", "label", "enabled", "accelerator", "icon"], description);
       const hasId = "id" in item;
       const hasAction = "action" in item;
       if (hasId === hasAction) fail(`${description} needs exactly one of id or action`);
       if (hasId) {
-        nonEmpty(item.id, `${description}.id`);
-        nonEmpty(item.label, `${description}.label`);
-        if (ids.has(item.id)) fail("tray menu item ids must be unique across the whole menu tree");
-        ids.add(item.id);
+        t.nonEmpty(item.id, `${description}.id`);
+        t.nonEmpty(item.label, `${description}.label`);
+        t.uniqueId(item.id);
       } else if (!["show", "hide", "quit"].includes(item.action)) {
         fail(`${description}.action must be show, hide, or quit`);
       } else if (item.action === "quit") hasQuit = true;
-      if ("label" in item) nonEmpty(item.label, `${description}.label`);
-      common(item, description);
-    }
-    for (const [group, checked] of checkedRadios) {
-      if (checked !== 1) fail(`tray radio group ${JSON.stringify(group)} must have exactly one checked item`);
-    }
-  };
-  level(menu, 1);
+      if ("label" in item) t.nonEmpty(item.label, `${description}.label`);
+      common();
+    },
+  });
   return hasQuit;
 }
 
