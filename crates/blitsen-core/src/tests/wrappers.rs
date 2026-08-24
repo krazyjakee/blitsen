@@ -48,14 +48,22 @@ fn finalizers_remove_only_the_wrapper_generation_they_own() {
     })
     .unwrap();
     assert_eq!(table.len(), 1);
+    let delayed_finalizer = live_wrapper.finalizer.borrow_mut().take().unwrap();
     drop(live_wrapper);
-    assert!(table.is_empty());
 
     let replacement = get_or_create(&table, &mut engine, node, |_, finalizer| {
         Ok(wrapper(ExternalId(node), finalizer))
     })
     .unwrap();
     assert_eq!(table.len(), 1);
+    delayed_finalizer(ExternalId(node));
+    assert_eq!(table.len(), 1);
+    let same_replacement = get_or_create(&table, &mut engine, node, |_, _| {
+        panic!("the old finalizer removed the replacement")
+    })
+    .unwrap();
+    assert!(Rc::ptr_eq(&replacement, &same_replacement));
+    drop(same_replacement);
     drop(replacement);
     assert!(table.is_empty());
 }

@@ -100,6 +100,12 @@
       __blitsenDispatchLockedPointerMotion: dispatchLockedPointerMotion,
       __blitsenReleaseWindowModes: releaseWindowModes,
       __blitsenDispatchDragEvent: dispatchDragEvent,
+      __blitsenWrapperCacheSize: () => wrapperCache.size,
+      __blitsenWrapperCacheProbe: wrapper => {
+        const rawHandle = requireNode(wrapper);
+        return { rawHandle, token: wrapperCache.get(rawHandle)?.token };
+      },
+      __blitsenFinalizeWrapperCacheEntry: finalizeWrapperCacheEntry,
     } : {}),
     __blitsenDispatchLifecycleEvent: dispatchLifecycleEvent,
     __blitsenDisposeContext: () => {
@@ -112,6 +118,7 @@
       acquiredSurfaces.clear();
       resizeObservers.clear();
       mediaQueryLists.clear();
+      listenerTargets.clear();
       wrapperCache.clear();
       drawnCanvases.clear();
       canvasPaintPending = false;

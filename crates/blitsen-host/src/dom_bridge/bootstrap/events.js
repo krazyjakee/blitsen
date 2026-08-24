@@ -247,6 +247,11 @@
   });
 
   const listenerMaps = new WeakMap();
+  // A registered listener belongs to the underlying EventTarget even when
+  // application code keeps no separate reference to its wrapper. Keep those
+  // wrappers live until their final listener is removed; the identity cache
+  // itself remains weak for every listener-free node.
+  const listenerTargets = new Set();
   const listenersFor = target => {
     let map = listenerMaps.get(target);
     if (!map) { map = new Map(); listenerMaps.set(target, map); }
@@ -263,10 +268,13 @@
 
   const removeListenerRecord = (target, type, record) => {
     record.removed = true;
-    const listeners = listenerMaps.get(target)?.get(type);
+    const map = listenerMaps.get(target);
+    const listeners = map?.get(type);
     if (!listeners) return;
     const index = listeners.indexOf(record);
     if (index >= 0) listeners.splice(index, 1);
+    if (listeners.length === 0) map.delete(type);
+    if (map.size === 0) listenerTargets.delete(target);
   };
 
   const invokeListenerSnapshot = (target, event, phase, capture, snapshot) => {

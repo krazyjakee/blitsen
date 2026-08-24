@@ -811,6 +811,138 @@ mod tests {
     }
 
     #[test]
+    fn node_wrapper_cache_is_weak_identity_storage() {
+        let (mut engine, document) = ime_document("<body></body>");
+        let baseline_nodes = document.borrow().document_ref().tree().len();
+        let identity = engine
+            .evaluate_script(
+                r#"
+                globalThis.wrapperProbe = document.createElement("section");
+                wrapperProbe.id = "wrapper-probe";
+                document.body.appendChild(wrapperProbe);
+                globalThis.oldWrapperWeak = new WeakRef(wrapperProbe);
+                globalThis.oldCacheProbe = __blitsenWrapperCacheProbe(wrapperProbe);
+                wrapperProbe === document.getElementById("wrapper-probe");
+                "#,
+                "blitsen:test-wrapper-identity",
+            )
+            .and_then(|value| engine.to_boolean(&value))
+            .unwrap();
+        assert!(identity, "a live node keeps strict wrapper identity");
+        let node = document
+            .borrow()
+            .get_element_by_id("wrapper-probe")
+            .unwrap()
+            .unwrap();
+
+        engine
+            .evaluate_script(
+                "globalThis.wrapperProbe = null",
+                "blitsen:test-drop-first-wrapper",
+            )
+            .unwrap();
+        engine.collect_garbage().unwrap();
+
+        // Install a replacement before deliberately delivering the old cache
+        // cleanup token. It must not evict the new generation.
+        let race = engine
+            .evaluate_script(
+                r#"
+                const oldCollected = oldWrapperWeak.deref() === undefined;
+                globalThis.wrapperProbe = document.getElementById("wrapper-probe");
+                globalThis.newWrapperWeak = new WeakRef(wrapperProbe);
+                __blitsenFinalizeWrapperCacheEntry(oldCacheProbe);
+                const sameReplacement = wrapperProbe === document.getElementById("wrapper-probe");
+                JSON.stringify({ oldCollected, sameReplacement });
+                "#,
+                "blitsen:test-wrapper-stale-finalizer",
+            )
+            .and_then(|value| engine.to_string(&value))
+            .unwrap();
+        let race: serde_json::Value = serde_json::from_str(&race).unwrap();
+        assert_eq!(
+            race,
+            serde_json::json!({
+                "oldCollected": true,
+                "sameReplacement": true,
+            })
+        );
+
+        engine
+            .evaluate_script(
+                r#"
+                wrapperProbe.remove();
+                globalThis.wrapperProbe = null;
+                globalThis.oldCacheProbe = null;
+                "#,
+                "blitsen:test-drop-replacement",
+            )
+            .unwrap();
+        for _ in 0..3 {
+            engine.collect_garbage().unwrap();
+            engine.drain_microtasks().unwrap();
+        }
+        let collected = engine
+            .evaluate_script(
+                "newWrapperWeak.deref() === undefined",
+                "blitsen:test-wrapper-collected",
+            )
+            .and_then(|value| engine.to_boolean(&value))
+            .unwrap();
+        assert!(collected, "the weak cache does not retain the wrapper");
+        assert!(
+            document.borrow().node_kind(node).is_err(),
+            "finalization releases the detached arena node"
+        );
+
+        engine
+            .evaluate_script(
+                r#"
+                globalThis.newWrapperWeak = null;
+                globalThis.churnWeak = [];
+                (() => {
+                  const body = document.body;
+                  for (let index = 0; index < 512; index++) {
+                    const child = document.createElement("i");
+                    body.appendChild(child);
+                    churnWeak.push(new WeakRef(child));
+                    child.remove();
+                  }
+                })();
+                "#,
+                "blitsen:test-wrapper-churn",
+            )
+            .unwrap();
+        for _ in 0..3 {
+            engine.collect_garbage().unwrap();
+            engine.drain_microtasks().unwrap();
+        }
+        let churn = engine
+            .evaluate_script(
+                r#"
+                const wrappersCollected = churnWeak.every(reference =>
+                  reference.deref() === undefined);
+                globalThis.churnWeak = null;
+                JSON.stringify({ wrappersCollected,
+                  cacheEntries: __blitsenWrapperCacheSize() });
+                "#,
+                "blitsen:test-wrapper-churn-result",
+            )
+            .and_then(|value| engine.to_string(&value))
+            .unwrap();
+        let churn: serde_json::Value = serde_json::from_str(&churn).unwrap();
+        assert_eq!(
+            churn,
+            serde_json::json!({ "wrappersCollected": true, "cacheEntries": 0 })
+        );
+        assert_eq!(
+            document.borrow().document_ref().tree().len(),
+            baseline_nodes,
+            "wrapper churn leaves neither cache entries nor arena nodes"
+        );
+    }
+
+    #[test]
     fn record_frame_owns_the_filename_png_and_write_error() {
         let directory = tempfile::tempdir().expect("a scratch directory");
 

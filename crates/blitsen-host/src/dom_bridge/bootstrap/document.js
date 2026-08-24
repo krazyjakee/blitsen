@@ -2,7 +2,16 @@
     if (!(value instanceof Node) || !(handle in value)) throw new TypeError("argument is not a Node");
     return value[handle];
   };
+  // Identity without ownership: the Rust wrapper table and this JavaScript
+  // cache both hold weak references, so a detached node can die with its last
+  // application reference. Tokens keep a delayed finalizer for an old wrapper
+  // from deleting a newer wrapper installed for the same generational handle.
   const wrapperCache = new Map();
+  const finalizeWrapperCacheEntry = ({ rawHandle, token }) => {
+    const entry = wrapperCache.get(rawHandle);
+    if (entry?.token === token) wrapperCache.delete(rawHandle);
+  };
+  const wrapperFinalizers = new FinalizationRegistry(finalizeWrapperCacheEntry);
   const TAG_INTERFACES = { "blitsen-view": BlitsenViewElement, button: HTMLButtonElement,
     canvas: HTMLCanvasElement,
     form: HTMLFormElement, img: HTMLImageElement, input: HTMLInputElement, link: HTMLLinkElement,
@@ -12,14 +21,18 @@
     if (rawHandle == null) return null;
     rawHandle = String(rawHandle);
     const cached = wrapperCache.get(rawHandle);
-    if (cached) return cached;
+    const live = cached?.reference.deref();
+    if (live) return live;
+    if (cached) wrapperCache.delete(rawHandle);
     const wrapper = __blitsenWrap(rawHandle);
     if (!(handle in wrapper)) {
       Object.defineProperty(wrapper, handle, { value: rawHandle });
       Object.setPrototypeOf(wrapper, call("kind", rawHandle) !== "element" ? Node.prototype
         : (TAG_INTERFACES[call("tagName", rawHandle)] ?? Element).prototype);
     }
-    wrapperCache.set(rawHandle, wrapper);
+    const token = Symbol();
+    wrapperCache.set(rawHandle, { reference: new WeakRef(wrapper), token });
+    wrapperFinalizers.register(wrapper, { rawHandle, token });
     return wrapper;
   };
 

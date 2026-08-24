@@ -9,6 +9,7 @@
         return;
       listeners.push({ callback, ...normalized, removed: false });
       map.set(type, listeners);
+      listenerTargets.add(this);
     }
     removeEventListener(type, callback, options = false) {
       if (!validListener(callback)) return;
