@@ -133,6 +133,36 @@ fn fragment_parsing_adopts_real_contextual_nodes() {
 }
 
 #[test]
+fn element_id_lookup_tracks_tree_order_and_attribute_mutations() {
+    let mut dom = BlitzDom::from_html(
+        "<body><div class='first' id='duplicate'></div><div class='second' id='duplicate'></div></body>",
+        DocumentConfig::default(),
+    );
+    let document = dom.document();
+    let body = dom.body().unwrap();
+    let first = dom.query_selector(document, ".first").unwrap().unwrap();
+    let second = dom.query_selector(document, ".second").unwrap().unwrap();
+
+    assert_eq!(dom.get_element_by_id("duplicate").unwrap(), Some(first));
+
+    // Moving the first candidate after the second changes document order,
+    // independently of the order in which the shared id was indexed.
+    dom.append_child(body, first).unwrap();
+    assert_eq!(dom.get_element_by_id("duplicate").unwrap(), Some(second));
+
+    dom.set_attribute(second, &DomName::attribute("id"), "renamed")
+        .unwrap();
+    assert_eq!(dom.get_element_by_id("duplicate").unwrap(), Some(first));
+    assert_eq!(dom.get_element_by_id("renamed").unwrap(), Some(second));
+
+    assert!(
+        dom.remove_attribute(first, &DomName::attribute("id"))
+            .unwrap()
+    );
+    assert_eq!(dom.get_element_by_id("duplicate").unwrap(), None);
+}
+
+#[test]
 fn reports_the_real_full_document_fallback_mode() {
     let mut dom = BlitzDom::from_html(
         "<body><main id='host'><p>child</p></main></body>",

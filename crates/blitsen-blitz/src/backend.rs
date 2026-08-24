@@ -538,11 +538,7 @@ impl DomBackend for BlitzDom {
     }
 
     fn get_element_by_id(&self, id: &str) -> Result<Option<NodeId>, DomError> {
-        let attribute = DomName::attribute("id");
-        Ok(self
-            .query_selector_all(self.document(), "*")?
-            .into_iter()
-            .find(|node| self.attribute(*node, &attribute).ok().flatten().as_deref() == Some(id)))
+        Ok(self.document.get_element_by_id(id))
     }
 
     fn set_animation_time(&mut self, seconds: f64) {
