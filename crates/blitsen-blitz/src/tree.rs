@@ -1,7 +1,6 @@
 //! Tree internals: node access, detachment bookkeeping, names and serialization.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::rc::Rc;
 
 use blitsen_dom::{DomError, DomName, LayoutSnapshot, NATIVE_VIEWPORT_TAG, Namespace};
@@ -97,20 +96,11 @@ impl BlitzDom {
             self.invalidation.mark_style(node);
         }
         if let Some(node) = layout_node {
-            let parents = self.parent_chain(node);
-            self.invalidation
-                .mark_layout(node, |node| parents.get(&node).copied());
+            let document = &self.document;
+            self.invalidation.mark_layout(node, |node| {
+                document.get_node(node).and_then(|node| node.parent)
+            });
         }
-    }
-
-    pub(crate) fn parent_chain(&self, node: NodeId) -> HashMap<NodeId, NodeId> {
-        let mut result = HashMap::new();
-        let mut current = node;
-        while let Some(parent) = self.document.get_node(current).and_then(|node| node.parent) {
-            result.insert(current, parent);
-            current = parent;
-        }
-        result
     }
 
     pub(crate) fn subtree_has_js_reference(&self, root: NodeId) -> bool {

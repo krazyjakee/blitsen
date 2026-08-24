@@ -138,6 +138,26 @@ mod tests {
     }
 
     #[test]
+    fn layout_propagation_stops_before_looking_past_a_dirty_ancestor() {
+        let parents = [(4, 3), (3, 2), (2, 1)]
+            .into_iter()
+            .collect::<std::collections::HashMap<_, _>>();
+        let mut dirty = InvalidationTracker::new(InvalidationMode::FineGrained);
+        dirty.mark_layout(3, |node| parents.get(&node).copied());
+
+        let mut looked_up = Vec::new();
+        dirty.mark_layout(4, |node| {
+            looked_up.push(node);
+            parents.get(&node).copied()
+        });
+
+        assert_eq!(looked_up, [4]);
+        let frame = dirty.take_frame(100);
+        assert_eq!(frame.layout_nodes, HashSet::from([1, 2, 3, 4]));
+        assert_eq!(frame.metrics.relaid_out_nodes, 4);
+    }
+
+    #[test]
     fn full_layout_fallback_reports_its_true_frame_cost() {
         let mut dirty = InvalidationTracker::new(InvalidationMode::FullDocumentFallback);
         dirty.mark_style(9);
