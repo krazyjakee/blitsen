@@ -475,21 +475,17 @@ pub mod single_instance {
                 while !thread_stop.load(Ordering::Acquire) {
                     match listener.accept() {
                         Ok(mut stream) => {
-                            // Windows impersonation is bound to the last bytes
-                            // read from this pipe, so authenticate after the
-                            // bounded frame has been consumed and before it is
-                            // admitted to the application queue.
-                            if let Some(invocation) = receive(&mut stream)
-                                && authenticate_client(&stream)
-                            {
-                                RECEIVED.lock().push(invocation);
-                                // Keep a real secondary alive until Windows has
-                                // authenticated its connected pipe token and the
-                                // invocation is durably owned by this process.
-                                // Without the acknowledgement a short-lived
-                                // secondary can exit between writing and
-                                // ImpersonateNamedPipeClient.
-                                let _ = write_acknowledgement(&mut stream, WRITE_TIMEOUT);
+                            match receive(&mut stream) {
+                                Ok(invocation) => {
+                                    RECEIVED.lock().push(invocation);
+                                    // Keep a real secondary alive until Windows
+                                    // has authenticated its connected pipe token
+                                    // and the invocation is durably owned here.
+                                    let _ = write_acknowledgement(&mut stream, WRITE_TIMEOUT);
+                                }
+                                Err(error) => {
+                                    eprintln!("rejected single-instance hand-off: {error}");
+                                }
                             }
                         }
                         Err(error) if error.kind() == ErrorKind::WouldBlock => {
@@ -509,25 +505,59 @@ pub mod single_instance {
         Ok(Instance::Primary)
     }
 
-    fn authenticate_client(stream: &LocalSocketStream) -> bool {
+    fn authenticate_client(stream: &LocalSocketStream) -> std::io::Result<()> {
         #[cfg(unix)]
-        return stream
-            .peer_creds()
-            .is_ok_and(|credentials| credentials.euid() == Some(unsafe { libc::geteuid() }));
+        {
+            let credentials = stream.peer_creds()?;
+            if credentials.euid() != Some(unsafe { libc::geteuid() }) {
+                return Err(std::io::Error::new(
+                    ErrorKind::PermissionDenied,
+                    "the single-instance client belongs to another user",
+                ));
+            }
+            return Ok(());
+        }
         #[cfg(windows)]
-        return windows::current_user_sid()
-            .is_ok_and(|sid| windows::authenticate_client(stream, &sid).is_ok());
+        {
+            let sid = windows::current_user_sid()
+                .map_err(|error| std::io::Error::other(error.to_string()))?;
+            windows::authenticate_client(stream, &sid)
+        }
     }
 
-    fn receive(stream: &mut LocalSocketStream) -> Option<Invocation> {
-        let payload = read_payload(stream, READ_TIMEOUT).ok()?;
-        serde_json::from_slice(&payload).ok()
+    fn receive(stream: &mut LocalSocketStream) -> Result<Invocation, String> {
+        #[cfg(unix)]
+        authenticate_client(stream).map_err(|error| error.to_string())?;
+
+        let deadline = Instant::now() + READ_TIMEOUT;
+        let mut encoded_size = [0; std::mem::size_of::<u32>()];
+        read_exact_until(stream, &mut encoded_size, deadline).map_err(|error| error.to_string())?;
+        let size = decoded_size(encoded_size).map_err(|error| error.to_string())?;
+
+        // Impersonation uses the security context of the last bytes read from
+        // this pipe. Authenticate immediately after the length prefix, while
+        // the acknowledged client is necessarily still connected, rather than
+        // after a final read that may observe pipe teardown.
+        #[cfg(windows)]
+        authenticate_client(stream).map_err(|error| error.to_string())?;
+
+        let mut payload = vec![0; size];
+        read_exact_until(stream, &mut payload, deadline).map_err(|error| error.to_string())?;
+        serde_json::from_slice(&payload).map_err(|error| error.to_string())
     }
 
+    #[cfg(test)]
     fn read_payload(reader: &mut impl Read, timeout: Duration) -> std::io::Result<Vec<u8>> {
         let deadline = Instant::now() + timeout;
         let mut encoded_size = [0; std::mem::size_of::<u32>()];
         read_exact_until(reader, &mut encoded_size, deadline)?;
+        let size = decoded_size(encoded_size)?;
+        let mut payload = vec![0; size];
+        read_exact_until(reader, &mut payload, deadline)?;
+        Ok(payload)
+    }
+
+    fn decoded_size(encoded_size: [u8; 4]) -> std::io::Result<usize> {
         let size = u32::from_be_bytes(encoded_size) as usize;
         if size > MAX_INVOCATION_BYTES {
             return Err(std::io::Error::new(
@@ -535,9 +565,7 @@ pub mod single_instance {
                 "the single-instance invocation frame is too large",
             ));
         }
-        let mut payload = vec![0; size];
-        read_exact_until(reader, &mut payload, deadline)?;
-        Ok(payload)
+        Ok(size)
     }
 
     fn hand_over(
@@ -917,7 +945,7 @@ pub mod single_instance {
             windows::security_descriptor(&endpoint.user_sid).unwrap();
 
             let listener = bind(&endpoint).unwrap();
-            let client = LocalSocketStream::connect(endpoint.name.borrow()).unwrap();
+            let mut client = LocalSocketStream::connect(endpoint.name.borrow()).unwrap();
             windows::authenticate_server(&client, &endpoint.user_sid).unwrap();
             assert_eq!(
                 windows::authenticate_server(&client, "S-1-0-0")
@@ -935,13 +963,15 @@ pub mod single_instance {
                 }
             };
             write_payload(
-                &mut &client,
+                &mut client,
                 br#"{"argv":[],"cwd":"C:\\"}"#,
                 Duration::from_secs(1),
             )
             .unwrap();
-            drop(client);
-            read_payload(&mut server, Duration::from_secs(1)).unwrap();
+            let deadline = Instant::now() + Duration::from_secs(1);
+            let mut encoded_size = [0; std::mem::size_of::<u32>()];
+            read_exact_until(&mut server, &mut encoded_size, deadline).unwrap();
+            let size = decoded_size(encoded_size).unwrap();
             windows::authenticate_client(&server, &endpoint.user_sid).unwrap();
             assert_eq!(
                 windows::authenticate_client(&server, "S-1-0-0")
@@ -949,6 +979,9 @@ pub mod single_instance {
                     .kind(),
                 ErrorKind::PermissionDenied
             );
+            let mut payload = vec![0; size];
+            read_exact_until(&mut server, &mut payload, deadline).unwrap();
+            assert_eq!(payload, br#"{"argv":[],"cwd":"C:\\"}"#);
         }
     }
 
