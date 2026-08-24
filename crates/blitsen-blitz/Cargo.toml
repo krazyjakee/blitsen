@@ -52,7 +52,7 @@ peniko = "0.6"
 # bounding box and what an application vertically centres text with. Parley
 # reads outlines through this crate already; it is named here to ask it the one
 # question Parley's own layout does not answer.
-skrifa = "0.44"
+skrifa = "0.46"
 style = { package = "stylo", version = "0.20" }
 
 [dev-dependencies]
