@@ -146,7 +146,7 @@ function parseMachO(executable) {
     malformed("the load-command padding that would hold __BLITSEN is not empty");
 
   return {
-    cpu, commands, commandsEnd, linkedit, text, signatureCommand, signatureOffset, signatureSize,
+    cpu, commands, linkedit, text, signatureCommand, signatureOffset, signatureSize,
     pageSize: cpu === CPU_TYPE_ARM64 ? 0x4000 : 0x1000,
   };
 }
@@ -266,7 +266,7 @@ function adHocSignature(bytes, codeLimit, text) {
 export function injectMachOPayload(executable, sectionData) {
   const parsed = parseMachO(executable);
   if (!parsed) return null;
-  const { commands, commandsEnd, linkedit, text, signatureCommand,
+  const { commands, linkedit, text, signatureCommand,
     signatureOffset: oldSignatureOffset, pageSize } = parsed;
   if (sectionData.length < BUNDLE_TRAILER_SIZE) malformed("the bundle has no complete trailer");
   const segmentFilesize = align(sectionData.length, pageSize);

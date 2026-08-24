@@ -180,7 +180,7 @@ function dbusService({ identity, executable }) {
  * by. Linux deliberately uses the identity too: the desktop filename, D-Bus
  * service name and well-known bus name must all agree for activation.
  */
-export function activationEntryPoint({ platform, identifier, executable }) {
+export function activationEntryPoint({ platform, identifier }) {
   if (!identifier) return null;
   if (platform === "linux") linuxIdentity(identifier);
   return {

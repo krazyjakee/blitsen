@@ -129,6 +129,8 @@ pub(crate) struct HostHooks<V> {
     pub(crate) locked_pointer_motion: V,
     pub(crate) release_window_modes: V,
     pub(crate) drag: V,
+    pub(crate) animation_frame_tick: V,
+    pub(crate) animation_frames_pending: V,
 }
 
 /// Observable window state plus the private native-to-DOM dispatch boundary.
@@ -313,6 +315,8 @@ pub(crate) fn install_with_hooks<E: JsEngine + 'static>(
         locked_pointer_motion: engine.get_property(&hooks, "lockedPointerMotion")?,
         release_window_modes: engine.get_property(&hooks, "releaseWindowModes")?,
         drag: engine.get_property(&hooks, "drag")?,
+        animation_frame_tick: engine.get_property(&hooks, "animationFrameTick")?,
+        animation_frames_pending: engine.get_property(&hooks, "animationFramesPending")?,
     };
 
     let document = engine.evaluate_script("globalThis.document", "blitsen:document-value")?;

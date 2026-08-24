@@ -208,12 +208,21 @@ impl<E: JsEngine> FrameLoop<E> {
         height: u32,
         trace: Option<Rc<InputTrace>>,
     ) -> Self {
+        let mut frame_loop = Self::new_uninstrumented(engine, document, width, height, trace);
+        frame_loop.enable_instrumentation();
+        frame_loop
+    }
+
+    pub(crate) fn new_uninstrumented(
+        engine: E,
+        document: Rc<RefCell<BlitzDom>>,
+        width: u32,
+        height: u32,
+        trace: Option<Rc<InputTrace>>,
+    ) -> Self {
         let started = Instant::now();
-        let mut pipeline = FramePipeline::new(started);
-        pipeline.set_instrumentation(true);
-        pipeline.set_allocation_counter(crate::alloc::stage_counter());
         Self {
-            pipeline,
+            pipeline: FramePipeline::new(started),
             started,
             turn: FrameLoopTurn {
                 engine,
@@ -229,6 +238,13 @@ impl<E: JsEngine> FrameLoop<E> {
                 tick: None,
             },
         }
+    }
+
+    /// Enables the per-stage measurements consumed by replay reports.
+    fn enable_instrumentation(&mut self) {
+        self.pipeline.set_instrumentation(true);
+        self.pipeline
+            .set_allocation_counter(crate::alloc::stage_counter());
     }
 
     /// Runs one turn for the one-based `frame` at `timestamp_ms` since start.

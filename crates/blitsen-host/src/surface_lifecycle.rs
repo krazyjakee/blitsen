@@ -1,167 +1,22 @@
-//! Surface loss and recreation: what a window that can be taken away needs.
+//! Native surface loss and recreation.
 //!
-//! On the six shipping desktop targets a window exists for the process's life,
-//! and winit says so in code: `x11`, `wayland`, `appkit` and `win32` call
-//! [`can_create_surfaces`] exactly once, at startup, and never call
-//! `destroy_surfaces`, `suspended`, `resumed` or `memory_warning` at all. Only
-//! `winit-uikit` and `winit-android` call the other four. So the honest
-//! starting position for issue #146 is that four of the five handlers this
-//! module owns have never executed on any target Blitsen ships — they were
-//! delegation stubs, and a stub is not a desktop implementation that might
-//! survive a cycle. There was nothing to survive.
+//! Desktop backends normally create one surface for the process lifetime;
+//! Android can destroy it while retaining the activity, window handle, DOM,
+//! JavaScript heap, timers, and CPU-backed canvas/native-view state. Only the
+//! renderer is rebuilt when the surface returns.
 //!
-//! What Android does with them, read from `winit-android` 0.31.0-beta.2:
+//! Losing a surface cancels live pointer contacts and clears modifier state
+//! because the platform will not send their terminal events while unfocused.
+//! The outer runtime also consults [`SurfaceState`] so it does not keep polling
+//! animation frames that cannot be presented. Timers retain their normal
+//! schedule; background throttling would require a visibility API Blitsen does
+//! not yet expose.
 //!
-//! | Android event | winit calls |
-//! | --- | --- |
-//! | `InitWindow` (surface created) | `can_create_surfaces` |
-//! | `TerminateWindow` (surface destroyed) | `destroy_surfaces` |
-//! | `Start` (`onStart`) | `resumed` |
-//! | `Stop` (`onStop`) | `suspended` |
-//! | `LowMemory` | `memory_warning` |
-//! | `ConfigChanged` | `ScaleFactorChanged` window event |
-//! | `WindowResized` | `SurfaceResized` window event |
-//!
-//! Note what `resumed`/`suspended` are *not*: they are `onStart`/`onStop`, not
-//! `onResume`/`onPause`. The pause pair only flips a `running` flag inside
-//! winit, which gates redraw and resize dispatch and is not visible from here.
-//!
-//! ## What a destroy/recreate cycle does to each piece of state
-//!
-//! The renderer is the only thing that actually dies. `View::suspend` drops
-//! `anyrender_vello`'s `RenderState::Active` — the wgpu surface, the swapchain
-//! and the `vello::Renderer` — and `View::resume` builds all three again from
-//! the retained window handle and the document's own viewport. Everything else
-//! is on this side of the boundary and is *kept*. Kept is the right answer for
-//! most of it, and the wrong answer for exactly two — the last two below:
-//!
-//! * **The document, the JavaScript heap and the timer queue are untouched.**
-//!   They are owned by [`WindowSession`](crate::WindowSession), not by the
-//!   surface; nothing in the cycle drops or reloads them. This is the reason
-//!   the config-change decision below matters so much — losing them is only
-//!   possible by letting the Activity restart.
-//! * **`<canvas>` and `<blitsen-view>` hold no GPU resources.** A canvas keeps
-//!   a recorded `anyrender::Scene` and a native view keeps an `ImageData` of
-//!   RGBA bytes; both are CPU-side and are re-uploaded by whatever renderer is
-//!   active when the next frame paints. So the paint-side custom-widget seam
-//!   needs nothing on a cycle — which is just as well, because `blitz-shell`'s
-//!   `custom-widget` feature (the one that would call `destroy_surfaces` on the
-//!   document) is not enabled in this workspace, only `blitz-dom`'s and
-//!   `blitz-paint`'s. If a widget ever holds a texture, that feature has to go
-//!   on and this comment has to change.
-//! * **`started_at` is kept deliberately.** `requestAnimationFrame` timestamps
-//!   are measured from it, and a clock that restarted would hand JavaScript a
-//!   timestamp earlier than the last one it saw. Keeping it means the first
-//!   timestamp after a long backgrounding jumps forward by however long the app
-//!   was away, which is exactly what a browser tab does.
-//! * **Live pointer contacts are wrong, and are cancelled here.** A finger down
-//!   when the app is backgrounded is a contact the platform will never send a
-//!   release for, and `dom_bridge/bootstrap/events.js` would hold `buttons`,
-//!   capture and the pending `click` for it forever. Every live contact is
-//!   spelled out as a `pointercancel` before the surface goes, which is what a
-//!   browser does to a gesture interrupted by a page becoming hidden.
-//! * **Modifier state is wrong, and is reset here.** Whether shift was held is
-//!   a fact about a keyboard the app no longer has focus on.
-//!
-//! Two things are known-incomplete and named rather than papered over:
-//!
-//! * A key held down when the app is backgrounded gets no `keyup`. The host
-//!   does not track which keys are down — JavaScript does — so synthesising one
-//!   would mean moving that state across the boundary. Cancelling pointers is
-//!   possible only because [`PointerIds`](crate::pointer_input::PointerIds)
-//!   already had to keep the live contacts to allocate their ids.
-//! * Nothing dispatches a DOM visibility change. `document.visibilityState` and
-//!   `visibilitychange` do not exist in Blitsen's DOM at all, on any target, so
-//!   there is no existing surface to drive from here; adding one is its own
-//!   issue and its own conformance question.
-//!
-//! ## Decision: `memory_warning` trims the JavaScript heap and nothing else
-//!
-//! Android sends `LowMemory` to a process that is *still in the foreground and
-//! still painting*. So the handler must not do anything that costs the user a
-//! frame or a state: not dropping the document, not dropping the surface, not
-//! clearing `<canvas>` backing stores — each of those is a visible regression
-//! traded for memory the system may not even have needed.
-//!
-//! What is left is the JavaScript heap, which is the one large allocation
-//! Blitsen owns that has slack in it by design: QuickJS collects on its own
-//! threshold, so at any moment it is holding some quantity of unreachable
-//! objects it has not got round to. [`JsEngine::collect_garbage`] runs that
-//! collection early. It is implemented for QuickJS and left as the trait's
-//! no-op default for JavaScriptCore and Node-API, because those two host only
-//! desktop targets and no desktop backend delivers `memory_warning` — a GC that
-//! can never be triggered is not worth the symbol lookup, and pretending
-//! otherwise is the kind of claim this repo has been burned by.
-//!
-//! ## Decision: the frame loop stops while the surface is gone
-//!
-//! winit already stops *its* half. Between `onPause` and `onResume` the Android
-//! backend refuses to dispatch `RedrawRequested`, and it drops the wake-ups a
-//! `request_redraw` sends, so no frame turns and no `requestAnimationFrame`
-//! callback runs. That matches a hidden browser tab, and it is the behaviour to
-//! keep: rAF means "before the next paint", and there is no next paint.
-//!
-//! What winit cannot stop is Blitsen's *outer* loop, because that loop is not
-//! winit's. `blitsen-runtime`'s session pumps with a zero timeout and paces
-//! itself to 60 Hz whenever `animation_frames_pending()` is true — and it stays
-//! true forever while backgrounded, because the callback that would clear the
-//! queue is exactly the one that is not running. Left alone, a backgrounded
-//! Blitsen application wakes 60 times a second to evaluate a script that says
-//! "still nothing to draw". [`SurfaceState`] is what that loop reads to stop:
-//! see `blitsen_runtime::loop_pacing::paces_a_frame`.
-//!
-//! The redraw request is stopped here as well, in `native_window`'s
-//! `about_to_wait` and its redraw branch, so that a callback is not run for a
-//! frame that cannot be presented on the four desktop backends either — they
-//! have no `running` gate of their own and would happily go on delivering
-//! `RedrawRequested` into a window whose surface had been destroyed.
-//!
-//! Timers keep running to their own schedule while suspended, unthrottled. A
-//! browser clamps background timers to about 1 Hz, but a browser also gives the
-//! page `document.hidden` to explain the clamp; Blitsen does not, so a clamp
-//! here would be an unannounced change in what `setTimeout` means. The cost is
-//! that an application which polls on a timer goes on polling in the
-//! background. That is a policy at one seam and can be changed there once a
-//! device measurement says what it is worth.
-//!
-//! ## Decision: declare `configChanges`, and handle the viewport change
-//!
-//! The manifest should carry
-//! `android:configChanges="orientation|keyboardHidden|screenSize|screenLayout|smallestScreenSize|density|uiMode|layoutDirection"`.
-//!
-//! Without it, rotating the device destroys and recreates the Activity, and
-//! with `android-activity` that means `android_main` returns and is called
-//! again: a new JavaScript engine, a re-parsed document, everything the user
-//! typed gone. There is no state-restoration path to soften it —
-//! `MainEvent::SaveState` is an unimplemented `warn!("TODO")` in winit, and
-//! Blitsen has no serialisation of a JavaScript heap to hand it if it were not.
-//! Declaring the config changes is therefore not an optimisation, it is the
-//! only version of rotation that keeps the application alive.
-//!
-//! What it gives up: the Android resource system stops re-resolving
-//! configuration-qualified resources on rotation. Blitsen does not use it — the
-//! layout is CSS and the assets are the app bundle's — so the price is one
-//! Blitsen does not pay, and any future JNI code that reads a qualified
-//! resource has to re-read it itself.
-//!
-//! With `configChanges` declared, a rotation is **not** a surface loss. It is a
-//! `ConfigChanged` (which winit turns into `ScaleFactorChanged`) followed by a
-//! `WindowResized` (which winit turns into `SurfaceResized`), and both already
-//! run through the paths `native_window` built for a desktop window drag. The
-//! handlers in this module are then for backgrounding and for the OS reclaiming
-//! a surface, not for rotation.
-//!
-//! ## What is proven, and what still needs a device
-//!
-//! Android now has an entry point and CI-built APK, but the lifecycle still has
-//! not been observed on a device or emulator. The local evidence is a synthetic
-//! cycle on a desktop window: [`WindowSession::lose_surface`] and
-//! [`WindowSession::restore_surface`] drive the real handlers with a real
-//! `ActiveEventLoop`, tearing down and rebuilding a real wgpu surface. See
-//! `tests/surface_lifecycle.rs` for the boundary of that evidence.
-//!
-//! [`can_create_surfaces`]: winit::application::ApplicationHandler::can_create_surfaces
-//! [`JsEngine::collect_garbage`]: blitsen_js::JsEngine::collect_garbage
+//! A memory warning collects the JavaScript heap without discarding visible
+//! application state. Android configuration changes are handled as viewport
+//! changes rather than activity restarts, preserving the same state across
+//! rotation. The synthetic phases below exercise the real winit handlers in
+//! `tests/surface_lifecycle.rs`.
 
 use std::sync::Arc;
 

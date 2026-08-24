@@ -18,7 +18,7 @@ use blitz::traits::net::NetProvider;
 
 use crate::app::{AppFiles, LoadOptions, LoadedDocument, load_document};
 use crate::dom_bridge::DocumentMode;
-use crate::harness::snapshot_and_render;
+use crate::harness::snapshot_harness;
 use crate::runtime_services::RuntimeServices;
 
 /// Whether this process was started to check itself rather than to run.
@@ -130,7 +130,7 @@ fn settle<E: JsEngine + Clone + 'static>(
 
     // Rendering is part of the check: a document that lays out but cannot paint
     // is exactly the failure an exported binary needs to catch before shipping.
-    snapshot_and_render(Rc::clone(&loaded.document), width, height)?;
+    snapshot_harness(Rc::clone(&loaded.document), width, height)?;
     Ok(())
 }
 

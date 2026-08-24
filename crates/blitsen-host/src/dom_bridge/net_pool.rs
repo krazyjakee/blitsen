@@ -15,6 +15,7 @@
 use std::sync::OnceLock;
 
 use blitsen_js::JsError;
+use reqwest::Client;
 use tokio::runtime::Runtime;
 
 /// Returns the process-wide network pool, starting it on first use.
@@ -31,4 +32,14 @@ pub(super) fn runtime() -> Result<&'static Runtime, JsError> {
         })
         .as_ref()
         .map_err(|error| JsError::new(format!("could not start the network pool: {error}")))
+}
+
+/// Builds an HTTP client inside the runtime that owns its connection pool.
+pub(super) fn client(runtime: &Runtime) -> Result<Client, JsError> {
+    let guard = runtime.enter();
+    let client = Client::builder()
+        .build()
+        .map_err(|error| JsError::new(format!("could not start the HTTP client: {error}")))?;
+    drop(guard);
+    Ok(client)
 }

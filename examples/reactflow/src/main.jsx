@@ -206,7 +206,7 @@ function TextControls() {
 }
 
 function App() {
-  const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
+  const [nodes, , onNodesChange] = useNodesState(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
   const onConnect = useCallback(
     connection => setEdges(current => addEdge({ ...connection, type: "html" }, current)),

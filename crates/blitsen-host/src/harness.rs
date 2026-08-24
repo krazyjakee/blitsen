@@ -333,7 +333,7 @@ pub fn execute_animation_harness<E: JsEngine + 'static>(
                 "blitsen:animation-harness-tick",
             )
             .and_then(|_| engine.drain_microtasks().map(|_| ()))?;
-        snapshots.push(snapshot_and_render(Rc::clone(&document), width, height)?.0);
+        snapshots.push(snapshot_harness(Rc::clone(&document), width, height)?);
     }
     Ok(snapshots)
 }
@@ -344,10 +344,28 @@ pub fn snapshot_and_render(
     width: u32,
     height: u32,
 ) -> Result<(HarnessSnapshot, Vec<u8>), JsError> {
+    let (snapshot, pixels) = snapshot_and_pixels(document, width, height)?;
+    Ok((snapshot, encode_png(&pixels, width, height)?))
+}
+
+/// Lays out, rasterizes, and serializes one frame without PNG compression.
+pub fn snapshot_harness(
+    document: Rc<RefCell<BlitzDom>>,
+    width: u32,
+    height: u32,
+) -> Result<HarnessSnapshot, JsError> {
+    snapshot_and_pixels(document, width, height).map(|(snapshot, _)| snapshot)
+}
+
+fn snapshot_and_pixels(
+    document: Rc<RefCell<BlitzDom>>,
+    width: u32,
+    height: u32,
+) -> Result<(HarnessSnapshot, Vec<u8>), JsError> {
     let layout = document.borrow_mut().flush_layout().map_err(dom_error)?;
     let pixels = render_document(&document, width, height);
     let snapshot = snapshot_document(&document, layout, &pixels)?;
-    Ok((snapshot, encode_png(&pixels, width, height)?))
+    Ok((snapshot, pixels))
 }
 
 /// Rasterizes the current layout to RGBA pixels on a white background.
@@ -510,7 +528,7 @@ pub fn execute_document_harness<E: JsEngine + Clone + 'static>(
     ACTIVE_DOCUMENT_HARNESS.with(|active| {
         *active.borrow_mut() = Some((Rc::clone(&document), width, height));
     });
-    snapshot_and_render(document, width, height).map(|(snapshot, _)| snapshot)
+    snapshot_harness(document, width, height)
 }
 
 /// Parses an entrypoint, installs the bridge and runs its document scripts.
@@ -562,8 +580,13 @@ pub fn execute_document_animation_harness<E: JsEngine + Clone + 'static>(
         load_document_harness(engine, entrypoint, width, height, DocumentMode::TestHarness)?;
     engine.evaluate_script(setup_script, "document-animation-setup.js")?;
 
-    let mut frame_loop =
-        frame_loop::FrameLoop::new(engine, Rc::clone(&document), width, height, None);
+    let mut frame_loop = frame_loop::FrameLoop::new_uninstrumented(
+        engine,
+        Rc::clone(&document),
+        width,
+        height,
+        None,
+    );
     let mut snapshots = Vec::with_capacity(frames as usize);
     for frame in 1..=frames {
         frame_loop.advance(frame, f64::from(frame) * (1_000.0 / 60.0))?;

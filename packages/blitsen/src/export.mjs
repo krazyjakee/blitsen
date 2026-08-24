@@ -631,8 +631,7 @@ export async function buildStandalone(
   // Recorded before the artifact is linked, because the runtime configuration is
   // written into it: the identity a notification activation is addressed to has
   // to be inside the executable the platform will start (#252).
-  const activation = activationEntryPoint(
-    { platform: buildPlatform, identifier: bundleId, executable: destination });
+  const activation = activationEntryPoint({ platform: buildPlatform, identifier: bundleId });
   // Persistence needs an identity even when notifications do not. This is the
   // same default macOS packaging records, and remains stable if the executable
   // is moved or renamed after it is built.
