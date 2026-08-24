@@ -13,7 +13,7 @@ import { developmentBundle, developmentIdentifier, signArtifact } from "./packag
 import { describeRuntime, hostTarget, openRuntime, packageVersion, resolveRuntime,
   runtimeCacheDir, TARGETS } from "./runtime.mjs";
 
-const HELP = `Usage: blitsen [directory|url] [options]
+export const HELP = `Usage: blitsen [directory|url] [options]
        blitsen build [directory] [options]
        blitsen doctor <directory> [--target <triple>] [--json]
 

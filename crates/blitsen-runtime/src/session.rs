@@ -59,7 +59,7 @@ impl Default for Settings {
             height: 768,
             title: "Blitsen".to_owned(),
             layout: "embedded".to_owned(),
-            runtime: concat!("blitsen-runtime ", env!("CARGO_PKG_VERSION")).to_owned(),
+            runtime: blitsen_core::runtime_identity(),
             window: NativeWindowOptions::default(),
             tray: None,
             menu: None,

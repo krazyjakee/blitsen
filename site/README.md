@@ -35,6 +35,10 @@ Add the file to `docs/`, then add an entry to the relevant user-task group in
 blurb. Nothing else needs touching — the sidebar, the documentation index, the home
 page card grid and the sitemap are all derived from that registry.
 
+`site:check` compares every `docs/*.md` source with that registry. A new source with
+no entry fails the build. The exceptional case belongs in `EXCLUDED_DOCS` with an
+explicit reason; the exclusion list is intentionally empty today.
+
 Contributor specifications, historical decisions and milestone records belong in
 `INTERNAL_PAGES`. They are still built so existing links work, but are deliberately
 absent from the user navigation and sitemap.

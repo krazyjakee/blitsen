@@ -56,7 +56,6 @@ skrifa = "0.42"
 style = { package = "stylo", version = "0.20" }
 
 [dev-dependencies]
-anyrender_vello_cpu = "0.16"
 blitsen-core = { path = "../blitsen-core" }
 blitz-paint = { git = "https://github.com/DioxusLabs/blitz", rev = "111ed2f7224e49cd3177ef3cb5990efc279d3e73", default-features = false, features = ["custom-widget", "svg"] }
 png = "0.18"

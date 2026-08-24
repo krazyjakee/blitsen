@@ -46,13 +46,26 @@ jobs:
   validate:
     name: Validate release inputs
     runs-on: ubuntu-latest
+    outputs:
+      release_version: ${{ steps.release_version.outputs.version }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
       - name: Validate npm distribution tag
         shell: bash
         env:
           DIST_TAG: ${{ inputs.tag }}
         run: bash scripts/release-summary.sh validate-tag "$DIST_TAG"
+      - name: Establish the release version
+        id: release_version
+        shell: bash
+        run: |
+          version=$(bun scripts/release-version.mjs manifests \
+            packages/blitsen/package.json packages/platforms/*/package.json)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Building native release $version"
 
   # One native runner per target. Cross-compilation is deliberately not used
   # here: #84 settled that the engine's artifacts are built and tested natively
@@ -76,6 +89,8 @@ jobs:
     needs: validate
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
+    env:
+      BLITSEN_RELEASE_VERSION: ${{ needs.validate.outputs.release_version }}
     strategy:
       fail-fast: false
       matrix:
@@ -111,7 +126,7 @@ jobs:
             executable: blitsen-runtime.exe
             reproducible: false
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - id: started
         shell: bash
         run: echo "at=$(date +%s)" >> "$GITHUB_OUTPUT"
@@ -140,7 +155,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             libfontconfig1-dev libxkbcommon-dev libwayland-dev \
             libx11-dev libxcursor-dev libxi-dev libxrandr-dev \
-            libasound2-dev
+            libasound2-dev libudev-dev
 
       # Two artifacts, one ABI: the addon `blitsen run` loads, and the Phase 2
       # executable an export links into (#88). They are built together and
@@ -150,10 +165,27 @@ jobs:
         shell: bash
         run: |
           # The selected reproducibility rows must compile independently rather
-          # than receiving an earlier job's object bytes from sccache.
-          if [ "${{ matrix.reproducible }}" = true ]; then unset RUSTC_WRAPPER; fi
-          CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target" \
-            bash scripts/build-release-runtime.sh "${{ matrix.target }}"
+          # than receiving an earlier job's object bytes from sccache. Build the
+          # first copy through the same canonical source pathname that the
+          # second clean clone will use. MSVC retains that pathname as UTF-16 in
+          # release objects even with rustc remapping and cl.exe /pathmap.
+          if [ "${{ matrix.reproducible }}" = true ]; then
+            reproducible_source="$RUNNER_TEMP/blitsen-repro-source"
+            reproducible_target="$RUNNER_TEMP/blitsen-repro-target"
+            git clone --quiet --no-hardlinks "$GITHUB_WORKSPACE" "$reproducible_source"
+            git -C "$reproducible_source" checkout --quiet --detach "$GITHUB_SHA"
+            (
+              cd "$reproducible_source"
+              unset RUSTC_WRAPPER
+              CARGO_TARGET_DIR="$reproducible_target" \
+                bash scripts/build-release-runtime.sh "${{ matrix.target }}"
+            )
+            test ! -e "$GITHUB_WORKSPACE/target"
+            mv "$reproducible_target" "$GITHUB_WORKSPACE/target"
+          else
+            CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target" \
+              bash scripts/build-release-runtime.sh "${{ matrix.target }}"
+          fi
 
       # A platform package is its committed manifest plus exactly these artifacts.
       - name: Stage the runtime
@@ -161,6 +193,17 @@ jobs:
         run: |
           cp "target/release/${{ matrix.library }}" "packages/platforms/${{ matrix.target }}/blitsen.node"
           cp "target/release/${{ matrix.executable }}" "packages/platforms/${{ matrix.target }}/${{ matrix.executable }}"
+
+      # Run the executable from the actual package staging directory. The main
+      # manifest is authoritative, the selected platform manifest must agree,
+      # and the compiled report must agree with both before signing or packing.
+      - name: Check the staged runtime version
+        shell: bash
+        run: |
+          bun scripts/release-version.mjs runtime \
+            "packages/platforms/${{ matrix.target }}/${{ matrix.executable }}" \
+            packages/blitsen/package.json \
+            "packages/platforms/${{ matrix.target }}/package.json"
 
       # Signing timestamps are intentionally variable, so reproducibility is a
       # property of these unsigned Cargo outputs. Record all six targets' hashes
@@ -178,16 +221,19 @@ jobs:
         shell: bash
         run: |
           second_source="$RUNNER_TEMP/blitsen-repro-source"
+          first_source="$RUNNER_TEMP/blitsen-repro-first-source"
+          second_target="$RUNNER_TEMP/blitsen-repro-target"
+          mv "$second_source" "$first_source"
           git clone --quiet --no-hardlinks "$GITHUB_WORKSPACE" "$second_source"
           git -C "$second_source" checkout --quiet --detach "$GITHUB_SHA"
           (
             cd "$second_source"
             unset RUSTC_WRAPPER
-            CARGO_TARGET_DIR="$second_source/target" \
+            CARGO_TARGET_DIR="$second_target" \
               bash scripts/build-release-runtime.sh "${{ matrix.target }}"
           )
           bun scripts/compare-release-builds.mjs --compare \
-            "target/release" "$second_source/target/release" \
+            "target/release" "$second_target/release" \
             "${{ matrix.library }}" "${{ matrix.executable }}"
 
       # Ubuntu 22.04 is the oldest hosted image available for both Linux
@@ -411,11 +457,11 @@ jobs:
       contents: write # the tag and the release page, written after a publish
       id-token: write # npm provenance
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: ${{ env.BUN_VERSION }}
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org
@@ -521,15 +567,21 @@ jobs:
       - name: Check the version is not already published
         id: release_version
         shell: bash
+        env:
+          PUBLISH: ${{ inputs.publish }}
         run: |
           version=$(node -p "require('./packages/blitsen/package.json').version")
           echo "version=$version" >> "$GITHUB_ENV"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           if npm view "blitsen@$version" version >/dev/null 2>&1; then
-            echo "::error::blitsen@$version is already published; bump the version"
-            exit 1
+            if [ "$PUBLISH" = true ]; then
+              echo "::error::blitsen@$version is already published; bump the version"
+              exit 1
+            fi
+            echo "::notice::Dry run is rehearsing already-published blitsen@$version"
+          else
+            echo "Releasing $version"
           fi
-          echo "Releasing $version"
 
       # The npm tarballs are the exact binary distribution, useful both as a
       # durable rehearsal artifact and as downloads beside the GitHub release.

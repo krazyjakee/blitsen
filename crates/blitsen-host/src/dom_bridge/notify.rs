@@ -51,6 +51,12 @@ pub(crate) struct Activation {
     pub(crate) identity: String,
     /// The notification's session ID, as the session that showed it named it.
     pub(crate) id: String,
+    /// The native session that showed it, where the recorder can name one.
+    ///
+    /// Kept internal: it prevents an old session's `n1` dismissal from closing
+    /// this session's unrelated `n1`, but is not application correlation data.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) session: Option<String>,
     /// The named action, absent for a body click.
     #[serde(default)]
     pub(crate) action: Option<String>,
@@ -319,6 +325,7 @@ mod tests {
             nonce: "a1".into(),
             identity: "com.example.app".into(),
             id: "n7".into(),
+            session: None,
             action: Some("reply".into()),
             dismissed: None,
             platform: "linux".into(),
@@ -348,6 +355,7 @@ mod tests {
             nonce: "a2".into(),
             identity: "com.example.app".into(),
             id: "n1".into(),
+            session: None,
             action: None,
             dismissed: Some("dismissed".into()),
             platform: "android".into(),
@@ -390,6 +398,7 @@ mod tests {
             nonce: "a1".into(),
             identity: "com.example.app".into(),
             id: "n3".into(),
+            session: None,
             action: Some("open".into()),
             dismissed: None,
             platform: "linux".into(),

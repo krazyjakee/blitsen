@@ -23,10 +23,11 @@ import { addonPath, native } from "./addon.mjs";
 // asserted is the installed namespace, not a description of it.
 const nativeManifest = await loadApiManifest();
 const namespaces = { app, clipboard, dialog, hid, input, menu, notify, os, tray, window: windowModule };
-// The members whose presence is a platform fact rather than a version fact: the
-// single-instance lock is a Unix socket, a dialog is the XDG portal, and an
-// application menu is the macOS main menu or the Windows menu bar.
-const absentOn = new Map([["app.requestSingleInstanceLock", ["win32"]]]);
+// The members whose presence is a platform fact rather than a version fact: a
+// dialog is the XDG portal, and an application menu is the macOS main menu or
+// the Windows menu bar. The single-instance transport differs by platform but
+// the member is present on every desktop target.
+const absentOn = new Map();
 for (const entry of nativeManifest.native.filter(entry => entry.module === "dialog")) {
   absentOn.set(entry.api, ["win32", "darwin"]);
 }
@@ -430,14 +431,12 @@ if (dialog.openFile) {
     "a dialog that never opened leaves nothing for a frame turn to settle");
 }
 
-// The single-instance lock, over the real socket: the second request finds the
-// lock held, hands this invocation over, and the first instance is handed it
-// back on a frame turn.
-if (process.platform !== "win32") {
+// The single-instance lock, over the real Unix socket or Windows named pipe:
+// the second request finds the lock held, hands this invocation over, and the
+// first instance is handed it back on a frame turn.
+{
   const received = [];
-  // A stable name, so a run after one that crashed also exercises taking over a
-  // socket whose owner is gone.
-  const lockName = "blitsen-native-harness";
+  const lockName = `blitsen-native-harness-${process.pid}`;
   assert.equal(app.requestSingleInstanceLock(lockName, invocation => received.push(invocation)),
     true, "the first instance owns the lock");
   assert.throws(() => app.requestSingleInstanceLock(lockName, "not a function"), TypeError);

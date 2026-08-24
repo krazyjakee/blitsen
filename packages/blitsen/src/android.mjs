@@ -119,6 +119,7 @@
 // painted a Blitsen document:
 //
 //     cargo ndk -t <abi> -P <min sdk> build --release -p blitsen-android
+//     javac + d8                            #252's activation callback classes
 //     aapt2 link --output-to-dir ...        the binary manifest and resources.arsc
 //     <write the archive, every entry stored>
 //     zipalign -f -p 4                      4 bytes, and a page for the .so
@@ -151,8 +152,9 @@
 //   - **No resources**, so no launcher icon: `--icon` is refused rather than
 //     ignored. An Android icon is a multi-density drawable set plus an
 //     adaptive-icon XML, which is `aapt2 compile` and a `res/` tree.
-//   - **A JRE is required**, because `apksigner` is a shell script around a jar
-//     — and `keytool`, from a JDK, if the debug keystore has to be created.
+//   - **A JDK is required.** `javac` compiles the two activation callbacks,
+//     `apksigner` is a shell script around a jar, and `keytool` creates the
+//     default debug signing key. D8 ships with the SDK build-tools.
 //
 // The seam that makes a Gradle backend affordable later is that nothing below
 // runs a command directly. [`androidProject`] describes the project — its
@@ -183,6 +185,7 @@ import { access, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { androidManifest, apkEntries, storedZip } from "./android-apk.mjs";
 import { ASSET_ROOT, stageAndroidAssets } from "./android-assets.mjs";
 import {
@@ -216,6 +219,10 @@ export const UNPROVEN_ABIS = ["armeabi-v7a"];
 export const DEBUG_KEYSTORE = () => join(homedir(), ".android", "debug.keystore");
 export const DEBUG_KEYSTORE_PASSWORD = "android";
 export const DEBUG_KEYSTORE_ALIAS = "androiddebugkey";
+
+/** The complete Java surface packaged for notification activation (#252). */
+export const NOTIFICATION_BRIDGE_SOURCE = fileURLToPath(
+  new URL("./android/NotificationBridge.java", import.meta.url));
 
 /// What the signing passwords are called in the environment `apksigner` is
 /// handed. Private to this process — they are not the variables a user sets,
@@ -394,6 +401,10 @@ export function androidProject({
  * `align` is written in process, because writing a stored-only zip is the one
  * thing no tool in the SDK will do (see `android-apk.mjs`).
  *
+ * The Java step is deliberately not Gradle: one checked-in source file is
+ * compiled against `android.jar` and D8 turns its two class files into the
+ * one `classes.dex` the archive carries.
+ *
  * Passwords are in the environment and never in the argv, for the reason
  * decision 3 gives — an argument is visible in `ps` and lands in shell history
  * and CI logs — and `apksigner` supports exactly that with `env:`.
@@ -475,6 +486,9 @@ export function apkPlan({
   const paths = {
     manifest: join(directory, "AndroidManifest.xml"),
     linked: join(directory, "linked"),
+    classes: join(directory, "classes"),
+    dex: join(directory, "dex"),
+    classesDex: join(directory, "dex", "classes.dex"),
     unaligned: join(directory, "unaligned.apk"),
     apk: join(directory, "aligned.apk"),
   };
@@ -489,6 +503,17 @@ export function apkPlan({
       command: ["cargo", "ndk", ...project.abis.flatMap(abi => ["-t", abi]),
         "-P", String(MIN_SDK), "build", ...release ? ["--release"] : [],
         "--manifest-path", join(entryCrate, "Cargo.toml"), "-p", ENTRY_CRATE],
+      environment,
+    },
+    javaCompile: {
+      command: [toolchain.tools.javac, "-source", "8", "-target", "8", "-bootclasspath",
+        toolchain.platform, "-d", paths.classes, NOTIFICATION_BRIDGE_SOURCE],
+      environment,
+    },
+    dex: {
+      command: [toolchain.tools.d8, "--min-api", String(MIN_SDK), "--output", paths.dex,
+        ...["NotificationBridge.class", "NotificationBridge$ActivationReceiver.class"]
+          .map(name => join(paths.classes, "com", "blitsen", "runtime", name))],
       environment,
     },
     libraries: project.abis.map(abi => ({
@@ -650,6 +675,8 @@ export async function buildAndroid({
   const directory = join(dirname(destination), `.${basename(destination)}.blitsen-android`);
   await rm(directory, { recursive: true, force: true });
   await mkdir(join(directory, "linked"), { recursive: true });
+  await mkdir(join(directory, "classes"), { recursive: true });
+  await mkdir(join(directory, "dex"), { recursive: true });
   const staged = await stageAndroidAssets({
     root,
     directory: join(directory, "assets"),
@@ -703,6 +730,16 @@ export async function buildAndroid({
   if (compiled.code !== 0) {
     throw new Error(`cargo ndk exited ${compiled.code}; ${ENTRY_SO} was not built`);
   }
+  const javaCompiled = await run(plan.javaCompile.command,
+    { environment: plan.javaCompile.environment, output });
+  if (javaCompiled.code !== 0) {
+    throw new Error(`javac exited ${javaCompiled.code}; the notification activation bridge was `
+      + "not compiled");
+  }
+  const dexed = await run(plan.dex.command, { environment: plan.dex.environment, output });
+  if (dexed.code !== 0) {
+    throw new Error(`d8 exited ${dexed.code}; classes.dex was not produced`);
+  }
   const linked = await run(plan.link.command, { environment: plan.compile.environment, output });
   if (linked.code !== 0) {
     throw new Error(`aapt2 link exited ${linked.code}; the APK manifest was not compiled`);
@@ -711,6 +748,7 @@ export async function buildAndroid({
   // stored" is the one instruction none of them takes. See android-apk.mjs.
   const entries = await apkEntries({
     linked: plan.paths.linked,
+    dex: plan.paths.classesDex,
     libraries: plan.libraries,
     assets: join(directory, "assets"),
   });
