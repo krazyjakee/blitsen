@@ -243,7 +243,6 @@ pub fn replay<E: JsEngine + Clone + 'static>(
         height,
         Some(Rc::clone(&trace)),
     );
-
     let count = trace.frames as usize;
     let mut records = Vec::with_capacity(count);
     let mut frame_times = Vec::with_capacity(count);

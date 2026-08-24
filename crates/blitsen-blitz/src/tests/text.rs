@@ -183,7 +183,7 @@ fn an_author_font_shapes_arabic_joining_and_visual_rtl_order() {
         glyphs.iter().all(|glyph| *glyph != 0),
         "no letter is .notdef"
     );
-    let mut forms = glyphs.clone();
+    let mut forms = glyphs;
     forms.sort_unstable();
     forms.dedup();
     assert_eq!(

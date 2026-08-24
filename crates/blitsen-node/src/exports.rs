@@ -135,9 +135,7 @@ pub fn evaluate_document_harness(env: Env, script: String) -> napi::Result<()> {
 #[napi]
 pub fn snapshot_document_harness() -> napi::Result<String> {
     let (document, width, height) = active_harness()?;
-    let snapshot = harness::snapshot_and_render(document, width, height)
-        .map(|(snapshot, _)| snapshot)
-        .map_err(napi_error)?;
+    let snapshot = harness::snapshot_harness(document, width, height).map_err(napi_error)?;
     json(&snapshot)
 }
 

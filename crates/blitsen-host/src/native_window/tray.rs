@@ -111,7 +111,7 @@ impl TrayController {
                 menu: options.menu.clone(),
                 open_on_click: options.open_on_click,
                 pending: Arc::clone(&pending),
-                proxy: proxy.clone(),
+                proxy,
             };
             runtime
                 .block_on(tray.spawn())

@@ -22,7 +22,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::runtime::Runtime;
 
-use super::net_pool::runtime as net_runtime;
+use super::net_pool::{client, runtime as net_runtime};
 
 /// A `fetch` call as the bootstrap describes it, with the body passed
 /// separately so binary payloads never round-trip through a string.
@@ -195,16 +195,9 @@ impl FetchHost {
     /// Creates a host bound to the shared worker pool.
     pub(super) fn new(reader: Option<crate::app::AppReader>) -> Result<Self, JsError> {
         let runtime = net_runtime()?;
-        // The connection pool spawns its idle reaper on construction, so the
-        // client has to be built inside the runtime it will run on.
-        let guard = runtime.enter();
-        let client = Client::builder()
-            .build()
-            .map_err(|error| JsError::new(format!("could not start the HTTP client: {error}")))?;
-        drop(guard);
         Ok(Self {
             runtime,
-            client,
+            client: client(runtime)?,
             next_id: AtomicU64::new(1),
             inflight: Mutex::new(HashMap::new()),
             shared: Arc::default(),

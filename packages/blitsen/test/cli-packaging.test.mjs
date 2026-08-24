@@ -224,22 +224,22 @@ describe("directory CLI", () => {
   // desktop filename and service filename to be the same string.
   test("names the activation entry point each platform's notification service uses", () => {
     expect(activationEntryPoint({
-      platform: "linux", identifier: "com.example.pong", executable: "/opt/pong/Pong",
+      platform: "linux", identifier: "com.example.pong",
     })).toEqual({ identity: "com.example.pong", entry: "com.example.pong" });
     expect(activationEntryPoint({
-      platform: "win32", identifier: "com.example.pong", executable: "C:\\Pong\\Pong.exe",
+      platform: "win32", identifier: "com.example.pong",
     })).toEqual({ identity: "com.example.pong", entry: "com.example.pong" });
     expect(activationEntryPoint({
-      platform: "darwin", identifier: "com.example.pong", executable: "/Applications/Pong",
+      platform: "darwin", identifier: "com.example.pong",
     })).toEqual({ identity: "com.example.pong", entry: "com.example.pong" });
     // An identity nobody chose is one two applications could share, and
     // notification permission is granted per identity — so the `.app` bundle's
     // `com.blitsen.<title>` fallback deliberately does not become one here.
     expect(activationEntryPoint({
-      platform: "darwin", identifier: null, executable: "/Applications/Pong",
+      platform: "darwin", identifier: null,
     })).toBeNull();
     expect(() => activationEntryPoint({
-      platform: "linux", identifier: "not one name", executable: "/opt/pong/Pong",
+      platform: "linux", identifier: "not one name",
     })).toThrow("not a Linux D-Bus application name");
   });
 

@@ -65,7 +65,6 @@ function timestamp(unixSeconds) {
 
 const element = id => document.getElementById(id);
 const write = (id, text) => { element(id).textContent = text; };
-const bar = (id, value) => { element(id).style.width = `${Math.min(100, Math.max(0, value))}%`; };
 
 // One class for the whole load scale, so a saturated core reads as saturated
 // before the number is looked at.

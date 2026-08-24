@@ -36,7 +36,7 @@ use reqwest::{Client, Url};
 use serde_json::{Value, json};
 use tokio::runtime::Runtime;
 
-use super::net_pool::runtime as net_runtime;
+use super::net_pool::{client, runtime as net_runtime};
 
 /// How long to wait before reconnecting when no server has said otherwise.
 ///
@@ -290,16 +290,9 @@ impl EventSourceHost {
     /// Creates a host bound to the shared worker pool.
     pub(super) fn new() -> Result<Self, JsError> {
         let runtime = net_runtime()?;
-        // The connection pool spawns its idle reaper on construction, so the
-        // client has to be built inside the runtime it will run on.
-        let guard = runtime.enter();
-        let client = Client::builder()
-            .build()
-            .map_err(|error| JsError::new(format!("could not start the HTTP client: {error}")))?;
-        drop(guard);
         Ok(Self {
             runtime,
-            client,
+            client: client(runtime)?,
             next_id: AtomicU64::new(1),
             open: Mutex::new(HashMap::new()),
             shared: Arc::default(),

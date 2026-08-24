@@ -603,7 +603,7 @@ impl<E: JsEngine + Clone + 'static> WindowSession<E> {
             && menu.needs_install()
             && let Err(error) = menu.install(handle)
         {
-            super::park_first_error(self.error.as_ref(), JsError::new(error));
+            self.application.park_error(JsError::new(error));
         }
     }
 

@@ -42,6 +42,21 @@
     hostSetTimeout(() => globalThis.dispatchEvent(new MessageEvent("message",
       { data: copy, origin: messageOrigin, source: globalThis })), 0);
   };
+  const animationFramesPending = () =>
+    animationFrames.size > 0 || inflightFetches.size > 0 || liveSockets.size > 0
+    || liveEventSources.size > 0
+    || pendingResizeObservations() > 0 || audioPending()
+    || waitingImages() > 0 || waitingLinks() > 0
+    || nativePending() || nativeDialogPending() || nativeTrayWorkPending()
+    || nativeMenuWorkPending()
+    || nativeNotifyWorkPending() || nativeHidWorkPending() || gamepadWorkPending()
+    || call("isAnimating")
+    // A canvas drawn outside a frame callback is owed a paint, and nothing
+    // else here would ask for one.
+    || canvasPaintPending
+    // A message from a worker lands in the frame turn, so a loop that idled
+    // would never deliver it — the same reason an open socket is listed.
+    || portsPending();
   const globals = {
     EventTarget, Node, Element, NodeList, Document, DocumentFragment, DOMTokenList,
     Attr, NamedNodeMap,
@@ -74,21 +89,7 @@
     setTimeout, clearTimeout, setInterval, clearInterval,
     __blitsenHostUrl: hostUrl,
     __blitsenAnimationFrameTick: animationFrameTick,
-    __blitsenAnimationFramesPending: () =>
-      animationFrames.size > 0 || inflightFetches.size > 0 || liveSockets.size > 0
-      || liveEventSources.size > 0
-      || pendingResizeObservations() > 0 || audioPending()
-      || waitingImages() > 0 || waitingLinks() > 0
-      || nativePending() || nativeDialogPending() || nativeTrayWorkPending()
-      || nativeMenuWorkPending()
-      || nativeNotifyWorkPending() || nativeHidWorkPending() || gamepadWorkPending()
-      || call("isAnimating")
-      // A canvas drawn outside a frame callback is owed a paint, and nothing
-      // else here would ask for one.
-      || canvasPaintPending
-      // A message from a worker lands in the frame turn, so a loop that idled
-      // would never deliver it — the same reason an open socket is listed.
-      || portsPending(),
+    __blitsenAnimationFramesPending: animationFramesPending,
     __blitsenForcedLayoutsThisFrame: () => forcedLayoutsThisFrame,
     __blitsenEventInternals: eventInternals,
     ...(testHarness ? {
@@ -263,4 +264,6 @@
     lockedPointerMotion: dispatchLockedPointerMotion,
     releaseWindowModes,
     drag: dispatchDragEvent,
+    animationFrameTick,
+    animationFramesPending,
   });
