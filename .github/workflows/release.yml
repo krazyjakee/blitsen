@@ -49,7 +49,7 @@ jobs:
     outputs:
       release_version: ${{ steps.release_version.outputs.version }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: ${{ env.BUN_VERSION }}
@@ -126,7 +126,7 @@ jobs:
             executable: blitsen-runtime.exe
             reproducible: false
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - id: started
         shell: bash
         run: echo "at=$(date +%s)" >> "$GITHUB_OUTPUT"
@@ -171,14 +171,17 @@ jobs:
           # release objects even with rustc remapping and cl.exe /pathmap.
           if [ "${{ matrix.reproducible }}" = true ]; then
             reproducible_source="$RUNNER_TEMP/blitsen-repro-source"
+            reproducible_target="$RUNNER_TEMP/blitsen-repro-target"
             git clone --quiet --no-hardlinks "$GITHUB_WORKSPACE" "$reproducible_source"
             git -C "$reproducible_source" checkout --quiet --detach "$GITHUB_SHA"
             (
               cd "$reproducible_source"
               unset RUSTC_WRAPPER
-              CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target" \
+              CARGO_TARGET_DIR="$reproducible_target" \
                 bash scripts/build-release-runtime.sh "${{ matrix.target }}"
             )
+            test ! -e "$GITHUB_WORKSPACE/target"
+            mv "$reproducible_target" "$GITHUB_WORKSPACE/target"
           else
             CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target" \
               bash scripts/build-release-runtime.sh "${{ matrix.target }}"
@@ -454,7 +457,7 @@ jobs:
       contents: write # the tag and the release page, written after a publish
       id-token: write # npm provenance
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: ${{ env.BUN_VERSION }}
@@ -564,15 +567,21 @@ jobs:
       - name: Check the version is not already published
         id: release_version
         shell: bash
+        env:
+          PUBLISH: ${{ inputs.publish }}
         run: |
           version=$(node -p "require('./packages/blitsen/package.json').version")
           echo "version=$version" >> "$GITHUB_ENV"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           if npm view "blitsen@$version" version >/dev/null 2>&1; then
-            echo "::error::blitsen@$version is already published; bump the version"
-            exit 1
+            if [ "$PUBLISH" = true ]; then
+              echo "::error::blitsen@$version is already published; bump the version"
+              exit 1
+            fi
+            echo "::notice::Dry run is rehearsing already-published blitsen@$version"
+          else
+            echo "Releasing $version"
           fi
-          echo "Releasing $version"
 
       # The npm tarballs are the exact binary distribution, useful both as a
       # durable rehearsal artifact and as downloads beside the GitHub release.

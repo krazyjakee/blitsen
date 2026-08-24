@@ -75,6 +75,8 @@ describe("native release version", () => {
       expect(workflow).toContain(`- target: ${target}`);
     }
     expect(workflow).toContain("BLITSEN_RELEASE_VERSION: ${{ needs.validate.outputs.release_version }}");
+    expect(workflow).toContain('if [ "$PUBLISH" = true ]; then');
+    expect(workflow).toContain("Dry run is rehearsing already-published blitsen@$version");
     expect(build).toContain("packages/platforms/*/package.json");
     expect(build).toContain("export BLITSEN_RELEASE_VERSION=$manifest_version");
     expect(workflow.indexOf("name: Check the staged runtime version"))

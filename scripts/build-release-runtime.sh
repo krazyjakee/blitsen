@@ -23,9 +23,17 @@ export BLITSEN_RELEASE_VERSION=$manifest_version
 # symbols are stripped. Both clean checkouts map to the same logical source
 # root so a runner's temporary path is not part of the artifact. Git Bash gives
 # native tools Windows paths through `pwd -W`; other shells use POSIX paths.
+target_dir=${CARGO_TARGET_DIR:-target}
+mkdir -p "$target_dir"
 case "${OSTYPE:-}" in
-  msys* | cygwin*) source_root=$(pwd -W) ;;
-  *) source_root=$PWD ;;
+  msys* | cygwin*)
+    source_root=$(pwd -W)
+    target_root=$(cd "$target_dir" && pwd -W)
+    ;;
+  *)
+    source_root=$PWD
+    target_root=$(cd "$target_dir" && pwd)
+    ;;
 esac
 
 # CARGO_ENCODED_RUSTFLAGS keeps each flag byte-for-byte. This matters on
@@ -43,6 +51,7 @@ append_rustflag() {
   encoded_rustflags="${encoded_rustflags:+${encoded_rustflags}$'\x1f'}$1"
 }
 append_rustflag "--remap-path-prefix=${source_root}=/src/blitsen"
+append_rustflag "--remap-path-prefix=${target_root}=/build/blitsen"
 
 # QuickJS-ng and a few platform dependencies compile C/C++ through the `cc`
 # crate. rustc's remap does not reach their __FILE__ strings, so give the pinned
@@ -54,13 +63,17 @@ case "$target" in
     # Prefix remapping is deliberately textual, so cover all representations.
     source_root_backslash=${source_root//\//\\}
     source_root_extended="\\\\?\\${source_root_backslash}"
+    target_root_backslash=${target_root//\//\\}
+    target_root_extended="\\\\?\\${target_root_backslash}"
     append_rustflag "--remap-path-prefix=${source_root_backslash}=/src/blitsen"
     append_rustflag "--remap-path-prefix=${source_root_extended}=/src/blitsen"
+    append_rustflag "--remap-path-prefix=${target_root_backslash}=/build/blitsen"
+    append_rustflag "--remap-path-prefix=${target_root_extended}=/build/blitsen"
     # `cc` shell-splits CFLAGS before invoking cl.exe. Quote each argument so
     # that split removes the quotes but does not consume path backslashes.
-    native_map="'/pathmap:${source_root}=/src/blitsen' '/pathmap:${source_root_backslash}=/src/blitsen' '/pathmap:${source_root_extended}=/src/blitsen'"
+    native_map="'/pathmap:${source_root}=/src/blitsen' '/pathmap:${source_root_backslash}=/src/blitsen' '/pathmap:${source_root_extended}=/src/blitsen' '/pathmap:${target_root}=/build/blitsen' '/pathmap:${target_root_backslash}=/build/blitsen' '/pathmap:${target_root_extended}=/build/blitsen'"
     ;;
-  *) native_map="-ffile-prefix-map=${source_root}=/src/blitsen" ;;
+  *) native_map="-ffile-prefix-map=${source_root}=/src/blitsen -ffile-prefix-map=${target_root}=/build/blitsen" ;;
 esac
 export CFLAGS="${CFLAGS:+$CFLAGS }$native_map"
 export CXXFLAGS="${CXXFLAGS:+$CXXFLAGS }$native_map"
