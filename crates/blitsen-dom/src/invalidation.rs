@@ -72,12 +72,6 @@ impl<N: Copy + Eq + Hash> InvalidationTracker<N> {
         }
     }
 
-    /// Marks a mutation that can affect both cascade and geometry.
-    pub fn mark_mutation(&mut self, node: N, parent: impl FnMut(N) -> Option<N>) {
-        self.mark_style(node);
-        self.mark_layout(node, parent);
-    }
-
     /// Drains dirty state into the next frame's work plan.
     ///
     /// `document_nodes` is used only by the full-document fallback to make its
@@ -103,11 +97,6 @@ impl<N: Copy + Eq + Hash> InvalidationTracker<N> {
             metrics,
         }
     }
-
-    /// Reports whether any work is pending.
-    pub fn is_dirty(&self) -> bool {
-        !self.style_dirty.is_empty() || !self.layout_dirty.is_empty()
-    }
 }
 
 #[cfg(test)]
@@ -121,7 +110,8 @@ mod tests {
             .collect::<std::collections::HashMap<_, _>>();
         let mut dirty = InvalidationTracker::new(InvalidationMode::FineGrained);
         dirty.mark_style(4);
-        dirty.mark_mutation(3, |node| parents.get(&node).copied());
+        dirty.mark_style(3);
+        dirty.mark_layout(3, |node| parents.get(&node).copied());
         let frame = dirty.take_frame(100);
 
         assert_eq!(frame.style_nodes, HashSet::from([3, 4]));
@@ -134,7 +124,11 @@ mod tests {
             }
         );
         assert!(!frame.full_document);
-        assert!(!dirty.is_dirty());
+        let clean_frame = dirty.take_frame(100);
+        assert!(clean_frame.style_nodes.is_empty());
+        assert!(clean_frame.layout_nodes.is_empty());
+        assert!(!clean_frame.full_document);
+        assert_eq!(clean_frame.metrics, InvalidationMetrics::default());
     }
 
     #[test]
