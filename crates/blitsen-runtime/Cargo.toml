@@ -39,6 +39,7 @@ serde_json = "1"
 libc = "0.2"
 
 [dev-dependencies]
+blitsen-core = { path = "../blitsen-core", features = ["test-support"] }
 tempfile.workspace = true
 
 [lints]

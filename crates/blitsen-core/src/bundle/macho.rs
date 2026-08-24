@@ -1,7 +1,6 @@
 //! The Mach-O container half of the Phase 2 bundle writer (#256).
 
 use sha2::{Digest, Sha256};
-use std::io::{Read, Seek, SeekFrom};
 
 use super::{BundleError, TRAILER_SIZE, malformed};
 
@@ -281,47 +280,6 @@ pub(super) fn payload_offset(executable: &[u8]) -> Result<Option<u64>, BundleErr
     Ok(parse(executable)?.map(|macho| macho.linkedit.fileoff))
 }
 
-pub(super) fn payload_section(file: &mut std::fs::File) -> Result<Option<(u64, u64)>, BundleError> {
-    let mut header = [0_u8; HEADER_SIZE];
-    file.seek(SeekFrom::Start(0))?;
-    file.read_exact(&mut header)?;
-    if read_u32(&header, 0)? != MH_MAGIC_64 {
-        return Ok(None);
-    }
-    let commands_size = read_u32(&header, 20)? as usize;
-    let mut commands = vec![0_u8; commands_size];
-    file.read_exact(&mut commands)?;
-    let ncmds = read_u32(&header, 16)? as usize;
-    let mut offset = 0;
-    for index in 0..ncmds {
-        if offset + 8 > commands.len() {
-            return Err(malformed(format!(
-                "Mach-O load command {index} has no complete header"
-            )));
-        }
-        let kind = read_u32(&commands, offset)?;
-        let size = read_u32(&commands, offset + 4)? as usize;
-        if size < 8 || !size.is_multiple_of(8) || offset + size > commands.len() {
-            return Err(malformed(format!(
-                "Mach-O load command {index} has invalid size {size}"
-            )));
-        }
-        if kind == LC_SEGMENT_64 && name(&commands, offset + 8)? == b"__BLITSEN" {
-            if size != SEGMENT_COMMAND_SIZE || read_u32(&commands, offset + 64)? != 0 {
-                return Err(malformed(
-                    "the Mach-O __BLITSEN segment has an unexpected section table",
-                ));
-            }
-            return Ok(Some((
-                read_u64(&commands, offset + 40)?,
-                read_u64(&commands, offset + 48)?,
-            )));
-        }
-        offset += size;
-    }
-    Ok(None)
-}
-
 fn align(value: usize, boundary: usize) -> Result<usize, BundleError> {
     value
         .checked_add(boundary - 1)
@@ -564,119 +522,4 @@ pub(super) fn inject(
     }
     unsigned.extend_from_slice(&signature);
     Ok(Some(unsigned))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn fixture(cpu: i32) -> (Vec<u8>, usize, usize) {
-        let page = if cpu == CPU_TYPE_ARM64 {
-            0x4000
-        } else {
-            0x1000
-        };
-        let linkedit_at = page;
-        let linkedit_bytes = 64;
-        let old_signature_bytes = 256;
-        let signature_at = linkedit_at + linkedit_bytes;
-
-        fn segment(
-            name: &[u8],
-            vmaddr: u64,
-            vmsize: usize,
-            fileoff: usize,
-            filesize: usize,
-        ) -> Vec<u8> {
-            let mut command = vec![0_u8; SEGMENT_COMMAND_SIZE];
-            write_u32(&mut command, 0, LC_SEGMENT_64);
-            write_u32(&mut command, 4, SEGMENT_COMMAND_SIZE as u32);
-            fixed_name(&mut command, 8, name);
-            write_u64(&mut command, 24, vmaddr);
-            write_u64(&mut command, 32, vmsize as u64);
-            write_u64(&mut command, 40, fileoff as u64);
-            write_u64(&mut command, 48, filesize as u64);
-            write_u32(&mut command, 56, 7);
-            write_u32(&mut command, 60, if name == b"__TEXT" { 5 } else { 1 });
-            command
-        }
-
-        let mut commands = vec![segment(b"__TEXT", 0x1_0000_0000, page, 0, page)];
-        let mut symtab = vec![0_u8; 24];
-        write_u32(&mut symtab, 0, LC_SYMTAB);
-        write_u32(&mut symtab, 4, 24);
-        write_u32(&mut symtab, 8, linkedit_at as u32);
-        write_u32(&mut symtab, 16, (signature_at - 32) as u32);
-        write_u32(&mut symtab, 20, 32);
-        commands.push(symtab);
-        let mut signature = vec![0_u8; 16];
-        write_u32(&mut signature, 0, LC_CODE_SIGNATURE);
-        write_u32(&mut signature, 4, 16);
-        write_u32(&mut signature, 8, signature_at as u32);
-        write_u32(&mut signature, 12, old_signature_bytes as u32);
-        commands.push(signature);
-        commands.push(segment(
-            b"__LINKEDIT",
-            0x1_0000_0000 + page as u64,
-            page,
-            linkedit_at,
-            linkedit_bytes + old_signature_bytes,
-        ));
-        let command_bytes = commands.concat();
-        let mut executable = vec![0_u8; signature_at + old_signature_bytes];
-        write_u32(&mut executable, 0, MH_MAGIC_64);
-        write_u32(&mut executable, 4, cpu as u32);
-        write_u32(&mut executable, 8, 3);
-        write_u32(&mut executable, 12, MH_EXECUTE);
-        write_u32(&mut executable, 16, commands.len() as u32);
-        write_u32(&mut executable, 20, command_bytes.len() as u32);
-        write_u32(&mut executable, 24, 0x20_0085);
-        executable[HEADER_SIZE..HEADER_SIZE + command_bytes.len()].copy_from_slice(&command_bytes);
-        executable[linkedit_at..signature_at].fill(0x5a);
-        executable[signature_at..].fill(0xa5);
-        (executable, linkedit_at, page)
-    }
-
-    #[test]
-    fn both_darwin_architectures_keep_linkedit_and_the_signature_last() {
-        for cpu in [CPU_TYPE_X86_64, CPU_TYPE_ARM64] {
-            let (runtime, linkedit_at, page) = fixture(cpu);
-            let mut section = vec![0x5a; TRAILER_SIZE + 37];
-            let magic_at = section.len() - 8;
-            section[magic_at..].copy_from_slice(b"BLITSEN\x1a");
-            let linked = inject(&runtime, &section).unwrap().unwrap();
-            let parsed = parse(&linked).unwrap().unwrap();
-            assert_eq!(&linked[linkedit_at..linkedit_at + 37], &section[..37]);
-            assert_eq!(
-                &linked[linkedit_at + page - TRAILER_SIZE..linkedit_at + page],
-                &section[37..]
-            );
-            assert_eq!(parsed.linkedit.fileoff, (linkedit_at + page) as u64);
-            assert_eq!(
-                parsed.linkedit.fileoff + parsed.linkedit.filesize,
-                linked.len() as u64
-            );
-            let signature = parsed.signature.unwrap();
-            let signature_at = read_u32(&linked, signature.offset + 8).unwrap() as usize;
-            assert_eq!(
-                u32::from_be_bytes(linked[signature_at..signature_at + 4].try_into().unwrap()),
-                CSMAGIC_EMBEDDED_SIGNATURE
-            );
-            let directory = signature_at
-                + u32::from_be_bytes(
-                    linked[signature_at + 16..signature_at + 20]
-                        .try_into()
-                        .unwrap(),
-                ) as usize;
-            let hashes = directory
-                + u32::from_be_bytes(linked[directory + 16..directory + 20].try_into().unwrap())
-                    as usize;
-            for (slot, page) in linked[..signature_at].chunks(SIGN_PAGE_SIZE).enumerate() {
-                assert_eq!(
-                    &linked[hashes + slot * 32..hashes + (slot + 1) * 32],
-                    Sha256::digest(page).as_slice()
-                );
-            }
-        }
-    }
 }

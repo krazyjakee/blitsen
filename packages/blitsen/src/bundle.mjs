@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { chmod, readFile, stat, writeFile } from "node:fs/promises";
+import { chmod, open, readFile, stat } from "node:fs/promises";
 
 import { injectMachOPayload, machOPayloadOffset } from "./macho.mjs";
 
@@ -13,6 +13,8 @@ const PAYLOAD_MAGIC = Buffer.from("BLITSEN\0", "latin1");
 const TRAILER_MAGIC = Buffer.from("BLITSEN\x1a", "latin1");
 const HEADER_SIZE = 32;
 const TRAILER_SIZE = 64;
+const SCAN_CHUNK = 1 << 20;
+const MAX_TRAILING_BYTES = 16 << 20;
 export const FORMAT_VERSION = 1;
 
 // A bundle path addresses a file inside the application and nothing else. The
@@ -33,9 +35,11 @@ function checkPath(path) {
  * so the same input links to the same bytes, which is what lets a build be
  * compared with the one before it.
  */
-export function buildPayload(files) {
+function serializePayload(files) {
   const entries = [...files.entries()]
-    .map(([path, bytes]) => [checkPath(path), Buffer.from(bytes)])
+    .map(([path, bytes]) => [
+      checkPath(path), Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes),
+    ])
     .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0));
 
   const index = [];
@@ -52,7 +56,6 @@ export function buildPayload(files) {
     offset += bytes.length;
   }
   const indexBytes = Buffer.concat(index);
-  const dataBytes = Buffer.concat(data);
 
   const header = Buffer.alloc(HEADER_SIZE);
   PAYLOAD_MAGIC.copy(header, 0);
@@ -60,16 +63,29 @@ export function buildPayload(files) {
   header.writeUInt32LE(0, 12);
   header.writeUInt32LE(entries.length, 16);
   header.writeUInt32LE(indexBytes.length, 20);
-  header.writeBigUInt64LE(BigInt(dataBytes.length), 24);
-  return Buffer.concat([header, indexBytes, dataBytes]);
+  header.writeBigUInt64LE(BigInt(offset), 24);
+  return {
+    parts: [header, indexBytes, ...data],
+    length: header.length + indexBytes.length + offset,
+  };
+}
+
+export function buildPayload(files) {
+  const payload = serializePayload(files);
+  return Buffer.concat(payload.parts, payload.length);
 }
 
 /** Serializes the trailer that locates and checksums a payload. */
 export function buildTrailer(payload, payloadOffset) {
+  const digest = createHash("sha256").update(payload).digest();
+  return serializeTrailer(digest, payloadOffset, payload.length);
+}
+
+function serializeTrailer(digest, payloadOffset, payloadLength) {
   const trailer = Buffer.alloc(TRAILER_SIZE);
-  createHash("sha256").update(payload).digest().copy(trailer, 0);
+  digest.copy(trailer, 0);
   trailer.writeBigUInt64LE(BigInt(payloadOffset), 32);
-  trailer.writeBigUInt64LE(BigInt(payload.length), 40);
+  trailer.writeBigUInt64LE(BigInt(payloadLength), 40);
   trailer.writeUInt32LE(FORMAT_VERSION, 48);
   trailer.writeUInt32LE(0, 52);
   TRAILER_MAGIC.copy(trailer, 56);
@@ -89,13 +105,31 @@ export function buildTrailer(payload, payloadOffset) {
  */
 export async function linkBundle({ runtime, output, files }) {
   const executable = await readFile(runtime);
-  const payload = buildPayload(files);
+  const payload = serializePayload(files);
+  const hasher = createHash("sha256");
+  for (const part of payload.parts) hasher.update(part);
+  const digest = hasher.digest();
   const machoOffset = machOPayloadOffset(executable);
   const payloadOffset = machoOffset ?? executable.length;
-  const trailer = buildTrailer(payload, payloadOffset);
-  const section = Buffer.concat([payload, trailer]);
-  const linked = injectMachOPayload(executable, section) ?? Buffer.concat([executable, section]);
-  await writeFile(output, linked);
+  const trailer = serializeTrailer(digest, payloadOffset, payload.length);
+  const linked = machoOffset === null
+    ? null
+    : injectMachOPayload(executable, payload.parts, trailer);
+  const destination = await open(output, "w");
+  try {
+    if (linked) {
+      await destination.write(linked);
+    } else {
+      // ELF and PE are append-only. Write their existing bytes, payload parts,
+      // and trailer in order instead of keeping an output-sized concatenation
+      // and a second payload copy live at the same time.
+      await destination.write(executable);
+      for (const part of payload.parts) await destination.write(part);
+      await destination.write(trailer);
+    }
+  } finally {
+    await destination.close();
+  }
   // The runtime arrives from an npm tarball, which does not always preserve the
   // executable bit; the linked application is useless without it.
   const mode = (await stat(runtime)).mode & 0o777;
@@ -103,7 +137,7 @@ export async function linkBundle({ runtime, output, files }) {
   return {
     files: files.size,
     payloadBytes: payload.length,
-    totalBytes: linked.length,
+    totalBytes: linked?.length ?? executable.length + payload.length + trailer.length,
     digest: trailer.subarray(0, 32).toString("hex"),
   };
 }
@@ -147,13 +181,30 @@ export function readBundle(executable) {
 // read-only data. A candidate is only taken when the payload it points at
 // actually starts with the payload magic, which is what the Rust reader does.
 function findTrailer(executable) {
-  for (let at = executable.length - TRAILER_SIZE; at >= 0; at -= 1) {
-    if (!executable.subarray(at + 56, at + 64).equals(TRAILER_MAGIC)) continue;
-    const offset = Number(executable.readBigUInt64LE(at + 32));
-    const length = Number(executable.readBigUInt64LE(at + 40));
-    if (offset < 0 || length < HEADER_SIZE || offset + length > at) continue;
-    if (!executable.subarray(offset, offset + 8).equals(PAYLOAD_MAGIC)) continue;
-    return at;
+  if (executable.length < TRAILER_SIZE) return null;
+  const floor = Math.max(0, executable.length - MAX_TRAILING_BYTES);
+  let windowEnd = executable.length;
+  let carry = Buffer.alloc(0);
+  while (windowEnd > floor) {
+    const windowStart = Math.max(floor, windowEnd - SCAN_CHUNK);
+    const chunk = Buffer.concat([executable.subarray(windowStart, windowEnd), carry]);
+    let searchFrom = chunk.length - TRAILER_MAGIC.length;
+    while (searchFrom >= 0) {
+      const magicAt = chunk.lastIndexOf(TRAILER_MAGIC, searchFrom);
+      if (magicAt < 0) break;
+      const at = windowStart + magicAt - 56;
+      searchFrom = magicAt - 1;
+      if (at < 0 || at + TRAILER_SIZE > executable.length) continue;
+      const offset = Number(executable.readBigUInt64LE(at + 32));
+      const length = Number(executable.readBigUInt64LE(at + 40));
+      if (offset < 0 || length < HEADER_SIZE || offset + length > at) continue;
+      if (!executable.subarray(offset, offset + 8).equals(PAYLOAD_MAGIC)) continue;
+      return at;
+    }
+    // The magic can straddle windows, so search the first seven bytes of the
+    // newer window again alongside the next older chunk.
+    carry = Buffer.from(chunk.subarray(0, Math.min(TRAILER_MAGIC.length - 1, chunk.length)));
+    windowEnd = windowStart;
   }
   return null;
 }

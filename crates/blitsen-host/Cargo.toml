@@ -117,6 +117,7 @@ winit = "=0.31.0-beta.2"
 # because it is the engine the platforms that really do destroy a surface would
 # be hosting (#146).
 [dev-dependencies]
+blitsen-core = { path = "../blitsen-core", features = ["test-support"] }
 blitsen-quickjs = { path = "../blitsen-quickjs" }
 tempfile.workspace = true
 

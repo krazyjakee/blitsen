@@ -74,13 +74,18 @@
 use std::collections::BTreeMap;
 use std::fmt;
 use std::fs::File;
-use std::io::{self, Read, Seek, SeekFrom, Write};
+use std::io::{self, Read, Seek, SeekFrom};
 use std::path::Path;
 use std::sync::Mutex;
 
+#[cfg(any(test, feature = "test-support"))]
+use std::io::Write;
+
 use sha2::{Digest, Sha256};
 
+#[cfg(any(test, feature = "test-support"))]
 mod macho;
+mod macho_reader;
 
 /// Magic opening the payload.
 const PAYLOAD_MAGIC: &[u8; 8] = b"BLITSEN\0";
@@ -317,56 +322,80 @@ impl AppBundle {
 /// The reference implementation of the writer. The CLI has its own in
 /// JavaScript, because a cross-target export cannot run the target's runtime;
 /// `cli-bundle.test.mjs` holds the two to the same bytes.
+#[cfg(any(test, feature = "test-support"))]
 pub fn write_bundle(
     runtime: &Path,
     output: &Path,
     files: &[(String, Vec<u8>)],
 ) -> Result<u64, BundleError> {
-    let mut payload = Vec::new();
-    payload.extend_from_slice(PAYLOAD_MAGIC);
-    payload.extend_from_slice(&FORMAT_VERSION.to_le_bytes());
-    payload.extend_from_slice(&0_u32.to_le_bytes());
-    payload.extend_from_slice(&(files.len() as u32).to_le_bytes());
-
     let mut index = Vec::new();
-    let mut data = Vec::new();
     let mut sorted: Vec<_> = files.iter().collect();
     sorted.sort_by(|left, right| left.0.cmp(&right.0));
-    for (path, bytes) in sorted {
+    let mut data_len = 0_u64;
+    for (path, bytes) in &sorted {
         index.extend_from_slice(&(path.len() as u32).to_le_bytes());
-        index.extend_from_slice(&(data.len() as u64).to_le_bytes());
+        index.extend_from_slice(&data_len.to_le_bytes());
         index.extend_from_slice(&(bytes.len() as u64).to_le_bytes());
         index.extend_from_slice(path.as_bytes());
-        data.extend_from_slice(bytes);
+        data_len += bytes.len() as u64;
     }
-    payload.extend_from_slice(&(index.len() as u32).to_le_bytes());
-    payload.extend_from_slice(&(data.len() as u64).to_le_bytes());
-    payload.extend_from_slice(&index);
-    payload.extend_from_slice(&data);
+
+    let mut header = Vec::with_capacity(HEADER_SIZE);
+    header.extend_from_slice(PAYLOAD_MAGIC);
+    header.extend_from_slice(&FORMAT_VERSION.to_le_bytes());
+    header.extend_from_slice(&0_u32.to_le_bytes());
+    header.extend_from_slice(&(files.len() as u32).to_le_bytes());
+    header.extend_from_slice(&(index.len() as u32).to_le_bytes());
+    header.extend_from_slice(&data_len.to_le_bytes());
+    debug_assert_eq!(header.len(), HEADER_SIZE);
+
+    let payload_len = header.len() as u64 + index.len() as u64 + data_len;
+    let mut hasher = Sha256::new();
+    hasher.update(&header);
+    hasher.update(&index);
+    for (_, bytes) in &sorted {
+        hasher.update(bytes);
+    }
+    let digest = hasher.finalize();
 
     let executable = std::fs::read(runtime)?;
-    let payload_offset = macho::payload_offset(&executable)?.unwrap_or(executable.len() as u64);
-    let digest = Sha256::digest(&payload);
-
-    let mut section = payload.clone();
-    section.extend_from_slice(&digest);
-    section.extend_from_slice(&payload_offset.to_le_bytes());
-    section.extend_from_slice(&(payload.len() as u64).to_le_bytes());
-    section.extend_from_slice(&FORMAT_VERSION.to_le_bytes());
-    section.extend_from_slice(&0_u32.to_le_bytes());
-    section.extend_from_slice(TRAILER_MAGIC);
-    let linked = if let Some(linked) = macho::inject(&executable, &section)? {
-        linked
-    } else {
-        let mut linked = executable;
-        linked.extend_from_slice(&section);
-        linked
-    };
+    let macho_offset = macho::payload_offset(&executable)?;
+    let payload_offset = macho_offset.unwrap_or(executable.len() as u64);
+    let mut trailer = Vec::with_capacity(TRAILER_SIZE);
+    trailer.extend_from_slice(&digest);
+    trailer.extend_from_slice(&payload_offset.to_le_bytes());
+    trailer.extend_from_slice(&payload_len.to_le_bytes());
+    trailer.extend_from_slice(&FORMAT_VERSION.to_le_bytes());
+    trailer.extend_from_slice(&0_u32.to_le_bytes());
+    trailer.extend_from_slice(TRAILER_MAGIC);
+    debug_assert_eq!(trailer.len(), TRAILER_SIZE);
 
     let mut file = File::create(output)?;
-    file.write_all(&linked)?;
+    if macho_offset.is_some() {
+        // Mach-O moves __LINKEDIT, so its writer needs the complete new segment.
+        // Build that segment once; the append-only formats below need no payload
+        // or output-sized allocation at all.
+        let mut section = Vec::with_capacity(payload_len as usize + TRAILER_SIZE);
+        section.extend_from_slice(&header);
+        section.extend_from_slice(&index);
+        for (_, bytes) in &sorted {
+            section.extend_from_slice(bytes);
+        }
+        section.extend_from_slice(&trailer);
+        let linked = macho::inject(&executable, &section)?
+            .ok_or_else(|| malformed("Mach-O writer disagrees with its parsed payload offset"))?;
+        file.write_all(&linked)?;
+    } else {
+        file.write_all(&executable)?;
+        file.write_all(&header)?;
+        file.write_all(&index)?;
+        for (_, bytes) in &sorted {
+            file.write_all(bytes)?;
+        }
+        file.write_all(&trailer)?;
+    }
     file.flush()?;
-    Ok(payload.len() as u64)
+    Ok(payload_len)
 }
 
 fn parse_index(
@@ -501,7 +530,7 @@ fn find_trailer(file: &mut File, size: u64) -> Result<Option<Trailer>, BundleErr
     // A Mach-O payload is a named segment before __LINKEDIT, so use the load
     // command instead of making the bounded compatibility scan depend on how
     // large that executable's symbols and code signature happen to be.
-    if let Some((section_at, section_size)) = macho::payload_section(file)? {
+    if let Some((section_at, section_size)) = macho_reader::payload_section(file)? {
         if section_size < TRAILER_SIZE as u64 || section_at.saturating_add(section_size) > size {
             return Err(malformed("Mach-O __BLITSEN lies outside the file"));
         }

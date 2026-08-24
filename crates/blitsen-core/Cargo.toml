@@ -8,6 +8,15 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+[features]
+# The shipped runtime only reads bundles. The reference writer exists for the
+# cross-language format tests and is deliberately absent from release binaries.
+test-support = []
+
+[[example]]
+name = "bundle-reference"
+required-features = ["test-support"]
+
 [dependencies]
 blake3 = "1.8"
 blitsen-dom = { path = "../blitsen-dom" }

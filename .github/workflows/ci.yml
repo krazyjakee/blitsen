@@ -258,6 +258,12 @@ jobs:
       # checkout that had already built a runtime passed locally, and a clean
       # runner is the only place the order was ever load-bearing.
       - run: cargo build --release -p blitsen-runtime
+      # Issue #311: both bundle writers must rewrite the same synthetic Mach-O
+      # to identical bytes. The ordinary Rust and JavaScript jobs each install
+      # only one toolchain; this job has both, so it owns the language boundary.
+      - name: Mach-O bundle writer conformance
+        if: runner.os == 'Linux'
+        run: bun packages/blitsen/test/run-bundle-writer-conformance.mjs
       # Issue #121: an export embeds the notices staged beside the runtime it
       # links, and refuses to claim redistribution when they are absent. The
       # release job stages them right after the same build; CI never did, so

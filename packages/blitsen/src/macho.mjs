@@ -258,18 +258,36 @@ function adHocSignature(bytes, codeLimit, text) {
 }
 
 /**
- * Installs `sectionData` in a read-only `__BLITSEN` segment immediately before
+ * Installs a bundle in a read-only `__BLITSEN` segment immediately before
  * `__LINKEDIT`, then replaces the now-invalid inherited signature with a
- * deterministic ad-hoc signature. `codesign --force` may replace it later;
- * having one here keeps an ordinary unsigned arm64 export runnable too.
+ * deterministic ad-hoc signature. The two-argument form accepts the historical
+ * contiguous payload-plus-trailer buffer. The linker passes payload parts and a
+ * separate trailer so large applications are copied only into the rewritten
+ * executable. `codesign --force` may replace the signature later; having one
+ * here keeps an ordinary unsigned arm64 export runnable too.
  */
-export function injectMachOPayload(executable, sectionData) {
+export function injectMachOPayload(executable, sectionData, trailerData = null) {
   const parsed = parseMachO(executable);
   if (!parsed) return null;
   const { commands, linkedit, text, signatureCommand,
     signatureOffset: oldSignatureOffset, pageSize } = parsed;
-  if (sectionData.length < BUNDLE_TRAILER_SIZE) malformed("the bundle has no complete trailer");
-  const segmentFilesize = align(sectionData.length, pageSize);
+  let payloadParts;
+  let trailer;
+  let sectionLength;
+  if (trailerData === null) {
+    if (!Buffer.isBuffer(sectionData) || sectionData.length < BUNDLE_TRAILER_SIZE)
+      malformed("the bundle has no complete trailer");
+    payloadParts = [sectionData.subarray(0, sectionData.length - BUNDLE_TRAILER_SIZE)];
+    trailer = sectionData.subarray(sectionData.length - BUNDLE_TRAILER_SIZE);
+    sectionLength = sectionData.length;
+  } else {
+    if (!Array.isArray(sectionData) || trailerData.length !== BUNDLE_TRAILER_SIZE)
+      malformed("the bundle has no complete trailer");
+    payloadParts = sectionData;
+    trailer = trailerData;
+    sectionLength = trailer.length + payloadParts.reduce((total, part) => total + part.length, 0);
+  }
+  const segmentFilesize = align(sectionLength, pageSize);
   const segmentVmsize = segmentFilesize;
   const linkeditData = executable.subarray(linkedit.fileoff, oldSignatureOffset);
   const newLinkeditOffset = linkedit.fileoff + segmentFilesize;
@@ -318,14 +336,13 @@ export function injectMachOPayload(executable, sectionData) {
   const commandBytes = Buffer.concat(rebuiltCommands);
   const newCommandsEnd = HEADER_SIZE + commandBytes.length;
   const bodyBeforeLinkedit = executable.subarray(newCommandsEnd, linkedit.fileoff);
-  const trailerAt = sectionData.length - BUNDLE_TRAILER_SIZE;
   const unsigned = Buffer.concat([
     header,
     commandBytes,
     bodyBeforeLinkedit,
-    sectionData.subarray(0, trailerAt),
-    Buffer.alloc(segmentFilesize - sectionData.length),
-    sectionData.subarray(trailerAt),
+    ...payloadParts,
+    Buffer.alloc(segmentFilesize - sectionLength),
+    trailer,
     linkeditData,
   ]);
   if (unsigned.length !== newSignatureOffset)
