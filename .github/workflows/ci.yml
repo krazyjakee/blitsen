@@ -245,7 +245,7 @@ jobs:
             libasound2-dev libudev-dev
       - run: bun install --frozen-lockfile
       - run: bun run --cwd packages/blitsen test:determinism
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: failure()
         with:
           name: determinism-divergence-${{ github.sha }}
@@ -253,7 +253,7 @@ jobs:
           if-no-files-found: ignore
       - name: Frame cost
         run: bun run --cwd packages/blitsen frames --out ${{ github.workspace }}/frame-metrics.json
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
           name: frame-metrics-${{ github.sha }}
@@ -295,7 +295,7 @@ jobs:
       # Uncaptured, because the run reports which tier it gated and a silent
       # pass on a runner whose rasterizer differs would read like a full one.
       - run: cargo test -p blitsen-blitz --test conformance -- --nocapture
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: failure()
         with:
           name: conformance-divergence-${{ matrix.os }}-${{ github.sha }}
@@ -368,7 +368,7 @@ jobs:
         run: bun run --cwd packages/blitsen size:phase2 --out ${{ github.workspace }}/phase2-size.json
         env:
           BLITSEN_RUNTIME_PATH: ${{ github.workspace }}/target/release/${{ runner.os == 'Windows' && 'blitsen-runtime.exe' || 'blitsen-runtime' }}
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
           name: phase2-size-${{ matrix.os }}-${{ github.sha }}
@@ -383,7 +383,7 @@ jobs:
           bun run --cwd packages/blitsen size:compare --blitsen
           ${{ github.workspace }}/phase2-size.json --out
           ${{ github.workspace }}/desktop-size-comparison.json
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
           name: desktop-size-comparison-${{ matrix.os }}-${{ github.sha }}
@@ -391,7 +391,7 @@ jobs:
           if-no-files-found: ignore
       # The committed time series only grows from local runs: CI cannot push, so
       # it keeps its own per-commit copy here instead.
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
           name: metrics-${{ matrix.os }}-${{ github.sha }}
@@ -495,7 +495,7 @@ jobs:
         run: bun run --cwd packages/blitsen notices --root blitsen-runtime --out ${{ github.workspace }}/target/release
       - run: bun run --cwd packages/blitsen test:standalone
       - run: cargo test -p blitsen-blitz --test conformance -- --nocapture
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: failure()
         with:
           name: conformance-divergence-${{ matrix.target }}-${{ github.sha }}
@@ -511,13 +511,13 @@ jobs:
         run: bun run --cwd packages/blitsen size:phase2 --out ${{ github.workspace }}/phase2-size.json
         env:
           BLITSEN_RUNTIME_PATH: ${{ github.workspace }}/target/release/${{ matrix.executable }}
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
           name: phase2-size-${{ matrix.target }}-${{ github.sha }}
           path: ${{ github.workspace }}/phase2-size.json
           if-no-files-found: ignore
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
           name: metrics-${{ matrix.target }}-${{ github.sha }}
@@ -780,11 +780,11 @@ jobs:
           bun packages/blitsen/bin/blitsen.mjs build "$APP" \
             --android --android-package com.blitsen.notifyfixture \
             --outfile ${{ runner.temp }}/Notify.apk
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: android-notify-apk-${{ github.sha }}
           path: ${{ runner.temp }}/Notify.apk
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
           name: android-notices-${{ github.sha }}
@@ -902,7 +902,7 @@ jobs:
             adb devices -l
             adb shell getprop ro.build.fingerprint
             bun run --cwd packages/blitsen test:android-notify -- --apk ${{ runner.temp }}/apk/Notify.apk --package com.blitsen.notifyfixture --out ${{ runner.temp }}/android-notify
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
           name: android-notify-${{ matrix.api-level }}-${{ github.sha }}
