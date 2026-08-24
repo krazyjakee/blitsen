@@ -28,11 +28,19 @@ async function hostFiles(keep) {
   return sources.join("\n");
 }
 
-const bootstrapJs = () => hostFiles(name =>
-  name.endsWith(".js") && (name.includes("/bootstrap/") || name.endsWith("/bootstrap.js")));
+const isBootstrapJs = name =>
+  name.endsWith(".js") && (/[\\/]bootstrap[\\/]/.test(name) || /[\\/]bootstrap\.js$/.test(name));
+const bootstrapJs = () => hostFiles(isBootstrapJs);
 const rustSource = () => hostFiles(name => name.endsWith(".rs"));
 
 describe("the __blitsen bridge vocabulary", () => {
+  test("finds bootstrap sources with either platform's path separator", () => {
+    expect(isBootstrapJs("dom_bridge/bootstrap/globals.js")).toBeTrue();
+    expect(isBootstrapJs("dom_bridge\\bootstrap\\globals.js")).toBeTrue();
+    expect(isBootstrapJs("dom_bridge/bootstrap.js")).toBeTrue();
+    expect(isBootstrapJs("dom_bridge\\bootstrap.js")).toBeTrue();
+  });
+
   test("every name the bootstrap JS references is defined in Rust or in the JS itself", async () => {
     const js = await bootstrapJs();
     const rust = await rustSource();
