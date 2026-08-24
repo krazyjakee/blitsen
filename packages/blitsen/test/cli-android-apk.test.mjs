@@ -438,6 +438,9 @@ async function fakeSdk(directory, { ndk = "27.2.12479018",
 // tested below, against directories this file makes.
 const detected = (sdk, overrides = {}) => detectAndroidToolchain({
   env: { ANDROID_HOME: sdk, LIBCLANG_PATH: "/llvm/lib", ...overrides },
+  // The generic detector fixtures describe the Unix SDK names. The dedicated
+  // Windows case below supplies win32 explicitly and covers .exe/.bat lookup.
+  hostPlatform: "linux",
   // Answers by name, so that *which* binary is looked for is part of what this
   // asserts rather than something a stub hides.
   which: name => ({ "cargo-ndk": "/somewhere/cargo-ndk", javac: "/jdk/bin/javac" })[name] ?? null,
@@ -504,10 +507,13 @@ describe("the toolchain is detected, never installed", () => {
       await expect(detected(noSigner)).rejects.toThrow("has no apksigner");
       const sdk = await fakeSdk(join(directory, "c"));
       await expect(detectAndroidToolchain({
-        env: { ANDROID_HOME: sdk, LIBCLANG_PATH: "/llvm/lib" }, which: () => null,
+        env: { ANDROID_HOME: sdk, LIBCLANG_PATH: "/llvm/lib" },
+        hostPlatform: "linux",
+        which: () => null,
       })).rejects.toThrow("javac is not on PATH");
       await expect(detectAndroidToolchain({
         env: { ANDROID_HOME: sdk, LIBCLANG_PATH: "/llvm/lib" },
+        hostPlatform: "linux",
         which: name => name === "javac" ? "/jdk/bin/javac" : null,
       })).rejects.toThrow("cargo-ndk is not on PATH");
     });
@@ -676,7 +682,7 @@ describe("the build plan", () => {
     expect(dex.command.slice(0, 5)).toEqual([
       "/sdk/bt/d8", "--min-api", String(MIN_SDK), "--output", paths.dex,
     ]);
-    expect(dex.command.slice(5).map(path => path.split("/").at(-1))).toEqual([
+    expect(dex.command.slice(5).map(path => path.split(/[\\/]/).at(-1))).toEqual([
       "NotificationBridge.class", "NotificationBridge$ActivationReceiver.class",
     ]);
   });

@@ -469,7 +469,8 @@ const dataDirectory = app.dataDir?.("MyApp");
 ```
 
 The methods return a platform-appropriate path but do not create it. Use your filesystem library
-to create the directory before writing. `requestSingleInstanceLock` is currently Unix-only.
+to create the directory before writing. `requestSingleInstanceLock` uses a private per-user Unix
+socket or Windows named pipe and has the same invocation hand-off contract on every desktop.
 
 ## OS readings
 

@@ -32,7 +32,8 @@ export interface NativeApp {
    * already holds it — in which case this invocation was handed to that
    * instance and this process should `process.exit(0)`.
    *
-   * Unix only.
+   * Available on desktop Unix and Windows; Android delivers second launches
+   * through its Activity lifecycle instead.
    */
   requestSingleInstanceLock?(
     name: string,
