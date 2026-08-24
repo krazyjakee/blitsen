@@ -805,13 +805,12 @@ mod tests {
 
     #[test]
     fn a_directory_source_serves_only_what_is_under_its_root() {
-        let root = std::env::temp_dir().join(format!("blitsen-modules-{}", std::process::id()));
-        std::fs::create_dir_all(root.join("assets")).unwrap();
-        std::fs::write(root.join("assets/index.js"), "export default 1").unwrap();
-        let source = DirectorySource::new(&root);
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join("assets")).unwrap();
+        std::fs::write(root.path().join("assets/index.js"), "export default 1").unwrap();
+        let source = DirectorySource::new(root.path());
         assert_eq!(source.read("assets/index.js").unwrap(), b"export default 1");
         assert!(source.read("assets/missing.js").is_none());
         assert!(source.read("../../../etc/passwd").is_none());
-        std::fs::remove_dir_all(&root).ok();
     }
 }

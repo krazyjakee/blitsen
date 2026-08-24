@@ -228,16 +228,14 @@ mod tests {
 
     #[test]
     fn directory_provider_preserves_its_distinct_file_url_fallbacks() {
-        let root =
-            std::env::temp_dir().join(format!("blitsen-resource-provider-{}", std::process::id()));
-        std::fs::remove_dir_all(&root).ok();
-        std::fs::create_dir_all(root.join("assets")).unwrap();
-        std::fs::write(root.join("assets/app.css"), b"body { color: disk }").unwrap();
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join("assets")).unwrap();
+        std::fs::write(root.path().join("assets/app.css"), b"body { color: disk }").unwrap();
 
         let source = Arc::new(Fixture::default());
         let provider = net_provider(
             Arc::clone(&source) as Arc<dyn AppSource>,
-            Some(root.clone()),
+            Some(root.path().to_path_buf()),
         );
         let collector = Collector::default();
 
@@ -248,7 +246,7 @@ mod tests {
                 b"body { color: black }".to_vec()
             )
         );
-        let inside = Url::from_file_path(root.join("assets/app.css")).unwrap();
+        let inside = Url::from_file_path(root.path().join("assets/app.css")).unwrap();
         assert_eq!(
             collector.fetch(provider.as_ref(), inside.as_str()),
             (inside.to_string(), b"body { color: disk }".to_vec())
@@ -258,7 +256,5 @@ mod tests {
             ("data:text/plain,fallback".to_owned(), b"fallback".to_vec())
         );
         assert_eq!(*source.reads.lock().unwrap(), ["assets/app.css"]);
-
-        std::fs::remove_dir_all(&root).ok();
     }
 }

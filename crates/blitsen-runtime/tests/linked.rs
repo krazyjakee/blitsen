@@ -18,13 +18,11 @@ fn runtime_binary() -> Option<PathBuf> {
 /// A linked executable, and the directory holding it, for one test.
 ///
 /// Every one of these is a whole copy of the runtime binary — hundreds of
-/// megabytes — and the directory name carries a process ID, so a run never
-/// reuses the previous run's. Left behind they accumulate rather than replace:
-/// `target/tmp` grew to 23 GB before this cleanup existed. Removing the
-/// directory in `Drop` rather than at the end of each test means a failing
-/// assertion takes its copy with it too.
+/// megabytes. A randomized `TempDir` below `target/tmp` keeps parallel runs
+/// separate and removes the copy even when an assertion panics. Keeping the
+/// large fixture below `target` also avoids filling a system `/tmp` mount.
 struct Linked {
-    directory: PathBuf,
+    _directory: tempfile::TempDir,
     executable: PathBuf,
 }
 
@@ -34,20 +32,15 @@ impl Linked {
     }
 }
 
-impl Drop for Linked {
-    fn drop(&mut self) {
-        // A test that is already failing should report that, not an unlink error.
-        let _ = std::fs::remove_dir_all(&self.directory);
-    }
-}
-
 fn link(files: &[(String, Vec<u8>)], name: &str) -> Option<Linked> {
     let runtime = runtime_binary()?;
-    let directory = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../target/tmp")
-        .join(format!("linked-{}-{name}", std::process::id()));
-    std::fs::create_dir_all(&directory).expect("temp directory");
-    let executable = directory.join(name);
+    let scratch = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/tmp");
+    std::fs::create_dir_all(&scratch).expect("temp directory root");
+    let directory = tempfile::Builder::new()
+        .prefix(&format!("linked-{name}-"))
+        .tempdir_in(scratch)
+        .expect("temp directory");
+    let executable = directory.path().join(name);
     blitsen_core::bundle::write_bundle(&runtime, &executable, files).expect("link");
     #[cfg(unix)]
     {
@@ -56,7 +49,7 @@ fn link(files: &[(String, Vec<u8>)], name: &str) -> Option<Linked> {
             .expect("make the linked application executable");
     }
     Some(Linked {
-        directory,
+        _directory: directory,
         executable,
     })
 }

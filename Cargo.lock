@@ -498,6 +498,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "tempfile",
 ]
 
 [[package]]
@@ -550,6 +551,7 @@ dependencies = [
  "sha2",
  "sourcemap",
  "sys-locale",
+ "tempfile",
  "tokio",
  "tokio-tungstenite",
  "tray-icon",
@@ -621,6 +623,7 @@ dependencies = [
  "libc",
  "serde",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]
