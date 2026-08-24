@@ -1,9 +1,9 @@
-// Optional plugins for users who prefer the `native:*` spelling.
+// Compatibility helpers for configurations that still mention `native:*`.
 //
-// `blitsen/*` is the recommended form precisely because it needs none of this: it is
-// an ordinary package subpath that every bundler already resolves. A bare `native:`
-// specifier is not resolvable, so a bundler either tries to bundle it and fails, or
-// errors outright. These plugins mark it external and leave it for the runtime.
+// The shipped module loader has no builtin-module namespace: leaving one of these
+// specifiers external only postpones the failure until application startup. Refuse it
+// in the bundler, where the replacement is attributable, and direct the application at
+// the real package subpath every bundler can include.
 import { NATIVE_MODULES } from "./native/module.mjs";
 
 const PREFIX = "native:";
@@ -17,6 +17,12 @@ const unknown = specifier => {
     + (name.includes("/") ? "; native modules have no subpaths" : "");
 };
 
+const unsupported = specifier => `"${specifier}" is not a Blitsen runtime module; import `
+  + `"blitsen/${specifier.slice(PREFIX.length)}" instead. Leaving native:* external produces `
+  + "an unresolved bare import in the shipped application.";
+
+const errorFor = specifier => isNative(specifier) ? unsupported(specifier) : unknown(specifier);
+
 /// Vite, Rollup and any bundler taking a Rollup-shaped plugin.
 export function blitsenRollup() {
   return {
@@ -24,8 +30,7 @@ export function blitsenRollup() {
     // `enforce: "pre"` so Vite's own resolver does not reject the specifier first.
     enforce: "pre",
     resolveId(specifier) {
-      if (isNative(specifier)) return { id: specifier, external: true };
-      if (specifier.startsWith(PREFIX)) this.error(unknown(specifier));
+      if (specifier.startsWith(PREFIX)) this.error(errorFor(specifier));
       return null;
     },
   };
@@ -39,8 +44,7 @@ export function blitsenEsbuild() {
     name: "blitsen-native",
     setup(build) {
       build.onResolve({ filter: /^native:/ }, ({ path }) => {
-        if (isNative(path)) return { path, external: true };
-        return { errors: [{ text: unknown(path) }] };
+        return { errors: [{ text: errorFor(path) }] };
       });
     },
   };
@@ -50,8 +54,7 @@ export function blitsenEsbuild() {
 /// an externals function, and a function composes with a user's existing entry.
 export function blitsenWebpackExternals() {
   return ({ request }, callback) => {
-    if (request && isNative(request)) return callback(null, `module ${request}`);
-    if (request && request.startsWith(PREFIX)) return callback(new Error(unknown(request)));
+    if (request && request.startsWith(PREFIX)) return callback(new Error(errorFor(request)));
     return callback();
   };
 }

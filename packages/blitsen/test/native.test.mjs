@@ -47,14 +47,21 @@ describe("native module namespaces", () => {
   });
 });
 
-describe("bundler plugins", () => {
-  test("mark known native specifiers external", () => {
-    const resolved = blitsenRollup().resolveId("native:dialog");
-    expect(resolved).toEqual({ id: "native:dialog", external: true });
+describe("bundler compatibility helpers", () => {
+  test("reject known native specifiers with the package subpath that replaces them", () => {
+    const plugin = blitsenRollup();
+    plugin.error = message => { throw new Error(message); };
+    expect(() => plugin.resolveId("native:dialog")).toThrow(/import "blitsen\/dialog" instead/);
     expect(blitsenRollup().resolveId("./local.js")).toBeNull();
+
+    const errors = [];
+    blitsenEsbuild().setup({
+      onResolve: (_filter, callback) => errors.push(callback({ path: "native:window" })),
+    });
+    expect(errors[0].errors[0].text).toMatch(/import "blitsen\/window" instead/);
   });
 
-  test("reject an unknown native specifier rather than externalizing it", () => {
+  test("reject an unknown native specifier", () => {
     const errors = [];
     const plugin = blitsenRollup();
     plugin.error = message => { throw new Error(message); };
@@ -72,12 +79,21 @@ describe("bundler plugins", () => {
     expect(() => plugin.resolveId("native:window/extra")).toThrow(/no subpaths/);
   });
 
-  test("webpack externals pass through anything that is not ours", () => {
+  test("webpack refuses native specifiers and passes through anything else", () => {
     const externals = blitsenWebpackExternals();
+    let error;
     let result;
-    externals({ request: "native:window" }, (_error, value) => { result = value; });
-    expect(result).toBe("module native:window");
-    externals({ request: "react" }, (_error, value) => { result = value; });
+    externals({ request: "native:window" }, (received, value) => {
+      error = received;
+      result = value;
+    });
+    expect(error.message).toMatch(/import "blitsen\/window" instead/);
+    expect(result).toBeUndefined();
+    externals({ request: "react" }, (received, value) => {
+      error = received;
+      result = value;
+    });
+    expect(error).toBeUndefined();
     expect(result).toBeUndefined();
   });
 });
