@@ -11,9 +11,10 @@ Run doctor against built output:
 npx blitsen doctor dist
 ```
 
-Errors block export because the scanner found a construct the application cannot recover from.
-Warnings identify missing or narrower behavior that may be guarded by a fallback—or may fail when
-the path executes. Review every warning and test the result in Blitsen.
+Errors block export because the scanner found either a server-root `fetch` whose resource is not
+shipped or an untranspiled source entry. Web-API absences and narrower behavior are warnings: they
+may be guarded by a fallback—or may fail when the path executes. Review every warning and test the
+result in Blitsen.
 
 For a machine-readable report or a different target:
 
@@ -30,18 +31,18 @@ lists individual globals, classes and members.
 | Area | Current support |
 | --- | --- |
 | DOM | Documents, elements, text, fragments, templates, attributes, selectors, mutation observers and common traversal/mutation APIs |
-| Events | Event targets, custom, mouse, keyboard, focus, input, pointer, wheel, error, submit, clipboard and drag events; Windows/macOS pointer lock with relative mouse movement |
-| Window modes | Windows/macOS pointer lock and root-element fullscreen on desktop, with standard promises, state properties and change/error events |
+| Events | Event targets, custom, mouse, keyboard, focus, input, pointer, wheel, error, submit, clipboard and drag events; pointer lock with relative mouse movement where the platform accepts it |
+| Window modes | Pointer-lock methods on every platform and root-element fullscreen on desktop, with standard promises, state properties and change/error events; unsupported platforms reject |
 | Forms | Basic input, textarea, select, option, button and form state; keyboard editing and selection |
 | Layout reads | Bounding rectangles, client/offset geometry, computed style, scrolling, ranges, carets and selection |
 | Scheduling | `requestAnimationFrame`, timeouts and intervals |
 | Networking | Buffered `fetch`, request/response/headers/blob, abort signals, WebSocket and `EventSource` |
 | Workers | Dedicated workers, message channels, structured clone and transferable buffers |
-| Routing | `location`, `history`, hash changes and popstate within the application |
+| Routing | `location`, `history`, hash changes and popstate within the application; document navigation is absent |
 | Styling | Stylesheets, rule source, media queries, CSS support checks and resize observers |
 | Audio | `<audio>` and a focused Web Audio subset |
 | Storage | synchronous durable `localStorage` and realm-scoped `sessionStorage` |
-| Canvas | `<canvas>` with a full 2D context: paths, text, images, gradients, patterns, compositing, `getImageData` and `toDataURL` |
+| Canvas | `<canvas>` with a broad 2D context: paths, text, images, gradients, patterns, compositing, `getImageData` and `toDataURL` |
 | Gamepads | Per-frame `navigator.getGamepads()` snapshots and connection events on Linux, macOS and Windows, with standard mapping and dual-rumble where the device reports it |
 | Notifications | Standard `Notification` construction, permission, close, and lifecycle events on Linux, Windows, eligible packaged macOS apps and launched Android packages; see platform limits below |
 
@@ -51,21 +52,27 @@ lists individual globals, classes and members.
 | --- | --- |
 | WebGL and WebGPU | Not implemented; `getContext("webgl")` answers `null`. Use the 2D context, or `<blitsen-view>` for [GPU output](RECIPES.md#gpu-output) |
 | Canvas shadows and `ctx.filter` | Absent, so a feature test selects a fallback; both need a blur the renderer has none of |
+| Advanced canvas text controls | `letterSpacing`, `wordSpacing`, `fontKerning`, `fontStretch`, `fontVariantCaps` and `textRendering` are absent |
 | `OffscreenCanvas` and `ImageBitmap` | Absent; a `<canvas>` that is never in the document draws, reads back and encodes |
 | WebAssembly | Absent from the standard shipped JavaScript engine |
 | XHR | Use `fetch` |
 | Streams | Responses are buffered; streaming body APIs are absent |
 | FormData, File and FileReader | Absent; use supported request bodies or native file paths |
+| Form reset and constraint validation | `HTMLFormElement.reset()` and `submit()`, reset controls, `validity`, `checkValidity`, `labels` and file inputs are absent; submit with `requestSubmit()` and validate in application code |
 | `DataTransfer.files` and `.items` | Absent; a drop reports absolute filesystem paths in `dataTransfer.paths` |
 | Starting a drag | `draggable`, `dragstart`, `dragend` and dragging out to the desktop are absent; dropping *into* the window works |
 | IndexedDB | Absent; use application-owned durable storage |
+| Object URLs and browser caches | `URL.createObjectURL`, `URL.revokeObjectURL`, `caches` and `cookieStore` are absent |
+| Broadcast and observer APIs | `BroadcastChannel`, `IntersectionObserver`, `PerformanceObserver` and idle callbacks are absent; `ResizeObserver` is supported |
 | SharedWorker and ServiceWorker | Absent; dedicated `Worker` is supported |
 | Browser modal dialogs | `alert`, `confirm`, `prompt` and `print` are absent; use `blitsen/dialog` where available |
 | Cookies | No cookie jar; `document.cookie` is absent |
 | Custom elements and shadow DOM | Absent; `DOMParser` is supported |
+| Constructible stylesheets | `adoptedStyleSheets`, `CSSStyleSheet.replace()`/`replaceSync()` and mutable rule/style objects are absent; linked and inline stylesheets are supported |
+| Document navigation | Hash changes work; assigning `location.href`, `pathname` or `search` throws `NotSupportedError`. `location.assign`, `replace` and `reload`, `window.open`/`close`, and `document.write` are absent |
 | Video and text tracks | Absent; audio is supported |
 | Accessibility tree | Deliberately not exported: screen readers receive no roles, names, focus state or live regions; DOM keyboard focus remains separate and supported |
-| Full IME and complex text editing | `<input>`/`<textarea>` preedit, commit and bounded undo/redo are implemented; `contenteditable`, form reset, surrounding-text deletion and native CJK/RTL workflows remain unverified |
+| Full IME and complex text editing | `<input>`/`<textarea>` preedit, commit and bounded undo/redo are implemented; `contenteditable`, surrounding-text deletion and native CJK/RTL workflows remain unverified |
 | Fullscreen top layer | `document.documentElement.requestFullscreen()` is supported on desktop. Arbitrary-element fullscreen is rejected because Blitsen does not yet promote a subtree into a Fullscreen top layer |
 
 ## Dropped files are paths
@@ -97,9 +104,8 @@ a `cut` to replace what is written; cancel a `paste` to insert it yourself.
 Missing APIs are absent rather than installed as no-op stubs:
 
 ```js
-if ("ResizeObserver" in globalThis) {
-  const observer = new ResizeObserver(handleResize);
-  observer.observe(element);
+if ("Notification" in globalThis) {
+  new Notification("Finished");
 }
 ```
 
@@ -118,7 +124,7 @@ cannot remove unsupported names from `lib.dom.d.ts`; doctor checks the built app
 
 ## Pointer lock and fullscreen
 
-On Windows and macOS, `Element.requestPointerLock()` is available; root-element fullscreen is
+`Element.requestPointerLock()` is installed on every platform; root-element fullscreen is
 available on every desktop. Both it and `document.documentElement.requestFullscreen()` require a
 native pointer or keyboard activation.
 They return promises, update `document.pointerLockElement` or `document.fullscreenElement`, and
@@ -137,13 +143,14 @@ resolution, or refresh-rate selector, so choosing an exclusive mode would be arb
 reconfigure the display. Use the native window API for application-controlled window state, but it
 also intentionally exposes borderless rather than exclusive fullscreen.
 
-Linux and Android expose no pointer lock. Pinned winit cannot provide `Locked` cursor grab on X11,
-so Linux is capability-scoped out rather than sometimes claiming an API its selected backend will
-refuse. Android also has no desktop cursor to lock, and its activity surface already
-uses platform-managed fullscreen/immersive policy. `document.fullscreenEnabled` is false there and
-requests reject with `NotSupportedError`. Physical multi-monitor placement and compositor-specific
-grab behavior still need acceptance on the supported backends; a refused cursor grab rejects rather
-than pretending the lock succeeded. DOM modes temporarily override `native:window` fullscreen,
+Linux and Android reject pointer-lock requests with `NotSupportedError` and dispatch
+`pointerlockerror`; the method's presence is therefore not a platform-support test. Pinned winit
+cannot provide `Locked` cursor grab on X11, and Android has no desktop cursor to lock. Android's
+activity surface already uses platform-managed fullscreen/immersive policy, so
+`document.fullscreenEnabled` is false there and requests reject with `NotSupportedError`. Physical
+multi-monitor placement and compositor-specific grab behavior still need acceptance on the
+supported backends; a refused cursor grab rejects rather than pretending the lock succeeded. DOM
+modes temporarily override `blitsen/window` fullscreen,
 cursor visibility and cursor-grab settings; changes made through the native API while a DOM mode is
 active become the state restored when that DOM mode exits or a document reloads.
 
@@ -222,10 +229,11 @@ input. Static complex text uses Parley/HarfRust shaping; ship `@font-face` files
 metrics must be portable.
 
 **SVG paints** — inline `<svg>`, `<img src="icon.svg">` and CSS `background-image`, as vectors
-rather than as rasterised images. Shapes, paths, `viewBox`, transforms, gradients, dashed strokes,
-`currentColor` and `<text>` all render; `filter`, `mask`, SMIL animation and `<pattern>` fills do
-not, and a `<pattern>` fill additionally leaves a red mark in the frame's corner. `doctor` reports
-those constructs specifically rather than warning about every `<svg>`. SVG `<text>` resolves fonts
+rather than as rasterised images. Focused tests cover basic shapes and paths, sizing, `viewBox`,
+`currentColor`, subtree mutation, subresources and `<text>`; a `<pattern>` fill fails and leaves a
+red mark in the frame's corner. Blitz/usvg accepts further features such as gradients, dashed
+strokes, opacity and clipping, but they do not yet have individual compatibility oracles. `doctor`
+warns on the unsupported constructs it can recognize rather than every `<svg>`. SVG `<text>` resolves fonts
 through a different database from HTML text and can silently find none — see
 [COMPATIBILITY.md](COMPATIBILITY.md#svg) before putting chart labels inside an `<svg>`.
 

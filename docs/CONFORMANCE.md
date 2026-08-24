@@ -11,8 +11,9 @@ bun run --cwd packages/blitsen test:conformance   # or: cargo test -p blitsen-bl
 
 It also runs inside `cargo test --workspace`, so a renderer change cannot land without it.
 
-Everything lives in [`crates/blitsen-blitz/tests/conformance/`](../crates/blitsen-blitz/tests/conformance):
-`conformance.rs` is the harness, `cases/` holds the documents, `goldens/` holds their images.
+[`crates/blitsen-blitz/tests/conformance.rs`](../crates/blitsen-blitz/tests/conformance.rs) is the
+harness. Beside it, [`tests/conformance/`](../crates/blitsen-blitz/tests/conformance) contains the
+`cases/` documents and their `goldens/` images.
 
 ## Two tiers, because they answer different questions
 
@@ -78,8 +79,8 @@ which holds the pinned fonts and the 8x4 red/blue image the image cases probe.
 Two different problems, two different answers.
 
 **Fonts.** Text metrics decide every box below the first line of text, and a CI runner has
-different fonts from a laptop. So the corpus ships the `block-regular`, `block-bold`,
-`block-italic` and `block-ascii` faces, built by
+different fonts from a laptop. So the corpus ships its `block-*` faces — regular, bold, italic,
+ASCII and world coverage, plus a WOFF2 form of the regular face — built by
 [`fixtures/generate.py`](../crates/blitsen-blitz/fixtures/generate.py). Their glyphs are solid
 rectangles one em wide with an ascent of exactly one em and no descent. Every metric a case depends
 on therefore comes out of a committed file, and — because no system fallback paints a filled
@@ -101,17 +102,15 @@ quietly. This is the same two-tier arrangement as the frame determinism gate; se
 Failures write `<case>.golden.png`, `<case>.actual.png` and `<case>.diff.png` (magenta where the two
 disagree) into `target/conformance-divergence`, which CI uploads as an artifact.
 
-Every golden here was recorded on Linux x86-64, and the CI job is the first in the workflow to
-build anything on macOS or Windows. Whether those runners share this fingerprint is therefore an
-open question the job exists to answer, and its first runs there are more likely to surface
-toolchain work than conformance failures. `fail-fast: false` keeps the Linux result readable
-meanwhile.
+Every golden here was recorded on Linux x86-64. The earlier Rust and acceptance jobs already build
+on macOS and Windows; conformance is the later renderer-specific comparison on those runners.
+`fail-fast: false` keeps every platform result readable when one diverges.
 
 ## What is in the corpus
 
-Eleven of the twelve cases are correctness oracles. `react-vite` is a change detector, and says so.
-The remaining `defect-*` case is an oracle too — its numbers came from the CSS and were confirmed
-against a browser — but what it gates is that Blitz still gets it wrong. `absolute-auto-margins`
+Twelve of the fifteen cases are correctness oracles. `react-vite` is a change detector, and says
+so. The two `defect-*` cases are oracles too — their numbers came from the CSS and were confirmed
+against a browser — but what they gate is that Blitz still gets them wrong. `absolute-auto-margins`
 was the second of those until the Blitz pin moved past the Taffy fix for it, and is now an ordinary
 oracle with a golden of the centred box.
 
@@ -129,6 +128,9 @@ oracle with a golden of the centred box.
 | `react-vite` | Real React output: centred shell, flex card row, borders, radii, wrapping | Change detector |
 | `absolute-auto-margins` | Auto margins against a `max-width`-clamped used width | Oracle |
 | `defect-initial-containing-block` | `absolute`/`fixed` insets resolved against the viewport | Known defect |
+| `paint-suppression` | `display`, `visibility` and opacity suppressing the right boxes and paint | Oracle |
+| `unservable-subresource` | A failed subresource cannot keep the document blocked forever | Oracle |
+| `defect-filter-ignored` | CSS filters reaching the renderer but not affecting its pixels | Known defect |
 
 Every golden image in this repository was rendered on the machine that recorded it and then looked
 at. They are not recordings of whatever the renderer happened to do.

@@ -87,7 +87,7 @@ localStorage.setItem("lastWorkspace", workspace.id);
 const previous = localStorage.getItem("lastWorkspace");
 ```
 
-Large values are stored separately, so opening an application does not read the entire store. For
+Each value is stored as its own record, so reading one key does not read the entire store. For
 arbitrary files or a queryable database schema, the standard runtime still exposes no general
 filesystem API. That case requires a native addon; use `blitsen/app` to choose its directory:
 
@@ -169,8 +169,9 @@ Use side-loaded assets when content needs to change without relinking the execut
 npx blitsen build dist --assets side-loaded --out MyApp
 ```
 
-Distribute `MyApp` and `MyApp.assets/` together. On macOS the asset directory is placed inside the
-application bundle beside its executable.
+Distribute `MyApp` and `MyApp.assets/` together. On macOS, when the build produces a `.app` bundle
+(pass `--icon`, `--bundle-id` or `--app-version`), the asset directory is placed inside the bundle
+beside its executable.
 
 ## Print third-party notices
 

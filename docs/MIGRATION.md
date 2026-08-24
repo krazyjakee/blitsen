@@ -19,7 +19,7 @@ npx blitsen build
 ## What changes
 
 Your exported executable is smaller, and it is the only file. Measured on Linux x64 with a bare
-application, 144.7 MB became 38.1 MB — 3.46× — with the JavaScript engine linked in rather than
+application, 131.6 MB became 38.1 MB — 3.46× — with the JavaScript engine linked in rather than
 shipped beside it. Your own numbers will differ with your application and platform; run
 `blitsen build` and compare.
 
@@ -57,8 +57,8 @@ application renders. This is checked rather than asserted:
 `bun run --cwd packages/blitsen test:hosts` builds one project on both runtimes and fails if the
 CLI's output, its config handling, its refusals, the files it produces, or the exported
 application's own self-check differ in any way except size. It also replays the committed frame
-trace on the new runtime and compares all 120 frames of DOM, layout and pixel digests with what
-the old one recorded.
+trace on the new runtime and compares all 120 frames of DOM digests with what the old one
+recorded — layout and pixel digests too, when the rasterizer fingerprint matches the golden's.
 
 ## The two things to know
 

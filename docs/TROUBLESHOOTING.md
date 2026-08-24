@@ -154,7 +154,8 @@ npx blitsen doctor dist --target win32-x64
 ```
 
 Dialogs are Linux-only in this release; the single-instance lock uses a Unix socket or Windows
-named pipe; app, window, dialog and clipboard native modules are absent on Android. See
+named pipe; the app, window, dialog, clipboard, tray and menu native modules are absent on
+Android. See
 [Native APIs](NATIVE-APIS.md).
 
 ## macOS notifications need an application bundle identity
@@ -178,6 +179,8 @@ Call window-dependent APIs from the `load` event or later. Document scripts can 
 native window exists:
 
 ```js
+import windowApi from "blitsen/window";
+
 addEventListener("load", () => {
   windowApi.setSize?.(1024, 720);
 });

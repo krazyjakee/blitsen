@@ -30,17 +30,16 @@ Status values: **open** (reproduced, unfiled), **filed** (upstream issue exists)
 | G5 | SVG paints nothing in Blitsen's build | fixed | `crates/blitsen-blitz/src/tests/svg.rs` | The `svg` feature it needed compiles upstream now (G7), so Blitsen enables it: inline `<svg>`, `<img src="*.svg">` and `background-image` all paint, as vectors. What is left unpainted is G16. See below |
 | G6 | Accumulating line-height, antialiasing and vertical spacing differences | open, low priority | `spikes/s6/results/metrics.tsv` | Needs a tolerance corpus before it can be actioned |
 | G7 | `blitz-dom`'s `svg` feature does not compile at the pinned revision | fixed | The build, which now compiles it | [blitz#687](https://github.com/DioxusLabs/blitz/issues/687); upstream re-adopted `svg` as a default feature and moved to usvg 0.48, and the pin moved past it. See below |
-| G8 | `@keyframes` animations never move | withdrawn | `crates/blitsen-blitz/src/lib.rs::tests::animations_stand_still_until_the_host_supplies_a_clock` | Not a Blitz gap: Blitz animates keyframes correctly. Blitsen was resolving every frame at time zero; see below |
+| G8 | `@keyframes` animations never move | withdrawn | `crates/blitsen-blitz/src/tests/stylesheets.rs::animations_stand_still_until_the_host_supplies_a_clock` | Not a Blitz gap: Blitz animates keyframes correctly. Blitsen was resolving every frame at time zero; see below |
 | G9 | `filter` and `backdrop-filter` paint nothing at all | open | `crates/blitsen-blitz/tests/conformance/cases/defect-filter-ignored.html` | Not Blitz: `blitz-paint` builds the filter layer and both anyrender backends drop it. `clip-path` and `mask-image` do work. See below |
 | G10 | Changing checkedness does not invalidate the cascade, so a `:checked` rule never repaints | open | `blitz-dom`'s `stylo.rs`, `document.rs` and `events/pointer.rs` at the pin; measured in pixels | Blitz's own click on its own checkbox has it too; see below |
 | G11 | A subresource whose handler never completes blocks painting for the life of the document | open | `crates/blitsen-blitz/tests/conformance/cases/unservable-subresource.html` | `NetProvider`'s only failure signal is dropping the handler, which is also the thing that blocks. Worked around in `resources.rs`; see below |
 | G12 | Blitz has no `[hidden]` user-agent rule | withdrawn | `docs/COMPATIBILITY.md`, "Rendered text, box reads and scrolling" | It has the rule. The probe that said otherwise put an author `display: block` on the element, which correctly wins the cascade |
 | G13 | Link-ness never reaches `ElementState`, so the style-sharing cache hands one anchor's style to another | open | `crates/blitsen-blitz/src/tests/ua.rs::only_an_anchor_with_an_href_is_painted_as_a_link` | stylo's cascade layer: `:any-link` and `:link` are matched ad hoc in `blitz-dom`'s `stylo.rs`, so two sibling anchors of opposite kinds are sharing candidates. Same shape as G10. See below |
-
 | G14 | A replaced element panics in layout the moment it carries a custom widget | fixed | `crates/blitsen-blitz/src/tests/canvas.rs::canvas_survives_carrying_a_custom_widget` | [blitz#706](https://github.com/DioxusLabs/blitz/issues/706), fixed by [blitz#719](https://github.com/DioxusLabs/blitz/pull/719). The fork that carried the patch is retired and the workspace has no `[patch]` section left (#138). See below |
-| G17 | SVG `<text>` is resolved against a font database that can be empty on a host where HTML text renders | open | `crates/blitsen-blitz/src/tests/svg.rs::text_inside_an_svg_is_painted_as_glyphs_wherever_the_host_has_one`; GitHub's Linux runner | `blitz-dom` hands usvg a `fontdb` built by `load_system_fonts()`, while HTML text is shaped by Parley through the platform's own font discovery. The two disagree, and where they do the text vanishes silently. See below |
-| G16 | An SVG paint the renderer cannot convert marks the frame's corner rather than the element | open | `crates/blitsen-blitz/src/tests/svg.rs::an_unsupported_pattern_fill_marks_the_frame_corner_rather_than_the_element` | Not Blitz: `anyrender_svg`'s error handler fills the node's bounding box under the *identity* transform. A `<pattern>` fill anywhere leaves a half-transparent red box at 0,0. See below |
 | G15 | `pointer-events` accepts only `auto` and `none`, so `all` is dropped and the element inherits | open | `crates/blitsen-blitz/src/tests/stylesheets.rs::an_element_that_declares_it_takes_hits_inside_one_that_does_not_is_hit` | stylo's cascade layer: the other nine values are `#[cfg(feature = "gecko")]`, which needs Gecko's bindings and cannot be enabled by an embedder. Worked around in `pointer_events.rs`; see below |
+| G16 | An SVG paint the renderer cannot convert marks the frame's corner rather than the element | open | `crates/blitsen-blitz/src/tests/svg.rs::an_unsupported_pattern_fill_marks_the_frame_corner_rather_than_the_element` | Not Blitz: `anyrender_svg`'s error handler fills the node's bounding box under the *identity* transform. A `<pattern>` fill anywhere leaves a half-transparent red box at 0,0. See below |
+| G17 | SVG `<text>` is resolved against a font database that can be empty on a host where HTML text renders | open | `crates/blitsen-blitz/src/tests/svg.rs::text_inside_an_svg_is_painted_as_glyphs_wherever_the_host_has_one`; GitHub's Linux runner | `blitz-dom` hands usvg a `fontdb` built by `load_system_fonts()`, while HTML text is shaped by Parley through the platform's own font discovery. The two disagree, and where they do the text vanishes silently. See below |
 | G18 | An opacity on an image paint aborts the process rather than drawing | open | `packages/blitsen/test/native-harness/canvas.mjs`, the half-transparent `drawImage` | anyrender backend: `vello_common`'s encoder reaches `unimplemented!("Applying opacity to image commands")`, which is a panic across the native boundary. Worked around in `canvas/wire.rs`; see below |
 | G19 | A compose function applies outside its own layer's clip | fixed | `crates/blitsen-blitz/src/tests/canvas.rs::a_destructive_composite_erases_the_canvas_and_not_the_page_behind_it` | anyrender backend: a `Copy` or `Clear` layer clipped to a rectangle cleared the whole surface. Gone at the `111ed2f7` pin; the encoder already scoped its layers correctly and needed no change. See below |
 
@@ -104,7 +103,7 @@ s6 images were made.
 
 **The last paragraph of this entry used to say it was unreachable through Blitsen, because Blitsen
 had no net provider. That is no longer true.** The runtime installs `blitz::net::Provider`
-(`crates/blitsen-host/src/native_window.rs`), which loads a `<link>` stylesheet off the frame thread, and the
+(`crates/blitsen-host/src/native_window/session.rs`), which loads a `<link>` stylesheet off the frame thread, and the
 dev server reloads linked sheets rather than inlining them. So the precondition — a sheet that
 lands *after* the first style resolution — is now something an ordinary application can hit. What
 has not been done is measuring whether it then reproduces: the renderer tests use
@@ -151,25 +150,25 @@ of the controls:
   `:any-link { cursor: pointer }` (`ua.css`).
 - **`:disabled` never appears in a rule**, so a disabled control paints identically to a live one.
   The pseudo-class itself matches fine.
-- **`fieldset` and `legend` have no rules**, so a fieldset is inline and borderless and its legend
-  runs into the contents on one line.
+- **`fieldset` and `legend` were missing rules at the older pin.** The current Blitz sheet supplies
+  their block, border, margin and padding baseline, so Blitsen no longer duplicates it.
 - **Every `<a>` is coloured and underlined**, including one with no `href`.
 - **`<select>`, `<meter>` and `<progress>` paint nothing at all** — no box, no border, no text — and
   `input[type=range|color|number]` collapse to a four-pixel bordered box with no widget and no value.
 - **`::placeholder` renders nothing** and `:placeholder-shown` is hardcoded to `false`
   (`stylo.rs`); **`:focus-visible` is hardcoded to `false` too**, so nothing but `input` and
   `textarea` — which use `:focus` — can show a focus ring.
-- **`<table border="1">` draws no borders.** The `border` attribute is not one of the presentation
-  attributes `stylo.rs` maps, and the sheet's rules for it are keyed on Gecko's
+- **`<table border="1">` draws no borders.** `stylo.rs` maps `border` for images, objects and image
+  inputs but deliberately not tables, whose sheet rules are keyed on Gecko's
   `:-moz-table-border-nonzero`, which is not implemented — so they can never match. (The `[frame]`
   and `[rules]` rules beside them are ordinary attribute selectors and do work.) `cellpadding` and
   `cellspacing` are not mapped either.
 - **A closed `<details>` still shows bare text children**, because the rule that hides them can only
   reach elements.
 
-The first four, plus `textarea`'s `white-space: pre-wrap`, are pure cascade and now ship in
-`crates/blitsen-blitz/src/ua.rs`, appended after Blitz's own sheet and below anything an author
-writes. The rest need a widget or engine support before a rule would mean anything, and are left
+Control cursors, disabled styling, non-link anchors and `textarea`'s `white-space: pre-wrap` are
+pure cascade and now ship in `crates/blitsen-blitz/src/ua.rs`, appended after Blitz's own sheet and
+below anything an author writes. The rest need a widget or engine support before a rule would mean anything, and are left
 alone deliberately: a UA rule for a control nobody paints is a lie in a stylesheet.
 
 ## G5 — SVG paints, and what it does not paint is one list
@@ -187,13 +186,11 @@ the rest of the frame. So an SVG is *vector* output rather than a rasterised ima
 at any window scale. `<img src="icon.svg">` and `background-image: url(icon.svg)` work for the same
 reason and take the intrinsic size the file declares.
 
-What paints and what does not is measured rather than asserted, in
-[`src/tests/svg.rs`](../crates/blitsen-blitz/src/tests/svg.rs): shapes, paths, `viewBox`,
-transforms, fills and strokes including `currentColor` off the CSS cascade, dash patterns, linear
-and radial gradients, `opacity`, a single-path `clipPath` and `<text>` all paint; `filter`, `mask`,
-SMIL animation, `foreignObject`, multi-path `clipPath` and `<pattern>` fills do not. The list is in
-[COMPATIBILITY.md](COMPATIBILITY.md#svg), and `doctor`'s `HTML_SVG` warning now names those
-constructs rather than every `<svg>` element.
+The focused tests in [`src/tests/svg.rs`](../crates/blitsen-blitz/src/tests/svg.rs) measure shapes,
+box sizing, `currentColor`, subtree mutation, SVG subresources, `<text>` and the failing
+`<pattern>` path. Other usvg features such as gradients, dash patterns, opacity and clipping are
+accepted but do not yet have individual compatibility oracles. [COMPATIBILITY.md](COMPATIBILITY.md#svg)
+keeps that distinction, while `doctor`'s `HTML_SVG` warning names the constructs it can recognize.
 
 One more thing worth knowing, and it is G16 rather than this row: a `<pattern>` fill does not merely
 fail to paint, it marks the frame.
@@ -239,7 +236,7 @@ with animation left to run reports itself as owing a frame so the loop keeps tur
 only moves forward, and it comes from the host rather than a wall clock, so replay and the recorded
 frame goldens stay deterministic. See "The animation clock" in [COMPATIBILITY.md](COMPATIBILITY.md).
 
-Reproduction, both halves, in `crates/blitsen-blitz/src/lib.rs`:
+Reproduction, both halves, in `crates/blitsen-blitz/src/tests/stylesheets.rs`:
 `animations_stand_still_until_the_host_supplies_a_clock` and
 `an_inserted_keyframes_rule_animates_with_the_frame_clock`.
 
@@ -267,9 +264,9 @@ happens the diagnostic over-warns on `clip-path` and `mask`.
 `Scene::push_layer` (`convert_filters`, `packages/blitz-paint/src/render.rs`) — the layer, the
 expansion rect and the backdrop filter are all built. It is the backend that drops it:
 
-- `anyrender_vello` 0.13 names both parameters `_filter` and `_backdrop_filter` in `push_layer`
+- `anyrender_vello` 0.14 names both parameters `_filter` and `_backdrop_filter` in `push_layer`
   and ignores them. There is no feature to turn on. That is the **window** renderer.
-- `anyrender_vello_cpu` 0.15 keeps `filter` only behind a `filters` feature that is not in its
+- `anyrender_vello_cpu` 0.16 keeps `filter` only behind a `filters` feature that is not in its
   defaults — so Blitsen, which takes the crate with defaults, compiles it out — and drops
   `backdrop_filter` outright. Even with the feature on, the conversion is suppressed whenever
   `multithreading` is enabled.
@@ -383,8 +380,8 @@ with an intrinsic aspect ratio that only `<canvas>` gets. Measured through Blits
 
 Filed as [blitz#706](https://github.com/DioxusLabs/blitz/issues/706) and **fixed upstream** by
 [blitz#719](https://github.com/DioxusLabs/blitz/pull/719), which took the shape the fork carried and
-went further: `Widget` gained `intrinsic_size()` and `aspect_ratio()`, so a widget can size the
-element it is attached to, and the sizing body it shares with `<canvas>` is factored into
+went further: `Widget` gained `intrinsic_sizes()`, whose result carries width, height and ratio, so
+a widget can size the element it is attached to, and the sizing body it shares with `<canvas>` is factored into
 `default_object_size`. The pin has moved past it, the fork is retired, and the workspace has no
 `[patch]` section at all any more — which closes [#138](https://github.com/krazyjakee/blitsen/issues/138)
 as well. What that is worth beyond the panic: a checkout, CI and a release all resolve `blitz*`

@@ -246,7 +246,7 @@
     "ReadableStream", "WritableStream", "TransformStream",
     "FormData", "File", "FileReader",
     "OffscreenCanvas", "ImageBitmap", "createImageBitmap", "OffscreenCanvasRenderingContext2D",
-    "WebGLRenderingContext", "WebGL2RenderingContext", "GPUCanvasContext",
+    "WebGLRenderingContext", "WebGL2RenderingContext", "GPUCanvasContext", "RTCPeerConnection",
     "webkitAudioContext", "HTMLMediaElement",
     "alert", "confirm", "prompt", "print",
     "open", "close", "navigation",

@@ -3593,6 +3593,13 @@
       "pattern": "(?<![.\\w$])GPUCanvasContext\\b"
     },
     {
+      "api": "RTCPeerConnection",
+      "kind": "global",
+      "status": "absent",
+      "code": "WEB_GPU",
+      "pattern": "(?<![.\\w$])RTCPeerConnection\\b"
+    },
+    {
       "api": "Audio",
       "kind": "global",
       "status": "implemented",
@@ -5026,7 +5033,13 @@
       "api": "os.batteries",
       "module": "os",
       "member": "batteries",
-      "status": "implemented"
+      "status": "implemented",
+      "condition": {
+        "platforms": [
+          "android"
+        ],
+        "reason": "Android exposes battery state through a different power service, so the desktop sysinfo-backed member is absent rather than returning an invented value."
+      }
     },
     {
       "api": "os.locale",
@@ -5123,8 +5136,8 @@
     },
     "WEB_GPU": {
       "severity": "warning",
-      "message": "WebGL and WebGPU are not implemented.",
-      "guidance": "Remove the GPU-web API path or replace it with a native addon/viewport.",
+      "message": "WebGL, WebGPU and WebRTC are not implemented.",
+      "guidance": "Remove that browser API path or replace it with a native addon/viewport.",
       "extra": null
     },
     "WEB_MEDIA": {

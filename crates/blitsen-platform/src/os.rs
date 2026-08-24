@@ -12,7 +12,7 @@
 //! that does not report its kernel version is not an error, and inventing a
 //! string for it would be worse than saying so.
 //!
-//! Present on Android, and the only `native:` module in this crate that is. The
+//! Present on Android, and the only `blitsen/*` module in this crate that is. The
 //! reason is that the paragraph above already answers the question Android asks.
 //! `sysinfo` reads the same `/proc/stat`, `/proc/meminfo` and `/proc/mounts`
 //! there as on any other Linux, so [`cpu`] and [`memory`] are the same facts

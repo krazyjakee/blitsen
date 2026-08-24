@@ -25,7 +25,7 @@
                   │ window   │   JS object model over the DOM
                   │ document │   event system
                   │ Element  │   web API compatibility layer
-                  │ events   │   native: module namespace
+                  │ events   │   blitsen/* native modules
                   └────┬─────┘
                        │
         ┌──────────────▼───────────────┐
@@ -38,7 +38,7 @@
         │                              │   input · net · fs · assets
         └──────────────┬───────────────┘
                        ▼
-                  Native window
+             Native window / Android activity
 ```
 
 The project **is the bridge**. Blitz supplies rendering; the JavaScript engine supplies
@@ -50,10 +50,15 @@ execution; the Rust platform layer supplies the OS. Everything novel lives betwe
 | --- | --- | --- |
 | HTML parsing, DOM tree, CSS cascade, layout, paint | Blitz (Stylo, Taffy) | Upstream; patches where needed |
 | JS execution, modules, event loop primitives | QuickJS-ng (P2, linked in); Bun / JavaScriptCore (P1, via Node-API) | Upstream; consumed through the `JsEngine` trait |
-| DOM ↔ JS bindings, event system, web API shims, `native:` modules | — | **Entirely ours** |
-| Windowing, GPU surface, input, audio, filesystem, networking | winit, wgpu, rodio/cpal, tokio | Thin Rust wrappers, ours |
+| DOM ↔ JS bindings, event system, web API shims, `blitsen/*` modules | — | **Entirely ours** |
+| Windowing, GPU surface, input, audio, filesystem, networking | winit, wgpu, web-audio-api/Symphonia/cpal, tokio | Thin Rust wrappers, ours |
 | Application bundling, transpilation, module resolution | The user's own tool (Vite, Webpack, Bun, …) | **Nothing. Deliberately not ours** (§16.6) |
 | Ingest, link, package, platform distribution | — | **Entirely ours** (§10, §11) |
+
+The workspace separates those responsibilities into `blitsen-core`, `blitsen-dom`, `blitsen-js`,
+`blitsen-quickjs`, `blitsen-host`, `blitsen-blitz`, `blitsen-platform`, `blitsen-node` and
+`blitsen-runtime`. `blitsen-android` supplies the Android `cdylib`/`android_main` entry, while the
+small publishable `blitsen` crate exposes the project version.
 
 ---
 
@@ -70,8 +75,8 @@ production native integration — `bun:ffi` remains marked experimental. Node-AP
 ABI-stable by design, which matters for the third-party addon story later.
 
 ```js
-import { Engine } from "blitsen:native";   // a .node addon under the hood
-
+import { createRequire } from "node:module";
+const { Engine } = createRequire(import.meta.url)("./blitsen.node");
 const app = new Engine();
 app.openDirectory({ entrypoint: "./index.html" });
 ```
@@ -90,7 +95,7 @@ produces a single file containing Bun/JSC, the Rust engine, Blitz, the app and i
 with no Chromium, Electron or OS WebView. That is enough to hit M3 (Pong) without ever having
 written an embedding layer.
 
-**Cost:** the full Bun runtime is in the export (~60–100 MB).
+**Cost:** the measured Phase 1 export is about 132 MB installed (about 50 MB compressed).
 
 ### Phase 2 — Blitsen is the host
 
@@ -145,8 +150,8 @@ Work that must not block the frame goes off-thread and returns through a queue d
 defined point in the turn:
 
 - **I/O, `fetch`, sockets, filesystem** — tokio runtime on a thread pool.
-- **Asset decode** (images, audio, fonts, glTF) — rayon pool; results uploaded on the main
-  thread.
+- **Network and audio decode** — the shared tokio pool. Images and fonts arrive through Blitz's
+  net provider; results join the main-thread frame pipeline.
 - **Web Workers** — separate JS contexts on their own threads, structured-clone message
   passing only. No shared DOM access, exactly as on the web.
 
@@ -236,11 +241,10 @@ Document ──┘
   catchable error rather than silent corruption of an unrelated node.
 - **Identity is preserved**: two lookups of the same node return the same JS object, so
   `a === b`, framework-owned properties and `WeakMap` keying behave as authors expect. A document
-  context strongly interns wrappers over the native `NodeId → JsWeakRef` table. The strong context
-  cache is required because frameworks attach listener/fiber state directly to connected wrappers;
-  M3b demonstrated that weak-only wrappers can be reclaimed in a compiled Bun host.
-- The context cache is cleared on document replacement. Detached wrappers may therefore remain
-  until that boundary in v0; bounded context lifetime is preferred over observable identity loss.
+  context and the native `NodeId → JsWeakRef` table both hold weak references. A
+  `FinalizationRegistry` with a token removes a cache entry only when the wrapper it names dies, so
+  a detached node can be reclaimed with its last application reference without allowing a stale
+  finalizer to remove a newer wrapper.
 
 ### v0 surface
 
@@ -265,14 +269,14 @@ Node / Element
   getBoundingClientRect
 ```
 
-`innerHTML` requires the parser to be reachable as a fragment parser, not only at document
-load. Confirm early — a surprising amount of real-world JS depends on it.
+`innerHTML` uses Blitz's parser as a fragment parser, not only at document load.
 
 ### v0 script loading subset
 
 Directory mode collects script elements after HTML parsing and executes supported entries in
 document order. Inline and local relative `src` scripts are supported, including `type="module"`
-graphs resolved by Bun. Until incremental parsing and networking land, `async` and `defer` are
+graphs resolved by Blitsen against the `blitsen://app/` origin ([MODULES.md](MODULES.md)). Until
+incremental parsing and networking land, `async` and `defer` are
 accepted but deliberately use the same deterministic post-parse document order. Non-JavaScript
 data-script types are skipped and remote script URLs are rejected. Export ingest normalizes local
 server-root HTML/CSS references into paths relative to each staged file, allowing Vite's default
@@ -319,10 +323,10 @@ OS input (winit)
    → default action (focus change, scroll, text input) unless preventDefault()
 ```
 
-v0 events: `click`, `mousedown`, `mouseup`, `mousemove`, `wheel`, `keydown`, `keyup`, `resize`, `load`.
-`Event`, `MouseEvent` and `KeyboardEvent` carry the properties authors actually read
-(`target`, `currentTarget`, `key`, `code`, `clientX/Y`, `button`, `preventDefault`,
-`stopPropagation`).
+The event surface includes mouse, wheel and keyboard events; the pointer-event model and pointer
+capture; focus, input, composition and submit events; clipboard and drag events; history, worker,
+WebSocket, gamepad and media-query events; `resize`, `load`, `error` and `CustomEvent`. Event
+objects carry the standard properties for their family plus propagation and cancellation state.
 
 A listener that throws must not corrupt dispatch: exceptions are caught per listener, reported,
 and dispatch continues — as on the web.
@@ -446,10 +450,10 @@ and promised an `Image` constructor that did not exist. One source of truth, or 
 
 What remains here is what a table cannot express: why a thing sits where it does.
 
-| Not implemented | Backed by, when it is |
+| Capability | Status or backing |
 | --- | --- |
-| `WebSocket` | tokio-tungstenite |
-| `Audio`, basic Web Audio | rodio / cpal |
+| `WebSocket` and `EventSource` | Implemented over tokio-tungstenite and reqwest |
+| `<audio>` and basic Web Audio | Implemented over web-audio-api, with Symphonia decoding and cpal output |
 | Starting a drag out to the desktop | winit, which reports a drag that arrives and cannot start one. Clipboard events and dropping *into* the window are implemented, over arboard and winit. |
 | Android Gamepad API | gilrs has no Android backend; the globals and navigator member are absent there |
 | WebGL / WebGPU | wgpu through the viewport |
@@ -459,8 +463,8 @@ Deliberately absent, with no plan: same-origin policy, CSP, cookies, **document 
 service workers, `SharedWorker`, `BroadcastChannel`, `document.write`, quirks mode. The three
 after navigation are all about sharing something between documents, and there is one document. `history` and `location` do exist, but as an
 in-memory session history at a synthetic address — enough for a client-side router, and nothing
-that navigates. `navigator` answers identity (`userAgent`, `platform`, `language`) and no
-capability. `localStorage` is the synchronous standard facade over an atomic keyed-file store in
+that navigates. `navigator` answers identity (`userAgent`, `platform`, `language`) and exposes the
+desktop Gamepad API where its backend is installed. `localStorage` is the synchronous standard facade over an atomic keyed-file store in
 the application's platform data directory; `sessionStorage` belongs only to the current realm.
 The backing store reads values individually rather than loading an application's whole durable
 dataset at startup, and it adds no database dependency.
@@ -532,9 +536,9 @@ This is enforced rather than reviewed. `api-manifest.mjs` parses the bootstrap a
 it is and refuses to emit a manifest that disagrees with it; the native harness asserts every API
 the manifest calls absent is genuinely `undefined` against a real bridge context; and `doctor`
 reads the same manifest, so a diagnostic cannot describe a capability the runtime does not have.
-Enforcement was worth building: it found the Phase 1 host leaking `Worker`, `WebSocket`,
-`FormData`, `ReadableStream`, `MessageChannel`, `alert` and more into every application, all of
-which would have vanished at the Phase 2 engine swap.
+Enforcement was worth building: it found the Phase 1 host leaking APIs outside the declared
+profile. Some of those findings — `Worker`, `WebSocket` and `MessageChannel` — were implemented
+before the engine swap; others, including `FormData`, `ReadableStream` and `alert`, remain absent.
 
 ### The 2D context
 
@@ -654,57 +658,45 @@ one that will never be asked for is waiting forever.
 
 ## 9. Native API layer
 
-Capability the web does not have, under a namespace that makes the non-portability obvious at
+Capability the web does not have, under package subpaths that make the non-portability obvious at
 the import site:
 
 ```js
-import { Window }    from "native:window";
-import { clipboard } from "native:clipboard";
-import { openFile }  from "native:dialog";
-import { app }       from "native:app";
+import windowApi from "blitsen/window";
+import clipboard from "blitsen/clipboard";
+import dialog from "blitsen/dialog";
+import app from "blitsen/app";
 ```
 
 | Module | Surface |
 | --- | --- |
-| `native:app` | app-data/cache/config paths, single-instance lock, restart, quit request, suspend/resume, file associations and `myapp://` protocol handling |
-| `native:window` | create, resize, fullscreen, borderless, always-on-top, transparency, cursor control, monitor enumeration, DPI |
-| `native:dialog` | open/save file, folder picker, message box |
-| `native:clipboard` | text, images, arbitrary MIME |
-| `native:tray` | tray icon and its context menu |
-| `native:menu` | the application menu: macOS main menu, Windows menu bar. Separate from `native:tray` because it must exist without a status item (#249) |
-| `native:notify` | desktop notifications |
-| `native:input` | raw keyboard/mouse state, gamepad device-change notification and dual-rumble; snapshots remain the standard `navigator.getGamepads()` surface |
-| `native:hid` | deliberately raw HID reports for non-keyboard/pointer devices: desktop enumeration, opaque device ids, input/output/feature reports and hot-plug, with the protected Generic Desktop collections refused. The Android half [S10](../spikes/s10/README.md) specified is the same module over `UsbManager`: enumeration without a grant, an `open()` that stays unsettled while the system permission dialog is up, and reports through USB control and interrupt transfers (#248) |
-| `native:os` | processor, memory, storage volumes, OS identity, batteries and locale. Displays stay `native:window`'s `monitors`, and idle time is absent by decision (#98) |
+| `blitsen/app` | app-data/cache/config paths, single-instance lock and relaunch |
+| `blitsen/window` | resize, fullscreen, decorations, minimize/maximize, always-on-top, cursor control and monitor enumeration; creating windows and transparency are absent |
+| `blitsen/dialog` | open/save file, folder picker and message box on Linux/BSD desktop targets |
+| `blitsen/clipboard` | text, HTML and images |
+| `blitsen/tray` | tray icon and its context menu |
+| `blitsen/menu` | the application menu: macOS main menu, Windows menu bar. Separate from `blitsen/tray` because it must exist without a status item (#249) |
+| `blitsen/notify` | desktop and Android notifications |
+| `blitsen/input` | raw keyboard/mouse state, gamepad device-change notification and dual-rumble; snapshots remain the standard `navigator.getGamepads()` surface |
+| `blitsen/hid` | deliberately raw HID reports for non-keyboard/pointer devices: desktop enumeration, opaque device ids, input/output/feature reports and hot-plug, with the protected Generic Desktop collections refused. The Android half [S10](../spikes/s10/README.md) specified is the same module over `UsbManager`: enumeration without a grant, an `open()` that stays unsettled while the system permission dialog is up, and reports through USB control and interrupt transfers (#248) |
+| `blitsen/os` | processor, memory, storage volumes, OS identity, batteries and locale. Displays stay `blitsen/window`'s `monitors`, and idle time is absent by decision (#98) |
 
-**The rule: `native:` is additive, never a superset.** Anything the Node surface already names
-keeps its Node name — `process.argv`, `process.execPath`, `process.exit`, `node:os` for CPU /
-memory / platform / arch / username, `node:fs`, `node:child_process`, `node:net`, `node:dgram`,
-`bun:sqlite`. A `native:` module exists only for capability that has no Node spelling at all. This
-is what keeps existing packages working unmodified, and it is why there is no `native:fs` or
-`native:net`: filesystem watching is `node:fs.watch` and raw sockets are `node:net`/`node:dgram`.
-Where a genuine gap remains (memory-mapped buffers, raw HID), it gets a narrowly named module of
-its own rather than a parallel re-spelling of a module Bun already ships. Raw HID is the first
-worked example: [S10](../spikes/s10/README.md) assigns it to `native:hid`, explicitly outside
-`native:input`, and records the platform permission and protected-device boundary.
+The shipped runtime has no Node or Bun builtins and refuses `node:*` and `bun:*` specifiers. Native
+capabilities therefore live only in the focused `blitsen/*` modules; there is no parallel
+`blitsen/fs` or `blitsen/net` surface. Raw HID is deliberately separate from `blitsen/input`, and
+[S10](../spikes/s10/README.md) records its platform permission and protected-device boundary.
 
-The rule reads against a host that ships Node's modules, which is what Phase 1 did. The shipped
-Phase 2 runtime implements none of them and refuses `node:*` at resolution (COMPATIBILITY.md,
-"Node compatibility in the shipped runtime"), so for the facts `node:os` would have named there is
-no Node spelling left to keep and `native:os` is the whole API — which is what that section's
-Phase 1 → Phase 2 table already routes `node:os` facts to. This is the rule applied, not waived:
-the test is whether the *shipped runtime* has another word for the thing.
-
-The rule also has a Phase 2 cost argument behind it. Once the embedded host replaces Bun (§3),
-every Node module the design leans on becomes ours to supply — deferred work, not avoided work.
-A `native:` module that duplicates one is that work done twice.
+These are real npm subpaths which an ordinary bundler resolves before the runtime sees them. The
+runtime resolver has no builtin-module exception for the older `native:*` spelling; leaving one in
+the built graph is an unresolved bare import.
 
 **The escape hatch is a first-class feature.** `.node` addons load at runtime — in development
 and from an exported executable — so users write Rust/C/C++ extensions and reach them from
 application code. Node-API's ABI stability is what makes this a durable promise rather than a
 version-locked one.
 
-A document script loads an addon through `require`, not through the ESM graph. Bun rejects
+A document script in an addon-carrying Phase 1 export loads the addon through `require`, not through
+the ESM graph. Bun rejects
 `import physics from "./box2d.node"` with *"To load Node-API modules, use require() or
 process.dlopen instead of import"*, and a Phase 2 host that resolved `.node` as a module would
 have to invent a semantics Node does not have. The spelling is therefore:
@@ -774,7 +766,7 @@ that, and duplicating it would make Blitsen a competitor to Vite instead of a ta
 | ② **Scan** | Static analysis of the bundle for web API usage; anything the target runtime lacks is reported (`blitsen doctor`, and as a build error or warning). |
 | ③ **Collect** | Hash and collect the reachable assets. Embedded in the binary or laid out beside it, per config. |
 | ④ **Link** | Runtime + application bundle + assets → one executable. |
-| ⑤ **Package** | Platform artifacts around the linked executable: icon, Linux `.desktop` entry and optional D-Bus `.service`, Windows application manifest, macOS `.app` bundle, and the signing hook. |
+| ⑤ **Package** | Platform artifacts around the linked executable: icon, Linux `.desktop` entry and optional D-Bus `.service`, Windows application manifest, macOS `.app` bundle, Android APK, and the signing hook. |
 
 - **Phase 1** step ④ is `bun build --compile` with the Rust engine as an embedded `.node` addon.
   Bun already compiles JS/TS — and HTML entrypoints — into standalone executables, so this path
@@ -791,14 +783,14 @@ that, and duplicating it would make Blitsen a competitor to Vite instead of a ta
   final bytes, which lets the step ⑤ hook replace the ad-hoc signature with a distribution identity
   and pass `codesign --verify --strict`. The hook still runs last on every platform; an Authenticode
   certificate legitimately follows the PE trailer, so readers find rather than assume the trailer.
-  Windows CI still has no certificate with which to run `signtool` over a real export; that is a
-  known distribution-test gap, not evidence that the Authenticode path has executed.
+  Release CI runs `signtool` over the published Windows runtime artifacts when its certificate is
+  configured; signing a complete exported application remains a distribution-test gap.
   This is what an export links into now that the
-  platform packages carry the Phase 2 runtime, and it is why an ordinary export is 37 MB rather
-  than 145 MB (PRODUCT.md §9).
+  platform packages carry the Phase 2 runtime, and the current checkpoint is about 58 MB rather
+  than the roughly 132 MB Phase 1 export (PRODUCT.md §9).
 
   One thing sends an export back to Phase 1: a carried `.node` addon, because Node-API is Bun's to
-  provide and Blitsen's own runtime has none (§12). It is decided from what the export collected
+  provide and Blitsen's own runtime has none (§9). It is decided from what the export collected
   and reported in step ③ along with what the copy of Bun costs, because an executable that is
   smaller and does not start is not smaller.
 
@@ -861,10 +853,10 @@ opens them in place. Embedded is the default because single-file distribution is
 claim; side-loaded exists for patchable assets and for media too large to justify carrying in the
 binary.
 
-Export is reproducible: the same input directory, output path, working directory, Bun version and
+Export is reproducible: the same input directory, output path, working directory, runtime and
 platform produce a byte-identical executable. Staging therefore lives at a stable path derived
-from the output path rather than in a randomly named temporary directory — `bun build --compile`
-records the compiled entrypoint's path inside the executable.
+from the output path rather than in a randomly named temporary directory. A Phase 1 addon export
+also pins Bun because `bun build --compile` records the compiled entrypoint's path.
 
 ### Package and signing hooks
 
@@ -879,6 +871,10 @@ hosts; signing and notarisation still require the target platform or an external
 | Linux | `<name>.desktop` with absolute `Exec` and `Icon`, plus the PNG or SVG icon; an identified build also writes matching `<id>.desktop` and `<id>.service` activation inputs |
 | Windows | `<name>.exe.manifest` (`asInvoker`, per-monitor-v2 DPI, UTF-8 code page, `supportedOS` for 8.1 and 10/11) and `<name>.ico` |
 | macOS | `<name>.app/` containing `Contents/MacOS/<name>`, `Info.plist`, `PkgInfo` and `Resources/<name>.icns`; side-loaded assets move into `Contents/MacOS/` with the executable |
+
+`blitsen build --android` is a separate APK path rather than a seventh desktop target: it builds
+the `blitsen-android` shared library, packages the application assets and activation bridge into a
+signed APK, and uses Android's activity surface instead of a desktop executable wrapper.
 
 One square PNG is converted into the container each platform wants: an `.ico` carrying a PNG
 directory entry (Vista and later, so ≤ 256 px) and an `.icns` using the PNG-bearing `ic07`–`ic10`
@@ -915,11 +911,11 @@ wrapping entirely, and every CLI flag overrides the configured value.
   file, no cascade, nothing to search for — one file per project, the one the user's build
   scripts already live in.
 - `output` is required and resolved against that `package.json`; `name` sets the window title and
-  the default output file name; unknown or malformed keys fail before anything runs, naming the
-  key and the file.
-- The schema is published as `blitsen/config.schema.json` (JSON Schema draft-07) for editor
-  completion, and it is the same object the CLI validates against, so the two cannot drift.
-  `defineConfig` from the `blitsen` package runs that validation on a config object written in JS.
+  default output file name. `window`, `tray`, `menu` and `addons` configure their corresponding
+  package surfaces. Unknown or malformed keys fail before anything runs, naming the key and file.
+- The equivalent schema is published as `blitsen/config.schema.json` (JSON Schema draft-07) for
+  editor completion and generic validators. The CLI and `defineConfig` use Blitsen's own validator
+  over the same documented shape.
 
 ### Development modes
 
@@ -933,13 +929,11 @@ npx blitsen http://localhost:5173    # ② proxy mode: load from a running dev s
 **Proxy mode is the strategically important one.** The runtime fetches the document and its
 subresources over HTTP from the user's own dev server, so Vite/Webpack HMR, source maps and the
 entire existing inner loop keep working — the native window simply replaces the browser tab.
-This requires `fetch` and a module loader that can resolve over HTTP, which is a real constraint
-on when it can ship. **S7 decision: proxy mode is v1, not v0.** Bun 1.3.14 can execute a
-pre-scanned Vite graph and connect to `vite-hmr`, but runtime resolver callbacks are synchronous,
-HTTP modules receive a synthetic `file:///http://…` identity, source-map identity is not
-preserved, and the actual browser-facing HMR client still depends on the v1 web-platform surface.
-One of S7's blockers has since gone: `EventSource` is implemented (#236), so the transport an HMR
-client listens on is no longer among the reasons proxy mode waits. Directory mode is the v0 path; see `spikes/s7/README.md`.
+Proxy mode is implemented: the host reads document, module and subresource bytes over HTTP while
+presenting them under the stable `blitsen://app/` origin, retains module queries, follows source
+maps and lets the application's real WebSocket HMR client connect. `build` and `doctor` still
+refuse a URL because they require finite static output. See `spikes/s7/README.md` for the blockers
+the implementation closed.
 
 Directory mode reload granularity: CSS swaps live via re-cascade with no reload; HTML and JS
 restart the JS context and reparse the document. Preserving JS state across reload is not
@@ -959,7 +953,7 @@ time.
 
 ```
 blitsen                        ← thin JS: CLI, config, TypeScript definitions
-├── bin/blitsen                  (dev · build · run · doctor)
+├── bin/blitsen.mjs              (run · build · doctor)
 └── optionalDependencies:
     ├── @blitsen/win32-x64     ┐
     ├── @blitsen/win32-arm64   │
@@ -974,7 +968,7 @@ blitsen                        ← thin JS: CLI, config, TypeScript definitions
   and swc use, and it is well-supported across package managers.
 - **No postinstall compile step, no Rust toolchain requirement** (product requirement P9).
   Install is a download.
-- The JS package carries the TypeScript definitions for the `native:` APIs, so editor
+- The JS package carries the TypeScript definitions for the `blitsen/*` APIs, so editor
   completion works without the runtime being loadable in a browser context.
 - Cross-platform export (`blitsen build --target win32-x64` from Linux) requires that target's
   package, which the CLI can fetch on demand rather than at install.
@@ -986,6 +980,10 @@ packs and dry-runs unless its `publish` input is explicitly true, then publishes
 packages before the thin `blitsen` package and records the same tarballs on the GitHub release.
 They are deliberately not workspace members: putting platform-specific packages in the root
 lockfile would make a frozen install depend on artifacts that do not exist in a checkout.
+
+Android does not use an npm platform package. The CLI drives the installed Android SDK/NDK and
+Rust target to build and package `blitsen-android`; CI exercises that cross-compile and APK smoke
+path separately from the six desktop artifacts.
 
 ### Resolving the runtime
 
@@ -1052,14 +1050,10 @@ Keeping the distribution boundary stable remains a strong argument for building 
 
 ### Native API resolution
 
-The `native:` specifier form is not resolvable by ordinary bundlers, which will try to bundle or
-fail on it — a real problem for a design whose premise is that the user's bundler runs first and
-unmodified. Two mitigations, likely both:
-
-- Ship real module paths (`blitsen/dialog`, `blitsen/window`) that any bundler resolves today, with
-  the package's browser/module field pointing at a stub that throws outside the runtime.
-- Provide optional bundler plugins that mark `native:*` external, for users who prefer that
-  spelling.
+Native API resolution uses real package subpaths such as `blitsen/dialog` and `blitsen/window`.
+They resolve in ordinary bundlers; outside the runtime their members throw when accessed. A bare
+`native:*` import left external is not runtime-resolvable, so the supported path is ordinary ESM
+bundled before Blitsen's resolver sees the graph.
 
 Generic system access needs neither: `node:fs`, `node:child_process` and `bun:sqlite` are already
 understood by the ecosystem, and in Phase 1 they come free from Bun's Node compatibility — Bun
@@ -1116,7 +1110,8 @@ executing the same native assertions on Linux, macOS, or Windows.
 
 ## 15. Feasibility spikes
 
-All eight spikes were completed on Linux x64, so every number in this section is a Linux number.
+All eleven spikes, S0–S10, were completed, so every number in this section is a Linux number unless
+its row says otherwise.
 The consolidated outcome is **go, re-scoped**; see [the M0 decision](M0.md). Windows and macOS are
 no longer deferred — all six targets build and test in CI (§11) — but nothing here was re-measured
 on them ([issue #123](https://github.com/krazyjakee/blitsen/issues/123)).
@@ -1131,6 +1126,9 @@ on them ([issue #123](https://github.com/krazyjakee/blitsen/issues/123)).
 | **S5** | Can an app-rendered wgpu texture composite into Blitz's paint output in one frame, correctly z-interleaved? | §7 viewport, and everything canvas/WebGL later depends on. |
 | **S6** | Take an unmodified `vite build` output from a real React app and render it. How much of its CSS does Blitz get right, and what breaks first? | §10 ingest and the entire drop-in premise. Cheap to run today with Blitz alone — **no bridge required** — which makes it the best early read on feasibility. |
 | **S7** | Can the runtime load a document and its module graph over HTTP from a running dev server? | §10 proxy mode, the cheapest adoption on-ramp. |
+| **S8** | Can QuickJS-ng replace JavaScriptCore behind the engine seam without changing frames or pacing? | §2 engine choice, licensing and export size. |
+| **S9** | Can the runtime build, package and launch as an Android activity? | The Android architecture and APK path. |
+| **S10** | Can raw HID be exposed without admitting protected keyboard and pointer collections? | §9 native HID and its permission boundary. |
 
 S0 killed the original 25–50 MB estimate, S2 validated bridge-driven mutation without a fork,
 and S6 narrowed the unrestricted drop-in claim to a documented compatibility profile. The

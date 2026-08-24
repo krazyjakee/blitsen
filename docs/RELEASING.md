@@ -2,7 +2,9 @@
 
 Six prebuilt runtimes and one JavaScript package, published together. This is what
 `.github/workflows/release.yml` does, what it deliberately does not do, and what has to exist
-before it can do any of it.
+before it can do any of it. One artifact sits deliberately outside the workflow: the `blitsen`
+crate on crates.io is a name reservation (`crates/blitsen`, version 0.0.1), hand-published and
+never versioned with a release.
 
 ## The shape of a release
 
@@ -21,7 +23,7 @@ packing or publishing.
 This stamp belongs only to a release build. A direct `cargo build` from a checkout has no npm
 package identity and explicitly reports `blitsen-runtime checkout`; the workspace crate version is
 never presented as a distribution version. To produce a correctly stamped local release artifact,
-use `scripts/build-release-runtime.sh <target>` rather than invoking Cargo directly.
+use `bash scripts/build-release-runtime.sh <target>` rather than invoking Cargo directly.
 
 That pin is what makes the ordering matter. `blitsen`'s `optionalDependencies` name exact versions,
 so the six platform packages publish **first** and `blitsen` **last**: its own publish is what makes
@@ -83,8 +85,9 @@ Gatekeeper ever sees.
 
 Where it does matter is an application a user exports with `blitsen build`. That artifact is theirs
 to sign and notarise, on a macOS host, and `--sign` is the seam for it. A cross-built macOS app that
-is never signed and notarised is refused by Gatekeeper on any machine that did not build it; see the
-cross-target section of the package README.
+is never signed and notarised is refused by Gatekeeper on any machine that did not build it; see
+[Build for another desktop target](PACKAGING.md#build-for-another-desktop-target) and
+[Sign the artifact](PACKAGING.md#sign-the-artifact).
 
 There is no credential hidden behind that statement. Completing notarisation needs an Apple
 Developer Program team, a Developer ID Application certificate for the final `.app`, and
@@ -121,7 +124,7 @@ target (issue \#132). Two things follow, and the release notes have to carry bot
   a user downloads and launches — so an unsigned runtime is mostly invisible at install time.
 - What a user's users see is different. `blitsen build` produces an executable launched by name,
   which is exactly what an OS gatekeeper checks. That artifact is the application author's to
-  sign, `--sign` is the seam for it, and the package README says so.
+  sign, `--sign` is the seam for it, and [PACKAGING.md](PACKAGING.md#sign-the-artifact) says so.
 
 Revisit at the first release anyone but its author installs. Signing needs a Developer ID
 Application certificate and a Windows certificate, added as the secrets below; notarisation stays
@@ -272,11 +275,12 @@ boots an AVD on API 32 and API 33 with `reactivecircus/android-emulator-runner`,
 `bun run --cwd packages/blitsen test:android-notify -- --apk <path> --package <id>`: it answers the
 runtime permission dialog, and reads delivery, same-ID replacement, timeout and close back out of
 `dumpsys notification` (issue \#254). It is a separate job because an emulator boot is the flakiest
-thing in the file and a cross-compile gate should not fail for one. The framebuffer smoke test
-(`bun run --cwd packages/blitsen test:android --apk <path> --package <id>`) is still not wired to a
-device: it and the notification job meet the same two open questions about hosted runners —
-lavapipe under the emulator's Vulkan, and KVM on a standard runner — and running one of them first
-is how those get an answer that is not two failures at once.
+thing in the file and a cross-compile gate should not fail for one. That job also answered the two
+questions about hosted runners that had held both harnesses back: the KVM udev rule works on a
+standard runner, and lavapipe under the emulator's Vulkan is moot because the shipped renderer
+creates no wgpu device. The framebuffer smoke test
+(`bun run --cwd packages/blitsen test:android --apk <path> --package <id>`) is the one harness
+still not wired to a device.
 
 What no CI job covers on any target is the release path itself: staging, signing,
 packing and publish ordering. That is what a `publish: false` dispatch is for, and it is the only

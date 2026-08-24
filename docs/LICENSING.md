@@ -20,7 +20,7 @@ Every dependency's terms still apply. In particular:
   library, which its author offers under GPL-3.0, BSD-3-Clause, or the original HIDAPI license, at
   the recipient's choice; Blitsen takes BSD-3-Clause, and nothing in a Blitsen export is
   distributed under GPL-3.0. The notice generator collects licence files that sit beside a crate's
-  `Cargo.toml`, and that library's are one directory further down, so a macOS distributor should
+  `Cargo.toml`, and that library's are two directories further down, so a macOS distributor should
   add `etc/hidapi/LICENSE-bsd.txt` from the `hidapi` crate to the notices the artifact carries.
 
 The platform runtime package carries an audited notice set. `blitsen build` compresses those

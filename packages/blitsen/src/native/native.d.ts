@@ -30,7 +30,7 @@ export interface NativeApp {
   /**
    * Claims the single-instance lock, returning `false` when another instance
    * already holds it — in which case this invocation was handed to that
-   * instance and this process should `process.exit(0)`.
+   * instance and this application should close its window.
    *
    * Available on desktop Unix and Windows; Android delivers second launches
    * through its Activity lifecycle instead.
@@ -41,7 +41,8 @@ export interface NativeApp {
   ): boolean;
   /**
    * Spawns a copy of this process with the same arguments and releases the
-   * single-instance lock. Stopping this one is `process.exit`.
+   * single-instance lock. The application closes its current window after
+   * flushing any state it owns.
    */
   relaunch?(): void;
 }

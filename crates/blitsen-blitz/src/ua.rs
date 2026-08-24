@@ -57,21 +57,6 @@ optgroup:disabled {
   cursor: default;
 }
 
-/* Gecko forms.css. Without the block display the legend and the contents run
-   together on one line. */
-fieldset {
-  display: block;
-  margin-inline: 2px;
-  padding-block: 0.35em 0.625em;
-  padding-inline: 0.75em;
-  border: 2px groove #c0c0c0;
-}
-
-legend {
-  display: block;
-  padding-inline: 2px;
-}
-
 /* Blitz colours and underlines every <a>; only a link is a link.
    Written against the attribute rather than `:not(:any-link)`, which this
    engine cannot be trusted with: link-ness is matched ad hoc and never reaches

@@ -59,17 +59,19 @@ Only `output` is required.
 | `addons` | string array | `.node` addons to carry, with paths relative to `package.json` |
 | `window` | object | Native window type and creation options |
 | `tray` | object | System tray icon and context menu |
-| `menu` | object | Application menu installed at startup; needs no tray icon |
+| `menu` | object | Application menu installed at startup; needs no tray icon. Its `menu` key holding the tree is required |
 
 Unknown keys and empty values are rejected instead of ignored.
 
 ## Native window and tray
 
 `window.type` accepts `normal` (the default), `borderless`, `fullscreen`, or `hidden`.
-The same object can set `resizable`, `transparent`, and `alwaysOnTop`. A hidden window requires a
-tray configuration so the application is not launched without a way to reveal it.
+The same object can set `resizable` (default true), `transparent`, and `alwaysOnTop` (both default
+false). A hidden window requires a tray configuration so the application is not launched without a
+way to reveal it.
 
-`tray.icon` is a PNG path relative to `package.json`. Blitsen carries it into standalone exports.
+`tray.icon` is a required PNG path relative to `package.json`. Blitsen carries it into standalone
+exports. An optional `tooltip` labels the icon on hover.
 `openOnClick` defaults to true. The optional `contextMenu` accepts built-in `show`, `hide`, and
 `quit` actions; application-defined action IDs; separators; checkboxes; consecutive radio groups;
 and nested submenus. Actions can set `enabled`, an `accelerator`, and a PNG `icon`; submenus can
@@ -105,8 +107,10 @@ one of each. On macOS that claims a position AppKit reads positionally rather th
 Blitsen supplies a standard submenu for each of `application`, `edit` and `window` that the
 application did not claim. See [Application menu](NATIVE-APIS.md#application-menu) for the ordering
 rules and [PLATFORM-SUPPORT.md](PLATFORM-SUPPORT.md#application-menu) for where a menu exists at
-all. A configured menu on a platform without one is validated and then installs nothing; it is not
-an error, because the same configuration has to build for every target.
+all. On a desktop platform without a menu, a configured menu is validated and then installs
+nothing; it is not an error, because the same configuration has to build for every desktop target.
+`blitsen build --android` is the exception: it fails when `window`, `tray` or `menu` is
+configured, because none of the three exists there.
 
 ## How configuration is found
 
@@ -171,7 +175,8 @@ For a one-off build, repeat `--addon` instead.
 
 ## Schema and JavaScript validation
 
-The JSON Schema Blitsen validates is published as `blitsen/config.schema.json`. JavaScript tooling
+Blitsen validates with its own validator; the equivalent JSON Schema is published as
+`blitsen/config.schema.json` for editors and generic JSON Schema validators. JavaScript tooling
 can validate the same object with `defineConfig`:
 
 ```js

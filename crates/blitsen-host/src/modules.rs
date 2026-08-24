@@ -34,7 +34,7 @@
 //! Modules are the case where relative rewriting cannot do the job, because the
 //! language hands the URL to the application. The same origin is used whether
 //! the application is a directory being run or a bundle inside an executable,
-//! so `blitsen run ./dist` and the exported binary resolve identically — which
+//! so `blitsen ./dist` and the exported binary resolve identically — which
 //! is the property issue #90 is about.
 //!
 //! # Where the graph is linked
