@@ -483,7 +483,7 @@ dependencies = [
  "peniko",
  "png",
  "serde_json",
- "skrifa 0.46.1",
+ "skrifa 0.46.2",
  "stylo",
 ]
 
@@ -5151,9 +5151,9 @@ dependencies = [
 
 [[package]]
 name = "skrifa"
-version = "0.46.1"
+version = "0.46.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "48ad1e42a3802c87684faf3a5c5aa9eb630658d64c056660bb5158ec166d47bb"
+checksum = "d4febebda507fb889c545a37a135517769d1391941013561292897961d1887d6"
 dependencies = [
  "bytemuck",
  "read-fonts 0.43.2",
