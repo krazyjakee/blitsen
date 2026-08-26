@@ -212,7 +212,7 @@ hidapi = { version = "2.6.6", default-features = false, features = ["windows-nat
 # toast and to remove one from notification history. Blitsen forks no second
 # toast implementation to get that.
 winrt-toast-reborn = "0.3.8"
-winreg = "0.55"
+winreg = "0.56"
 # `ToastNotifier::Setting()`, and nothing else. Whether the user, the
 # administrator or policy has switched this application's toasts off is the only
 # notification permission state Windows has, and no toast library in the tree
