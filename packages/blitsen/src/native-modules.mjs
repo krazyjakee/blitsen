@@ -61,6 +61,8 @@ export const platformOf = target => String(target).split("-")[0];
 // different object with a different owner rather than the same one relocated.
 const ABSENT = {
   linux: ["menu"],
+  darwin: [],
+  win32: [],
   android: ["app", "clipboard", "dialog", "window", "tray", "menu"],
 };
 
