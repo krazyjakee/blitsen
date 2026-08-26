@@ -568,6 +568,7 @@ dependencies = [
  "winreg 0.56.0",
  "winrt-toast-reborn",
  "writeable",
+ "x11rb",
  "zbus",
 ]
 

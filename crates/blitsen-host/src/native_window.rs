@@ -259,6 +259,8 @@ pub struct WindowApplication<Rend: anyrender::WindowRenderer, E: JsEngine + Clon
     pub(crate) hid: hid::HidController,
     pub(crate) gamepads: gamepad::Controller,
     pub(crate) quit_requested: bool,
+    /// XSettings' toolkit scale, needed on X11 desktops that keep Xft/DPI at 96.
+    pub(crate) system_scale_override: Option<f64>,
 }
 
 /// Forgets the window the `native:window` module addresses.
@@ -507,7 +509,16 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Ren
         }
     }
 
-    pub(crate) fn sync_native_window(&self, window_id: WindowId) {
+    pub(crate) fn sync_native_window(&mut self, window_id: WindowId) {
+        if let Some(scale) = self.system_scale_override
+            && let Some(view) = self.inner.windows.get_mut(&window_id)
+            && f64::from(view.doc.inner().viewport().hidpi_scale) < scale
+        {
+            view.doc
+                .inner_mut()
+                .viewport_mut()
+                .set_hidpi_scale(scale as f32);
+        }
         let Some((width, height, scale)) = self.inner.windows.get(&window_id).map(|view| {
             let document = view.doc.inner();
             let viewport = document.viewport();
