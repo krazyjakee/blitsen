@@ -182,6 +182,10 @@ zbus = { version = "5", default-features = false, features = ["blocking-api", "t
 # `blitsen doctor` and `blitsen build` say so rather than the runtime trying.
 hidapi = { version = "2.6.6", default-features = false, features = ["linux-native-basic-udev"] }
 ksni = "0.3.6"
+# X11 desktops publish their toolkit scale through XSettings separately from
+# Xft/DPI. Winit only consumes the latter, so XFCE's 2x UI scale would otherwise
+# leave a native Blitsen window at 1x (issue #348).
+x11rb = { version = "0.13.2", default-features = false }
 
 [target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
 # The status item, and — through `tray_icon::menu`, which is `muda` — the

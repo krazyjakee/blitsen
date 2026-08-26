@@ -13,6 +13,7 @@ use blitsen_js::{JsEngine, JsError};
 use blitz::shell::create_default_event_loop;
 use blitz::shell::{BlitzApplication, BlitzShellProxy, WindowConfig};
 use blitz::traits::net::NetProvider;
+use blitz::traits::shell::{ColorScheme, Viewport};
 use winit::dpi::LogicalSize;
 use winit::event_loop::EventLoop;
 use winit::event_loop::pump_events::EventLoopExtPumpEvents;
@@ -170,17 +171,30 @@ impl<E: JsEngine + Clone + 'static> WindowSession<E> {
             Arc::new(blitz::net::Provider::new(Some(Arc::new(proxy.clone()))))
                 as Arc<dyn NetProvider>
         });
-        let document = crate::app::load_window_document(
-            engine,
-            &files,
-            net_provider,
-            crate::app::LoadOptions::new(
-                options.width,
-                options.height,
-                crate::dom_bridge::DocumentMode::Application,
-            )
-            .with_storage(storage.clone()),
-        )?;
+        #[cfg(target_os = "linux")]
+        let system_scale_override = crate::x11_scale::system_scale_factor();
+        #[cfg(not(target_os = "linux"))]
+        let system_scale_override = None;
+        let load_options = crate::app::LoadOptions::new(
+            options.width,
+            options.height,
+            crate::dom_bridge::DocumentMode::Application,
+        )
+        .with_storage(storage.clone());
+        let load_options = if let Some(scale) = system_scale_override {
+            let physical =
+                LogicalSize::new(options.width, options.height).to_physical::<u32>(scale);
+            load_options.with_viewport(Viewport::new(
+                physical.width,
+                physical.height,
+                scale as f32,
+                ColorScheme::Light,
+            ))
+        } else {
+            load_options
+        };
+        let document =
+            crate::app::load_window_document(engine, &files, net_provider, load_options)?;
         // Renderer selection happens before winit creates a surface. On an
         // unsafe target this must never construct wgpu: recovering from device
         // loss is too late when a Metal compute submission wedges WindowServer.
@@ -192,9 +206,17 @@ impl<E: JsEngine + Clone + 'static> WindowSession<E> {
         // redraw instead; see `prepare_startup_reveal`. A `hidden` window is
         // the one that stays unmapped when that moment comes.
         let reveal_on_startup = window_options.window_type != WindowType::Hidden;
+        let requested_size: winit::dpi::Size = system_scale_override.map_or_else(
+            || LogicalSize::new(options.width, options.height).into(),
+            |scale| {
+                winit::dpi::LogicalSize::new(options.width, options.height)
+                    .to_physical::<u32>(scale)
+                    .into()
+            },
+        );
         let attributes = WindowAttributes::default()
             .with_title(options.title.clone())
-            .with_surface_size(LogicalSize::new(options.width, options.height))
+            .with_surface_size(requested_size)
             .with_decorations(window_options.window_type != WindowType::Borderless)
             .with_fullscreen(
                 (window_options.window_type == WindowType::Fullscreen)
@@ -249,6 +271,7 @@ impl<E: JsEngine + Clone + 'static> WindowSession<E> {
             hid: super::hid::controller(event_loop.create_proxy()),
             gamepads: super::gamepad::Controller::platform(),
             quit_requested: false,
+            system_scale_override,
         };
         drop(guard);
         Ok(Self {

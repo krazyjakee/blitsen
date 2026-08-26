@@ -32,6 +32,8 @@ pub mod runtime_services;
 mod source_maps;
 pub mod standalone;
 pub mod storage;
+#[cfg(target_os = "linux")]
+mod x11_scale;
 // Surface loss and recreation: what a window that can be taken away needs (#146).
 pub mod surface_lifecycle;
 pub mod worker;
