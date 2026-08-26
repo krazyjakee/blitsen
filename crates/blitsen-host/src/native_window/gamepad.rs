@@ -281,6 +281,7 @@ impl Backend for GilrsBackend {
 
         let mut changes = Vec::new();
         let mut changed = Vec::new();
+        let mut changed_ids = std::collections::HashSet::new();
         let mut vibration_completed = Vec::new();
         while let Some(event) = self.gilrs.next_event() {
             let key = Self::key(event.id);
@@ -291,7 +292,7 @@ impl Backend for GilrsBackend {
                             event.id,
                             &self.gilrs.gamepad(event.id),
                         )));
-                    } else if !changed.contains(&event.id) {
+                    } else if changed_ids.insert(event.id) {
                         changed.push(event.id);
                     }
                 }
@@ -307,8 +308,7 @@ impl Backend for GilrsBackend {
                     vibration_completed.push(key);
                 }
                 _ => {
-                    if self.known.values().any(|id| *id == event.id) && !changed.contains(&event.id)
-                    {
+                    if self.known.contains_key(&key) && changed_ids.insert(event.id) {
                         changed.push(event.id);
                     }
                 }

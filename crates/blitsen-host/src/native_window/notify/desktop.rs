@@ -243,14 +243,9 @@ fn notification(options: &NotificationOptions) -> Result<Notification, String> {
     if let Some(icon) = &options.icon {
         notification.icon(icon);
     }
-    // Which installed application this notification belongs to, in the one term
-    // the freedesktop notification specification has for it (#252). A server
-    // resolves the name against the installed desktop entries to attribute the
-    // notification, to file it under the right application in a notification
-    // centre, and — where the server implements it at all — to find the entry
-    // point to start when the application is no longer running. `appname` above
-    // is a display string and answers none of those: it is what the sender calls
-    // itself, not what the system has installed.
+    // `DesktopEntry` identifies the installed application; `appname` above is
+    // only a display string. Notification servers use this hint for attribution
+    // and, where supported, to locate the application's entry point.
     #[cfg(target_os = "linux")]
     if let Some(entry_point) = super::entry_point() {
         notification.hint(notify_rust::Hint::DesktopEntry(entry_point.entry.clone()));

@@ -1,26 +1,6 @@
-// Third-party notices for an exported application (issue #121).
-//
-// LICENSING.md's acceptance gate: an export may not claim redistribution
-// compliance until the notices it owes travel with the artifact, generated from
-// the build rather than maintained by hand, and until a test extracts them from
-// a real artifact and finds them complete.
-//
-// This is the generator. It reads the dependency graph `cargo` resolved for one
-// platform, collects what each package's licence requires to travel with it, and
-// renders one document. Cargo is needed to *produce* the notices, never to
-// consume them: they are generated where the runtime is built — this checkout,
-// or the release job that builds a platform package — and shipped inside it, so
-// a user's machine needs no toolchain (P9).
-//
-// Two things the licences in this tree actually demand:
-//
-//   - **MIT, BSD, ISC, Zlib and friends**: the copyright notice and the
-//     permission text travel with the binary. Every package's copyright lines
-//     are listed; each distinct licence text appears once, because reproducing
-//     the same MIT text 115 times is 115 copies of the same requirement.
-//   - **MPL-2.0** (Stylo, and 44 other packages): the covered source has to be
-//     available. The offer names the exact revision each one was built from,
-//     which is what makes it durable rather than decorative.
+// Generate third-party notices from the resolved build graph and ship them with
+// the artifact. Copyright lines are retained per package, identical licence
+// texts are deduplicated, and MPL source offers name exact revisions.
 import { readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { dirname, join } from "node:path";
