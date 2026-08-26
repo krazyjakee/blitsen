@@ -44,8 +44,8 @@ pub(crate) fn system_scale_factor() -> Option<f64> {
 
 fn parse_scale(bytes: &[u8]) -> Option<u32> {
     let little = match *bytes.first()? {
-        b'l' => true,
-        b'B' => false,
+        0 => true,
+        1 => false,
         _ => return None,
     };
     let read_u16 = |bytes: &[u8]| {
@@ -98,11 +98,21 @@ mod tests {
 
     #[test]
     fn reads_gdk_scale_from_xsettings() {
-        let mut bytes = vec![b'l', 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0];
+        let mut bytes = vec![0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0];
         bytes.extend([0, 0, 23, 0]);
         bytes.extend(SCALE_NAME);
         bytes.push(0);
         bytes.extend([7, 0, 0, 0, 2, 0, 0, 0]);
+        assert_eq!(parse_scale(&bytes), Some(2));
+    }
+
+    #[test]
+    fn reads_big_endian_xsettings() {
+        let mut bytes = vec![1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1];
+        bytes.extend([0, 0, 0, 23]);
+        bytes.extend(SCALE_NAME);
+        bytes.push(0);
+        bytes.extend([0, 0, 0, 7, 0, 0, 0, 2]);
         assert_eq!(parse_scale(&bytes), Some(2));
     }
 }
