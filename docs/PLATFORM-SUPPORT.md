@@ -64,8 +64,8 @@ or Wayland session.
 Minimal containers and headless Linux systems commonly omit these libraries. Blitsen is a windowed
 runtime, so a successful install does not imply that such an environment can open an application.
 
-Linux is currently the only desktop platform with `blitsen/dialog`. `setAlwaysOnTop` has no effect
-on Wayland because that protocol does not expose the operation. Cursor grab modes also vary; the
+Linux dialogs use the XDG desktop portal and fall back to `zenity` when no portal is running.
+`setAlwaysOnTop` has no effect on Wayland because that protocol does not expose the operation. Cursor grab modes also vary; the
 runtime throws when a requested mode is unavailable. Pointer lock is currently exposed on Windows
 and macOS only: pinned winit 0.31.0-beta.2 reports `Locked` cursor grab as unsupported on X11, and Blitsen
 does not claim a Linux API that can fail on a common backend.
@@ -160,7 +160,8 @@ macOS. Modern macOS notifications also require a signed `.app` bundle identity, 
 and a development run does not: submission and permission from an unbundled executable reject with
 a message naming `blitsen --dev-bundle`, which builds a signed development `.app` around the
 interpreter and runs inside it under `com.blitsen.dev.<name>`. No installed application's identifier
-is ever borrowed for either. The current `blitsen/dialog` module is absent on macOS.
+is ever borrowed for either. Native dialogs are presented as window-modal sheets without blocking
+the application frame loop.
 
 `blitsen/hid` opens devices with shared IOHID access, so an application never seizes a device from
 the rest of the system. A sandboxed application must be signed with `com.apple.security.device.usb`;
@@ -173,8 +174,8 @@ Published runtimes support Windows 10 or newer, and x64 also supports Server 201
 Microsoft C runtime is statically linked, so users do not need a separate Visual C++ Redistributable.
 
 Windows packaging writes the application manifest and optional `.ico` beside the executable rather
-than embedding them in the PE file. Keep those files with the executable. The current
-`blitsen/dialog` module is absent on Windows. Single-instance invocation hand-off uses a per-user
+than embedding them in the PE file. Keep those files with the executable. Native dialogs run away
+from the window thread and remain modal to it. Single-instance invocation hand-off uses a per-user
 named pipe whose name includes the user's SID.
 
 `blitsen/hid` opens HID top-level collections through the Windows HID class driver and needs no

@@ -265,8 +265,7 @@ describe("directory CLI", () => {
 
   // A `native:` module the target does not have is a finding at export time
   // rather than an `undefined` at run time (#147). Android is the reason the
-  // rule exists, but it is not the only column: `blitsen/dialog` has been absent
-  // on macOS and Windows since it shipped and nothing said so.
+  // rule exists; desktop targets implement all five imported modules.
   test("reports a native: module the target being built for does not have", async () => {
     const directory = await mkdtemp(join(tmpdir(), "blitsen-native-target-"));
     try {
@@ -290,8 +289,8 @@ describe("directory CLI", () => {
       // Linux has all five, so the same file is silent there. Without this the
       // test could pass against a rule that fires on everything.
       expect(await reported("linux-x64")).toEqual([]);
-      expect(await reported("win32-x64")).toEqual(["blitsen/dialog does not exist on win32."]);
-      expect(await reported("darwin-arm64")).toEqual(["blitsen/dialog does not exist on darwin."]);
+      expect(await reported("win32-x64")).toEqual([]);
+      expect(await reported("darwin-arm64")).toEqual([]);
       // Sorted by position in the file, which is why `app` — the dynamic import
       // after the direct imports — comes last rather than first. notify is
       // deliberately absent from the findings: Android implements that module.

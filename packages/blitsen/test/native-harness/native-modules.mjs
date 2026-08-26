@@ -23,14 +23,9 @@ import { addonPath, native } from "./addon.mjs";
 // asserted is the installed namespace, not a description of it.
 const nativeManifest = await loadApiManifest();
 const namespaces = { app, clipboard, dialog, hid, input, menu, notify, os, tray, window: windowModule };
-// The members whose presence is a platform fact rather than a version fact: a
-// dialog is the XDG portal, and an application menu is the macOS main menu or
-// the Windows menu bar. The single-instance transport differs by platform but
-// the member is present on every desktop target.
+// The members whose presence is a platform fact rather than a version fact.
+// An application menu is the macOS main menu or the Windows menu bar.
 const absentOn = new Map();
-for (const entry of nativeManifest.native.filter(entry => entry.module === "dialog")) {
-  absentOn.set(entry.api, ["win32", "darwin"]);
-}
 for (const entry of nativeManifest.native.filter(entry => entry.module === "menu")) {
   absentOn.set(entry.api, ["linux"]);
 }
@@ -99,20 +94,23 @@ const commandChannels = JSON.parse(native.runBridgeHarness(
        error: "access denied", errorName: "NotAllowedError" });
      hidChannel.settle();
 
-     const dialogWire = [{ id: 3, value: [] }];
+     const dialogWire = [{ id: 3, value: [] }, { id: 4, value: ["/chosen/project"] }];
      const dialogChannel = makeChannel({
        take: () => dialogWire.splice(0), completion: () => true,
        commandId: answer => answer.id, result: answer => answer.value,
        rejected: () => false, pollPendingCommands: true,
      });
      let cancelled = "unsettled";
+     let chosen = "unsettled";
      void dialogChannel.run(3, { transform: paths => (cancelled = paths[0] ?? null) });
+     void dialogChannel.run(4, { transform: paths => (chosen = paths[0] ?? null) });
      dialogChannel.settle();
      const expected = ["click", "tray:ready", "NotAllowedError:access denied"];
      if (JSON.stringify(seen) !== JSON.stringify(expected) || cancelled !== null
+       || chosen !== "/chosen/project"
        || trayChannel.workPending() || hidChannel.workPending() || dialogChannel.workPending())
        throw new Error("command channels lost FIFO, errors, cancellation, or isolation: "
-         + JSON.stringify({ seen, cancelled }));
+         + JSON.stringify({ seen, cancelled, chosen }));
      document.getElementById("channels").setAttribute("data-result", "passed"); }`,
   32,
   32,

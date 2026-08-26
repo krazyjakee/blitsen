@@ -672,7 +672,7 @@ import app from "blitsen/app";
 | --- | --- |
 | `blitsen/app` | app-data/cache/config paths, single-instance lock and relaunch |
 | `blitsen/window` | resize, fullscreen, decorations, minimize/maximize, always-on-top, cursor control and monitor enumeration; creating windows and transparency are absent |
-| `blitsen/dialog` | open/save file, folder picker and message box on Linux/BSD desktop targets |
+| `blitsen/dialog` | open/save file, folder picker and message box on Linux, macOS and Windows |
 | `blitsen/clipboard` | text, HTML and images |
 | `blitsen/tray` | tray icon and its context menu |
 | `blitsen/menu` | the application menu: macOS main menu, Windows menu bar. Separate from `blitsen/tray` because it must exist without a status item (#249) |

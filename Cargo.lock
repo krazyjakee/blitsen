@@ -604,6 +604,7 @@ dependencies = [
  "interprocess",
  "libc",
  "parking_lot",
+ "pollster",
  "raw-window-handle",
  "rfd",
  "serde",

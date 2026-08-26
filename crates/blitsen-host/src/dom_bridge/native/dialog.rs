@@ -1,25 +1,13 @@
 use blitsen_js::{JsEngine, JsError};
-#[cfg(all(
-    unix,
-    not(any(target_os = "macos", target_os = "android", target_os = "ios"))
-))]
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 use serde_json::json;
 
-#[cfg(all(
-    unix,
-    not(any(target_os = "macos", target_os = "android", target_os = "ios"))
-))]
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 use super::super::{argument, json_value, window};
-#[cfg(all(
-    unix,
-    not(any(target_os = "macos", target_os = "android", target_os = "ios"))
-))]
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 use super::failed;
 
-#[cfg(all(
-    unix,
-    not(any(target_os = "macos", target_os = "android", target_os = "ios"))
-))]
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub(super) fn install<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsError> {
     use blitsen_platform::dialog::{
         self, Buttons, FileKind, FileRequest, Filter, Level, MessageRequest, Outcome,
@@ -163,14 +151,9 @@ pub(super) fn install<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsErr
     )
 }
 
-// Nothing to install: `rfd` opens a macOS file dialog on the main thread, which
-// is the thread this design deliberately leaves free to keep painting, and a
-// Windows dialog was never verified here. Approximating either would be a
-// different design wearing this one's name.
-#[cfg(not(all(
-    unix,
-    not(any(target_os = "macos", target_os = "android", target_os = "ios"))
-)))]
+// Mobile choosers return through the activity lifecycle rather than a desktop
+// window's asynchronous native panel.
+#[cfg(any(target_os = "android", target_os = "ios"))]
 pub(super) fn install<E: JsEngine + 'static>(_engine: &mut E) -> Result<(), JsError> {
     Ok(())
 }

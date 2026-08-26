@@ -299,7 +299,7 @@ Availability is incremental. A browser having an API does not oblige Blitsen to 
 HTML · CSS · DOM · JS/TS execution · events · `requestAnimationFrame` · `setTimeout`/
 `setInterval` · mouse · keyboard · one native viewport element backed by the GPU.
 
-**v1 — makes real apps possible** — *met, with two members partial*
+**v1 — makes real apps possible** — *met, with one member partial*
 `fetch` · `WebSocket` · images · web fonts · audio playback · pointer events (mouse, touch and
 pen, with pressure, multi-touch and pointer capture) · the first `blitsen/*` modules
 (dialog, clipboard, window, app). The published profile is
@@ -307,7 +307,6 @@ pen, with pressure, multi-touch and pointer capture) · the first `blitsen/*` mo
 
 | Partial | Why |
 | --- | --- |
-| `dialog.*` | Linux only, by design: macOS and Windows require a file dialog on the main thread, which is the thread kept free to paint. Absent there rather than approximated. The XDG portal backend is one the BSDs share, but no BSD runtime is published. |
 | `window.create` | Deliberately absent — the context, communication and lifetime contract is settled by #105, but the per-window host state it requires is not implemented. |
 
 **v2 — makes real apps comfortable** — *partly landed early*
@@ -408,7 +407,7 @@ every module an application imports that the target does not have, with the reas
 | `window` | **Absent** | winit accepts every setter on Android and discards it, then answers the getter as though the request had never been made: `setDecorations(false)`, then `isDecorated()` saying true, on a platform with no decorations. The monitor list is the one worth naming, because it looks like the survivor — winit enumerates no monitors there, so `monitors()` would report a device with no display. Immersive mode and orientation are the real capabilities and are not these under another name (#146). |
 | `clipboard` | **Absent** | `arboard` has no Android backend and does not compile. `ClipboardManager` would not settle it either: Android refuses a read to an unfocused application, and these readers report an empty clipboard as `null`, so the refusal and the empty clipboard would arrive as the same value. A module shaped for that, over JNI. |
 | `app` | **Absent** | The directories are the Activity's `filesDir`/`cacheDir`; the XDG variables Android does not set would resolve to a path nothing can write to. `relaunch` has no executable to spawn inside an APK. Single-instance ownership is the platform's own — a second launch is an `Intent` to the process already running, not a command line to hand over. |
-| `dialog` | **Absent** | No XDG portal. Already absent off the portal platforms, for its own reasons (#141). |
+| `dialog` | **Absent** | Android's system choosers are lifecycle `Intent` results rather than dialogs owned by the desktop window. |
 | `input` | **Present, partial** | Focus-scoped keyboard and pointer snapshots are fed by the same winit events as desktop. Gamepad discovery and vibration are desktop-only; the standard and native members are absent on Android because the maintained backend has no Android implementation. |
 | `hid` | **Present, unexercised** | `UsbManager` over `jni` (#248): USB HID interfaces enumerate without a grant, the first `open()` of a device raises the system permission dialog and the promise is held until it is answered, and reports, bounds, the protected-collection refusal and the single terminal disconnect are the desktop module's own code over a USB backend. Two things are Android's and are documented as such: `usagePage`/`usage` are `0` until a device is opened, because a report descriptor cannot be read without permission, and a denial is inferred from window focus because no HID permission receiver is implemented. **No part of it has run on physical hardware** — a USB HID device cannot be attached to the CI emulator, so verification needs a device. |
 | `tray` | **Absent** | Android has no desktop status item or context-menu surface. A persistent Android notification is not a tray icon under another name. |

@@ -46,14 +46,7 @@ export const ANDROID_TARGETS = ["android-arm64", "android-x64"];
 
 export const platformOf = target => String(target).split("-")[0];
 
-// Absences that are not Android's. Both were already true and neither was
-// reported: an application built for Windows that imports `blitsen/dialog` gets
-// a module with no members, and nothing said so until the call returned
-// `undefined`.
-//
-// `dialog` is the XDG portal platforms only — macOS wants the file dialog on the
-// main thread, which is the thread kept free to paint. The BSDs are XDG and are
-// not a Blitsen target, so `linux` is the whole of it here.
+// Absences that are not Android's.
 //
 // `app` survives everywhere, but not whole: the single-instance lock is a Unix
 // domain socket that doubles as the channel a second invocation's `argv`
@@ -68,8 +61,6 @@ export const platformOf = target => String(target).split("-")[0];
 // different object with a different owner rather than the same one relocated.
 const ABSENT = {
   linux: ["menu"],
-  darwin: ["dialog"],
-  win32: ["dialog"],
   android: ["app", "clipboard", "dialog", "window", "tray", "menu"],
 };
 
@@ -77,11 +68,6 @@ const ABSENT = {
 // `<platform>.<module>` so a module absent on two platforms for two different
 // reasons says both.
 const REASONS = {
-  "darwin.dialog": "macOS opens a file dialog on the main thread, which is the thread Blitsen "
-    + "keeps free to paint. That is a different design rather than this one with the backend "
-    + "swapped out, so the module is absent rather than approximated.",
-  "win32.dialog": "The Windows dialog was never verified against this design, and a dialog that "
-    + "blocks the thread pumping the window would stop the application painting while it is up.",
   "android.app": "The directories are the Activity's `filesDir` and `cacheDir`, which only the "
     + "Activity can name; Android sets none of the XDG variables, so resolving them would answer "
     + "a path nothing can write to. `relaunch` has no executable to spawn inside an APK, and "

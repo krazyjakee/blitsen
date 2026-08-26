@@ -19,8 +19,7 @@ serde_json.workspace = true
 # neither shipped in the binary nor implied by this module.
 sysinfo = { version = "0.39", default-features = false, features = ["system", "disk"] }
 
-# Two unrelated capabilities that share one predicate: both crates refuse to
-# compile on Android rather than answer there, and each module says why.
+# Desktop capabilities that do not compile on Android.
 [target.'cfg(not(target_os = "android"))'.dependencies]
 # The clipboard crate TECH.md §9 names. `wayland-data-control` is on because a
 # Wayland session without XWayland has no other way to reach the clipboard.
@@ -70,13 +69,12 @@ windows-sys = { version = "0.61", features = [
     "Win32_System_Threading",
 ] }
 
-# Dialogs exist only where the XDG desktop portal does; see `src/dialog.rs` for
-# why macOS and Windows are absent rather than approximated. `rfd` speaks the
-# portal's D-Bus interface itself, so this needs no GTK headers to build against
-# and no async runtime to host, and it falls back to `zenity` where no portal is
-# running. Default features carry the Wayland half of the parent-window
-# identifier, which is what makes a dialog modal to our window there.
-[target.'cfg(all(unix, not(any(target_os = "macos", target_os = "android", target_os = "ios"))))'.dependencies]
+# `rfd` provides native asynchronous dialogs on every desktop target. On Linux
+# it speaks the portal's D-Bus interface itself and falls back to `zenity`.
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+# Drive rfd's future from Blitsen's dialog worker. On macOS it dispatches the
+# panel to the main thread; elsewhere it waits away from the frame-loop thread.
+pollster = "0.4"
 raw-window-handle = "0.6"
 rfd = "0.17"
 
