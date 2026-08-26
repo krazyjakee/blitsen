@@ -22,12 +22,8 @@ pub mod app;
 // wrap refuses a read unless the application holds focus.
 #[cfg(not(target_os = "android"))]
 pub mod clipboard;
-// Absent off the XDG portal platforms rather than approximated there; the
-// module's own documentation says why.
-#[cfg(all(
-    unix,
-    not(any(target_os = "macos", target_os = "android", target_os = "ios"))
-))]
+// Desktop-native dialogs. Android and iOS need lifecycle-based choosers.
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub mod dialog;
 // Present everywhere, including Android: `sysinfo` reads the same `/proc` there
 // as on Linux, and the facts it cannot get come back `None` by design rather

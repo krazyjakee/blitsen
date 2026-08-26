@@ -1,20 +1,15 @@
 //! Native file and message dialogs, backed by `rfd`.
 //!
-//! A dialog is opened on a thread of its own and its outcome is queued here for
-//! the runtime to collect, rather than blocking the caller. The reason is the
-//! frame loop: the thread a `native:dialog` call arrives on is the thread that
-//! pumps winit, so blocking it would stop the application painting for as long
+//! A dialog future is driven on a thread of its own and its outcome is queued
+//! here for the runtime to collect, rather than blocking the caller. The reason
+//! is the frame loop: the thread a `native:dialog` call arrives on is the thread
+//! that pumps winit, so blocking it would stop the application painting for as long
 //! as the dialog is on screen — and a client that stops reading its display
 //! socket is one X11 and Wayland compositors are entitled to grey out.
 //!
-//! Not painting is the only thing given up, and only because the dialog is not
-//! ours to draw: the portal runs it in another process, and the parent window
-//! handle is what makes it modal. The user cannot reach the application under it
-//! whatever its frame loop is doing.
-//!
-//! Absent off the XDG portal platforms. macOS requires a file dialog on the main
-//! thread, which is the thread this design deliberately leaves running; that is
-//! a different design rather than this one with the backend swapped out.
+//! The asynchronous backend presents macOS panels on the main thread without
+//! blocking its event loop, uses a COM worker on Windows, and speaks the XDG
+//! portal on Linux. The parent window handle makes each dialog modal.
 //!
 //! Android is off them too, and not only because there is no portal to speak to.
 //! Its file chooser is an `Intent` handed to the system and answered by a
@@ -223,6 +218,7 @@ fn show(dialog: impl FnOnce() -> Outcome + Send + 'static) -> Result<u64, Platfo
 /// Without this the portal fails, `rfd` reports the same `None` a user pressing
 /// Cancel produces, and the application is told its dialog was dismissed by
 /// someone who never saw it.
+#[cfg(target_os = "linux")]
 fn session() -> Result<(), PlatformError> {
     let displayed = ["DISPLAY", "WAYLAND_DISPLAY"]
         .iter()
@@ -236,11 +232,16 @@ fn session() -> Result<(), PlatformError> {
     ))
 }
 
-fn file_dialog<W>(request: &FileRequest, parent: Option<&W>) -> rfd::FileDialog
+#[cfg(not(target_os = "linux"))]
+fn session() -> Result<(), PlatformError> {
+    Ok(())
+}
+
+fn file_dialog<W>(request: &FileRequest, parent: Option<&W>) -> rfd::AsyncFileDialog
 where
     W: HasWindowHandle + HasDisplayHandle + ?Sized,
 {
-    let mut dialog = rfd::FileDialog::new();
+    let mut dialog = rfd::AsyncFileDialog::new();
     if let Some(title) = &request.title {
         dialog = dialog.set_title(title);
     }
@@ -259,14 +260,30 @@ where
     dialog
 }
 
-fn pick(kind: FileKind, dialog: rfd::FileDialog) -> Vec<PathBuf> {
-    match kind {
-        FileKind::OpenFile => dialog.pick_file().into_iter().collect(),
-        FileKind::OpenFiles => dialog.pick_files().unwrap_or_default(),
-        FileKind::SaveFile => dialog.save_file().into_iter().collect(),
-        FileKind::OpenFolder => dialog.pick_folder().into_iter().collect(),
-        FileKind::OpenFolders => dialog.pick_folders().unwrap_or_default(),
-    }
+fn pick(kind: FileKind, dialog: rfd::AsyncFileDialog) -> Vec<PathBuf> {
+    pollster::block_on(async move {
+        match kind {
+            FileKind::OpenFile => one_path(dialog.pick_file().await),
+            FileKind::OpenFiles => paths(dialog.pick_files().await),
+            FileKind::SaveFile => one_path(dialog.save_file().await),
+            FileKind::OpenFolder => one_path(dialog.pick_folder().await),
+            FileKind::OpenFolders => paths(dialog.pick_folders().await),
+        }
+    })
+}
+
+fn one_path(file: Option<rfd::FileHandle>) -> Vec<PathBuf> {
+    file.into_iter()
+        .map(|file| file.path().to_owned())
+        .collect()
+}
+
+fn paths(files: Option<Vec<rfd::FileHandle>>) -> Vec<PathBuf> {
+    files
+        .unwrap_or_default()
+        .into_iter()
+        .map(|file| file.path().to_owned())
+        .collect()
 }
 
 fn message_dialog<W>(request: &MessageRequest, parent: Option<&W>) -> rfd::MessageDialog

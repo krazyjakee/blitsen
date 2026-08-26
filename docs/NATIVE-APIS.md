@@ -43,7 +43,7 @@ polyfill.
 The declaration files installed with `blitsen` document parameters and result types. The
 [generated native module matrix](COMPATIBILITY.md#native-modules) is available when you need the
 exact per-member runtime manifest. On Android the `app`, `window`, `clipboard`, `tray`, `menu` and
-`dialog` modules are absent whole; each module's section below notes its other platform gaps.
+`dialog` modules are absent whole.
 
 ## Window lifetime
 
@@ -442,9 +442,9 @@ if (path) {
 }
 ```
 
-File dialogs resolve to `null` when dismissed. In this release the dialog module is available on
-Linux desktop targets and absent on macOS, Windows and Android. Feature detection is required even
-when your current development platform supports it.
+File dialogs resolve to `null` when dismissed. The dialog module is available on Linux, macOS and
+Windows desktop targets and absent on Android. Feature detection is still recommended at runtime
+boundaries.
 
 ## Clipboard images
 

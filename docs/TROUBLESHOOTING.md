@@ -156,8 +156,8 @@ Support varies by version and target. Feature-detect the member and grade the in
 blitsen doctor dist --target win32-x64
 ```
 
-Dialogs are Linux-only in this release; the single-instance lock uses a Unix socket or Windows
-named pipe; the app, window, dialog, clipboard, tray and menu native modules are absent on
+Dialogs are available on Linux, macOS and Windows; the single-instance lock uses a Unix socket or
+Windows named pipe; the app, window, dialog, clipboard, tray and menu native modules are absent on
 Android. See
 [Native APIs](NATIVE-APIS.md).
 
