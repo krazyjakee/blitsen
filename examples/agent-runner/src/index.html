@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <title>Agency Runner</title>
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <a class="brand" href="#" aria-label="Agency Runner home">
+          <span class="brand-mark"><i></i><i></i><i></i></span>
+          <span>agency<span>.runner</span></span>
+        </a>
+        <div class="topbar-context">LOCAL AGENT EXECUTION</div>
+        <div class="topbar-actions">
+          <div class="system-state"><span class="pulse"></span><span id="system-label">LOCAL</span></div>
+          <button id="open-settings" class="settings-button" title="Configuration" aria-label="Open configuration">⚙</button>
+        </div>
+      </header>
+
+      <div class="workspace">
+        <aside class="sidebar">
+          <div class="sidebar-heading"><span>AGENTS</span><button id="refresh" title="Refresh agents" aria-label="Refresh agents">↻</button></div>
+          <nav id="tree" class="tree" aria-label="Agent files"></nav>
+          <div class="hint"><kbd>⌘</kbd><kbd>R</kbd><span>refresh agents</span></div>
+        </aside>
+
+        <section class="editor-pane">
+          <div class="breadcrumb"><span class="dot-grid">⠿</span><span id="breadcrumb">Select an agent</span></div>
+          <div id="configuration" class="configuration hidden">
+            <div class="configuration-heading">
+              <div><span class="overline">CONFIGURATION</span><h1>Agent library</h1><p>Choose the folder containing your Markdown agent files.</p></div>
+              <button id="close-settings" class="close-settings" aria-label="Close configuration">×</button>
+            </div>
+            <section class="config-card">
+              <label for="root"><span>AGENT ROOT</span><small>Scanned recursively for .md files</small></label>
+              <div class="root-control">
+                <input id="root" aria-label="Agent root folder" spellcheck="false">
+                <button id="pick-root" class="browse-button" type="button">CHOOSE FOLDER</button>
+              </div>
+              <div class="config-actions">
+                <span>You can also enter a folder path directly.</span>
+                <button id="load-root" class="save-button" type="button">SAVE &amp; LOAD</button>
+              </div>
+            </section>
+          </div>
+          <div id="empty" class="empty-state">
+            <div class="empty-orbit"><span>⌁</span></div>
+            <h1>Choose an agent</h1>
+            <p>Select a Markdown file from the navigator to configure a run.</p>
+          </div>
+          <div id="runner" class="runner hidden">
+            <section class="agent-card">
+              <div class="agent-icon">A<span>·</span></div>
+              <div><span class="overline">SELECTED AGENT</span><h1 id="agent-name"></h1><p id="agent-path"></p></div>
+              <span id="agent-lines" class="line-count"></span>
+            </section>
+
+            <label class="field-label" for="target"><span>TARGET DIRECTORY</span><small>Working directory for the agent</small></label>
+            <div class="root-control target-control">
+              <input id="target" aria-label="Target directory" spellcheck="false">
+              <button id="pick-target" class="browse-button" type="button">CHOOSE FOLDER</button>
+            </div>
+
+            <label class="field-label" for="context"><span>EXECUTION CONTEXT <em>OPTIONAL</em></span><small>Add a task or supporting details</small></label>
+            <div class="context-wrap"><textarea id="context" placeholder="Add context for this run, or leave blank to use the agent as-is…" spellcheck="true"></textarea><span id="characters">0 characters</span></div>
+
+            <div class="run-settings">
+              <fieldset><legend>CLI</legend><div id="cli-options" class="cli-options"></div></fieldset>
+              <button id="run" class="run-button"><span>▶</span> RUN AGENT <kbd>⌘↵</kbd></button>
+            </div>
+
+          </div>
+        </section>
+      </div>
+      <div id="toast" role="status" aria-live="polite"></div>
+    </main>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

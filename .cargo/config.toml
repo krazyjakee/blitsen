@@ -1,0 +1,16 @@
+[build]
+# Reuse compiled crates across clean builds, branches, and target directories
+# when sccache is installed. The wrapper falls back to rustc otherwise, so a
+# fresh checkout still builds without extra system packages.
+rustc-wrapper = "scripts/rustc-wrapper.sh"
+
+[target.x86_64-unknown-linux-gnu]
+# Renderer-heavy test binaries spend a meaningful amount of time in the
+# linker. Prefer mold in local and CI builds, while retaining the system linker
+# as a fallback.
+linker = "scripts/linux-linker.sh"
+
+[target.aarch64-unknown-linux-gnu]
+# Native Linux arm64 runners can use the same fast-linker path. Cross-target
+# builds such as Android retain the linker selected by their own toolchain.
+linker = "scripts/linux-linker.sh"

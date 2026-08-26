@@ -1,0 +1,19 @@
+{
+  "name": "blitsen-agent-runner-example",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "desktop": "npm run build && blitsen dist"
+  },
+  "blitsen": {
+    "build": "npm run build",
+    "output": "dist",
+    "name": "Agency Runner"
+  },
+  "devDependencies": {
+    "blitsen": "file:../../packages/blitsen",
+    "typescript": "^5.9.2"
+  }
+}

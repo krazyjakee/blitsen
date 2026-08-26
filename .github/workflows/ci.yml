@@ -26,6 +26,8 @@ env:
   # Primary-platform jobs restore dependency artifacts from `rust-cache`. A
   # previous read-only sccache layer recorded zero hits across more than one
   # thousand compile requests, so the target archives are the sole Rust cache.
+  # Linux compile/test jobs install mold for the repository's linker wrapper;
+  # measurement and release-like jobs deliberately retain their baseline linker.
 
 jobs:
   workflows:
@@ -113,9 +115,9 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            libfontconfig1-dev libxkbcommon-dev libwayland-dev \
+            libfontconfig1-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
             libx11-dev libxcursor-dev libxi-dev libxrandr-dev \
-            libasound2-dev libudev-dev xvfb
+            libasound2-dev libudev-dev xvfb mold
       # Formatting first: it compiles nothing, so an unformatted change is
       # reported in seconds instead of after clippy has built the whole graph.
       - name: Lint
@@ -202,9 +204,9 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            libfontconfig1-dev libxkbcommon-dev libwayland-dev \
+            libfontconfig1-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
             libx11-dev libxcursor-dev libxi-dev libxrandr-dev \
-            libasound2-dev libudev-dev
+            libasound2-dev libudev-dev mold
       # `--locked`, because the floor being tested is the one the lockfile
       # describes; a resolution free to pick older dependencies would quietly
       # test a graph nobody ships. `--all-targets` so tests and benches, which
@@ -248,9 +250,9 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            libfontconfig1-dev libxkbcommon-dev libwayland-dev \
+            libfontconfig1-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
             libx11-dev libxcursor-dev libxi-dev libxrandr-dev \
-            libasound2-dev libudev-dev xvfb
+            libasound2-dev libudev-dev xvfb mold
       - run: bun install --frozen-lockfile
       # Issue #90: one project, both runtimes, and the only difference allowed
       # is size. The engine is inside the runtime, so nothing is installed for it.
@@ -335,9 +337,9 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            libfontconfig1-dev libxkbcommon-dev libwayland-dev \
+            libfontconfig1-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
             libx11-dev libxcursor-dev libxi-dev libxrandr-dev \
-            libasound2-dev libudev-dev
+            libasound2-dev libudev-dev mold
       - run: bun install --frozen-lockfile
       - run: bun run --cwd packages/blitsen test:determinism
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -383,7 +385,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libfontconfig1-dev
+          sudo apt-get install -y --no-install-recommends libfontconfig1-dev mold
       # Uncaptured, because the run reports which tier it gated and a silent
       # pass on a runner whose rasterizer differs would read like a full one.
       - run: cargo test -p blitsen-blitz --test conformance -- --nocapture
@@ -433,7 +435,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            libfontconfig1-dev libxkbcommon-dev libwayland-dev \
+            libfontconfig1-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
             libx11-dev libxcursor-dev libxi-dev libxrandr-dev \
             libasound2-dev libudev-dev libwebkit2gtk-4.1-dev libappindicator3-dev \
             librsvg2-dev patchelf
@@ -553,7 +555,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            libfontconfig1-dev libxkbcommon-dev libwayland-dev \
+            libfontconfig1-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
             libx11-dev libxcursor-dev libxi-dev libxrandr-dev \
             libasound2-dev libudev-dev
       # The same two artifacts release.yml builds and publishes for this target,

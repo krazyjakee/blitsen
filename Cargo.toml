@@ -73,6 +73,18 @@ missing_docs = "warn"
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
 
+# Full debug information is disproportionately expensive for this workspace:
+# renderer-heavy test binaries approach a gigabyte each, which makes both
+# compilation and linking I/O-bound. Keep source locations for useful panics
+# and backtraces during normal development without emitting variable-level
+# debug data. Use `CARGO_PROFILE_DEV_DEBUG=2` (or the corresponding TEST
+# setting) for a debugger session that needs locals.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.test]
+debug = "line-tables-only"
+
 # Symbols are 13.1 MB of the 50.1 MB Phase 2 runtime and nothing that ships
 # reads them: the executable is what a user downloads, and a backtrace taken
 # from it names frames the reporter cannot map to a source line anyway. Dropped

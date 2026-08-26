@@ -542,14 +542,15 @@ pub(crate) fn load_window_document<E: JsEngine + Clone + 'static>(
         };
     });
     let source = files.entrypoint_source()?;
+    let viewport =
+        viewport.unwrap_or_else(|| Viewport::new(width, height, 1.0, ColorScheme::Light));
+    let device_pixel_ratio = f64::from(viewport.hidpi_scale);
     let dom_runtime = crate::DomRuntime::new(BlitzDom::from_html(
         &source,
         DocumentConfig {
             base_url: Some(files.base_url()),
             net_provider: Some(net_provider),
-            viewport: Some(
-                viewport.unwrap_or_else(|| Viewport::new(width, height, 1.0, ColorScheme::Light)),
-            ),
+            viewport: Some(viewport),
             ..Default::default()
         },
     ));
@@ -575,6 +576,7 @@ pub(crate) fn load_window_document<E: JsEngine + Clone + 'static>(
             entrypoint: &entrypoint,
             width,
             height,
+            device_pixel_ratio,
             mode,
             loader: loader.as_ref(),
             reader: Some(files.reader()),
@@ -630,6 +632,7 @@ mod tests {
     use std::net::TcpListener;
     use std::sync::Mutex;
 
+    use blitsen_quickjs::QuickJs;
     use blitz::traits::net::{Bytes, NetHandler, Request};
 
     use super::*;
@@ -644,6 +647,35 @@ mod tests {
         let harness = LoadOptions::new(320, 240, DocumentMode::TestHarness).with_viewport(viewport);
         assert_eq!(harness.mode, DocumentMode::TestHarness);
         assert!(harness.viewport.is_some());
+    }
+
+    #[test]
+    fn a_window_script_sees_the_initial_viewport_scale() {
+        let directory = tempfile::tempdir().unwrap();
+        let entrypoint = directory.path().join("index.html");
+        std::fs::write(&entrypoint, "<!doctype html><title>scaled</title>").unwrap();
+        let files = AppFiles::directory(&entrypoint).unwrap();
+        let net_provider = files.net_provider().unwrap();
+        let viewport = Viewport::new(1600, 1200, 2.0, ColorScheme::Light);
+        let mut engine = QuickJs::new().expect("a QuickJS runtime");
+        let _services = crate::runtime_services::RuntimeServices::install(&mut engine)
+            .expect("runtime services");
+
+        load_window_document(
+            &mut engine,
+            &files,
+            net_provider,
+            LoadOptions::new(800, 600, DocumentMode::Application).with_viewport(viewport),
+        )
+        .unwrap();
+
+        let observed = engine
+            .evaluate_script(
+                "devicePixelRatio === 2 && innerWidth === 800 && innerHeight === 600",
+                "initial-viewport-scale.js",
+            )
+            .unwrap();
+        assert!(engine.to_boolean(&observed).unwrap());
     }
 
     /// Collects what a subresource provider answered, so a test can ask how

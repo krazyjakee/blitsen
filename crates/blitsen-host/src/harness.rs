@@ -174,6 +174,7 @@ pub(crate) struct WindowScriptOptions<'a> {
     pub(crate) entrypoint: &'a str,
     pub(crate) width: u32,
     pub(crate) height: u32,
+    pub(crate) device_pixel_ratio: f64,
     pub(crate) mode: DocumentMode,
     pub(crate) loader: &'a dyn blitsen_core::ScriptLoader,
     pub(crate) reader: Option<crate::app::AppReader>,
@@ -190,6 +191,7 @@ pub(crate) fn execute_window_scripts_from<E: JsEngine + 'static>(
         entrypoint,
         width,
         height,
+        device_pixel_ratio,
         mode,
         loader,
         reader,
@@ -224,7 +226,7 @@ pub(crate) fn execute_window_scripts_from<E: JsEngine + 'static>(
             })()"#
     .replace("__BLITSEN_RELOAD_ROOT__", &module_root);
     engine.evaluate_script(&cleanup, "blitsen:dispose-document-context")?;
-    let mut install = InstallOptions::new(width, height, 1.0, mode, reader);
+    let mut install = InstallOptions::new(width, height, device_pixel_ratio, mode, reader);
     if let Some(storage) = storage {
         install = install.with_storage(storage);
     }
@@ -1236,6 +1238,25 @@ mod tests {
                 "readonlyHandled": false,
             })
         );
+    }
+
+    #[test]
+    fn keydown_default_action_inserts_printable_text_once() {
+        let (mut engine, _) = ime_document("<input id=field>");
+        let value = engine
+            .evaluate_script(
+                r#"
+                const field = document.getElementById("field");
+                field.focus();
+                __blitsenDispatchKeyboardEvent("keydown",
+                  { key: "a", code: "KeyA", bubbles: true, cancelable: true });
+                field.value;
+                "#,
+                "blitsen:test-keydown-default-action",
+            )
+            .and_then(|value| engine.to_string(&value))
+            .unwrap();
+        assert_eq!(value, "a");
     }
 
     #[test]

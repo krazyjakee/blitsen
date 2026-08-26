@@ -821,11 +821,15 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> ApplicationHandler
             !suppress_absolute_pointer && self.queue_pointer_input(window_id, &event);
         let queued_keyboard_input = self.queue_keyboard_input(window_id, &event);
         let queued_drag_input = self.queue_drag_input(window_id, &event);
-        // Blitz has its own editor-side IME handler, but it knows nothing about
-        // this runtime's DOM events. Letting the same event continue there
-        // would mutate the shared editor before `compositionupdate` and then
-        // mutate it a second time when the bridge applies the default action.
-        if matches!(&event, WindowEvent::Ime(_)) {
+        // Blitz has its own editor-side keyboard and IME handlers, but they know
+        // nothing about this runtime's DOM events. Letting the same event
+        // continue there would mutate the shared editor before `keydown` or
+        // `compositionupdate`, then mutate it a second time when the bridge
+        // applies the event's default action.
+        if matches!(
+            &event,
+            WindowEvent::KeyboardInput { .. } | WindowEvent::Ime(_)
+        ) {
             if let Some(view) = self.inner.windows.get(&window_id) {
                 view.window.request_redraw();
             }

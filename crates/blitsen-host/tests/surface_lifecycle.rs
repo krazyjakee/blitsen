@@ -101,6 +101,18 @@ fn marker(engine: &mut QuickJs) -> String {
 }
 
 fn main() {
+    // GitHub's Windows runner has no interactive desktop/GPU session. Winit can
+    // create a window there, but wgpu faults in the process while creating or
+    // restoring its surface (STATUS_ACCESS_VIOLATION), before Rust can report
+    // an error. Keep exercising Windows on real desktop sessions while making
+    // the hosted runner honest about the coverage it cannot provide.
+    if cfg!(target_os = "windows") && std::env::var_os("GITHUB_ACTIONS").is_some() {
+        eprintln!(
+            "SKIPPED surface_lifecycle: GitHub's Windows runner has no interactive GPU session"
+        );
+        return;
+    }
+
     // macOS and Windows create windows natively without a DISPLAY variable, so
     // the environment check only means anything on the platforms that use one.
     let has_display = cfg!(any(target_os = "macos", target_os = "windows"))

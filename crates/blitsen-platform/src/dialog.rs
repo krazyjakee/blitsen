@@ -335,6 +335,7 @@ mod tests {
     /// A dialog nobody could have seen must not report that it was dismissed.
     #[test]
     fn a_dialog_needs_a_session_to_appear_in() {
+        #[cfg(target_os = "linux")]
         match session() {
             Ok(()) => assert!(
                 std::env::var_os("DISPLAY").is_some()
@@ -342,5 +343,10 @@ mod tests {
             ),
             Err(error) => assert!(error.message().contains("no desktop session")),
         }
+
+        // macOS and Windows do not describe their native desktop sessions with
+        // the Unix display variables Linux's portal backend needs.
+        #[cfg(not(target_os = "linux"))]
+        assert!(session().is_ok());
     }
 }
