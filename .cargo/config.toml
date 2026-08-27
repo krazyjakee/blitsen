@@ -1,8 +1,24 @@
-[build]
-# Reuse compiled crates across clean builds, branches, and target directories
-# when sccache is installed. The wrapper falls back to rustc otherwise, so a
-# fresh checkout still builds without extra system packages.
-rustc-wrapper = "scripts/rustc-wrapper.sh"
+# There is deliberately no `build.rustc-wrapper` here.
+#
+# This file used to point it at `scripts/rustc-wrapper.sh`, a `#!/bin/sh` shim
+# that exec'd sccache when installed and plain rustc otherwise. Both halves of
+# that broke CI, and neither failure named the wrapper:
+#
+#   * On Windows, Cargo executes the wrapper itself rather than through a
+#     shell, so every `cargo` invocation died before compiling anything with
+#     "%1 is not a valid Win32 application. (os error 193)".
+#   * On Linux, `/bin/sh` is dash, and dash drops environment entries whose
+#     names are not valid shell identifiers. `CARGO_BIN_EXE_blitsen-runtime`
+#     contains a hyphen, so Cargo set it, dash discarded it, and rustc never
+#     saw it: `crates/blitsen-runtime/tests/linked.rs` failed to compile with
+#     "environment variable `CARGO_BIN_EXE_blitsen-runtime` not defined at
+#     compile time". macOS escaped only because its `/bin/sh` is bash, which
+#     passes such entries through.
+#
+# sccache needs no shim: it is an executable Cargo can call directly. Anyone
+# who wants it sets `RUSTC_WRAPPER=sccache` in their own environment, which
+# keeps it opt-in without putting a shell between Cargo and rustc for everyone
+# else. CI stopped using sccache entirely in "ci: make Rust caching effective".
 
 [target.x86_64-unknown-linux-gnu]
 # Renderer-heavy test binaries spend a meaningful amount of time in the
