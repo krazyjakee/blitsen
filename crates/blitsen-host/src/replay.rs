@@ -228,7 +228,7 @@ pub fn replay<E: JsEngine + Clone + 'static>(
     record_frames: &[u32],
 ) -> Result<ReplayReport, JsError> {
     let (width, height) = (trace.width, trace.height);
-    let (engine, document) = load_document_harness(
+    let (engine, document, hooks) = load_document_harness(
         engine,
         entrypoint,
         width,
@@ -242,6 +242,7 @@ pub fn replay<E: JsEngine + Clone + 'static>(
         width,
         height,
         Some(Rc::clone(&trace)),
+        hooks,
     );
     let count = trace.frames as usize;
     let mut records = Vec::with_capacity(count);

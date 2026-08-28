@@ -525,7 +525,7 @@ pub fn execute_document_harness<E: JsEngine + Clone + 'static>(
 ) -> Result<HarnessSnapshot, JsError> {
     // Mirrors a shipped window exactly, including the absence of test-only
     // injection globals, so the fixture guard against them stays meaningful.
-    let (_, document) =
+    let (_, document, _) =
         load_document_harness(engine, entrypoint, width, height, DocumentMode::Application)?;
     ACTIVE_DOCUMENT_HARNESS.with(|active| {
         *active.borrow_mut() = Some((Rc::clone(&document), width, height));
@@ -543,18 +543,24 @@ pub fn execute_document_harness<E: JsEngine + Clone + 'static>(
 /// instead of an application URL, so `new URL("./data.json", import.meta.url)`
 /// named a path `fetch` refuses, and the Phase 1 export failed the read that the
 /// Phase 2 one completed (#126, #90).
-pub fn load_document_harness<E: JsEngine + Clone + 'static>(
+type LoadedHarness<E> = (
+    E,
+    Rc<RefCell<BlitzDom>>,
+    crate::dom_bridge::HostHooks<<E as JsEngine>::StrongRef>,
+);
+
+pub(crate) fn load_document_harness<E: JsEngine + Clone + 'static>(
     mut engine: E,
     entrypoint: &Path,
     width: u32,
     height: u32,
     mode: DocumentMode,
-) -> Result<(E, Rc<RefCell<BlitzDom>>), JsError> {
+) -> Result<LoadedHarness<E>, JsError> {
     let files = crate::app::AppFiles::directory(entrypoint)?;
     let net_provider = files
         .net_provider()
         .unwrap_or_else(|| Arc::new(LocalResources) as Arc<dyn NetProvider>);
-    let loaded = crate::app::load_document(
+    let loaded = crate::app::load_window_document(
         &mut engine,
         &files,
         net_provider,
@@ -564,7 +570,7 @@ pub fn load_document_harness<E: JsEngine + Clone + 'static>(
         "globalThis.__blitsenDispatchLifecycleEvent('load')",
         "blitsen:load",
     )?;
-    Ok((engine, loaded.document))
+    Ok((engine, loaded.document, loaded.host_hooks))
 }
 
 /// Runs a loaded entrypoint through the frame pipeline, optionally recording
@@ -578,7 +584,7 @@ pub fn execute_document_animation_harness<E: JsEngine + Clone + 'static>(
     height: u32,
     record_into: Option<&Path>,
 ) -> Result<Vec<HarnessSnapshot>, JsError> {
-    let (mut engine, document) =
+    let (mut engine, document, hooks) =
         load_document_harness(engine, entrypoint, width, height, DocumentMode::TestHarness)?;
     engine.evaluate_script(setup_script, "document-animation-setup.js")?;
 
@@ -588,6 +594,7 @@ pub fn execute_document_animation_harness<E: JsEngine + Clone + 'static>(
         width,
         height,
         None,
+        hooks,
     );
     let mut snapshots = Vec::with_capacity(frames as usize);
     for frame in 1..=frames {
