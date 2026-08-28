@@ -103,10 +103,9 @@ impl NetProvider for DirectoryResources {
             .is_ok_and(|path| path.starts_with(&self.root));
         if request.url.scheme() == "file" && outside {
             let relative = request.url.path().trim_start_matches('/');
-            if let Some(bytes) = self.source.read(relative) {
-                handler.bytes(request.url.as_str().to_owned(), Bytes::from(bytes));
-                return;
-            }
+            let bytes = self.source.read(relative).unwrap_or_default();
+            handler.bytes(request.url.as_str().to_owned(), Bytes::from(bytes));
+            return;
         }
         LocalResources.fetch(doc_id, request, handler);
     }
@@ -128,6 +127,10 @@ impl NetProvider for SourceResources {
         if let Some(path) = path_of(&url) {
             let bytes = self.source.read(path).unwrap_or_default();
             handler.bytes(url, Bytes::from(bytes));
+            return;
+        }
+        if request.url.scheme() == "file" {
+            handler.bytes(url, Bytes::new());
             return;
         }
         // `data:` subresources, and anything else the ordinary local provider
@@ -256,5 +259,29 @@ mod tests {
             ("data:text/plain,fallback".to_owned(), b"fallback".to_vec())
         );
         assert_eq!(*source.reads.lock().unwrap(), ["assets/app.css"]);
+    }
+
+    #[test]
+    fn both_provider_shapes_refuse_files_outside_the_application() {
+        let outside = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(outside.path(), b"not application data").unwrap();
+        let outside = Url::from_file_path(outside.path()).unwrap();
+        let collector = Collector::default();
+
+        let exported = net_provider(Arc::new(Fixture::default()), None);
+        assert_eq!(
+            collector.fetch(exported.as_ref(), outside.as_str()),
+            (outside.to_string(), Vec::new())
+        );
+
+        let root = tempfile::tempdir().unwrap();
+        let directory = net_provider(
+            Arc::new(Fixture::default()),
+            Some(root.path().to_path_buf()),
+        );
+        assert_eq!(
+            collector.fetch(directory.as_ref(), outside.as_str()),
+            (outside.to_string(), Vec::new())
+        );
     }
 }

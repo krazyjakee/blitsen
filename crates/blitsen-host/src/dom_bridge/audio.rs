@@ -664,17 +664,6 @@ impl AudioHost {
         self.pending.fetch_add(1, Ordering::Relaxed);
         let runtime = net_runtime()?;
         match parsed.scheme() {
-            "file" => {
-                let path = parsed
-                    .to_file_path()
-                    .map_err(|()| JsError::new(format!("{url} is not a readable path")))?;
-                runtime.spawn_blocking(move || {
-                    let result = std::fs::read(&path)
-                        .map_err(|error| format!("{}: {error}", path.display()))
-                        .and_then(|bytes| decode_bytes(bytes, sample_rate));
-                    shared.decoded.lock().push(Decoded { id, result });
-                });
-            }
             "http" | "https" => {
                 runtime.spawn(async move {
                     let result = match reqwest::get(parsed).await {
@@ -953,6 +942,31 @@ mod tests {
         assert_eq!(
             error(&host, "bufferInfo", &["999"]),
             "the audio buffer has been released"
+        );
+    }
+
+    #[test]
+    fn audio_file_loads_are_confined_to_the_application() {
+        let root = tempfile::tempdir().unwrap();
+        let entrypoint = root.path().join("index.html");
+        std::fs::write(&entrypoint, "<p>audio</p>").unwrap();
+        let files = crate::app::AppFiles::directory(&entrypoint).unwrap();
+        let host = AudioHost::new(true, Some(files.reader()));
+
+        let outside = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(outside.path(), b"not audio").unwrap();
+        let url = url::Url::from_file_path(outside.path()).unwrap();
+        host.start_load(url.as_str()).unwrap();
+
+        while host.pending() && host.shared.decoded.lock().is_empty() {
+            std::thread::yield_now();
+        }
+        let result = host.poll();
+        assert_eq!(
+            result["decoded"][0]["error"],
+            format!(
+                "an audio source is a file this application shipped, or an http or https URL, not {url}"
+            )
         );
     }
 }
