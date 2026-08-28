@@ -34,7 +34,10 @@ pub(super) fn net_provider(
     directory_root: Option<PathBuf>,
 ) -> Arc<dyn NetProvider> {
     match directory_root {
-        Some(root) => Arc::new(DirectoryResources { source, root }),
+        Some(root) => Arc::new(DirectoryResources {
+            source,
+            root: root.canonicalize().unwrap_or(root),
+        }),
         None => Arc::new(SourceResources { source }),
     }
 }
@@ -92,18 +95,24 @@ struct DirectoryResources {
 
 impl NetProvider for DirectoryResources {
     fn fetch(&self, doc_id: usize, request: Request, handler: Box<dyn NetHandler>) {
-        // Only a path that landed outside the application is reinterpreted. One
-        // already inside it is an ordinary relative reference and is read where
-        // it points, so a directory at the filesystem root changes nothing.
-        // `to_file_path` can fail for a root-shaped URL on Windows; that is also
-        // not demonstrably inside and must reach the retry.
-        let outside = !request
-            .url
-            .to_file_path()
-            .is_ok_and(|path| path.starts_with(&self.root));
-        if request.url.scheme() == "file" && outside {
-            let relative = request.url.path().trim_start_matches('/');
-            let bytes = self.source.read(relative).unwrap_or_default();
+        if request.url.scheme() == "file" {
+            // Canonical paths identify the same file across platform aliases
+            // such as macOS' /var and /private/var. Every file read goes through
+            // AppSource as well, so an inside-looking symlink cannot bypass its
+            // canonical root check by falling through to LocalResources.
+            let relative = request
+                .url
+                .to_file_path()
+                .ok()
+                .and_then(|path| {
+                    let path = path.canonicalize().unwrap_or(path);
+                    path.strip_prefix(&self.root).ok().map(Path::to_path_buf)
+                })
+                .map(|path| path.to_string_lossy().replace('\\', "/"))
+                // A server-root URL landed at the filesystem root. Reinterpret
+                // it relative to the application, preserving the Vite case.
+                .unwrap_or_else(|| request.url.path().trim_start_matches('/').to_owned());
+            let bytes = self.source.read(&relative).unwrap_or_default();
             handler.bytes(request.url.as_str().to_owned(), Bytes::from(bytes));
             return;
         }
@@ -230,7 +239,7 @@ mod tests {
     }
 
     #[test]
-    fn directory_provider_preserves_its_distinct_file_url_fallbacks() {
+    fn directory_provider_confines_both_file_url_shapes_through_its_source() {
         let root = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(root.path().join("assets")).unwrap();
         std::fs::write(root.path().join("assets/app.css"), b"body { color: disk }").unwrap();
@@ -252,13 +261,49 @@ mod tests {
         let inside = Url::from_file_path(root.path().join("assets/app.css")).unwrap();
         assert_eq!(
             collector.fetch(provider.as_ref(), inside.as_str()),
-            (inside.to_string(), b"body { color: disk }".to_vec())
+            (inside.to_string(), b"body { color: black }".to_vec())
         );
         assert_eq!(
             collector.fetch(provider.as_ref(), "data:text/plain,fallback"),
             ("data:text/plain,fallback".to_owned(), b"fallback".to_vec())
         );
-        assert_eq!(*source.reads.lock().unwrap(), ["assets/app.css"]);
+        assert_eq!(
+            *source.reads.lock().unwrap(),
+            ["assets/app.css", "assets/app.css"]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn directory_provider_recognises_path_aliases_without_following_escapes() {
+        use std::os::unix::fs::symlink;
+
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join("assets")).unwrap();
+        std::fs::write(root.path().join("assets/app.css"), b"body { color: disk }").unwrap();
+        let aliases = tempfile::tempdir().unwrap();
+        let alias = aliases.path().join("application");
+        symlink(root.path(), &alias).unwrap();
+
+        let provider = net_provider(
+            Arc::new(crate::modules::DirectorySource::new(root.path())),
+            Some(root.path().canonicalize().unwrap()),
+        );
+        let url = Url::from_file_path(alias.join("assets/app.css")).unwrap();
+        assert_eq!(
+            Collector::default().fetch(provider.as_ref(), url.as_str()),
+            (url.to_string(), b"body { color: disk }".to_vec())
+        );
+
+        let outside = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(outside.path(), b"outside").unwrap();
+        let escape = root.path().join("escape");
+        symlink(outside.path(), &escape).unwrap();
+        let escape = Url::from_file_path(escape).unwrap();
+        assert_eq!(
+            Collector::default().fetch(provider.as_ref(), escape.as_str()),
+            (escape.to_string(), Vec::new())
+        );
     }
 
     #[test]

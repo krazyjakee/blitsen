@@ -123,6 +123,10 @@ jobs:
             reproducible: false
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Disable the POSIX compiler wrapper on Windows
+        if: runner.os == 'Windows'
+        shell: bash
+        run: echo "RUSTC_WRAPPER=" >> "$GITHUB_ENV"
       - id: started
         shell: bash
         run: echo "at=$(date +%s)" >> "$GITHUB_OUTPUT"

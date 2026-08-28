@@ -193,7 +193,7 @@
   // to the pointer path — it is the wheel's path, and the compatibility mouse
   // events a pointer synthesises are reached only through `pointerdown` and
   // its siblings.
-  if (testHarness) globals.__blitsenInjectPointerAt = (type, clientX, clientY, init = {}) => {
+  const injectPointerAt = (type, clientX, clientY, init = {}) => {
     const hit = call("hitTest", Number(clientX), Number(clientY));
     if (!hit) return null;
     const members = {
@@ -210,6 +210,7 @@
         { buttons: type === "mousedown" ? 1 : 0, ...members });
     return { allowed, target: wrap(hit.target), path: hit.path.map(wrap) };
   };
+  if (testHarness) globals.__blitsenInjectPointerAt = injectPointerAt;
   Object.assign(globalThis, globals);
   if (!gamepadInstalled) try { delete globalThis.Gamepad; } catch {}
   if (!gamepadInstalled) try { delete globalThis.GamepadButton; } catch {}
@@ -280,5 +281,7 @@
     lifecycle: dispatchLifecycleEvent,
     animationFrameTick,
     animationFramesPending,
+    replayKeyboard: dispatchKeyboardEvent,
+    injectPointerAt,
     window: globalThis,
   });

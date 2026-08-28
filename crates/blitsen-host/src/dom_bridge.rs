@@ -134,6 +134,8 @@ pub(crate) struct HostHooks<V> {
     pub(crate) lifecycle: V,
     pub(crate) animation_frame_tick: V,
     pub(crate) animation_frames_pending: V,
+    pub(crate) replay_keyboard: V,
+    pub(crate) inject_pointer_at: V,
     pub(crate) window: V,
 }
 
@@ -150,6 +152,8 @@ impl<V> HostHooks<V> {
             lifecycle: property("lifecycle")?,
             animation_frame_tick: property("animationFrameTick")?,
             animation_frames_pending: property("animationFramesPending")?,
+            replay_keyboard: property("replayKeyboard")?,
+            inject_pointer_at: property("injectPointerAt")?,
             window: property("window")?,
         })
     }
@@ -1020,7 +1024,7 @@ mod tests {
             assert_eq!(hooks.animation_frame_tick, "animationFrameTick");
             assert_eq!(hooks.animation_frames_pending, "animationFramesPending");
         }
-        assert_eq!(lookups.values().copied().collect::<Vec<_>>(), vec![1; 11]);
+        assert_eq!(lookups.values().copied().collect::<Vec<_>>(), vec![1; 13]);
     }
 
     #[test]
@@ -1046,6 +1050,49 @@ mod tests {
         assert_eq!(
             engine.to_string(&seen).expect("the key is text"),
             "'); throw new Error('compiled') //"
+        );
+    }
+
+    #[test]
+    fn retained_replay_hooks_preserve_input_fields_and_order() {
+        let (mut engine, _services, hooks) = realm();
+        engine
+            .evaluate_script(
+                r#"
+                globalThis.__replayed = [];
+                for (const type of ["keydown", "pointermove"]) document.addEventListener(type, event => {
+                  __replayed.push(type === "keydown"
+                    ? [event.type, event.key, event.code, event.repeat, event.bubbles, event.cancelable]
+                    : [event.type, event.clientX, event.clientY, event.screenX, event.screenY]);
+                });
+                "#,
+                "blitsen:replay-hook-setup",
+            )
+            .unwrap();
+
+        let keyboard = engine.retained_value(&hooks.replay_keyboard).unwrap();
+        let arguments = crate::frame_loop::replay_keyboard_arguments(
+            &mut engine,
+            "keydown",
+            "'\\\n雪",
+            "Quote",
+            true,
+        )
+        .unwrap();
+        engine.call(&keyboard, None, &arguments).unwrap();
+
+        let pointer = engine.retained_value(&hooks.inject_pointer_at).unwrap();
+        let arguments =
+            crate::frame_loop::replay_pointer_arguments(&mut engine, "pointermove", 12.25, -0.0)
+                .unwrap();
+        engine.call(&pointer, None, &arguments).unwrap();
+
+        let observed = engine
+            .evaluate_script("JSON.stringify(__replayed)", "blitsen:replay-hook-result")
+            .unwrap();
+        assert_eq!(
+            engine.to_string(&observed).unwrap(),
+            r#"[["keydown","'\\\n雪","Quote",true,true,true],["pointermove",12.25,0,12.25,0]]"#
         );
     }
 

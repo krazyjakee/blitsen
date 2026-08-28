@@ -39,10 +39,9 @@ pub(crate) struct FrameLoopTurn<E: JsEngine> {
     frame: u32,
     display_list: Duration,
     layout: Option<LayoutSnapshot>,
-    /// The animation-frame callback, resolved once instead of compiled every
-    /// frame. Sound only because a loop never outlives the addon call that
-    /// created it, so this handle stays inside its scope.
-    tick: Option<E::Value>,
+    keyboard: Option<E::StrongRef>,
+    pointer: Option<E::StrongRef>,
+    tick: Option<E::StrongRef>,
 }
 
 impl<E: JsEngine> FrameTurn for FrameLoopTurn<E> {
@@ -79,16 +78,12 @@ impl<E: JsEngine> FrameTurn for FrameLoopTurn<E> {
     }
 
     fn run_animation_frames(&mut self, time: FrameTime) -> Result<(), Self::Error> {
-        let tick = match &self.tick {
-            Some(tick) => tick.clone(),
-            None => {
-                let tick = self.engine.evaluate_script(
-                    "globalThis.__blitsenAnimationFrameTick",
-                    "blitsen:frame-loop-tick",
-                )?;
-                self.tick.insert(tick).clone()
-            }
-        };
+        let tick = retained_hook(
+            &mut self.engine,
+            &mut self.tick,
+            "globalThis.__blitsenAnimationFrameTick",
+            "blitsen:frame-loop-tick",
+        )?;
         let timestamp = self.engine.number(time.timestamp.as_secs_f64() * 1_000.0);
         self.engine.call(&tick, None, &[timestamp]).map(drop)
     }
@@ -165,30 +160,35 @@ impl<E: JsEngine> FrameTurn for FrameLoopTurn<E> {
 
 impl<E: JsEngine> FrameLoopTurn<E> {
     fn dispatch(&mut self, input: &TraceInput) -> Result<(), JsError> {
-        let quote = |value: &str| {
-            serde_json::to_string(value).map_err(|error| JsError::new(error.to_string()))
-        };
-        let script = match input {
+        let (hook, arguments) = match input {
             TraceInput::Key {
                 event_type,
                 key,
                 code,
                 repeat,
-            } => format!(
-                "globalThis.__blitsenDispatchKeyboardEvent({}, {{ bubbles: true, cancelable: true, \
-                 key: {}, code: {}, repeat: {repeat} }})",
-                quote(event_type)?,
-                quote(key)?,
-                quote(code)?,
+            } => (
+                retained_hook(
+                    &mut self.engine,
+                    &mut self.keyboard,
+                    "globalThis.__blitsenDispatchKeyboardEvent",
+                    "blitsen:frame-loop-keyboard",
+                )?,
+                replay_keyboard_arguments(&mut self.engine, event_type, key, code, *repeat)?,
             ),
-            TraceInput::Pointer { event_type, x, y } => format!(
-                "globalThis.__blitsenInjectPointerAt({}, {x}, {y})",
-                quote(event_type)?
-            ),
+            TraceInput::Pointer { event_type, x, y } => {
+                let arguments = replay_pointer_arguments(&mut self.engine, event_type, *x, *y)?;
+                (
+                    retained_hook(
+                        &mut self.engine,
+                        &mut self.pointer,
+                        "globalThis.__blitsenInjectPointerAt",
+                        "blitsen:frame-loop-pointer",
+                    )?,
+                    arguments,
+                )
+            }
         };
-        self.engine
-            .evaluate_script(&script, "blitsen:replay-input")
-            .map(drop)
+        self.engine.call(&hook, None, &arguments).map(drop)
     }
 }
 
@@ -208,19 +208,51 @@ impl<E: JsEngine> FrameLoop<E> {
         height: u32,
         trace: Option<Rc<InputTrace>>,
     ) -> Self {
-        let mut frame_loop = Self::new_uninstrumented(engine, document, width, height, trace);
+        let mut frame_loop = Self::build(engine, document, width, height, trace, None);
         frame_loop.enable_instrumentation();
         frame_loop
     }
 
-    pub(crate) fn new_uninstrumented(
+    pub(crate) fn new_with_hooks(
         engine: E,
         document: Rc<RefCell<BlitzDom>>,
         width: u32,
         height: u32,
         trace: Option<Rc<InputTrace>>,
+        hooks: crate::dom_bridge::HostHooks<E::StrongRef>,
+    ) -> Self {
+        let mut frame_loop = Self::build(engine, document, width, height, trace, Some(hooks));
+        frame_loop.enable_instrumentation();
+        frame_loop
+    }
+
+    pub(crate) fn new_uninstrumented_with_hooks(
+        engine: E,
+        document: Rc<RefCell<BlitzDom>>,
+        width: u32,
+        height: u32,
+        trace: Option<Rc<InputTrace>>,
+        hooks: crate::dom_bridge::HostHooks<E::StrongRef>,
+    ) -> Self {
+        Self::build(engine, document, width, height, trace, Some(hooks))
+    }
+
+    fn build(
+        engine: E,
+        document: Rc<RefCell<BlitzDom>>,
+        width: u32,
+        height: u32,
+        trace: Option<Rc<InputTrace>>,
+        hooks: Option<crate::dom_bridge::HostHooks<E::StrongRef>>,
     ) -> Self {
         let started = Instant::now();
+        let (keyboard, pointer, tick) = hooks.map_or((None, None, None), |hooks| {
+            (
+                Some(hooks.replay_keyboard),
+                Some(hooks.inject_pointer_at),
+                Some(hooks.animation_frame_tick),
+            )
+        });
         Self {
             pipeline: FramePipeline::new(started),
             started,
@@ -235,7 +267,9 @@ impl<E: JsEngine> FrameLoop<E> {
                 frame: 0,
                 display_list: Duration::ZERO,
                 layout: None,
-                tick: None,
+                keyboard,
+                pointer,
+                tick,
             },
         }
     }
@@ -267,5 +301,67 @@ impl<E: JsEngine> FrameLoop<E> {
     /// Layout snapshot resolved by the most recent frame.
     pub fn layout(&self) -> Option<LayoutSnapshot> {
         self.turn.layout
+    }
+}
+
+fn retained_hook<E: JsEngine>(
+    engine: &mut E,
+    retained: &mut Option<E::StrongRef>,
+    source: &str,
+    identifier: &str,
+) -> Result<E::Value, JsError> {
+    if retained.is_none() {
+        let hook = engine.evaluate_script(source, identifier)?;
+        *retained = Some(engine.retain(&hook)?);
+    }
+    engine.retained_value(retained.as_ref().expect("the hook was retained"))
+}
+
+pub(crate) fn replay_keyboard_arguments<E: JsEngine>(
+    engine: &mut E,
+    event_type: &str,
+    key: &str,
+    code: &str,
+    repeat: bool,
+) -> Result<Vec<E::Value>, JsError> {
+    let init = engine.object()?;
+    for (name, value) in [
+        ("bubbles", engine.boolean(true)),
+        ("cancelable", engine.boolean(true)),
+        ("key", engine.string(key)?),
+        ("code", engine.string(code)?),
+        ("repeat", engine.boolean(repeat)),
+    ] {
+        engine.set_property(&init, name, &value)?;
+    }
+    Ok(vec![engine.string(event_type)?, init])
+}
+
+pub(crate) fn replay_pointer_arguments<E: JsEngine>(
+    engine: &mut E,
+    event_type: &str,
+    x: f64,
+    y: f64,
+) -> Result<Vec<E::Value>, JsError> {
+    Ok(vec![
+        engine.string(event_type)?,
+        engine.number(x),
+        engine.number(y),
+    ])
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn replay_input_dispatch_contains_no_script_evaluation() {
+        let source = include_str!("frame_loop.rs");
+        let dispatch = source
+            .split("fn dispatch")
+            .nth(1)
+            .unwrap()
+            .split("/// A document advancing")
+            .next()
+            .unwrap();
+        assert!(!dispatch.contains("evaluate_script"));
     }
 }
