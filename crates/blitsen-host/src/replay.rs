@@ -21,7 +21,9 @@ use serde::Serialize;
 
 use crate::alloc::{self, AllocationCounts};
 use crate::frame_loop::FrameLoop;
-use crate::harness::{load_document_harness, record_frame, render_document, visit_elements};
+use crate::harness::{
+    load_document_harness_with_hooks, record_frame, render_document, visit_elements,
+};
 
 /// Digest domains. Bump the version when a digest's inputs change, so a stale
 /// golden fails loudly instead of comparing two different questions.
@@ -228,7 +230,7 @@ pub fn replay<E: JsEngine + Clone + 'static>(
     record_frames: &[u32],
 ) -> Result<ReplayReport, JsError> {
     let (width, height) = (trace.width, trace.height);
-    let (engine, document, hooks) = load_document_harness(
+    let (engine, document, hooks) = load_document_harness_with_hooks(
         engine,
         entrypoint,
         width,
@@ -236,7 +238,7 @@ pub fn replay<E: JsEngine + Clone + 'static>(
         crate::dom_bridge::DocumentMode::TestHarness,
     )?;
     let trace = Rc::new(trace);
-    let mut frame_loop = FrameLoop::new(
+    let mut frame_loop = FrameLoop::new_with_hooks(
         engine,
         Rc::clone(&document),
         width,

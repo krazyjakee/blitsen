@@ -525,7 +525,7 @@ pub fn execute_document_harness<E: JsEngine + Clone + 'static>(
 ) -> Result<HarnessSnapshot, JsError> {
     // Mirrors a shipped window exactly, including the absence of test-only
     // injection globals, so the fixture guard against them stays meaningful.
-    let (_, document, _) =
+    let (_, document) =
         load_document_harness(engine, entrypoint, width, height, DocumentMode::Application)?;
     ACTIVE_DOCUMENT_HARNESS.with(|active| {
         *active.borrow_mut() = Some((Rc::clone(&document), width, height));
@@ -549,7 +549,20 @@ type LoadedHarness<E> = (
     crate::dom_bridge::HostHooks<<E as JsEngine>::StrongRef>,
 );
 
-pub(crate) fn load_document_harness<E: JsEngine + Clone + 'static>(
+/// Loads an application document for a headless harness at a fixed viewport.
+pub fn load_document_harness<E: JsEngine + Clone + 'static>(
+    engine: E,
+    entrypoint: &Path,
+    width: u32,
+    height: u32,
+    mode: DocumentMode,
+) -> Result<(E, Rc<RefCell<BlitzDom>>), JsError> {
+    let (engine, document, _) =
+        load_document_harness_with_hooks(engine, entrypoint, width, height, mode)?;
+    Ok((engine, document))
+}
+
+pub(crate) fn load_document_harness_with_hooks<E: JsEngine + Clone + 'static>(
     mut engine: E,
     entrypoint: &Path,
     width: u32,
@@ -584,11 +597,16 @@ pub fn execute_document_animation_harness<E: JsEngine + Clone + 'static>(
     height: u32,
     record_into: Option<&Path>,
 ) -> Result<Vec<HarnessSnapshot>, JsError> {
-    let (mut engine, document, hooks) =
-        load_document_harness(engine, entrypoint, width, height, DocumentMode::TestHarness)?;
+    let (mut engine, document, hooks) = load_document_harness_with_hooks(
+        engine,
+        entrypoint,
+        width,
+        height,
+        DocumentMode::TestHarness,
+    )?;
     engine.evaluate_script(setup_script, "document-animation-setup.js")?;
 
-    let mut frame_loop = frame_loop::FrameLoop::new_uninstrumented(
+    let mut frame_loop = frame_loop::FrameLoop::new_uninstrumented_with_hooks(
         engine,
         Rc::clone(&document),
         width,
