@@ -85,8 +85,20 @@ impl DevServer {
                  output, or a dev server over http or https."
             )));
         }
+        let origin = parsed.origin();
+        let origin_name = origin.ascii_serialization();
         let client = reqwest::Client::builder()
             .timeout(REQUEST_TIMEOUT)
+            .redirect(reqwest::redirect::Policy::custom(move |attempt| {
+                if attempt.url().origin() == origin {
+                    attempt.follow()
+                } else {
+                    let target = attempt.url().to_string();
+                    attempt.error(format!(
+                        "redirect to {target} refused: this server only requests from {origin_name}"
+                    ))
+                }
+            }))
             .build()
             .map_err(|error| JsError::new(format!("could not start an HTTP client: {error}")))?;
         let server = Arc::new(Self {
@@ -205,7 +217,14 @@ fn connection_error(error: &reqwest::Error) -> String {
     } else if error.is_timeout() {
         "the request timed out".to_owned()
     } else {
-        error.to_string()
+        let mut message = error.to_string();
+        let mut source = std::error::Error::source(error);
+        while let Some(error) = source {
+            message.push_str(": ");
+            message.push_str(&error.to_string());
+            source = error.source();
+        }
+        message
     }
 }
 
@@ -237,6 +256,9 @@ impl AppSource for DevServer {
 
 #[cfg(test)]
 mod tests {
+    use std::io::{Read as _, Write as _};
+    use std::net::TcpListener;
+
     use super::*;
 
     fn server() -> DevServer {
@@ -265,6 +287,51 @@ mod tests {
             server.url_for("//evil.example/x"),
             "http://localhost:5173///evil.example/x",
             "a message about a refused path still names it, on the origin"
+        );
+    }
+
+    #[test]
+    fn redirects_stay_on_the_configured_origin() {
+        let origin_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let origin = format!("http://{}", origin_listener.local_addr().unwrap());
+        let outside_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let outside = format!("http://{}", outside_listener.local_addr().unwrap());
+        let origin_server = std::thread::spawn(move || {
+            for response in [
+                "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nindex".to_owned(),
+                "HTTP/1.1 302 Found\r\nLocation: /entrypoint\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_owned(),
+                "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nentry".to_owned(),
+                format!(
+                    "HTTP/1.1 302 Found\r\nLocation: {outside}/payload\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                ),
+            ] {
+                let (mut stream, _) = origin_listener.accept().unwrap();
+                let mut request = Vec::new();
+                let mut buffer = [0_u8; 1024];
+                while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+                    let read = stream.read(&mut buffer).unwrap();
+                    if read == 0 {
+                        break;
+                    }
+                    request.extend_from_slice(&buffer[..read]);
+                }
+                stream.write_all(response.as_bytes()).unwrap();
+                stream.flush().unwrap();
+            }
+        });
+
+        let server = DevServer::connect(&origin, "/index.html").unwrap();
+        assert_eq!(server.read("/entrypoint"), Some(b"entry".to_vec()));
+        assert_eq!(server.read("/cross-origin"), None);
+        let error = server.last_error().unwrap();
+        assert!(error.contains("redirect"), "{error}");
+        assert!(error.contains("only requests from"), "{error}");
+        origin_server.join().unwrap();
+
+        outside_listener.set_nonblocking(true).unwrap();
+        assert!(
+            outside_listener.accept().is_err(),
+            "the redirect target must not receive a request"
         );
     }
 }
