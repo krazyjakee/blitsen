@@ -1,4 +1,4 @@
-//! Host half of the `native:` modules, below the namespace the bootstrap builds.
+//! Host half of the `blitsen/*` modules, below the namespace the bootstrap builds.
 //!
 //! Every function here is installed under a `__blitsenNative…` name and only if
 //! this platform can implement it properly. That is what makes the namespace
@@ -32,7 +32,7 @@ fn failed(error: PlatformError) -> JsError {
     JsError::new(error.message().to_owned())
 }
 
-/// Installs the host functions the `native:` namespace is assembled from.
+/// Installs the host functions the native namespace is assembled from.
 pub(super) fn install<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsError> {
     app::install(engine)?;
     clipboard::install(engine)?;

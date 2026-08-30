@@ -31,7 +31,7 @@ async function compatibilityRules() {
 let loaded;
 const compatibility = () => (loaded ??= compatibilityRules());
 
-// A `native:` module the target being built for does not have (#147).
+// A `blitsen/*` module the target being built for does not have (#147).
 //
 // Not from the manifest, and the reason is worth stating: the manifest is
 // generated from one bootstrap script shared by every build, so it can say a
@@ -164,7 +164,7 @@ async function collectScannableFiles(root) {
 
 /**
  * Grades built output against the v1 profile, and against `target`'s own
- * `native:` surface.
+ * native surface.
  *
  * `target` defaults to the host because that is what an unqualified `blitsen
  * doctor` is asking about, and it is what `blitsen build` without `--target`

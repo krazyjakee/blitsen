@@ -27,7 +27,7 @@
 //
 // So the two flags mean different things and are refused together. What Android
 // keeps of `--target` is `doctor`'s reading of it, which #147 already landed:
-// `--target android-arm64` grades an application against the `native:` modules
+// `--target android-arm64` grades an application against the `blitsen/*` modules
 // Android has. Grading for a platform and building for it are different claims,
 // and the vocabulary stays split along that line.
 //

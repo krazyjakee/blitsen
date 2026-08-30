@@ -4767,6 +4767,34 @@
       "reason": "winit sets the window level and cannot read it back, and the window manager may change it without telling the application. Remembering what was last set would be a second source of truth that quietly goes stale."
     },
     {
+      "api": "window.isMinimized",
+      "module": "window",
+      "member": "isMinimized",
+      "status": "absent",
+      "reason": "winit answers `is_minimized()` as `Option<bool>` and documents Wayland as always `None`, so on one of the three desktop platforms there is no answer to give. Reporting false for `None` would be indistinguishable from a restored window, which is the one thing a caller asks this to tell apart. The alternative is the desired state this module last set, which the window manager and the user change without telling it."
+    },
+    {
+      "api": "window.getCursor",
+      "module": "window",
+      "member": "getCursor",
+      "status": "absent",
+      "reason": "winit has no getter for the cursor icon. The value would be the argument the caller last passed, which it already has, and it would be wrong exactly where it is interesting: the platform swaps the cursor itself over a resize edge or during a drag and reports nothing when it does."
+    },
+    {
+      "api": "window.isCursorVisible",
+      "module": "window",
+      "member": "isCursorVisible",
+      "status": "absent",
+      "reason": "The counterpart of `getCursor`: winit sets cursor visibility and cannot read it back. Pointer lock hides the cursor through the DOM path, so a remembered flag here would disagree with the screen for as long as a lock is held."
+    },
+    {
+      "api": "window.getCursorGrab",
+      "module": "window",
+      "member": "getCursorGrab",
+      "status": "absent",
+      "reason": "The counterpart of `getCursor`, and with a second reason: the compositor may refuse or drop a grab — a Wayland client loses one when it loses focus — so the last mode this module set is not the mode in effect."
+    },
+    {
       "api": "window.startFileDrag",
       "module": "window",
       "member": "startFileDrag",

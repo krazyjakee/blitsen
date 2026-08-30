@@ -2,7 +2,7 @@
 //!
 //! A dialog future is driven on a thread of its own and its outcome is queued
 //! here for the runtime to collect, rather than blocking the caller. The reason
-//! is the frame loop: the thread a `native:dialog` call arrives on is the thread
+//! is the frame loop: the thread a `blitsen/dialog` call arrives on is the thread
 //! that pumps winit, so blocking it would stop the application painting for as long
 //! as the dialog is on screen — and a client that stops reading its display
 //! socket is one X11 and Wayland compositors are entitled to grey out.

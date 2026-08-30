@@ -1,4 +1,4 @@
-// Which `native:` modules exist on which target, and why the missing ones are
+// Which `blitsen/*` modules exist on which target, and why the missing ones are
 // missing. Read by `doctor`, so an application that imports a capability the
 // target it is being built for does not have hears about it at export time
 // rather than at run time (#147).
@@ -29,7 +29,7 @@
 
 import { NATIVE_MODULES } from "./native/module.mjs";
 
-/// The platforms a target's `native:` surface is decided by. A target is
+/// The platforms a target's native surface is decided by. A target is
 /// `<platform>-<arch>`; the architecture never changes which modules exist.
 export const NATIVE_PLATFORMS = ["linux", "darwin", "win32", "android"];
 
@@ -104,7 +104,7 @@ const REASONS = {
     + "permission and channel semantics rather than pretending to be a tray icon.",
 };
 
-/// The `native:` modules that do not exist on `target`, each with its reason.
+/// The `blitsen/*` modules that do not exist on `target`, each with its reason.
 ///
 /// An unknown platform reports nothing rather than guessing. `doctor` runs
 /// against the host by default and the six shipping targets are all listed, so

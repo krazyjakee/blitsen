@@ -619,7 +619,7 @@ at 918,068 B by the same method, consistent with the ~1.5 MB recorded above for 
 the `x86_64` APK is 39,440,959 B against 39,470,504 B for the `linux-x64` export from the same
 commit — **29,545 B less**, complete with the 3.6 MB of OpenSSL the desktop build does not carry.
 Only that net is measured. The obvious reading is that what Android drops pays for what it vendors
-— winit's X11 and Wayland backends, `arboard`, the XDG portal and every `native:` module §7 records
+— winit's X11 and Wayland backends, `arboard`, the XDG portal and every `blitsen/*` module §7 records
 as absent are all out of its graph — but nothing here priced those omissions, so that sentence is
 an inference and the 29,545 B is the measurement. What it does settle is the direction: the
 vendored-OpenSSL cost is a real line in the breakdown and it is not a reason the APK is large.

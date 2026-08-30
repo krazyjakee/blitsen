@@ -25,7 +25,6 @@
     pending: gamepadPending,
     take: () => JSON.parse(__blitsenGamepadTake()),
     result: message => message.result,
-    error: message => new DOMException(message.error, message.errorName ?? "OperationError"),
     onMessage: message => {
       const gamepad = gamepadFromRaw(message.gamepad);
       globalThis.dispatchEvent(new GamepadEvent(`gamepad${message.kind}`, { gamepad }));
@@ -98,11 +97,9 @@
     return Object.freeze(JSON.parse(__blitsenGamepads()).map(gamepadFromRaw));
   };
   const gamepadListener = listener => {
-    if (typeof listener !== "function")
-      throw new TypeError("gamepad device-change listener must be a function");
+    const remove = commandListener(gamepadDeviceListeners, listener, "gamepad device-change");
     touchGamepads();
-    gamepadDeviceListeners.add(listener);
-    return () => { gamepadDeviceListeners.delete(listener); };
+    return remove;
   };
   const settleGamepads = gamepadChannel.settle;
 

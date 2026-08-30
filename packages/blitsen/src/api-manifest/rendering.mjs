@@ -8,7 +8,7 @@ export const COMPATIBILITY_DOC = join(import.meta.dirname, "../../../../docs/COM
 // maintained beside it (issue #74).
 //
 // The failure this prevents is the one that costs a user the most: editor
-// completion offering `native:window.create`, the code compiling, and the call
+// completion offering `blitsen/window.create`, the code compiling, and the call
 // returning `undefined` at run time. So the rule is exact in both directions —
 // a declared member the runtime does not install is a promise, and an installed
 // member left undeclared is completion the user does not get.
@@ -107,7 +107,7 @@ export function renderCapabilityTiers(manifest) {
     "| Diagnostic | Severity | Reported as |", "| --- | --- | --- |", ...diagnosed].join("\n");
 }
 
-// Renders the `native:` module surface documented in COMPATIBILITY.md.
+// Renders the `blitsen/*` module surface documented in COMPATIBILITY.md.
 export function renderNativeModules(manifest) {
   const modules = [...new Set(manifest.native.map(entry => entry.module))];
   const members = (module, status) => manifest.native

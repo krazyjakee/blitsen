@@ -1,5 +1,5 @@
 /**
- * The `native:` module surfaces, re-exported so an application can name one.
+ * The `blitsen/*` module surfaces, re-exported so an application can name one.
  * The modules themselves are the `blitsen/app` … `blitsen/os` subpaths.
  */
 export type {

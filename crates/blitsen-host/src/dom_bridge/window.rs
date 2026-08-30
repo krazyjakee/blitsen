@@ -1,7 +1,7 @@
-//! The live application window, as `native:window` and `native:dialog` reach it.
+//! The live application window, as `blitsen/window` and `blitsen/dialog` reach it.
 //!
 //! The window belongs to the winit session `pumpWindow` turns, and that same
-//! call is what runs JavaScript: a `native:window` call arrives from inside
+//! call is what runs JavaScript: a `blitsen/window` call arrives from inside
 //! `pump_app_events`, with the session already borrowed by the pump that made
 //! it. So it does not reach the session at all. It reaches this slot, which
 //! holds the same `Arc<dyn Window>` the session's view holds — published when
@@ -26,7 +26,7 @@ use std::sync::Arc;
 use winit::dpi::PhysicalSize;
 use winit::window::Window;
 
-// Everything a `native:window` or `native:dialog` call reaches is compiled off
+// Everything a `blitsen/window` or `blitsen/dialog` call reaches is compiled off
 // Android; see the note above `with`. What is left is the slot itself, which the
 // session publishes into and reads back whatever the platform.
 #[cfg(not(target_os = "android"))]
@@ -58,7 +58,7 @@ thread_local! {
     /// native window module so lifecycle loss only undoes modes it owns.
     static WEB_POINTER_LOCKED: Cell<bool> = const { Cell::new(false) };
     static WEB_FULLSCREEN: Cell<bool> = const { Cell::new(false) };
-    /// Desired state owned by `native:window`. DOM modes temporarily override
+    /// Desired state owned by `blitsen/window`. DOM modes temporarily override
     /// these values and restore the latest desired state on exit.
     #[cfg(not(target_os = "android"))]
     static NATIVE_CURSOR_GRAB: Cell<CursorGrabMode> = const { Cell::new(CursorGrabMode::None) };
@@ -66,7 +66,7 @@ thread_local! {
     static NATIVE_FULLSCREEN: Cell<bool> = const { Cell::new(false) };
 }
 
-/// Publishes the window `native:` calls act on, or `None` once it has gone.
+/// Publishes the window the native modules act on, or `None` once it has gone.
 pub(crate) fn publish(window: Option<Arc<dyn Window>>) {
     #[cfg(not(target_os = "android"))]
     if CURRENT.with_borrow(|current| current.is_none())
@@ -234,7 +234,7 @@ pub(crate) fn take_close_requested() -> bool {
 /// reachable there, but it is already `devicePixelRatio` and is not this
 /// module's to spell a second time.
 ///
-/// So `native:window` is absent whole on Android rather than trimmed. The
+/// So `blitsen/window` is absent whole on Android rather than trimmed. The
 /// capabilities that *are* real — immersive mode, orientation, the cutout inset
 /// — are not these under another name (#146, #147).
 #[cfg(not(target_os = "android"))]
@@ -246,7 +246,7 @@ pub(super) fn with<T>(
         // Scripts run before the window is created, so this is a real state an
         // application can be in rather than a broken build.
         None => Err(JsError::new(
-            "there is no application window yet: native:window and native:dialog are usable \
+            "there is no application window yet: blitsen/window and blitsen/dialog are usable \
              from the load event onwards, in an application run by blitsen",
         )),
     })

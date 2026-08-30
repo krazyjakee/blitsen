@@ -582,9 +582,9 @@ export interface NativeHidDevice {
   readonly maxOutputReportSize: number;
   readonly maxFeatureReportSize: number;
   /** Sends an output report; the first byte is the report ID, or zero. */
-  write(data: Uint8Array): Promise<null>;
+  write(data: Uint8Array): Promise<void>;
   /** Sends a feature report; the first byte is the report ID, or zero. */
-  sendFeatureReport(data: Uint8Array): Promise<null>;
+  sendFeatureReport(data: Uint8Array): Promise<void>;
   /** Reads a feature report, answering it without the report ID asked for. */
   receiveFeatureReport(reportId: number): Promise<Uint8Array>;
   /** Listens for input reports; returns an unsubscribe function. */
@@ -592,7 +592,7 @@ export interface NativeHidDevice {
   /** Listens for the single terminal event a disconnected device produces. */
   onDisconnect(listener: (event: { readonly deviceId: string }) => void): () => void;
   /** Closes the device. Produces no disconnect event. */
-  close(): Promise<null>;
+  close(): Promise<void>;
 }
 
 /**

@@ -291,11 +291,11 @@ export const CATALOGUE = {
   WEB_COMPONENTS: ["customElements", "ShadowRoot", "DOMParser"],
 };
 
-// The `native:` modules, declared the same way and for the same reason: the
+// The `blitsen/*` modules, declared the same way and for the same reason: the
 // names live here and whether each one is implemented is read out of the
 // bootstrap, so this file cannot claim capability the runtime does not install.
 // Nothing here has a Node or web spelling — that is the entry condition for a
-// `native:` member (TECH.md §9), which is why `argv`, `execPath` and `quit` are
+// `blitsen/<module>` member (TECH.md §9), which is why `argv`, `execPath` and `quit` are
 // not listed as absent: they are `process.argv`, `process.execPath` and
 // `process.exit`, and they are not this layer's to name.
 // Note what `window` does not name: size, position and scale factor. Those are
@@ -309,7 +309,8 @@ export const NATIVE = {
   window: ["setSize", "setFullscreen", "isFullscreen", "setDecorations", "isDecorated",
     "setMinimized", "setMaximized", "isMaximized", "startDrag", "close", "setAlwaysOnTop",
     "setCursor", "setCursorVisible", "setCursorGrab", "monitors",
-    "create", "setTransparent", "isAlwaysOnTop", "startFileDrag"],
+    "create", "setTransparent", "isAlwaysOnTop", "isMinimized", "getCursor", "isCursorVisible",
+    "getCursorGrab", "startFileDrag"],
   dialog: ["openFile", "openFiles", "saveFile", "openFolder", "openFolders", "message"],
   clipboard: ["readText", "readHtml", "readImage", "writeText", "writeHtml", "writeImage",
     "clear", "readMime", "writeMime"],
@@ -319,6 +320,30 @@ export const NATIVE = {
   hid: ["devices", "open", "onDeviceChange"],
   notify: ["show", "permission", "requestPermission", "update", "close", "onEvent"],
   os: ["cpu", "memory", "storage", "host", "displays", "batteries", "locale", "idleTime"],
+};
+
+// Which member reads back each `blitsen/window` setter, declared rather than
+// left to review. A window property the application sets is one the window
+// manager, the user or the DOM path can change afterwards, so "can I read this
+// back" is a question every setter raises and none of them should answer by
+// accident. `api-manifest.mjs` refuses a setter that is missing here, and a
+// named readback is an ordinary declared member: implemented, or absent with a
+// reason in NATIVE_ABSENT like any other.
+//
+// `answeredBy` is the other outcome — the fact is already reported by something
+// that is not this module, and a second answer that could disagree is worse
+// than none. It names what answers instead.
+export const WINDOW_READBACKS = {
+  setSize: { answeredBy: "`innerWidth`, `innerHeight` and the `resize` event" },
+  setFullscreen: { readback: "isFullscreen" },
+  setDecorations: { readback: "isDecorated" },
+  setMinimized: { readback: "isMinimized" },
+  setMaximized: { readback: "isMaximized" },
+  setAlwaysOnTop: { readback: "isAlwaysOnTop" },
+  setCursor: { readback: "getCursor" },
+  setCursorVisible: { readback: "isCursorVisible" },
+  setCursorGrab: { readback: "getCursorGrab" },
+  setTransparent: { answeredBy: "the window's own creation, which is `window.create`" },
 };
 
 // Why a declared member is not implemented. Absence is the answer, not an
@@ -354,6 +379,21 @@ export const NATIVE_ABSENT = {
     + "`NSDraggingSession`, a `wl_data_device` offer — and the first two run a modal loop that "
     + "does not return until the drop, on the one thread Blitsen keeps free to paint. That is a "
     + "design question rather than a missing call, so the module says so instead of answering it.",
+  "window.isMinimized": "winit answers `is_minimized()` as `Option<bool>` and documents Wayland "
+    + "as always `None`, so on one of the three desktop platforms there is no answer to give. "
+    + "Reporting false for `None` would be indistinguishable from a restored window, which is the "
+    + "one thing a caller asks this to tell apart. The alternative is the desired state this "
+    + "module last set, which the window manager and the user change without telling it.",
+  "window.getCursor": "winit has no getter for the cursor icon. The value would be the argument "
+    + "the caller last passed, which it already has, and it would be wrong exactly where it is "
+    + "interesting: the platform swaps the cursor itself over a resize edge or during a drag and "
+    + "reports nothing when it does.",
+  "window.isCursorVisible": "The counterpart of `getCursor`: winit sets cursor visibility and "
+    + "cannot read it back. Pointer lock hides the cursor through the DOM path, so a remembered "
+    + "flag here would disagree with the screen for as long as a lock is held.",
+  "window.getCursorGrab": "The counterpart of `getCursor`, and with a second reason: the "
+    + "compositor may refuse or drop a grab — a Wayland client loses one when it loses focus — "
+    + "so the last mode this module set is not the mode in effect.",
   "window.isAlwaysOnTop": "winit sets the window level and cannot read it back, and the window "
     + "manager may change it without telling the application. Remembering what was last set would "
     + "be a second source of truth that quietly goes stale.",
