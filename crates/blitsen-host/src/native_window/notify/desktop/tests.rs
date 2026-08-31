@@ -71,6 +71,7 @@ fn the_unregistered_windows_refusal_names_the_identity_rather_than_a_verdict() {
 /// a registered identity to mean anything skips loudly when there is none.
 #[cfg(all(test, target_os = "windows"))]
 mod windows_tests {
+    use super::super::windows_backend::{GROUP, app_id, toast};
     use super::*;
     use windows::UI::Notifications::ToastNotificationManager;
     use windows::core::HSTRING;
