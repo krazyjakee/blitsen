@@ -13,7 +13,7 @@ describe("the Android renderer policy", () => {
     const [cargo, androidCargo, renderer, entry] = await Promise.all([
       source("crates/blitsen-host/Cargo.toml"),
       source("crates/blitsen-android/Cargo.toml"),
-      source("crates/blitsen-host/src/native_window.rs"),
+      source("crates/blitsen-host/src/native_window/renderer.rs"),
       source("crates/blitsen-android/src/lib.rs"),
     ]);
     const androidDependencies = /\[target\.'cfg\(target_os = "android"\)'\.dependencies\]([\s\S]*?)\n\[/

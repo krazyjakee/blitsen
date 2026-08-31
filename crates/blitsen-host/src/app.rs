@@ -279,10 +279,12 @@ impl AppFiles {
                 // Canonicalised once, here, rather than on every URL the
                 // reader is asked about: the root does not move while the
                 // document it anchors is loaded, and each *target* is still
-                // resolved per read. (The stored root is the simplified
-                // spelling; the comparison in `path_of_url` needs the
-                // canonical one, which on Windows is the `\\?\` form.)
-                Self::Directory { root, .. } => root.canonicalize().ok(),
+                // resolved per read. Simplified after canonicalising because
+                // `path_of_url` compares it against targets that may not
+                // exist and so cannot be canonicalised: on Windows those
+                // stay in the plain spelling, which the `\\?\` form would
+                // never prefix-match.
+                Self::Directory { root, .. } => root.canonicalize().ok().map(simplified),
                 Self::Bundle { .. } | Self::Server { .. } | Self::Assets { .. } => None,
             },
         }
@@ -439,7 +441,10 @@ impl AppReader {
         // reporting it as "not this application's" would send the reader looking
         // for the wrong mistake. `Url` has already resolved any `..` segments,
         // and `AppSource` re-canonicalises and re-checks on the way in.
-        let target = target.canonicalize().unwrap_or(target);
+        // Simplified so both spellings sit beside the stored root's: on
+        // Windows a canonicalised target is `\\?\C:\...` while a missing one
+        // stays `C:\...`, and only one of them can match a given root.
+        let target = simplified(target.canonicalize().unwrap_or(target));
         let relative = target.strip_prefix(root).ok()?;
         Some(relative.to_string_lossy().replace('\\', "/"))
     }

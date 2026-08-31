@@ -295,6 +295,10 @@ jobs:
       # executes instead of skipping — see the header comment above.
       - if: runner.os == 'Linux'
         run: xvfb-run -a bun run --cwd packages/blitsen test:standalone
+        env:
+          # The device behind Xvfb is Mesa's lavapipe, so the frame-cadence
+          # assertion holds the software floor rather than the 60 Hz budget.
+          BLITSEN_TEST_SOFTWARE_GPU: "1"
       - if: runner.os != 'Linux'
         run: bun run --cwd packages/blitsen test:standalone
       - run: bun run --cwd packages/blitsen test:m3b
