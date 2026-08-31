@@ -26,7 +26,7 @@ const interactiveDemo = interactiveSnapshot.nodes.find(node => node.attributes.i
 assert.equal(interactiveDemo.attributes["data-ready"], "true",
   "interactive acceptance example installs its event and animation script");
 // The hardware example, which is the only one of these whose script depends on a
-// `native:` module. Running it here is what catches an application that parses
+// `blitsen/*` module. Running it here is what catches an application that parses
 // and then throws on evaluation — the marker is absent, rather than the document
 // merely looking sparse.
 const hardwareSnapshot = JSON.parse(native.runDocumentScriptsHarness(

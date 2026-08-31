@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import {
   ASSET_RULES, CATALOGUE, CONDITIONAL, DECLARED, DIAGNOSTICS, ENGINE_ABSENT, NATIVE,
-  NATIVE_ABSENT, NATIVE_CONDITIONAL, RENDERER_RULES, USAGE_RULES,
+  NATIVE_ABSENT, NATIVE_CONDITIONAL, RENDERER_RULES, USAGE_RULES, WINDOW_READBACKS,
 } from "./api-manifest/catalogue.mjs";
 import {
   SOURCE_NAME, extractRuntimeSurface, readBootstrapScript,
@@ -50,7 +50,7 @@ function apiEntry(surface, entry, code) {
     pattern: override === undefined ? pattern : override };
 }
 
-// Reads the `native:` surface out of the bootstrap, refusing anything the two
+// Reads the native surface out of the bootstrap, refusing anything the two
 // disagree about — an installed member this file does not declare, or an absent
 // one it cannot say why about.
 function nativeEntries(surface) {
@@ -58,31 +58,60 @@ function nativeEntries(surface) {
     const installed = surface.native.get(module);
     const undeclared = [...installed].filter(member => !members.includes(member));
     if (undeclared.length > 0)
-      throw new Error(`${SOURCE_NAME} installs native:${module}.`
-        + `${undeclared.join(`, native:${module}.`)}, which this manifest does not declare; `
+      throw new Error(`${SOURCE_NAME} installs blitsen/${module}.`
+        + `${undeclared.join(`, blitsen/${module}.`)}, which this manifest does not declare; `
         + "add each one to NATIVE");
     return members.map(member => {
       const api = `${module}.${member}`;
       const status = installed.has(member) ? "implemented" : "absent";
       const reason = NATIVE_ABSENT[api];
       if (status === "absent" && !reason)
-        throw new Error(`native:${api} is not installed and NATIVE_ABSENT does not say why`);
+        throw new Error(`blitsen/${api} is not installed and NATIVE_ABSENT does not say why`);
       if (status === "implemented" && reason)
-        throw new Error(`native:${api} is installed, so NATIVE_ABSENT must not explain it away`);
+        throw new Error(`blitsen/${api} is installed, so NATIVE_ABSENT must not explain it away`);
       const condition = NATIVE_CONDITIONAL[api];
       if (condition) {
         const unknown = condition.platforms
           .filter(platform => !NATIVE_PLATFORMS.includes(platform));
         if (unknown.length > 0)
-          throw new Error(`native:${api} is conditional on ${unknown.join(", ")}, which is not a platform`);
+          throw new Error(`blitsen/${api} is conditional on ${unknown.join(", ")}, `
+            + "which is not a platform");
         if (status !== "implemented")
-          throw new Error(`native:${api} is conditional and not implemented on any platform`);
+          throw new Error(`blitsen/${api} is conditional and not implemented on any platform`);
       }
       return { api, module, member, status, ...(reason ? { reason } : {}),
         ...(condition ? { condition } : {}) };
     });
   });
+  checkWindowReadbacks();
   return entries;
+}
+
+// Every `blitsen/window` setter either has a readback member or names what
+// answers for it instead. Without this a setter could be added with no getter
+// and nothing would notice: an undeclared member is not absent, it is
+// unmentioned, and only a declared one is held to NATIVE_ABSENT's "say why".
+function checkWindowReadbacks() {
+  const declared = new Set(NATIVE.window);
+  for (const setter of NATIVE.window.filter(member => /^set[A-Z]/.test(member))) {
+    const pairing = WINDOW_READBACKS[setter];
+    if (!pairing)
+      throw new Error(`window.${setter} has no entry in WINDOW_READBACKS, so nothing says whether `
+        + "it can be read back or what answers for it instead");
+    if (pairing.readback === undefined) {
+      if (!pairing.answeredBy)
+        throw new Error(`WINDOW_READBACKS.${setter} must name a readback member or, in `
+          + "answeredBy, what reports the same fact instead");
+      continue;
+    }
+    if (!declared.has(pairing.readback))
+      throw new Error(`WINDOW_READBACKS.${setter} names window.${pairing.readback}, which NATIVE `
+        + "does not declare; declare it there so it is implemented or absent with a reason");
+  }
+  const unknown = Object.keys(WINDOW_READBACKS).filter(setter => !declared.has(setter));
+  if (unknown.length > 0)
+    throw new Error(`WINDOW_READBACKS pairs ${unknown.join(", ")}, which NATIVE does not declare `
+      + "as window members");
 }
 
 // A rule matched against a source file of one kind, rather than against an API.

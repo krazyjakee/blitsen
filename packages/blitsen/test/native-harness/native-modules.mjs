@@ -18,7 +18,7 @@ import windowModule from "../../src/native/window.mjs";
 
 import { addonPath, native } from "./addon.mjs";
 
-// The `native:` modules. Everything below reaches them the way an application
+// The `blitsen/*` modules. Everything below reaches them the way an application
 // does — through the `blitsen/app` and `blitsen/clipboard` proxies — so what is
 // asserted is the installed namespace, not a description of it.
 const nativeManifest = await loadApiManifest();
@@ -31,20 +31,21 @@ for (const entry of nativeManifest.native.filter(entry => entry.module === "menu
 }
 for (const entry of nativeManifest.native) {
   const namespace = namespaces[entry.module];
-  assert(namespace, `the manifest names native:${entry.module}, which the harness does not import`);
+  assert(namespace,
+    `the manifest names blitsen/${entry.module}, which the harness does not import`);
   const installed = entry.status === "implemented"
     && !(absentOn.get(entry.api) ?? []).includes(process.platform);
   if (installed) {
     assert.equal(typeof namespace[entry.member], "function",
-      `native:${entry.api} is implemented and must be installed`);
-    assert.equal(entry.member in namespace, true, `native:${entry.api} must be enumerable`);
+      `blitsen/${entry.api} is implemented and must be installed`);
+    assert.equal(entry.member in namespace, true, `blitsen/${entry.api} must be enumerable`);
   } else {
     // Absent, not stubbed: the property does not exist, so `if (app.onSuspend)`
     // selects a fallback instead of calling something that throws.
     assert.equal(namespace[entry.member], undefined,
-      `native:${entry.api} is absent and must not be installed`);
+      `blitsen/${entry.api} is absent and must not be installed`);
     assert.equal(entry.member in namespace, false,
-      `native:${entry.api} must not answer an "in" check`);
+      `blitsen/${entry.api} must not answer an "in" check`);
   }
 }
 for (const [name, namespace] of Object.entries(namespaces)) {
@@ -53,7 +54,7 @@ for (const [name, namespace] of Object.entries(namespaces)) {
       .filter(entry => entry.module === name && entry.status === "implemented"
         && !(absentOn.get(entry.api) ?? []).includes(process.platform))
       .map(entry => entry.member).sort(),
-    `the native:${name} namespace enumerates exactly what the runtime installed`);
+    `the blitsen/${name} namespace enumerates exactly what the runtime installed`);
 }
 assert.throws(() => { app.dataDir = () => "/tmp"; }, /read-only/);
 

@@ -1,7 +1,7 @@
 //! Native platform services used below the bridge boundary.
 //!
 //! Capability the web has no spelling for, in a crate that knows nothing about
-//! JavaScript. The `native:` modules in `blitsen-host`'s DOM bridge are a thin
+//! JavaScript. The `blitsen/*` modules in `blitsen-host`'s DOM bridge are a thin
 //! translation of what is here, so the Phase 2 host swap re-wires the bridge
 //! rather than rewriting the platform code behind it.
 //!

@@ -25,6 +25,41 @@ Outside Blitsen, accessing a native module member throws. Put browser-preview be
 environment boundary or a dynamic import rather than expecting the module to act as a browser
 polyfill.
 
+## Conventions
+
+Four rules hold across every module below, so they are worth learning once rather than per call.
+
+**A mistake in the call throws where the call was made.** Arguments are checked before anything
+reaches the platform, so a wrong type, an out-of-range number or a malformed menu tree is a
+synchronous `TypeError` — including from a method that otherwise returns a promise. A promise from
+this surface rejects because the platform refused or failed, never because the call was written
+wrongly. State the caller already knows is checked the same way: `hid.open` throws for a device
+this application has open already, and an open device's methods throw once it is closed.
+
+**A rejection is a `DOMException`, and `name` is what to branch on.** `hid.open` separates
+`NotAllowedError`, `NotFoundError`, `NotSupportedError` and `OperationError`; where a platform
+names nothing more specific than failure, the name is `OperationError`. Match on `error.name`
+rather than on message text, which is written for a person reading a log. A platform gap a
+synchronous member reports — `setCursorGrab` where the platform cannot do it, an `os` reading the
+machine cannot answer — is an ordinary `Error` thrown at the call, because there is no promise for
+it to reject.
+
+**A command with nothing to report resolves `undefined`.** `tray.configure`, `menu.remove`,
+`input.vibrateGamepad` and a HID `write` all answer only that they finished. Where a promise
+resolves to something else it is an answer the caller needs: an id from `notify.show`, `false` from
+`notify.update` for a notification that is no longer active, `null` from a dismissed file dialog.
+
+**`onX(listener)` returns the function that removes it.** Every listener is a function or the call
+is a `TypeError`; events reach listeners FIFO at a frame boundary and never from a platform
+callback thread; an exception thrown by one listener is reported to the console and does not stop
+the rest. The one departure is `app.requestSingleInstanceLock`, which takes its handler as an
+argument because the handler and the lock are claimed in one step — it answers whether this process
+is the primary instance, and there is nothing to unsubscribe from if it is not.
+
+Asynchrony follows the platform rather than the member: `notify.permission` returns a promise like
+its `requestPermission` counterpart even though reading the setting does not wait, while the
+`clipboard` and `os` readers are synchronous because the value is already in this process.
+
 ## Available modules
 
 | Import | Available members in this release |

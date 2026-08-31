@@ -1,4 +1,4 @@
-  // The `native:` modules. `packages/blitsen/src/native/module.mjs` proxies every
+  // The `blitsen/*` modules. `packages/blitsen/src/native/module.mjs` proxies every
   // `blitsen/<module>` subpath onto the namespace installed below, and reports a
   // member it cannot find as absent rather than as an error — so a capability the
   // host could not install must not appear here at all, and a member is dropped
@@ -18,7 +18,7 @@
   const nativeMembers = members => Object.freeze(Object.fromEntries(
     Object.entries(members).filter(([, member]) => member !== undefined)));
   const hosted = name => typeof globalThis[name] === "function";
-  const nativePending = typeof __blitsenNativeAppPending === "function"
+  const nativePending = hosted("__blitsenNativeAppPending")
     ? __blitsenNativeAppPending : () => false;
   let secondInstanceHandler = null;
   // Second invocations land here and nowhere else in the turn, for the same
@@ -40,7 +40,7 @@
     relaunch: hosted("__blitsenNativeAppRelaunch")
       ? () => { __blitsenNativeAppRelaunch(); }
       : undefined,
-    requestSingleInstanceLock: typeof __blitsenNativeAppSingleInstance === "function"
+    requestSingleInstanceLock: hosted("__blitsenNativeAppSingleInstance")
       ? (name, onSecondInstance = null) => {
           if (onSecondInstance !== null && typeof onSecondInstance !== "function")
             throw new TypeError("the second-instance handler must be a function");
@@ -144,11 +144,6 @@
   const trayActionListeners = new Set();
   const nativeTrayPending = hosted("__blitsenNativeTrayPending")
     ? __blitsenNativeTrayPending : () => false;
-  const trayListener = (listeners, listener, name) => {
-    if (typeof listener !== "function") throw new TypeError(`${name} listener must be a function`);
-    listeners.add(listener);
-    return () => { listeners.delete(listener); };
-  };
   const trayChannel = makeCommandChannel({
     pending: nativeTrayPending,
     take: () => JSON.parse(__blitsenNativeTrayTake()),
@@ -316,9 +311,9 @@
     },
     remove: !trayInstalled ? undefined : () => runTrayCommand(__blitsenNativeTrayRemove()),
     onClick: !trayInstalled ? undefined
-      : listener => trayListener(trayClickListeners, listener, "tray click"),
+      : listener => commandListener(trayClickListeners, listener, "tray click"),
     onAction: !trayInstalled ? undefined
-      : listener => trayListener(trayActionListeners, listener, "tray action"),
+      : listener => commandListener(trayActionListeners, listener, "tray action"),
   };
 
   // The application menu: the macOS main menu, and the Windows window menu bar.
@@ -383,12 +378,8 @@
     configure: !menuInstalled ? undefined : options =>
       runMenuCommand(__blitsenNativeMenuConfigure(normaliseMenuEntries(options))),
     remove: !menuInstalled ? undefined : () => runMenuCommand(__blitsenNativeMenuRemove()),
-    onAction: !menuInstalled ? undefined : listener => {
-      if (typeof listener !== "function")
-        throw new TypeError("menu action listener must be a function");
-      menuActionListeners.add(listener);
-      return () => { menuActionListeners.delete(listener); };
-    },
+    onAction: !menuInstalled ? undefined
+      : listener => commandListener(menuActionListeners, listener, "menu action"),
   };
 
   // Polling state for games and other frame-oriented applications. Ordinary
@@ -408,8 +399,8 @@
             || ![duration, strong, weak].every(Number.isFinite)
             || duration < 0 || duration > 60_000
             || strong < 0 || strong > 1 || weak < 0 || weak > 1)
-            return Promise.reject(new TypeError(
-              "gamepad index must be non-negative, duration 0..60000ms, and magnitudes 0..1"));
+            throw new TypeError(
+              "gamepad index must be non-negative, duration 0..60000ms, and magnitudes 0..1");
           return startGamepadVibration(slot, strong, weak, duration).then(() => undefined);
         }
       : undefined,
@@ -431,16 +422,6 @@
   const hidChangeListeners = new Set();
   const nativeHidPending = hosted("__blitsenNativeHidPending")
     ? __blitsenNativeHidPending : () => false;
-  // An open device and a hot-plug listener both keep the loop turning, for the
-  // reason a live socket does: the report is already in the host, and a loop
-  // that idled would never reach the turn that delivers it.
-  const hidListener = (listeners, listener, what) => {
-    if (typeof listener !== "function") throw new TypeError(`${what} listener must be a function`);
-    listeners.add(listener);
-    return () => { listeners.delete(listener); };
-  };
-  const deliverHid = (listeners, event, what) =>
-    deliverCommandListeners(listeners, event, what);
   const hidDeviceInfo = info => Object.freeze({
     ...info, usages: Object.freeze(info.usages.map(usage => Object.freeze(usage))),
   });
@@ -449,15 +430,14 @@
     take: () => __blitsenNativeHidTake(),
     decode: ({ json, data }) => ({ ...JSON.parse(json), data }),
     result: message => message.data === null ? message.value : message.data,
-    // The four open outcomes are told apart by the exception name rather than
-    // by its text, so `error.name === "NotAllowedError"` is a udev rule or an
-    // entitlement and nothing else is.
-    error: message => new DOMException(message.error, message.errorName),
+    // An open device and a hot-plug listener both keep the loop turning, for the
+    // reason a live socket does: the report is already in the host, and a loop
+    // that idled would never reach the turn that delivers it.
     keepAlive: () => hidOpenDevices.size > 0 || hidChangeListeners.size > 0,
     onMessage: message => {
       const { data } = message;
       if (message.type === "change") {
-        deliverHid(hidChangeListeners, Object.freeze({
+        deliverCommandListeners(hidChangeListeners, Object.freeze({
           type: message.change, device: hidDeviceInfo(message.device),
         }), "HID device change");
         return;
@@ -467,7 +447,7 @@
       if (message.type === "input") {
         // The report ID is separate and the data excludes it, so nothing here
         // depends on whether a platform backend retained the leading byte.
-        deliverHid(device.inputListeners, Object.freeze({
+        deliverCommandListeners(device.inputListeners, Object.freeze({
           deviceId: message.deviceId, reportId: message.reportId, data,
         }), "HID input report");
         return;
@@ -476,8 +456,8 @@
       // will not send another for this device.
       hidOpenDevices.delete(message.deviceId);
       device.opened = false;
-      deliverHid(device.disconnectListeners, Object.freeze({ deviceId: message.deviceId }),
-        "HID disconnect");
+      deliverCommandListeners(device.disconnectListeners,
+        Object.freeze({ deviceId: message.deviceId }), "HID disconnect");
     },
   });
   const nativeHidWorkPending = hidChannel.workPending;
@@ -495,6 +475,10 @@
         `a HID ${what} of ${data.length} bytes exceeds the ${limit} this device declared`);
     return data;
   };
+  // A command that answers only that it finished resolves undefined, as the
+  // tray, menu and gamepad commands do. The host sends null for these; nothing
+  // reads it, and two spellings of "no value" is one more than the surface needs.
+  const hidCompleted = command => command.then(() => undefined);
   const hidDevice = (id, opened) => {
     const state = {
       opened: true,
@@ -517,13 +501,13 @@
       maxFeatureReportSize: state.maxFeatureReportSize,
       write: data => {
         live();
-        return runHidCommand(__blitsenNativeHidWrite(
-          id, hidReport(data, state.maxOutputReportSize, "output report")));
+        return hidCompleted(runHidCommand(__blitsenNativeHidWrite(
+          id, hidReport(data, state.maxOutputReportSize, "output report"))));
       },
       sendFeatureReport: data => {
         live();
-        return runHidCommand(__blitsenNativeHidSendFeatureReport(
-          id, hidReport(data, state.maxFeatureReportSize, "feature report")));
+        return hidCompleted(runHidCommand(__blitsenNativeHidSendFeatureReport(
+          id, hidReport(data, state.maxFeatureReportSize, "feature report"))));
       },
       receiveFeatureReport: reportId => {
         live();
@@ -532,17 +516,19 @@
           throw new TypeError("a HID report id is a byte");
         return runHidCommand(__blitsenNativeHidReceiveFeatureReport(id, String(report)));
       },
-      onInputReport: listener => hidListener(state.inputListeners, listener, "HID input report"),
-      onDisconnect: listener => hidListener(state.disconnectListeners, listener, "HID disconnect"),
+      onInputReport: listener =>
+        commandListener(state.inputListeners, listener, "HID input report"),
+      onDisconnect: listener =>
+        commandListener(state.disconnectListeners, listener, "HID disconnect"),
       close: () => {
-        if (!state.opened) return Promise.resolve(null);
+        if (!state.opened) return Promise.resolve(undefined);
         state.opened = false;
         hidOpenDevices.delete(id);
         // A device unplugged in the same turn this was called is already closed
         // in the host, which answers that a device it does not have open cannot
         // be closed. The application asked for the state it now has, and could
         // not have avoided the race, so this resolves rather than rejecting.
-        return runHidCommand(__blitsenNativeHidClose(id)).catch(() => null);
+        return hidCompleted(runHidCommand(__blitsenNativeHidClose(id)).catch(() => undefined));
       },
     });
   };
@@ -559,7 +545,7 @@
     // told again when the last listener goes: an application that never asks
     // never makes the runtime walk the device tree.
     onDeviceChange: !hidInstalled ? undefined : listener => {
-      const remove = hidListener(hidChangeListeners, listener, "HID device change");
+      const remove = commandListener(hidChangeListeners, listener, "HID device change");
       __blitsenNativeHidWatch(true);
       return () => {
         remove();
@@ -653,6 +639,9 @@
     show: !notifyInstalled ? undefined : options => runNotifyCommand(
       __blitsenNativeNotifyShow(JSON.stringify(normaliseNotification(options))),
     ),
+    // A promise for a reading that does not wait, deliberately: this and
+    // `requestPermission` answer the same question and differ only in whether
+    // they may prompt, so a caller should be able to swap one for the other.
     permission: !notifyInstalled ? undefined : async () => __blitsenNativeNotifyPermission(),
     requestPermission: !notifyInstalled ? undefined : () => runNotifyCommand(
       __blitsenNativeNotifyRequestPermission(),
@@ -663,12 +652,8 @@
     close: !notifyInstalled ? undefined : id => runNotifyCommand(
       __blitsenNativeNotifyClose(String(id)),
     ),
-    onEvent: !notifyInstalled ? undefined : listener => {
-      if (typeof listener !== "function")
-        throw new TypeError("notification event listener must be a function");
-      notifyListeners.add(listener);
-      return () => { notifyListeners.delete(listener); };
-    },
+    onEvent: !notifyInstalled ? undefined
+      : listener => commandListener(notifyListeners, listener, "notification event"),
   };
 
   // The standard constructor is installed only when close is addressable. The
@@ -861,7 +846,7 @@
   // painting for as long as the dialog is up. Nothing is lost by that — the
   // dialog is drawn by the desktop, in its own process, modal to our window —
   // and the frame loop keeps turning, which is also how the answer gets back.
-  const nativeDialogPending = typeof __blitsenNativeDialogPending === "function"
+  const nativeDialogPending = hosted("__blitsenNativeDialogPending")
     ? __blitsenNativeDialogPending : () => false;
   // The one handoff point for dialog answers, for the same reason `fetch` has
   // one: a promise must not settle part-way through a frame.
@@ -878,7 +863,7 @@
     pollPendingCommands: true,
   });
   const settleDialogs = dialogChannel.settle;
-  const dialogInstalled = typeof __blitsenNativeDialogFile === "function";
+  const dialogInstalled = hosted("__blitsenNativeDialogFile");
   const opened = (id, answer) =>
     dialogChannel.run(id, { transform: answer });
   // Everything the options say is checked before the dialog opens, so a mistake

@@ -263,7 +263,7 @@ pub struct WindowApplication<Rend: anyrender::WindowRenderer, E: JsEngine + Clon
     pub(crate) system_scale_override: Option<f64>,
 }
 
-/// Forgets the window the `native:window` module addresses.
+/// Forgets the window the `blitsen/window` module addresses.
 ///
 /// Called when a session ends, so a later call reports "no window" instead of
 /// reaching a destroyed one.
@@ -543,7 +543,7 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Ren
         engine.to_boolean(&result)
     }
 
-    /// Hands `native:window` the window it acts on, or takes it away.
+    /// Hands `blitsen/window` the window it acts on, or takes it away.
     ///
     /// There is deliberately only one in the current host. Issue #105 chooses
     /// isolated JavaScript contexts for future windows, so `create` remains

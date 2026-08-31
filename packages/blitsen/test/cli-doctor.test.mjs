@@ -263,10 +263,10 @@ describe("directory CLI", () => {
     expect(checkNativeModuleTable()).toBeGreaterThan(0);
   });
 
-  // A `native:` module the target does not have is a finding at export time
+  // A `blitsen/*` module the target does not have is a finding at export time
   // rather than an `undefined` at run time (#147). Android is the reason the
   // rule exists; desktop targets implement all five imported modules.
-  test("reports a native: module the target being built for does not have", async () => {
+  test("reports a blitsen/* module the target being built for does not have", async () => {
     const directory = await mkdtemp(join(tmpdir(), "blitsen-native-target-"));
     try {
       await writeFile(join(directory, "app.js"), [

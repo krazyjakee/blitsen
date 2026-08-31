@@ -288,7 +288,7 @@ describe("the command line", () => {
     expect(help.join("\n")).toContain("BLITSEN_ANDROID_KEYSTORE_PASSWORD");
   });
 
-  test("--android grades the application against Android's native: table", async () => {
+  test("--android grades the application against Android's module table", async () => {
     // #147 landed the table and taught `doctor` to read it; the point here is
     // that `build --android` reaches the same answer without being told a
     // target, because there is no target to tell it.

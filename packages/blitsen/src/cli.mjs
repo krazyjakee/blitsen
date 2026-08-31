@@ -29,7 +29,7 @@ Build creates a single-file executable: Blitsen's own runtime with the
 application appended to it. With --android it creates a signed APK instead,
 cross-compiled for every ABI asked for, with the application under assets/.
 Doctor checks built static output against the v1 compatibility profile, and
-against the native: modules the target it is grading for actually has.
+against the blitsen/* modules the target it is grading for actually has.
 
 Options:
   --width <pixels>   Initial logical width (default: 800)
@@ -98,7 +98,7 @@ const BUILD_FLAGS = ["--accept-errors", "--android", "--android-debug"];
 // silently building a desktop executable that ignored it.
 const ANDROID_ONLY = ["--android-abi", "--android-debug", ...Object.keys(ANDROID_OPTIONS)];
 // The one build option doctor also takes, because doctor grades against a
-// target rather than for one: which `native:` modules exist is a property of the
+// target rather than for one: which `blitsen/*` modules exist is a property of the
 // platform, and asking about a platform is not the same as claiming to build for
 // it (#147).
 const DOCTOR_OPTIONS = ["--target"];
@@ -598,7 +598,7 @@ export async function main(args, output = console, runtime = null) {
     }
     if (options.command === "build") {
       reportStep(output, { step: "ingest", detail: application.entrypoint });
-      // Which `native:` modules exist is a property of the platform and never of
+      // Which `blitsen/*` modules exist is a property of the platform and never of
       // the architecture — `native-modules.mjs` says so and the table has no
       // arch axis — so an APK carrying several ABIs is graded once, against the
       // Android row #147 landed. Grading per ABI would print the same findings
