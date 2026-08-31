@@ -75,7 +75,11 @@ pub trait AppSource: Send + Sync {
     /// Reads one application-relative path, or `None` when it is not there.
     fn read(&self, path: &str) -> Option<Vec<u8>>;
 
-    /// Whether the path exists, without reading it.
+    /// Whether the path exists.
+    ///
+    /// The default answers by reading the file and dropping it, which is fine
+    /// for a one-off entrypoint check and wrong for a hot path — the module
+    /// resolver keeps the bytes of the read it makes instead (#360).
     fn contains(&self, path: &str) -> bool {
         self.read(path).is_some()
     }
@@ -83,24 +87,39 @@ pub trait AppSource: Send + Sync {
 
 /// An application laid out as a directory on disk.
 pub struct DirectorySource {
+    /// Canonical root, resolved once — see [`Self::new`].
     root: PathBuf,
 }
 
 impl DirectorySource {
     /// Serves files below `root`, and nothing outside it.
+    ///
+    /// The root is canonicalised here, once, rather than on every read: the
+    /// application a source serves does not move while it runs, so retargeting
+    /// a symlinked root afterwards does not move the running application — the
+    /// same snapshot the document's base URL already took. Each *target* is
+    /// still resolved per read, so a symlink out of the root stays refused.
     pub fn new(root: impl Into<PathBuf>) -> Self {
-        Self { root: root.into() }
+        let root = root.into();
+        Self {
+            root: root.canonicalize().unwrap_or(root),
+        }
     }
 }
 
 impl AppSource for DirectorySource {
     fn read(&self, path: &str) -> Option<Vec<u8>> {
-        // `resolve` has already refused `..`, but the root is canonicalised and
-        // rechecked here too: this is the only place a path becomes a real one.
-        let root = self.root.canonicalize().ok()?;
-        let target = root.join(Path::new(file_of(path))).canonicalize().ok()?;
+        // `resolve` has already refused `..`, but the target is canonicalised
+        // and rechecked here too: this is the only place a path becomes a real
+        // one, and a symlink is followed only to somewhere still under the
+        // root.
+        let target = self
+            .root
+            .join(Path::new(file_of(path)))
+            .canonicalize()
+            .ok()?;
         target
-            .starts_with(&root)
+            .starts_with(&self.root)
             .then(|| std::fs::read(target).ok())?
     }
 }
@@ -245,6 +264,10 @@ pub fn file_of(path: &str) -> &str {
 pub struct ModuleRegistry {
     source: Arc<dyn AppSource>,
     loaded: RefCell<HashMap<String, LoadedModule>>,
+    /// Bytes resolution already read, waiting for [`Self::source`] to claim
+    /// them: the existence check *is* the first read, held rather than
+    /// repeated (#360).
+    fetched: RefCell<HashMap<String, Vec<u8>>>,
 }
 
 struct LoadedModule {
@@ -258,19 +281,34 @@ impl ModuleRegistry {
         Self {
             source,
             loaded: RefCell::new(HashMap::new()),
+            fetched: RefCell::new(HashMap::new()),
         }
     }
 
-    /// Resolves a specifier against its referrer.
+    /// Resolves a specifier against its referrer, confirming the module is
+    /// there.
+    ///
+    /// Existence is confirmed by the read itself, and the bytes are kept for
+    /// [`Self::source`], which the engine calls next: a first load costs one
+    /// file read or one dev-server GET, not one to ask and one to fetch
+    /// (#360). A URL already handed out resolves without touching the source
+    /// at all — the engine caches the evaluated record by URL anyway, so
+    /// nothing fresher could have reached it. Dev-server freshness is
+    /// unchanged: a changed module arrives under a new query (`?t=…`), which
+    /// is a new URL, and a reload goes through [`Self::reset`].
     pub fn resolve(&self, referrer: &str, specifier: &str) -> Result<String, JsError> {
         let url = resolve(referrer, specifier)?;
+        if self.loaded.borrow().contains_key(&url) || self.fetched.borrow().contains_key(&url) {
+            return Ok(url);
+        }
         let path = path_of(&url).expect("resolve returns application URLs");
-        if !self.source.contains(path) {
+        let Some(bytes) = self.source.read(path) else {
             return Err(JsError::new(format!(
                 "the application has no module at {path} (imported as {specifier:?} \
                  from {referrer})"
             )));
-        }
+        };
+        self.fetched.borrow_mut().insert(url.clone(), bytes);
         Ok(url)
     }
 
@@ -281,9 +319,9 @@ impl ModuleRegistry {
         }
         let path =
             path_of(url).ok_or_else(|| JsError::new(format!("{url} is not an application URL")))?;
-        let bytes = self
-            .source
-            .read(path)
+        let fetched = self.fetched.borrow_mut().remove(url);
+        let bytes = fetched
+            .or_else(|| self.source.read(path))
             .ok_or_else(|| JsError::new(format!("the application has no module at {path}")))?;
         let source = String::from_utf8(bytes)
             .map_err(|_| JsError::new(format!("the module at {path} is not UTF-8")))?;
@@ -370,9 +408,11 @@ impl ModuleRegistry {
         )
     }
 
-    /// Forgets every loaded module, so a reload re-reads them.
+    /// Forgets every loaded module and every byte resolution fetched ahead,
+    /// so a reload re-reads them.
     pub fn reset(&self) {
         self.loaded.borrow_mut().clear();
+        self.fetched.borrow_mut().clear();
     }
 
     /// Reads any application file, for asset URLs rather than modules.
@@ -574,6 +614,45 @@ mod tests {
         }
     }
 
+    /// A source that counts its reads, so a test can assert a first load
+    /// costs one and not two (#360).
+    struct CountingSource {
+        files: Vec<&'static str>,
+        reads: std::sync::atomic::AtomicUsize,
+    }
+
+    impl CountingSource {
+        fn new(files: Vec<&'static str>) -> Self {
+            Self {
+                files,
+                reads: std::sync::atomic::AtomicUsize::new(0),
+            }
+        }
+
+        fn reads(&self) -> usize {
+            self.reads.load(std::sync::atomic::Ordering::Relaxed)
+        }
+    }
+
+    impl AppSource for CountingSource {
+        fn read(&self, path: &str) -> Option<Vec<u8>> {
+            self.reads
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            self.files
+                .contains(&path)
+                .then(|| format!("// {path}").into_bytes())
+        }
+    }
+
+    /// A source whose files change under the registry, as a dev server's do.
+    struct MutableSource(std::sync::Mutex<HashMap<String, Vec<u8>>>);
+
+    impl AppSource for MutableSource {
+        fn read(&self, path: &str) -> Option<Vec<u8>> {
+            self.0.lock().unwrap().get(path).cloned()
+        }
+    }
+
     fn registry(files: Vec<&'static str>) -> Rc<ModuleRegistry> {
         Rc::new(ModuleRegistry::new(Arc::new(Fixture(files))))
     }
@@ -717,6 +796,74 @@ mod tests {
     }
 
     #[test]
+    fn a_first_module_load_reads_the_source_once() {
+        let source = Arc::new(CountingSource::new(vec!["index.js", "a.js"]));
+        let registry = ModuleRegistry::new(Arc::clone(&source) as Arc<dyn AppSource>);
+        let entry = url_of("index.js");
+        let url = registry.resolve(&entry, "./a.js").unwrap();
+        assert_eq!(source.reads(), 1, "resolution is the read");
+        let first = registry.source(&url).unwrap();
+        assert_eq!(source.reads(), 1, "the source is what resolution read");
+        // A second import of the same module touches the source not at all.
+        assert_eq!(registry.resolve(&entry, "./a.js").unwrap(), url);
+        assert!(Rc::ptr_eq(&first, &registry.source(&url).unwrap()));
+        assert_eq!(source.reads(), 1);
+        // A missing import is still one attempt, refused where it resolves.
+        let error = registry.resolve(&entry, "./missing.js").unwrap_err();
+        assert!(error.message().contains("missing.js"));
+        assert_eq!(source.reads(), 2);
+        // And a reload forgets everything and reads afresh — once.
+        registry.reset();
+        registry.resolve(&entry, "./a.js").unwrap();
+        registry.source(&url).unwrap();
+        assert_eq!(source.reads(), 3);
+    }
+
+    #[test]
+    fn reset_drops_what_resolution_fetched_but_nothing_ever_loaded() {
+        let files = Arc::new(MutableSource(std::sync::Mutex::new(HashMap::from([(
+            "a.js".to_owned(),
+            b"// one".to_vec(),
+        )]))));
+        let registry = ModuleRegistry::new(Arc::clone(&files) as Arc<dyn AppSource>);
+        let url = registry.resolve(&url_of("index.js"), "./a.js").unwrap();
+        files
+            .0
+            .lock()
+            .unwrap()
+            .insert("a.js".to_owned(), b"// two".to_vec());
+        // A reload must not serve bytes fetched before it — a dev server's
+        // module may have changed between the two.
+        registry.reset();
+        registry.resolve(&url_of("index.js"), "./a.js").unwrap();
+        assert_eq!(*registry.source(&url).unwrap(), "// two");
+    }
+
+    #[test]
+    fn a_loaded_module_resolves_without_consulting_the_source_again() {
+        let files = Arc::new(MutableSource(std::sync::Mutex::new(HashMap::from([(
+            "a.js".to_owned(),
+            b"// a".to_vec(),
+        )]))));
+        let registry = ModuleRegistry::new(Arc::clone(&files) as Arc<dyn AppSource>);
+        let entry = url_of("index.js");
+        let url = registry.resolve(&entry, "./a.js").unwrap();
+        let loaded = registry.source(&url).unwrap();
+        // The engine keeps the evaluated record by URL, so the registry
+        // answers for what it has already handed out rather than asking a
+        // source that may have moved on — a dev server restarting mid-session
+        // must not fail an import of a module that is already running.
+        files.0.lock().unwrap().remove("a.js");
+        assert_eq!(registry.resolve(&entry, "./a.js").unwrap(), url);
+        assert!(Rc::ptr_eq(&loaded, &registry.source(&url).unwrap()));
+        // A reload forgets it, and the error names the import that wanted it.
+        registry.reset();
+        let error = registry.resolve(&entry, "./a.js").unwrap_err();
+        assert!(error.message().contains("no module at a.js"), "{error}");
+        assert!(error.message().contains("\"./a.js\""), "{error}");
+    }
+
+    #[test]
     fn external_maps_follow_the_last_directive_and_keep_map_queries() {
         let registry = ModuleRegistry::new(Arc::new(ContentFixture(HashMap::from([
             (
@@ -812,5 +959,37 @@ mod tests {
         assert_eq!(source.read("assets/index.js").unwrap(), b"export default 1");
         assert!(source.read("assets/missing.js").is_none());
         assert!(source.read("../../../etc/passwd").is_none());
+    }
+
+    /// The root snapshot `DirectorySource::new` documents, exercised: the root
+    /// is resolved when the source is made, every target on every read.
+    #[cfg(unix)]
+    #[test]
+    fn a_directory_root_is_resolved_once_and_every_target_on_every_read() {
+        let directory = tempfile::tempdir().unwrap();
+        let first = directory.path().join("first");
+        let second = directory.path().join("second");
+        std::fs::create_dir_all(&first).unwrap();
+        std::fs::create_dir_all(&second).unwrap();
+        std::fs::write(first.join("app.js"), "first").unwrap();
+        std::fs::write(second.join("app.js"), "second").unwrap();
+        std::fs::write(directory.path().join("secret.txt"), "secret").unwrap();
+        std::os::unix::fs::symlink(first.join("app.js"), first.join("inside.js")).unwrap();
+        std::os::unix::fs::symlink(directory.path().join("secret.txt"), first.join("escape.js"))
+            .unwrap();
+        let link = directory.path().join("root");
+        std::os::unix::fs::symlink(&first, &link).unwrap();
+
+        let source = DirectorySource::new(&link);
+        assert_eq!(source.read("app.js").unwrap(), b"first");
+        // A symlink that stays under the root is an ordinary file of it; one
+        // that leaves is out of the application, though it never spelt `..`.
+        assert_eq!(source.read("inside.js").unwrap(), b"first");
+        assert!(source.read("escape.js").is_none());
+        // The root was resolved when the source was made: retargeting the
+        // symlink afterwards does not move the running application.
+        std::fs::remove_file(&link).unwrap();
+        std::os::unix::fs::symlink(&second, &link).unwrap();
+        assert_eq!(source.read("app.js").unwrap(), b"first");
     }
 }

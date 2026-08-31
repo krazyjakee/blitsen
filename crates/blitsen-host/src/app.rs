@@ -276,7 +276,13 @@ impl AppFiles {
         AppReader {
             source: self.source(),
             root: match self {
-                Self::Directory { root, .. } => Some(root.clone()),
+                // Canonicalised once, here, rather than on every URL the
+                // reader is asked about: the root does not move while the
+                // document it anchors is loaded, and each *target* is still
+                // resolved per read. (The stored root is the simplified
+                // spelling; the comparison in `path_of_url` needs the
+                // canonical one, which on Windows is the `\\?\` form.)
+                Self::Directory { root, .. } => root.canonicalize().ok(),
                 Self::Bundle { .. } | Self::Server { .. } | Self::Assets { .. } => None,
             },
         }
@@ -387,7 +393,9 @@ pub fn notices(source: &dyn AppSource) -> Option<String> {
 pub struct AppReader {
     source: Arc<dyn AppSource>,
     /// A directory being run is the one shape whose files are also addressed by
-    /// `file:` URLs, because that is what its document's base URL is.
+    /// `file:` URLs, because that is what its document's base URL is. Held
+    /// canonical, resolved once when the reader is made — see
+    /// [`AppFiles::reader`].
     root: Option<PathBuf>,
 }
 
@@ -423,7 +431,7 @@ impl AppReader {
         if url.scheme() != "file" {
             return None;
         }
-        let root = self.root.as_ref()?.canonicalize().ok()?;
+        let root = self.root.as_ref()?;
         let target = url.to_file_path().ok()?;
         // Canonicalised when it can be, so a symlink out of the directory is
         // still out of it. A path that does not exist cannot be, and must not be
@@ -432,7 +440,7 @@ impl AppReader {
         // for the wrong mistake. `Url` has already resolved any `..` segments,
         // and `AppSource` re-canonicalises and re-checks on the way in.
         let target = target.canonicalize().unwrap_or(target);
-        let relative = target.strip_prefix(&root).ok()?;
+        let relative = target.strip_prefix(root).ok()?;
         Some(relative.to_string_lossy().replace('\\', "/"))
     }
 }

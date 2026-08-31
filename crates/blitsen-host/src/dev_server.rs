@@ -291,6 +291,60 @@ mod tests {
     }
 
     #[test]
+    fn a_first_module_load_costs_one_request() {
+        use crate::modules::{ModuleRegistry, url_of};
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let origin = format!("http://{}", listener.local_addr().unwrap());
+        // Exactly two connections are served: the connection probe and the
+        // one load. A stray third request has nobody answering it, which the
+        // final assertion would report as a failed read.
+        let requests_served = std::thread::spawn(move || {
+            let mut requests = Vec::new();
+            for _ in 0..2 {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut request = Vec::new();
+                let mut buffer = [0_u8; 1024];
+                while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+                    let read = stream.read(&mut buffer).unwrap();
+                    if read == 0 {
+                        break;
+                    }
+                    request.extend_from_slice(&buffer[..read]);
+                }
+                let target = String::from_utf8_lossy(&request)
+                    .lines()
+                    .next()
+                    .and_then(|line| line.split_ascii_whitespace().nth(1))
+                    .unwrap()
+                    .to_owned();
+                requests.push(target);
+                let body = b"// module";
+                stream
+                    .write_all(
+                        format!(
+                            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                            body.len()
+                        )
+                        .as_bytes(),
+                    )
+                    .unwrap();
+                stream.write_all(body).unwrap();
+                stream.flush().unwrap();
+            }
+            requests
+        });
+
+        let server = DevServer::connect(&origin, "/index.html").unwrap();
+        let registry = ModuleRegistry::new(server);
+        let url = registry.resolve(&url_of("index.html"), "./mod.js").unwrap();
+        assert_eq!(*registry.source(&url).unwrap(), "// module");
+        // Resolution's GET is the load (#360): one request for the probe, one
+        // for the module, and none to ask whether the module was there first.
+        assert_eq!(requests_served.join().unwrap(), ["/index.html", "/mod.js"]);
+    }
+
+    #[test]
     fn redirects_stay_on_the_configured_origin() {
         let origin_listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let origin = format!("http://{}", origin_listener.local_addr().unwrap());

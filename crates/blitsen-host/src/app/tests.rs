@@ -236,6 +236,36 @@ fn a_directory_serves_a_server_root_subresource_from_the_application_root() {
     assert_eq!(served("file:///assets/nothing.css"), 0);
 }
 
+/// The reader resolves the application root once, when it is made, and every
+/// `file:` target afresh against it — the same snapshot [`DirectorySource`]
+/// takes of the root it serves.
+#[test]
+fn a_reader_confines_file_urls_to_the_root_it_was_made_with() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(root.path().join("index.html"), b"<p>hi").unwrap();
+    std::fs::write(root.path().join("data.json"), b"{}").unwrap();
+    let elsewhere = tempfile::tempdir().unwrap();
+    std::fs::write(elsewhere.path().join("secret.txt"), b"secret").unwrap();
+
+    let reader = AppFiles::directory(root.path().join("index.html"))
+        .unwrap()
+        .reader();
+    let canonical = root.path().canonicalize().unwrap();
+    let inside = Url::from_file_path(canonical.join("data.json")).unwrap();
+    assert_eq!(reader.read_url(&inside).ok().unwrap(), b"{}");
+    // A file the application does not ship is missing, not outside: the
+    // reader must send the caller looking for the right mistake.
+    let missing = Url::from_file_path(canonical.join("missing.json")).unwrap();
+    assert!(matches!(
+        reader.read_url(&missing),
+        Err(NotRead::Missing(path)) if path == "missing.json"
+    ));
+    // Another directory's files are outside, however real they are.
+    let outside =
+        Url::from_file_path(elsewhere.path().canonicalize().unwrap().join("secret.txt")).unwrap();
+    assert!(matches!(reader.read_url(&outside), Err(NotRead::Outside)));
+}
+
 /// The fourth shape reaching the same session as the other three: same
 /// application origin, same script identifiers, same subresource contract.
 /// Run against a directory standing in for the APK's `assets/`, which is
