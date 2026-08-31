@@ -153,7 +153,7 @@ export async function collectNotices({
 }
 
 /** Packages whose terms this document cannot honour, and why. */
-function auditNotices(collected) {
+export function auditNotices(collected) {
   const problems = [];
   for (const entry of collected.packages) {
     if (entry.license === null && entry.licenseFile === null && entry.texts.length === 0) {

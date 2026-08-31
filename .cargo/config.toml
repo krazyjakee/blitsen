@@ -1,8 +1,7 @@
-[build]
-# Reuse compiled crates across clean builds, branches, and target directories
-# when sccache is installed. The wrapper falls back to rustc otherwise, so a
-# fresh checkout still builds without extra system packages.
-rustc-wrapper = "scripts/rustc-wrapper.sh"
+# Keep compiler caching opt-in through `RUSTC_WRAPPER=sccache`. A repository
+# wrapper would put a POSIX script between Cargo and rustc on every platform:
+# Windows cannot execute it, and `/bin/sh` may discard Cargo's hyphenated
+# `CARGO_BIN_EXE_*` variables before integration tests compile.
 
 [target.x86_64-unknown-linux-gnu]
 # Renderer-heavy test binaries spend a meaningful amount of time in the
