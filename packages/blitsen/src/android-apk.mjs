@@ -1,45 +1,7 @@
-// The APK itself: the manifest Android reads, and the archive it reads it out
-// of (issues #148 and #144).
-//
-// Split from `android.mjs` because that file decides what an Android artifact
-// *is* and this one knows the two file formats it is made of. Both were settled
-// by building one and running it — issue #143's spike, `spikes/s9/` — rather
-// than by reading documentation, and the shape below is that spike's, with the
-// parts it did by hand moved into code.
-//
-// # Why the archive is written here rather than by a packager
-//
-// `aapt2 link` produces the two files only a resource compiler can produce, the
-// binary `AndroidManifest.xml` and `resources.arsc`, and it has no way to put a
-// shared object into `lib/<abi>/`. Every tool that closes that gap — `aapt` v1,
-// `cargo apk`, Gradle — brings a packaging policy with it, and the one policy
-// this project needs is the one none of them will express: **every entry
-// stored, never deflated.**
-//
-// That is issue #144's single packaging requirement and it is not a preference.
-// `blitsen_host::apk` reads an asset through `AAssetManager` as a pointer into
-// the mapped APK; a deflated entry has to be inflated into a heap buffer on
-// every open, which is the design undone. And `android:extractNativeLibs="false"`
-// — the thing that stops a 35 MB `.so` being copied out at install time — is
-// only legal if that `.so` is stored and page-aligned. So both of the
-// properties the artifact is supposed to have are properties of the compression
-// method, and the compression method is the one knob the packagers hide.
-//
-// Writing a stored-only zip is about eighty lines because a stored entry has no
-// codec: a local header, the bytes, a central directory record, an end record.
-// `zipalign -p 4` then inserts the padding — 4 bytes for everything, a page for
-// an uncompressed `.so` — and `apksigner` signs the result. Those tools and D8,
-// which compiles #252's small activation bridge, ship in the SDK build-tools
-// that were already a prerequisite.
-//
-// # Why the timestamps are constant
-//
-// Zip carries an MS-DOS timestamp per entry, and it is the one field in an APK
-// that would otherwise differ between two builds of identical inputs. It is
-// fixed at the earliest value the format can hold, so two builds of the same
-// application produce the same archive byte for byte — the reproducibility
-// property #71 asks of the desktop bundle, kept for the artifact that replaces
-// it on this platform.
+// APK entries must remain stored so assets can be memory-mapped and native
+// libraries can be page-aligned for `extractNativeLibs=false`. The custom ZIP
+// writer supplies that policy around aapt2's generated manifest and resources.
+// Constant DOS timestamps make identical inputs reproducible byte for byte.
 
 import { readdir, readFile } from "node:fs/promises";
 import { join, posix } from "node:path";

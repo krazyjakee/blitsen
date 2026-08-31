@@ -102,7 +102,7 @@ assert.equal(bare.standard, false,
   "the standard Notification facade must stay absent where the process has no identity");
 assert.equal(bare.permission, undefined,
   `an unbundled host must not report a permission, got ${JSON.stringify(bare.permission)}`);
-assert.match(bare.error, /blitsen run --dev-bundle/,
+assert.match(bare.error, /blitsen --dev-bundle/,
   `the refusal must name the command that fixes it, got: ${bare.error}`);
 assert.doesNotMatch(bare.error, /com\.apple\.|Terminal|Script Editor/,
   `the refusal must not name another application's identity, got: ${bare.error}`);

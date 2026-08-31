@@ -13,8 +13,7 @@
 // if the two have drifted. Three string literals and a schema in two languages
 // is exactly the shape of thing that silently disagrees.
 import { describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   ANDROID_ABIS, ANDROID_NOTICES_FILE, androidNotices, androidProject, applicationId, DEFAULT_ABIS,
@@ -27,30 +26,11 @@ import { MIN_SDK } from "../src/android-toolchain.mjs";
 import { main, parseArgs } from "../src/cli.mjs";
 import { changed, decodeFrame, describe as describeFrame } from "./run-android-smoke.mjs";
 import { capture } from "./cli-support.mjs";
+import {
+  androidApplication as application, withAndroidWork as withWork,
+} from "./android-apk-fixtures.mjs";
 
 const apkSource = join(import.meta.dir, "../../../crates/blitsen-host/src/apk.rs");
-
-const withWork = async run => {
-  const directory = await mkdtemp(join(tmpdir(), "blitsen-android-"));
-  try {
-    return await run(directory);
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
-};
-
-/** A small application on disk, with one reference for the rewriter to follow. */
-async function application(directory) {
-  const root = join(directory, "dist");
-  await mkdir(join(root, "assets"), { recursive: true });
-  await writeFile(join(root, "index.html"),
-    "<html><link rel=stylesheet href=\"/assets/app.css\"><script type=module src=\"/app.js\">"
-    + "</script></html>");
-  await writeFile(join(root, "app.js"), "export const ready = true;\n");
-  await writeFile(join(root, "assets/app.css"), "body { color: red }\n");
-  await writeFile(join(root, "orphan.txt"), "not reachable\n");
-  return root;
-}
 
 describe("the index format agrees with the host that reads it", () => {
   test("the three constants are the same on both sides", async () => {

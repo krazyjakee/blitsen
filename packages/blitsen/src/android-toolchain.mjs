@@ -1,24 +1,5 @@
-// Finding the Android toolchain, and the crate the artifact is built from
-// (issue #148).
-//
-// Split from `android.mjs` because it answers a different question. That file
-// decides what an Android artifact *is* — its ABIs, its identity, its signing,
-// how it is packaged. This one is entirely about the machine the build is
-// running on: whether it has an SDK, an NDK, a build-tools that ships `aapt2`,
-// a cross-compiler driver, a libclang, the Rust targets, and the entry crate
-// that has not been published yet. None of it is a decision about the product;
-// all of it is a question with a yes-or-no answer and an installation command
-// attached.
-//
-// The rule it implements is decision 5 in `android.mjs`, and it is worth
-// restating in one line where the code lives: **detect precisely, install
-// nothing.** An Android build is a cross-compile, so cargo, rustc, two target
-// standard libraries and a C toolchain have to be there whoever provides them;
-// downloading two and a half licence-gated gigabytes would shorten that list by
-// one and give this package a versioned cache it has no business owning. So
-// every check below names the one thing that is missing and the one command
-// that installs it, in the order a person can act on rather than the order a
-// subprocess happens to trip over.
+// Detect Android build prerequisites precisely, but never install them. Checks
+// are ordered so each failure identifies the next prerequisite a user can fix.
 
 import { spawn } from "node:child_process";
 import { access, readdir } from "node:fs/promises";
@@ -26,44 +7,14 @@ import { constants, existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
-/// The API level an artifact targets, and the oldest it installs on.
-///
-/// Here rather than with the packaging decisions because the target level is
-/// also a *prerequisite*: `android-<TARGET_SDK>/android.jar` has to be installed
-/// for the packager to link against, and this is the file that checks for it.
-///
-/// 24 was the first answer — the floor `android-activity` and the NDK's own C++
-/// runtime settle on in practice — and **it does not link**. `cpal`'s Android
-/// backend is AAudio, so `blitsen-android` links `-laaudio`, and the NDK ships
-/// `libaaudio.so` from API 26 and no earlier, so `cargo ndk -P 24` fails at
-/// `ld.lld` with `unable to find library -laaudio`. Raising the compile level
-/// while leaving the manifest at 24 would have produced a shared object binding
-/// symbols that are absent on the devices the manifest invites, and the failure
-/// there is a `dlopen` on a cold start with nothing on screen. So the floor and
-/// the compile level are the same number.
-///
-/// This is measured rather than read: the sysroot has `libaaudio.so` under
-/// `usr/lib/<triple>/26` and nothing under `24/` or `25/`. #148's original 24
-/// was never built against the real entry crate, which is why nothing caught
-/// it, and #148 and #149 found it independently the moment either one did.
-///
-/// What it costs is Android 7.x, which no device with a Vulkan driver worth
-/// rendering to is still on: 26 is Oreo, August 2017, and it is already the
-/// floor #148 names for the 32-bit ABI it declines to default. 33 is what #139
-/// and #143 measured against, so it is what is claimed.
+/// API 26 is the minimum because the audio backend links `libaaudio.so`, which
+/// the NDK does not provide for earlier levels. Compile and manifest floors must
+/// match or the application can bind unavailable symbols and fail at startup.
 export const MIN_SDK = 26;
 export const TARGET_SDK = 33;
 
-/// Where the entry point comes from, and what linking it produces.
-///
-/// #142 owns the crate and it is a `cdylib` exporting `android_main` directly —
-/// there is no rlib, no macro, and nothing for a build to generate. This was an
-/// open question until #143 settled it by building one and running it: `cargo
-/// ndk ... -p blitsen-android` links `libblitsen_android.so`, and
-/// `android.app.lib_name = blitsen_android` is what `NativeActivity` `dlopen`s.
-/// So the library name is the crate's `[lib] name` and not something derived
-/// from the application, and `cli-android.test.mjs` reads all three of these
-/// back out of `crates/blitsen-android/Cargo.toml` and fails if they drift.
+/// The entry crate is itself the `cdylib` exporting `android_main`; NativeActivity
+/// loads its fixed library name rather than a name derived from the application.
 export const ENTRY_CRATE = "blitsen-android";
 export const ENTRY_LIBRARY = "blitsen_android";
 export const ENTRY_SO = `lib${ENTRY_LIBRARY}.so`;
@@ -76,19 +27,7 @@ const NDK_VARIABLES = ["ANDROID_NDK_HOME", "ANDROID_NDK_ROOT", "NDK_HOME"];
 
 const readable = path => access(path, constants.R_OK).then(() => true, () => false);
 
-/// `which`, without Bun.
-///
-/// The obvious spelling of this is `Bun.which(command)`, and it was — which
-/// made `npx blitsen build --android` die at step ② with `Bun is not defined`
-/// on every machine that installed the package instead of cloning it. That is
-/// #131's bug exactly, on the one path #131 did not cover, and it is spelled
-/// out here because `Bun?.which` *looks* like it guards the case and does not:
-/// optional chaining short-circuits a null value, not an undeclared binding, so
-/// the reference throws before the `?.` is ever consulted.
-///
-/// Synchronous and eager because the callers are, and because a PATH scan is a
-/// handful of `stat`s. `PATHEXT` is honoured so this answers the same question
-/// on Windows, where the cross-compile driver is `cargo-ndk.exe`.
+/// `which`, without requiring Bun. `PATHEXT` preserves Windows executable lookup.
 function onPath(command) {
   const separator = process.platform === "win32" ? ";" : ":";
   const extensions = process.platform === "win32"
