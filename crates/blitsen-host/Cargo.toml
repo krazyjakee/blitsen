@@ -185,7 +185,7 @@ ksni = "0.3.6"
 # X11 desktops publish their toolkit scale through XSettings separately from
 # Xft/DPI. Winit only consumes the latter, so XFCE's 2x UI scale would otherwise
 # leave a native Blitsen window at 1x (issue #348).
-x11rb = { version = "0.13.2", default-features = false }
+x11rb = { version = "0.14.0", default-features = false }
 
 [target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
 # The status item, and — through `tray_icon::menu`, which is `muda` — the
