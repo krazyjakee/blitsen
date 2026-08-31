@@ -11,7 +11,7 @@ publish.workspace = true
 [dependencies]
 anyrender = "0.13"
 anyrender_vello = "0.14"
-anyrender_vello_cpu = "0.16"
+anyrender_vello_cpu = "0.17"
 base64.workspace = true
 blitsen-blitz = { path = "../blitsen-blitz" }
 blitsen-core = { path = "../blitsen-core" }

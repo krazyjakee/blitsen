@@ -14,7 +14,7 @@ anyrender = "0.13"
 # answer before the call returns, and reading a texture back off the GPU stalls
 # the pipeline for a frame or more. `blitsen-host` already links this renderer
 # for its own headless and CPU-fallback paths, so the binary carries it once.
-anyrender_vello_cpu = "0.16"
+anyrender_vello_cpu = "0.17"
 # Canvas data URLs need only the standard padded alphabet; the workspace entry
 # keeps the encoder's allocation support without the crate's `std` surface.
 base64.workspace = true
