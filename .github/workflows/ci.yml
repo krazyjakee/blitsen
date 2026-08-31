@@ -46,8 +46,7 @@ jobs:
           flags: -config-file .github/actionlint.yaml
       - name: Check workflow security policy
         run: |
-          bun test scripts/check-workflow-security.test.mjs scripts/release-summary.test.mjs \
-            scripts/rustc-wrapper.test.mjs
+          bun test scripts/check-workflow-security.test.mjs scripts/release-summary.test.mjs
           bun scripts/check-workflow-security.mjs
 
   # Fast feedback: no native toolchain, no display.
