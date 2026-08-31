@@ -121,7 +121,8 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             libfontconfig1-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
             libx11-dev libxcursor-dev libxi-dev libxrandr-dev \
-            libasound2-dev libudev-dev xvfb mold
+            libasound2-dev libudev-dev xvfb mold \
+            mesa-vulkan-drivers libvulkan1 libegl1 libgl1 libgl1-mesa-dri
       # Formatting first: it compiles nothing, so an unformatted change is
       # reported in seconds instead of after clippy has built the whole graph.
       - name: Lint
@@ -132,7 +133,11 @@ jobs:
       # Under a virtual display on Linux, so blitsen-host's surface-lifecycle
       # test executes instead of skipping itself: headless runners set no
       # DISPLAY, so no Linux runner had ever run it. The runner image ships
-      # xvfb; the apt line above keeps that true.
+      # xvfb; the apt line above keeps that true. Xvfb is only a display —
+      # wgpu still needs a device, so the same line installs Mesa's software
+      # Vulkan (lavapipe) and EGL/GL. Without them the instance has no backend
+      # at all and surface creation panics with
+      # FailedToCreateSurfaceForAnyBackend (first seen in run 33440709489).
       - if: runner.os == 'Linux'
         run: xvfb-run -a cargo test --workspace
         env:
@@ -260,7 +265,8 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             libfontconfig1-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
             libx11-dev libxcursor-dev libxi-dev libxrandr-dev \
-            libasound2-dev libudev-dev xvfb mold
+            libasound2-dev libudev-dev xvfb mold \
+            mesa-vulkan-drivers libvulkan1 libegl1 libgl1 libgl1-mesa-dri
       - run: bun install --frozen-lockfile
       # Issue #90: one project, both runtimes, and the only difference allowed
       # is size. The engine is inside the runtime, so nothing is installed for it.
