@@ -18,6 +18,22 @@ use winit::event_loop::EventLoopProxy;
 use crate::dom_bridge::notify::Activation;
 use crate::dom_bridge::notify::{NotificationOptions, NotificationPatch};
 
+#[cfg(target_os = "linux")]
+mod linux_backend;
+#[cfg(target_os = "macos")]
+mod macos_backend;
+#[cfg(target_os = "windows")]
+mod windows_backend;
+
+#[cfg(target_os = "linux")]
+use linux_backend::{LinuxHandle, Record};
+#[cfg(target_os = "macos")]
+use macos_backend::Record;
+#[cfg(target_os = "windows")]
+use windows_backend::Record;
+#[cfg(target_os = "windows")]
+pub(super) use windows_backend::register_entry_point;
+
 #[derive(Debug)]
 enum SignalKind {
     Response(NotificationResponse),
@@ -48,122 +64,12 @@ const NO_BUNDLE_IDENTITY: &str = concat!(
     "`blitsen build --bundle-id <id> --sign <command>`.",
 );
 
-/// The library's own bundle check, ahead of anything that reaches the framework.
-///
-/// Only `permission` and `show` need it: every other entry point addresses a
-/// notification that a `show` already got through, and a process cannot acquire
-/// or lose a bundle identifier while it runs.
-#[cfg(target_os = "macos")]
-fn bundle_identity() -> Result<(), String> {
-    notify_rust::check_bundle().map_err(|_| NO_BUNDLE_IDENTITY.to_owned())
-}
-
 #[derive(Debug)]
 struct Signal {
     public_id: String,
     token: u64,
     kind: SignalKind,
 }
-
-#[cfg(target_os = "linux")]
-struct Record {
-    options: NotificationOptions,
-    handle: LinuxHandle,
-    token: u64,
-}
-
-#[cfg(target_os = "linux")]
-enum LinuxHandle {
-    /// Development runs have no installed identity and retain the original
-    /// freedesktop notification backend and its live-process response stream.
-    Freedesktop(Box<notify_rust::NotificationHandle>),
-    /// Packaged identities submit through the portal, which can D-Bus-activate
-    /// the application after this process and its connection have exited.
-    Portal,
-}
-
-#[cfg(target_os = "macos")]
-struct Record {
-    options: NotificationOptions,
-    token: u64,
-    native_id: String,
-    nonce: Option<String>,
-}
-
-#[cfg(target_os = "windows")]
-struct Record {
-    options: NotificationOptions,
-    token: u64,
-    nonce: Option<String>,
-}
-
-/// The identity Windows files every Blitsen toast under when nothing registered
-/// one for this executable.
-///
-/// Windows will not display a toast from an identity it does not know.
-/// PowerShell's is present on every installation, which is why it is the
-/// identity the notification libraries offer as their unpackaged default and the
-/// one `notify-rust` already used here. It stays as the development answer: an
-/// interpreter running a script is not an installed application and has nothing
-/// of its own to be known by.
-#[cfg(target_os = "windows")]
-const BORROWED_APP_ID: &str = winrt_toast_reborn::ToastManager::POWERSHELL_AUM_ID;
-
-/// The application identity Windows files every Blitsen toast under.
-///
-/// Permission, replacement and removal are all scoped to it, so all three have
-/// to agree on which identity they mean — which is why this is read rather than
-/// passed: `permission` is an associated function with no session to reach
-/// through, and the notifier is built by a free function.
-#[cfg(target_os = "windows")]
-fn app_id() -> &'static str {
-    super::entry_point().map_or(BORROWED_APP_ID, |entry_point| entry_point.entry.as_str())
-}
-
-/// Tells the notification platform that this AppUserModelID exists (#252).
-///
-/// An AppUserModelID Windows has never seen holds no notifier, which is the
-/// state #251's refusal describes: `permission` cannot be read, and a toast has
-/// no identity to be delivered under. Registering one is a key under the running
-/// user's own `SOFTWARE\Classes\AppUserModelId`, and `winrt-toast-reborn` — the
-/// crate already delivering the toasts — writes it, so no registry code is
-/// forked here to do it.
-///
-/// It happens at startup rather than at packaging time because `blitsen build`
-/// cross-compiles: the machine that writes a Windows artifact is routinely a
-/// Linux one, and the hive that has to carry this key belongs to the user who
-/// eventually runs it.
-#[cfg(target_os = "windows")]
-pub(super) fn register_entry_point(display_name: &str) {
-    let Some(entry_point) = super::entry_point() else {
-        return;
-    };
-    // A registration that fails is not a reason to refuse to start: the identity
-    // may already be registered by an installer that did it properly, and if it
-    // is not, `permission` reports the missing identity in the sentence #251
-    // wrote for exactly this.
-    let _ = winrt_toast_reborn::register(&entry_point.entry, display_name, None);
-    let _ = super::windows_activation::register(&entry_point.entry, display_name);
-}
-
-/// The toast group Blitsen's own notifications share.
-///
-/// The group narrows the tag: removing `(group, tag)` cannot reach a toast some
-/// other application filed under the shared PowerShell identity with a colliding
-/// tag of its own.
-#[cfg(target_os = "windows")]
-const GROUP: &str = "blitsen";
-
-/// `ERROR_ELEMENT_NOT_FOUND`, which is how Windows spells an identity it has
-/// never seen when it is asked for that identity's notifier setting.
-///
-/// Written as the Win32 number the `windows` crate's `Win32_Foundation` feature
-/// would name, because compiling that whole feature for one constant costs more
-/// than the constant does. The message cannot be matched on instead: Windows
-/// localises it, and the failing CI line only read "Element not found." because
-/// the runner happened to be English.
-#[cfg(target_os = "windows")]
-const ELEMENT_NOT_FOUND: windows::core::HRESULT = windows::core::HRESULT::from_win32(1168);
 
 /// What a Windows process with no registered application identity is told (#251).
 ///
@@ -280,70 +186,6 @@ fn activation(
     })
 }
 
-/// The Windows toast for `options`, tagged with the session ID that addresses it.
-///
-/// The tag is what makes `update` and `close` possible at all: Windows replaces
-/// a delivered toast whose group and tag match a newly shown one, and removes
-/// the same pair from notification history. Both are derived from the public ID
-/// alone, so a toast built here for an ID `show` already used is the same toast
-/// as far as the platform is concerned.
-#[cfg(target_os = "windows")]
-fn toast(
-    public_id: &str,
-    options: &NotificationOptions,
-    session: &str,
-    generation: u64,
-) -> Result<(winrt_toast_reborn::Toast, Option<String>), String> {
-    use winrt_toast_reborn::content::image::ImagePlacement;
-    use winrt_toast_reborn::{Action, Image, Scenario, Toast, ToastDuration};
-
-    let body_activation = activation(public_id, None, session, generation, "windows");
-    let nonce = body_activation
-        .as_ref()
-        .map(|activation| activation.nonce.clone());
-    let launch = body_activation
-        .as_ref()
-        .map_or_else(|| "default".to_owned(), super::encode_desktop_envelope);
-    let mut toast = Toast::new();
-    toast
-        .text1(&options.title)
-        .text2(&options.body)
-        .tag(public_id)
-        .group(GROUP)
-        // Windows gives a body click no argument of its own, so the toast's
-        // launch string is what distinguishes it from a button in the activation
-        // handler. `"default"` is the identifier the declarations reserve for it.
-        .launch(&launch)
-        // Windows has two toast durations rather than a timeout, and picks the
-        // exact seconds itself. This is the mapping `notify-rust` applied.
-        .duration(match options.timeout {
-            Some(0) => ToastDuration::Long,
-            Some(timeout) if timeout >= 25_000 => ToastDuration::Long,
-            _ => ToastDuration::Short,
-        });
-    // A critical notification is one the user must not miss, and the reminder
-    // scenario is Windows' name for a toast that stays until it is dismissed.
-    // Low and normal are the ordinary toast, which has no scenario of its own.
-    if matches!(urgency(&options.urgency)?, Urgency::Critical) {
-        toast.scenario(Scenario::Reminder);
-    }
-    if let Some(icon) = &options.icon {
-        // Windows resolves a toast image through a URI, so a relative path has
-        // no meaning to the notification platform and is rejected rather than
-        // silently resolved against whatever directory this process is in.
-        let image = Image::new_local(icon)
-            .map_err(|error| format!("could not use notification icon {icon:?}: {error}"))?;
-        toast.image(1, image.with_placement(ImagePlacement::AppLogoOverride));
-    }
-    for action in &options.actions {
-        let argument = activation(public_id, Some(&action.id), session, generation, "windows")
-            .as_ref()
-            .map_or_else(|| action.id.clone(), super::encode_desktop_envelope);
-        toast.action(Action::new(&action.title, &argument, ""));
-    }
-    Ok((toast, nonce))
-}
-
 fn close_reason(reason: CloseReason) -> &'static str {
     match reason {
         CloseReason::Expired => "expired",
@@ -366,118 +208,6 @@ fn queue(
         kind,
     });
     proxy.wake_up();
-}
-
-#[cfg(target_os = "macos")]
-fn watch(
-    handle: notify_rust::NotificationHandle,
-    public_id: String,
-    token: u64,
-    signals: Arc<Mutex<VecDeque<Signal>>>,
-    proxy: EventLoopProxy,
-) {
-    std::thread::spawn(move || {
-        let result = handle.wait_for_response(|response: &NotificationResponse| {
-            queue(
-                &signals,
-                &proxy,
-                public_id.clone(),
-                token,
-                SignalKind::Response(response.clone()),
-            );
-        });
-        if let Err(error) = result {
-            queue(
-                &signals,
-                &proxy,
-                public_id,
-                token,
-                SignalKind::Error(format!("could not observe notification response: {error}")),
-            );
-        }
-    });
-}
-
-/// A Windows toast notifier whose callbacks report as `public_id` at `token`.
-///
-/// The handlers belong to the notifier rather than to the toast, so a
-/// replacement gets a fresh notifier carrying the replacement's token. The
-/// toast Windows superseded may still report its own dismissal afterwards;
-/// [`NotifyController::poll`] drops it because the record no longer holds that
-/// token, which is how a replaced toast stops speaking for the ID it had.
-#[cfg(target_os = "windows")]
-fn notifier(
-    public_id: &str,
-    token: u64,
-    signals: &Arc<Mutex<VecDeque<Signal>>>,
-    proxy: &EventLoopProxy,
-) -> winrt_toast_reborn::ToastManager {
-    use winrt_toast_reborn::{DismissalReason, ToastManager};
-
-    let (activated_signals, activated_proxy, activated_id) =
-        (Arc::clone(signals), proxy.clone(), public_id.to_owned());
-    let (dismissed_signals, dismissed_proxy, dismissed_id) =
-        (Arc::clone(signals), proxy.clone(), public_id.to_owned());
-    let (failed_signals, failed_proxy, failed_id) =
-        (Arc::clone(signals), proxy.clone(), public_id.to_owned());
-
-    ToastManager::new(app_id())
-        .on_activated(None, move |activated| {
-            // Windows can report an activation it attributes to neither the body
-            // nor a button. Calling that a click would end the notification for
-            // the user on a guess, so it is dropped instead.
-            let Some(activated) = activated else { return };
-            let response = super::decode_desktop_envelope(&activated.arg).map_or_else(
-                |_| {
-                    if activated.arg == "default" {
-                        NotificationResponse::Default
-                    } else {
-                        NotificationResponse::Action(activated.arg)
-                    }
-                },
-                |activation| {
-                    activation
-                        .action
-                        .map_or(NotificationResponse::Default, NotificationResponse::Action)
-                },
-            );
-            queue(
-                &activated_signals,
-                &activated_proxy,
-                activated_id.clone(),
-                token,
-                SignalKind::Response(response),
-            );
-        })
-        .on_dismissed(move |dismissed| {
-            queue(
-                &dismissed_signals,
-                &dismissed_proxy,
-                dismissed_id.clone(),
-                token,
-                match dismissed {
-                    Ok(dismissed) => {
-                        SignalKind::Response(NotificationResponse::Closed(match dismissed.reason {
-                            DismissalReason::UserCanceled => CloseReason::Dismissed,
-                            DismissalReason::TimedOut => CloseReason::Expired,
-                            DismissalReason::ApplicationHidden => CloseReason::CloseAction,
-                        }))
-                    }
-                    Err(error) => SignalKind::Error(format!(
-                        "could not observe notification response: {error}"
-                    )),
-                },
-            );
-        })
-        .on_failed(move |failed| {
-            queue(
-                &failed_signals,
-                &failed_proxy,
-                failed_id.clone(),
-                token,
-                SignalKind::Error(format!("could not show notification: {}", failed.error)),
-            );
-        })
 }
 
 impl NotifyController {
@@ -554,69 +284,17 @@ impl NotifyController {
     pub(crate) fn permission(request: bool) -> Result<Value, String> {
         #[cfg(target_os = "linux")]
         {
-            let _ = request;
-            Ok(json!("granted"))
+            linux_backend::permission(request)
         }
 
         #[cfg(target_os = "macos")]
         {
-            // From the crate root, not from `notify_rust::macos`: that module is
-            // private (`notify-rust-4.18.0/src/lib.rs`, `mod macos;`) and only
-            // its items are re-exported, so naming it never compiled — this
-            // whole arm has been dead since #97 landed it, which is also why
-            // #253's macOS gate is the first thing to run it.
-            use mac_usernotifications::AuthorizationStatus;
-            use notify_rust::{get_notification_settings_blocking, request_auth_blocking};
-
-            bundle_identity()?;
-            if request {
-                return request_auth_blocking()
-                    .map(|granted| json!(if granted { "granted" } else { "denied" }))
-                    .map_err(|error| {
-                        format!("could not request notification permission: {error}")
-                    });
-            }
-            let status = get_notification_settings_blocking()
-                .map_err(|error| format!("could not read notification permission: {error}"))?
-                .authorization_status;
-            Ok(json!(match status {
-                AuthorizationStatus::NotDetermined | AuthorizationStatus::Unknown => "default",
-                AuthorizationStatus::Denied => "denied",
-                AuthorizationStatus::Authorized
-                | AuthorizationStatus::Provisional
-                | AuthorizationStatus::Ephemeral => "granted",
-            }))
+            macos_backend::permission(request)
         }
 
         #[cfg(target_os = "windows")]
         {
-            use windows::UI::Notifications::{NotificationSetting, ToastNotificationManager};
-            use windows::core::HSTRING;
-
-            // Windows has no programmatic prompt: the user, the administrator or
-            // group policy decides, and an application can only read the answer.
-            // Requesting is therefore the same non-mutating reading, and there is
-            // no third state to report — the notifier is either enabled for this
-            // identity or it is switched off, whoever switched it off.
-            let _ = request;
-            let setting =
-                ToastNotificationManager::CreateToastNotifierWithId(&HSTRING::from(app_id()))
-                    .and_then(|notifier| notifier.Setting())
-                    .map_err(|error| {
-                        // An identity the platform never registered is not a
-                        // notifier reporting a state, so it is refused with the
-                        // prerequisite rather than reported as one more failure.
-                        if error.code() == ELEMENT_NOT_FOUND {
-                            NO_TOAST_IDENTITY.to_owned()
-                        } else {
-                            format!("could not read notification permission: {error}")
-                        }
-                    })?;
-            Ok(json!(if setting == NotificationSetting::Enabled {
-                "granted"
-            } else {
-                "denied"
-            }))
+            windows_backend::permission(request)
         }
     }
 
@@ -633,7 +311,7 @@ impl NotifyController {
         // framework `show` would reach does not return an error, it aborts the
         // process.
         #[cfg(target_os = "macos")]
-        bundle_identity()?;
+        macos_backend::bundle_identity()?;
         let token = self.token();
         #[cfg(target_os = "macos")]
         let mac_activation =
@@ -654,7 +332,8 @@ impl NotifyController {
         // first. Its encoded launch argument is also the durable cold-start
         // envelope the COM callback receives.
         #[cfg(target_os = "windows")]
-        let (toast, nonce) = toast(&public_id, &options, &self.notification_session, token)?;
+        let (toast, nonce) =
+            windows_backend::toast(&public_id, &options, &self.notification_session, token)?;
 
         #[cfg(target_os = "linux")]
         {
@@ -667,45 +346,13 @@ impl NotifyController {
                     let handle = notification(&options)?
                         .show()
                         .map_err(|error| format!("could not show notification: {error}"))?;
-                    let native_id = handle.id();
-                    let signals = Arc::clone(&self.signals);
-                    let proxy = self.proxy.clone();
-                    let watched_id = public_id.clone();
-                    std::thread::spawn(move || {
-                        #[allow(deprecated)]
-                        let result = notify_rust::handle_action(native_id, |response| {
-                            #[allow(deprecated)]
-                            let response = match response {
-                                notify_rust::ActionResponse::Custom("default") => {
-                                    NotificationResponse::Default
-                                }
-                                notify_rust::ActionResponse::Custom(action) => {
-                                    NotificationResponse::Action((*action).to_owned())
-                                }
-                                notify_rust::ActionResponse::Closed(reason) => {
-                                    NotificationResponse::Closed(*reason)
-                                }
-                            };
-                            queue(
-                                &signals,
-                                &proxy,
-                                watched_id.clone(),
-                                token,
-                                SignalKind::Response(response),
-                            );
-                        });
-                        if let Err(error) = result {
-                            queue(
-                                &signals,
-                                &proxy,
-                                watched_id,
-                                token,
-                                SignalKind::Error(format!(
-                                    "could not observe notification response: {error}"
-                                )),
-                            );
-                        }
-                    });
+                    linux_backend::watch(
+                        handle.id(),
+                        public_id.clone(),
+                        token,
+                        Arc::clone(&self.signals),
+                        self.proxy.clone(),
+                    );
                     LinuxHandle::Freedesktop(Box::new(handle))
                 }
                 Err(error) => return Err(error.clone()),
@@ -726,7 +373,7 @@ impl NotifyController {
             // An identity-less development bundle has no durable activation
             // envelope, so it retains the dependency's live-process watcher.
             if nonce.is_none() {
-                watch(
+                macos_backend::watch(
                     handle,
                     public_id.clone(),
                     token,
@@ -747,7 +394,7 @@ impl NotifyController {
 
         #[cfg(target_os = "windows")]
         {
-            notifier(&public_id, token, &self.signals, &self.proxy)
+            windows_backend::notifier(&public_id, token, &self.signals, &self.proxy)
                 .show(&toast)
                 .map_err(|error| format!("could not show notification: {error}"))?;
             self.records.insert(
@@ -813,7 +460,7 @@ impl NotifyController {
                 .map_err(|error| format!("could not update notification {public_id}: {error}"))?;
             let nonce = activation.map(|activation| activation.nonce);
             if nonce.is_none() {
-                watch(
+                macos_backend::watch(
                     handle,
                     public_id.to_owned(),
                     token,
@@ -842,8 +489,9 @@ impl NotifyController {
         {
             let options = record.options.clone();
             let token = self.token();
-            let (toast, nonce) = toast(public_id, &options, &self.notification_session, token)?;
-            notifier(public_id, token, &self.signals, &self.proxy)
+            let (toast, nonce) =
+                windows_backend::toast(public_id, &options, &self.notification_session, token)?;
+            windows_backend::notifier(public_id, token, &self.signals, &self.proxy)
                 .show(&toast)
                 .map_err(|error| format!("could not update notification {public_id}: {error}"))?;
             let record = self
@@ -881,8 +529,8 @@ impl NotifyController {
         #[cfg(target_os = "windows")]
         {
             let _ = record;
-            winrt_toast_reborn::ToastManager::new(app_id())
-                .remove_grouped_tag(GROUP, public_id)
+            winrt_toast_reborn::ToastManager::new(windows_backend::app_id())
+                .remove_grouped_tag(windows_backend::GROUP, public_id)
                 .map_err(|error| format!("could not close notification {public_id}: {error}"))?;
         }
 
