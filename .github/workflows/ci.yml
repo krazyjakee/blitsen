@@ -686,13 +686,15 @@ jobs:
           targets: aarch64-linux-android, x86_64-linux-android
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          # This job installs cargo-ndk after the cache step. Keep its bin cache
-          # separate so another job cannot win the shared immutable cache first
-          # and leave the tool absent on every later Android run.
-          shared-key: cargo-android-registry
-          # cargo-ndk and the registry are compact; two Android target trees are
-          # larger than the benefit once the primary native caches are present.
-          cache-targets: false
+          # Android is the longest repeated compile in this workflow: two release
+          # target trees, neither shared with a desktop runner. Keep its archive
+          # separate so a desktop job cannot claim the immutable key first, and
+          # retain completed dependency builds even if a later packaging check
+          # fails. Stale superseded keys are pruned when the cache budget is
+          # maintained; registry-only caching left this job cold for every run.
+          shared-key: cargo-android
+          cache-targets: true
+          cache-on-failure: true
           save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
       # `rquickjs-sys` ships pre-generated bindings for sixteen triples and none
       # is `*-linux-android`, so `crates/blitsen-quickjs/Cargo.toml` turns on its
