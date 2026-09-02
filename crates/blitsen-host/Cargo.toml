@@ -167,6 +167,13 @@ ndk = { version = "0.9", default-features = false }
 # implementations; keeping these target-specific avoids irrelevant platform
 # dependencies in every runtime.
 [target.'cfg(target_os = "linux")'.dependencies]
+# A Linux desktop is the one target that can be asked to open a window with no
+# usable GPU behind it — a headless CI runner under Xvfb is exactly that, and so
+# is a workstation whose Vulkan driver is missing. `softbuffer_window_renderer`
+# is what `native_window.rs` falls back to there; `pollster` blocks on the one
+# wgpu adapter enumeration that decides which of the two this run gets.
+anyrender_vello_cpu = { version = "0.16", features = ["softbuffer_window_renderer"] }
+pollster = "0.4"
 # The notification portal and org.freedesktop.Application activation service
 # use the same zbus major and Tokio transport already linked by notify-rust.
 # Naming it directly adds no crate to the resolved graph; `blocking-api` only

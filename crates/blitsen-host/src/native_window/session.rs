@@ -21,7 +21,11 @@ use winit::keyboard::ModifiersState;
 use winit::monitor::Fullscreen;
 use winit::window::{WindowAttributes, WindowLevel};
 
-use super::{NativeWindowRenderer, SharedBlitzDocument, WindowApplication, native_window_renderer};
+#[cfg(not(target_os = "linux"))]
+use super::NativeWindowRenderer;
+#[cfg(target_os = "linux")]
+use super::SelectedRenderer;
+use super::{SharedBlitzDocument, WindowApplication, native_window_renderer};
 use crate::app::AppFiles;
 use crate::pointer_input::PointerIds;
 use crate::surface_lifecycle::SurfaceState;
@@ -72,13 +76,13 @@ fn create_event_loop() -> EventLoop {
 /// [`pump`](Self::pump) until it reports the window is gone. Phase 1 pumps from
 /// a task on Bun's loop (TECH.md §3, S1 option 1); Phase 2 pumps from its own
 /// outer loop. Nothing else about the session differs between them.
-pub struct WindowSession<E: JsEngine + Clone> {
+pub struct Session<R: anyrender::WindowRenderer, E: JsEngine + Clone> {
     /// I/O runtime entered around every winit turn.
     pub runtime: tokio::runtime::Runtime,
     /// The winit loop, advanced without blocking by [`pump`](Self::pump).
     pub event_loop: EventLoop,
     /// Window, document and input translation.
-    pub application: WindowApplication<NativeWindowRenderer, E>,
+    pub application: WindowApplication<R, E>,
     /// The first error raised inside a winit callback, surfaced by `pump`.
     pub error: Rc<RefCell<Option<JsError>>>,
     /// Where the application's files come from, retained for reload.
@@ -89,7 +93,7 @@ pub struct WindowSession<E: JsEngine + Clone> {
     storage: crate::storage::LocalStorage,
 }
 
-impl<E: JsEngine + Clone> Drop for WindowSession<E> {
+impl<R: anyrender::WindowRenderer, E: JsEngine + Clone> Drop for Session<R, E> {
     fn drop(&mut self) {
         // A notification is platform-owned once shown and deliberately
         // outlives a graceful process exit: that is what leaves something for
@@ -100,9 +104,11 @@ impl<E: JsEngine + Clone> Drop for WindowSession<E> {
     }
 }
 
-impl<E: JsEngine + Clone + 'static> WindowSession<E> {
-    /// Parses the entrypoint, runs its scripts, and opens a native window.
-    pub fn open(
+impl<R: anyrender::WindowRenderer, E: JsEngine + Clone + 'static> Session<R, E> {
+    /// Parses the entrypoint, runs its scripts, and opens a native window
+    /// around a renderer its caller has already chosen.
+    pub fn open_with(
+        renderer: R,
         engine: &mut E,
         files: AppFiles,
         options: OpenDirectoryOptions,
@@ -195,10 +201,10 @@ impl<E: JsEngine + Clone + 'static> WindowSession<E> {
         };
         let document =
             crate::app::load_window_document(engine, &files, net_provider, load_options)?;
-        // Renderer selection happens before winit creates a surface. On an
-        // unsafe target this must never construct wgpu: recovering from device
-        // loss is too late when a Metal compute submission wedges WindowServer.
-        let renderer = native_window_renderer();
+        // The renderer arrived already built, because selection has to happen
+        // before winit creates a surface. On an unsafe target that selection
+        // must never construct wgpu at all: recovering from device loss is too
+        // late when a Metal compute submission wedges WindowServer.
         let window_options = &options.window;
         // A window this type asks to be shown is still created hidden:
         // blitz-shell otherwise maps it in `View::init`, before wgpu has a
@@ -710,5 +716,113 @@ impl<E: JsEngine + Clone + 'static> WindowSession<E> {
     /// turns as frames and exiting before the application was ever visible.
     pub fn startup_revealed(&self) -> bool {
         self.application.startup_revealed
+    }
+}
+
+/// The session a host drives, over whichever renderer this run selected.
+///
+/// On every target but Linux that selection is a property of the build, so this
+/// is simply that one session. Linux decides at startup (`native_window.rs`),
+/// which means both possibilities have to exist in the binary and every entry
+/// point has to reach the one this run built. The forwarding below is
+/// mechanical on purpose: nothing above this type is allowed to learn which
+/// renderer answered, and `WindowSession` keeps the shape both hosts and
+/// `tests/surface_lifecycle.rs` already call.
+#[cfg(target_os = "linux")]
+pub enum WindowSession<E: JsEngine + Clone> {
+    /// A wgpu device this run found and Vello can drive.
+    Gpu(Session<anyrender_vello::VelloWindowRenderer, E>),
+    /// The software rasterizer, because there was no such device.
+    Cpu(Session<anyrender_vello_cpu::VelloCpuWindowRenderer, E>),
+}
+
+#[cfg(target_os = "linux")]
+impl<E: JsEngine + Clone + 'static> WindowSession<E> {
+    /// Parses the entrypoint, runs its scripts, and opens a native window.
+    pub fn open(
+        engine: &mut E,
+        files: AppFiles,
+        options: OpenDirectoryOptions,
+    ) -> Result<Self, JsError> {
+        Ok(match native_window_renderer() {
+            SelectedRenderer::Gpu(renderer) => {
+                Self::Gpu(Session::open_with(*renderer, engine, files, options)?)
+            }
+            SelectedRenderer::Cpu(renderer) => {
+                Self::Cpu(Session::open_with(*renderer, engine, files, options)?)
+            }
+        })
+    }
+
+    /// Re-parses the entrypoint and replaces the document in the open window.
+    pub fn reload(&mut self, engine: &mut E) -> Result<(), JsError> {
+        match self {
+            Self::Gpu(session) => session.reload(engine),
+            Self::Cpu(session) => session.reload(engine),
+        }
+    }
+
+    /// Replaces one stylesheet without reloading the document.
+    pub fn reload_css(&mut self, file: &str) -> Result<bool, JsError> {
+        match self {
+            Self::Gpu(session) => session.reload_css(file),
+            Self::Cpu(session) => session.reload_css(file),
+        }
+    }
+
+    /// Advances the winit loop without blocking.
+    pub fn pump(&mut self) -> Result<bool, JsError> {
+        match self {
+            Self::Gpu(session) => session.pump(),
+            Self::Cpu(session) => session.pump(),
+        }
+    }
+
+    /// Advances the winit loop, waiting up to `timeout` for the next event.
+    pub fn pump_for(&mut self, timeout: Option<Duration>) -> Result<bool, JsError> {
+        match self {
+            Self::Gpu(session) => session.pump_for(timeout),
+            Self::Cpu(session) => session.pump_for(timeout),
+        }
+    }
+
+    /// Whether a requested animation frame is still owed a callback.
+    pub fn animation_frames_pending(&self) -> bool {
+        match self {
+            Self::Gpu(session) => session.animation_frames_pending(),
+            Self::Cpu(session) => session.animation_frames_pending(),
+        }
+    }
+
+    /// Asks the window for another frame.
+    pub fn request_redraw(&self) {
+        match self {
+            Self::Gpu(session) => session.request_redraw(),
+            Self::Cpu(session) => session.request_redraw(),
+        }
+    }
+
+    /// Whether the startup reveal has already happened.
+    pub fn startup_revealed(&self) -> bool {
+        match self {
+            Self::Gpu(session) => session.startup_revealed(),
+            Self::Cpu(session) => session.startup_revealed(),
+        }
+    }
+}
+
+/// The session a host drives. See the Linux enum above for why this is a type.
+#[cfg(not(target_os = "linux"))]
+pub type WindowSession<E> = Session<NativeWindowRenderer, E>;
+
+#[cfg(not(target_os = "linux"))]
+impl<E: JsEngine + Clone + 'static> Session<NativeWindowRenderer, E> {
+    /// Parses the entrypoint, runs its scripts, and opens a native window.
+    pub fn open(
+        engine: &mut E,
+        files: AppFiles,
+        options: OpenDirectoryOptions,
+    ) -> Result<Self, JsError> {
+        Self::open_with(native_window_renderer(), engine, files, options)
     }
 }

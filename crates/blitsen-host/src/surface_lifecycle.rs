@@ -25,7 +25,9 @@ use winit::application::ApplicationHandler as _;
 use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::ModifiersState;
 
+#[cfg(target_os = "linux")]
 use crate::WindowSession;
+use crate::native_window::Session;
 use crate::native_window::WindowApplication;
 use crate::pointer_input::{PendingPointerInput, PointerDetails};
 
@@ -74,7 +76,7 @@ pub(crate) enum SyntheticPhase {
 }
 
 /// The session-level view of the surface, and the seam a test drives it from.
-impl<E: JsEngine + Clone + 'static> WindowSession<E> {
+impl<R: anyrender::WindowRenderer, E: JsEngine + Clone + 'static> Session<R, E> {
     /// Whether the window still has a surface to paint into.
     ///
     /// The frame loop reads this: a surface that has gone away takes
@@ -123,7 +125,6 @@ impl<E: JsEngine + Clone + 'static> WindowSession<E> {
     /// so a test asserting a cycle happened is asking the thing that owns the
     /// GPU resources, not the flag that is supposed to agree with it.
     pub fn renderer_is_active(&self) -> bool {
-        use anyrender::WindowRenderer as _;
         self.application
             .inner
             .windows
@@ -269,6 +270,53 @@ fn cancellations(
             physical_y: at.1,
             pointer,
         })
+}
+
+/// The same seam, reached through the renderer this Linux run selected.
+///
+/// These forward for the reason the ones in `session.rs` do: which renderer
+/// answered is not a question a caller of `WindowSession` is allowed to ask.
+#[cfg(target_os = "linux")]
+impl<E: JsEngine + Clone + 'static> WindowSession<E> {
+    /// Whether the window still has a surface to paint into.
+    pub fn surface(&self) -> SurfaceState {
+        match self {
+            Self::Gpu(session) => session.surface(),
+            Self::Cpu(session) => session.surface(),
+        }
+    }
+
+    /// Queues the real `SurfaceDestroyed` winit delivers.
+    pub fn lose_surface(&mut self) {
+        match self {
+            Self::Gpu(session) => session.lose_surface(),
+            Self::Cpu(session) => session.lose_surface(),
+        }
+    }
+
+    /// Queues the real `SurfaceCreated` winit delivers.
+    pub fn restore_surface(&mut self) {
+        match self {
+            Self::Gpu(session) => session.restore_surface(),
+            Self::Cpu(session) => session.restore_surface(),
+        }
+    }
+
+    /// How many references the window handle is under, which a leak grows.
+    pub fn window_references(&self) -> usize {
+        match self {
+            Self::Gpu(session) => session.window_references(),
+            Self::Cpu(session) => session.window_references(),
+        }
+    }
+
+    /// Whether the renderer currently holds an active surface.
+    pub fn renderer_is_active(&self) -> bool {
+        match self {
+            Self::Gpu(session) => session.renderer_is_active(),
+            Self::Cpu(session) => session.renderer_is_active(),
+        }
+    }
 }
 
 #[cfg(test)]

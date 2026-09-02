@@ -36,7 +36,7 @@ pub(crate) mod tray;
 
 use input::{ImeTarget, PendingKeyboardInput};
 pub(crate) use input::{InputBootstrap, ModifierFlags, css_pointer_coordinates, take_queued_for};
-pub use session::WindowSession;
+pub use session::{Session, WindowSession};
 
 /// Width of the resize border supplied for an undecorated window, in logical
 /// pixels. Native decorations normally own this hit area; without them the
@@ -120,6 +120,7 @@ pub type NativeWindowRenderer = anyrender_vello_cpu::VelloCpuWindowRenderer;
 
 /// The window renderer safe for this target.
 #[cfg(not(any(
+    target_os = "linux",
     all(target_os = "macos", target_arch = "x86_64"),
     all(target_os = "android", not(feature = "android-vello-gpu"))
 )))]
@@ -154,11 +155,63 @@ fn native_window_renderer() -> NativeWindowRenderer {
 
 #[cfg(not(any(
     target_os = "android",
+    target_os = "linux",
     all(target_os = "macos", target_arch = "x86_64")
 )))]
 fn native_window_renderer() -> NativeWindowRenderer {
     eprintln!("blitsen: renderer=vello-gpu backend=wgpu");
     NativeWindowRenderer::new()
+}
+
+/// The window renderer a Linux run can actually use, decided once at startup.
+///
+/// Linux is the one desktop target where this is not a property of the build.
+/// A headless runner under Xvfb and a workstation whose Vulkan driver is
+/// missing both offer a window system with no GPU behind it, and
+/// `anyrender_vello` does not degrade there: it unwraps the surface it could
+/// not create and takes the process with it before the first frame. That is
+/// issue #366's failure, and it is what `tests/surface_lifecycle.rs` reproduces
+/// on a runner.
+#[cfg(target_os = "linux")]
+pub(crate) enum SelectedRenderer {
+    /// wgpu found a device that is not the CPU pretending to be one.
+    Gpu(Box<anyrender_vello::VelloWindowRenderer>),
+    /// The software rasterizer over a `softbuffer` framebuffer.
+    Cpu(Box<anyrender_vello_cpu::VelloCpuWindowRenderer>),
+}
+
+/// Whether wgpu can see a GPU worth handing Vello.
+///
+/// The question is put to wgpu rather than to the environment, and it is put
+/// before winit creates a surface, which is the ordering [`WindowSession::open`]
+/// already depended on. An adapter reporting [`wgpu::DeviceType::Cpu`] is not a
+/// yes: lavapipe does enumerate, and Vello's device request against it then
+/// fails to return inside any time a frame loop can wait for — measured at over
+/// twenty-five minutes for the one window `surface_lifecycle` opens — so a
+/// software adapter counts here as no adapter at all.
+#[cfg(target_os = "linux")]
+fn gpu_adapter_is_available() -> bool {
+    use anyrender_vello::wgpu;
+
+    let instance = wgpu::Instance::default();
+    pollster::block_on(instance.enumerate_adapters(wgpu::Backends::all()))
+        .iter()
+        .any(|adapter| adapter.get_info().device_type != wgpu::DeviceType::Cpu)
+}
+
+/// The renderer selection reported on stderr, as every other target reports it.
+#[cfg(target_os = "linux")]
+fn native_window_renderer() -> SelectedRenderer {
+    if gpu_adapter_is_available() {
+        eprintln!("blitsen: renderer=vello-gpu backend=wgpu");
+        SelectedRenderer::Gpu(Box::new(anyrender_vello::VelloWindowRenderer::new()))
+    } else {
+        eprintln!(
+            "blitsen: renderer=vello-cpu window-backend=softbuffer \
+             reason=no-gpu-adapter"
+        );
+        SelectedRenderer::Cpu(Box::new(anyrender_vello_cpu::VelloCpuWindowRenderer::new()))
+    }
 }
 
 /// Hands the activity to the event loop, before there is one (issue #142).

@@ -549,6 +549,7 @@ dependencies = [
  "parking_lot",
  "peniko",
  "png",
+ "pollster",
  "reqwest",
  "serde",
  "serde_json",
