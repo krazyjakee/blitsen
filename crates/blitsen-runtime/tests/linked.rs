@@ -6,21 +6,18 @@
 //! survive whatever else a linked executable happens to contain — including its
 //! own copy of the format's magic number.
 
+mod common;
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-fn runtime_binary() -> Option<PathBuf> {
-    // `CARGO_BIN_EXE_` names the binary this test was built alongside.
-    let path = PathBuf::from(env!("CARGO_BIN_EXE_blitsen-runtime"));
-    path.is_file().then_some(path)
-}
+use common::{runtime_binary, scratch_root};
 
 /// A linked executable, and the directory holding it, for one test.
 ///
 /// Every one of these is a whole copy of the runtime binary — hundreds of
 /// megabytes. A randomized `TempDir` below `target/tmp` keeps parallel runs
-/// separate and removes the copy even when an assertion panics. Keeping the
-/// large fixture below `target` also avoids filling a system `/tmp` mount.
+/// separate and removes the copy even when an assertion panics.
 struct Linked {
     _directory: tempfile::TempDir,
     executable: PathBuf,
@@ -34,11 +31,9 @@ impl Linked {
 
 fn link(files: &[(String, Vec<u8>)], name: &str) -> Option<Linked> {
     let runtime = runtime_binary()?;
-    let scratch = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/tmp");
-    std::fs::create_dir_all(&scratch).expect("temp directory root");
     let directory = tempfile::Builder::new()
         .prefix(&format!("linked-{name}-"))
-        .tempdir_in(scratch)
+        .tempdir_in(scratch_root())
         .expect("temp directory");
     let executable = directory.path().join(name);
     blitsen_core::bundle::write_bundle(&runtime, &executable, files).expect("link");

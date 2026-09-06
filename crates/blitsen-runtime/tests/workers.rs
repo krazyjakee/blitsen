@@ -10,24 +10,21 @@
 //! loop until its asynchronous work settles and exits, which is exactly the
 //! sequence a windowed run would perform without needing a display.
 
-use std::path::{Path, PathBuf};
+mod common;
+
+use std::path::Path;
 use std::process::Command;
 
-fn runtime_binary() -> Option<PathBuf> {
-    let path = PathBuf::from(env!("CARGO_BIN_EXE_blitsen-runtime"));
-    path.is_file().then_some(path)
-}
+use common::{runtime_binary, scratch_root};
 
 /// A unique application directory removed when the test that made it ends.
 struct App(tempfile::TempDir);
 
 impl App {
     fn new(name: &str, files: &[(&str, &str)]) -> Self {
-        let scratch = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/tmp");
-        std::fs::create_dir_all(&scratch).expect("application directory root");
         let root = tempfile::Builder::new()
             .prefix(&format!("workers-{name}-"))
-            .tempdir_in(scratch)
+            .tempdir_in(scratch_root())
             .expect("application directory");
         for (path, source) in files {
             std::fs::write(root.path().join(path), source).expect("write application file");
@@ -399,9 +396,7 @@ fn a_directory_run_resolves_modules_by_application_url_as_a_bundle_does() {
         printed.contains("WORKER blitsen://app/work.js"),
         "a worker resolves against the document that started it: {printed}"
     );
-    // The failure names the module and the importer rather than arriving as
-    // QuickJS's uninitialized marker, which is what every import error used to
-    // look like.
+    // The failure names the module and the importer.
     assert!(
         printed.contains("MISSING the application has no module at missing.js"),
         "an import that fails says why: {printed}"

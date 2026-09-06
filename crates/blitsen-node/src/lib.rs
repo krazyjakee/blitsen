@@ -14,8 +14,7 @@ use std::cell::RefCell;
 use blitsen_host::app::AppFiles;
 use blitsen_host::{
     MenuDefinition, NativeWindowOptions as HostWindowOptions, OpenDirectoryOptions as HostOptions,
-    TrayAction, TrayMenu, TrayMenuItem as HostTrayMenuItem, TrayOptions as HostTrayOptions,
-    WindowSession, WindowType, native_window,
+    TrayMenu, TrayOptions as HostTrayOptions, WindowSession, WindowType, native_window,
 };
 use blitsen_js::JsError;
 use napi::{Env, Status};
@@ -94,18 +93,6 @@ pub struct NativeWindowOptions {
 
 #[napi(object)]
 #[derive(Clone)]
-/// JavaScript-facing tray context-menu entry.
-pub struct NativeTrayMenuItem {
-    /// Built-in action name.
-    pub action: String,
-    /// Optional displayed label.
-    pub label: Option<String>,
-    /// Optional enabled state.
-    pub enabled: Option<bool>,
-}
-
-#[napi(object)]
-#[derive(Clone)]
 /// JavaScript-facing system tray options.
 pub struct NativeTrayOptions {
     /// PNG file path.
@@ -116,8 +103,6 @@ pub struct NativeTrayOptions {
     pub open_on_click: Option<bool>,
     /// Whether the native close control hides the window.
     pub close_to_tray: Option<bool>,
-    /// Ordered context-menu entries.
-    pub context_menu: Option<Vec<NativeTrayMenuItem>>,
     /// Rich recursive menu serialized as JSON by the CLI adapter.
     pub menu_json: Option<String>,
     /// PNG paths addressed by `iconIndex` values in `menu_json`.
@@ -163,58 +148,31 @@ impl TryFrom<OpenDirectoryOptions> for HostOptions {
                 let icon = std::fs::read(&tray.icon).map_err(|error| {
                     JsError::new(format!("could not read tray icon {}: {error}", tray.icon))
                 })?;
-                let context_menu = tray
-                    .context_menu
+                let entries: Vec<MenuDefinition> = tray
+                    .menu_json
+                    .as_deref()
+                    .map(serde_json::from_str)
+                    .transpose()
+                    .map_err(|error| {
+                        JsError::new(format!("invalid tray menu configuration: {error}"))
+                    })?
+                    .unwrap_or_default();
+                let icons = tray
+                    .menu_icons
                     .unwrap_or_default()
                     .into_iter()
-                    .map(|item| {
-                        let action = match item.action.as_str() {
-                            "show" => TrayAction::Show,
-                            "hide" => TrayAction::Hide,
-                            "quit" => TrayAction::Quit,
-                            "separator" => TrayAction::Separator,
-                            value => {
-                                return Err(JsError::new(format!(
-                                    "unknown tray menu action: {value}"
-                                )));
-                            }
-                        };
-                        Ok(HostTrayMenuItem {
-                            action,
-                            label: item.label,
-                            enabled: item.enabled.unwrap_or(true),
+                    .map(|path| {
+                        std::fs::read(&path).map_err(|error| {
+                            JsError::new(format!("could not read tray menu icon {path}: {error}"))
                         })
                     })
-                    .collect::<Result<Vec<_>, JsError>>()?;
-                let menu = tray
-                    .menu_json
-                    .map(|json| {
-                        let entries: Vec<MenuDefinition> =
-                            serde_json::from_str(&json).map_err(|error| {
-                                JsError::new(format!("invalid tray menu configuration: {error}"))
-                            })?;
-                        let icons = tray
-                            .menu_icons
-                            .unwrap_or_default()
-                            .into_iter()
-                            .map(|path| {
-                                std::fs::read(&path).map_err(|error| {
-                                    JsError::new(format!(
-                                        "could not read tray menu icon {path}: {error}"
-                                    ))
-                                })
-                            })
-                            .collect::<Result<Vec<_>, _>>()?;
-                        Ok(TrayMenu { entries, icons })
-                    })
-                    .transpose()?;
+                    .collect::<Result<Vec<_>, _>>()?;
                 Ok(HostTrayOptions {
                     icon,
                     tooltip: tray.tooltip,
                     open_on_click: tray.open_on_click.unwrap_or(true),
                     close_to_tray: tray.close_to_tray.unwrap_or(false),
-                    context_menu,
-                    menu,
+                    menu: TrayMenu { entries, icons },
                 })
             })
             .transpose()?;

@@ -8,10 +8,12 @@ use winit::event_loop::EventLoopProxy;
 
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 use super::menu::DecodedIcon;
-use super::menu::{
-    MenuEntry, MenuItem, MenuItemKind, MenuSignal, MenuSurface, decode_icon, parse_menu, queue,
-};
-use crate::{TrayAction, TrayOptions};
+#[cfg(any(target_os = "linux", test))]
+use super::menu::MenuItemKind;
+use super::menu::{MenuEntry, MenuSignal, MenuSurface, decode_icon, parse_menu, queue};
+#[cfg(any(not(target_os = "android"), test))]
+use crate::TrayAction;
+use crate::TrayOptions;
 
 #[derive(Clone)]
 pub(crate) struct TraySpec {
@@ -26,34 +28,11 @@ impl TryFrom<TrayOptions> for TraySpec {
     type Error = String;
 
     fn try_from(options: TrayOptions) -> Result<Self, Self::Error> {
-        let menu = if let Some(menu) = options.menu {
-            let (entries, has_quit) = parse_menu(menu.entries, &menu.icons, MenuSurface::Tray)?;
-            if options.close_to_tray && !has_quit {
-                return Err("closeToTray requires a quit action in the tray menu".to_owned());
-            }
-            entries
-        } else {
-            options
-                .context_menu
-                .into_iter()
-                .map(|item| {
-                    let action = item.action;
-                    if action == TrayAction::Separator {
-                        return MenuEntry::Separator;
-                    }
-                    MenuEntry::Item(MenuItem {
-                        label: item
-                            .label
-                            .unwrap_or_else(|| action.default_label().to_owned()),
-                        enabled: item.enabled,
-                        accelerator: None,
-                        icon: None,
-                        signal: MenuSignal::Command(action),
-                        kind: MenuItemKind::Action,
-                    })
-                })
-                .collect()
-        };
+        let (menu, has_quit) =
+            parse_menu(options.menu.entries, &options.menu.icons, MenuSurface::Tray)?;
+        if options.close_to_tray && !has_quit {
+            return Err("closeToTray requires a quit action in the tray menu".to_owned());
+        }
         Ok(Self {
             icon: options.icon,
             tooltip: options.tooltip,
@@ -475,6 +454,7 @@ impl ksni::Tray for LinuxTray {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::native_window::menu::MenuItem;
 
     fn event_item(id: &str, kind: MenuItemKind) -> MenuEntry {
         let checked = match &kind {
@@ -503,14 +483,21 @@ mod tests {
             tooltip: None,
             open_on_click: true,
             close_to_tray: false,
-            context_menu: vec![crate::TrayMenuItem {
-                label: None,
-                action: TrayAction::Show,
-                enabled: true,
-            }],
-            menu: None,
+            menu: crate::TrayMenu {
+                entries: vec![
+                    crate::MenuDefinition {
+                        action: Some("show".into()),
+                        ..Default::default()
+                    },
+                    crate::MenuDefinition {
+                        kind: Some("separator".into()),
+                        ..Default::default()
+                    },
+                ],
+                icons: Vec::new(),
+            },
         })
-        .expect("legacy tray options are valid");
+        .expect("tray options are valid");
         assert!(matches!(
             &spec.menu[0],
             MenuEntry::Item(MenuItem {
@@ -518,6 +505,7 @@ mod tests {
                 ..
             })
         ));
+        assert!(matches!(&spec.menu[1], MenuEntry::Separator));
     }
 
     #[cfg(target_os = "linux")]

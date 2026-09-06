@@ -49,10 +49,12 @@
 //! it with the user's identity afterwards.
 //!
 //! That ordering is also why the trailer is *found* rather than assumed to be
-//! the final bytes: a signature legitimately follows it. The reader takes the
-//! trailer at the end when it is there, and otherwise scans backwards for the
-//! magic — validating each candidate, because this runtime carries a copy of
-//! that magic in its own read-only data.
+//! the final bytes: a signature legitimately follows it. The reader locates the
+//! Mach-O segment from its load command. For the append-only formats and old
+//! bundles, where an Authenticode certificate can legitimately follow the
+//! trailer, it takes the trailer at the end when it is there, and otherwise
+//! scans backwards — a bounded scan validating each candidate, because this
+//! runtime carries a copy of that magic in its own read-only data.
 //!
 //! What is verified here is the shape: a linked executable still reads back
 //! correctly with arbitrary bytes appended after its trailer, which is what
@@ -61,10 +63,6 @@
 //! out to rewrite the Mach-O or PE rather than only append, the offsets in the
 //! trailer move and this reader has to learn that; the first macOS or Windows
 //! signing run is where that is found out.
-//!
-//! The reader locates that Mach-O segment from its load command. It retains the
-//! bounded backwards scan for the append-only formats and old bundles, where an
-//! Authenticode certificate can legitimately follow the trailer.
 //!
 //! # Reading
 //!

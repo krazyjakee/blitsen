@@ -150,11 +150,10 @@ impl Settings {
                     tooltip: tray.tooltip,
                     open_on_click: tray.open_on_click,
                     close_to_tray: tray.close_to_tray,
-                    context_menu: Vec::new(),
-                    menu: Some(TrayMenu {
+                    menu: TrayMenu {
                         entries: tray.context_menu,
                         icons: menu_icons,
-                    }),
+                    },
                 });
             }
             // The application menu carries no assets, so unlike the tray there
@@ -298,7 +297,7 @@ fn run(files: AppFiles, arguments: &[String]) -> Result<ExitCode, String> {
     modules
         .install(&mut engine)
         .map_err(|error| error.to_string())?;
-    engine::install_module_loader(&mut engine)?;
+    engine.install_module_loader();
 
     if blitsen_host::standalone::requested() {
         let storage = blitsen_host::storage::LocalStorage::for_application(&storage_identity)?;

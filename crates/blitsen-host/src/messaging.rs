@@ -267,25 +267,21 @@ pub fn install<E: JsEngine + 'static>(
         }),
     )?;
 
-    let start_host = Rc::clone(host);
     engine.define_global_function(
         "__blitsenPortStart",
         Box::new(move |call| {
             let mut engine = E::from_value(&call.this);
             let port = port_argument(&mut engine, &call, 0)?;
-            let _ = &start_host;
             registry().start(port);
             Ok(call.this)
         }),
     )?;
 
-    let close_host = Rc::clone(host);
     engine.define_global_function(
         "__blitsenPortClose",
         Box::new(move |call| {
             let mut engine = E::from_value(&call.this);
             let port = port_argument(&mut engine, &call, 0)?;
-            let _ = &close_host;
             registry().close(port);
             Ok(call.this)
         }),

@@ -26,12 +26,6 @@ pub fn load() -> Result<Engine, String> {
     blitsen_quickjs::QuickJs::new().map_err(|error| error.to_string())
 }
 
-/// Points the engine's module loader at the resolver.
-pub fn install_module_loader(engine: &mut Engine) -> Result<(), String> {
-    engine.install_module_loader();
-    Ok(())
-}
-
 /// How this runtime starts a web worker: a thread, and an engine of its own.
 ///
 /// The third thing that is engine-specific, and it is here for the same reason
@@ -44,18 +38,10 @@ impl blitsen_host::worker::WorkerLauncher for Workers {
     fn launch(&self, boot: blitsen_host::worker::WorkerBoot) -> Result<(), JsError> {
         blitsen_host::worker::launch_on_thread(boot, || {
             let mut engine = load().map_err(JsError::new)?;
-            install_module_loader(&mut engine).map_err(JsError::new)?;
+            engine.install_module_loader();
             Ok(engine)
         })
     }
-}
-
-/// Whether this build can evaluate module scripts, for `--engine-report`.
-///
-/// Asked of the engine rather than hard-coded, because the report exists to be
-/// checkable against what the compatibility profile claims.
-pub fn supports_modules(engine: &Engine) -> bool {
-    engine.supports_modules()
 }
 
 /// Which of `names` this engine does not define.

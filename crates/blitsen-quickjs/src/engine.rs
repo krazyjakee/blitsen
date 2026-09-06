@@ -11,7 +11,7 @@ use blitsen_js::{
 };
 use rquickjs::function::{Args, IntoJsFunc, ParamRequirement, Params, This};
 use rquickjs::{
-    Array, ArrayBuffer, Coerced, Constructor, Ctx, FromJs, Function, IntoJs, Module, Object, Type,
+    Array, ArrayBuffer, Coerced, Constructor, FromJs, Function, IntoJs, Module, Object, Type,
     TypedArray as RqTypedArray, U8Clamped, Value,
 };
 
@@ -163,7 +163,7 @@ impl JsEngine for QuickJs {
     }
 
     fn to_typed_array(&mut self, value: &Self::Value) -> Result<TypedArray, JsError> {
-        self.with_result(|ctx| typed_array_contents(ctx, value.restore(ctx)?))
+        self.with_result(|ctx| typed_array_contents(value.restore(ctx)?))
     }
 
     fn get_property(&mut self, object: &Self::Value, name: &str) -> Result<Self::Value, JsError> {
@@ -427,7 +427,7 @@ fn is_typed_array(value: &Value<'_>) -> bool {
         || object.is_typed_array::<u64>()
 }
 
-fn typed_array_contents<'js>(ctx: &Ctx<'js>, value: Value<'js>) -> rquickjs::Result<TypedArray> {
+fn typed_array_contents(value: Value<'_>) -> rquickjs::Result<TypedArray> {
     macro_rules! extract {
         ($type:ty, $kind:expr) => {
             if value
@@ -463,7 +463,6 @@ fn typed_array_contents<'js>(ctx: &Ctx<'js>, value: Value<'js>) -> rquickjs::Res
     extract!(f64, TypedArrayKind::Float64);
     extract!(i64, TypedArrayKind::BigInt64);
     extract!(u64, TypedArrayKind::BigUint64);
-    let _ = ctx;
     Err(rquickjs::Error::new_from_js(
         value.type_name(),
         "TypedArray",

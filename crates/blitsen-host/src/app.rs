@@ -27,7 +27,7 @@ use url::Url;
 
 use crate::apk::ApkAssets;
 use crate::dev_server::DevServer;
-use crate::dom_bridge::DocumentMode;
+use crate::dom_bridge::{DocumentMode, InstallOptions};
 use crate::modules::{APP_ORIGIN, AppSource, DirectorySource, url_of};
 
 /// What a served URL with no filename asks for.
@@ -347,18 +347,16 @@ impl AppFiles {
 /// archive, and the entry point can print or display it (see [`crate::apk`]).
 ///
 /// Two names are looked for, and the second one is not a convenience (#148).
-/// `aapt` **rewrites an asset whose name ends in `.gz`**: it strips the suffix
-/// and stores the decompressed contents under the shortened name, so
-/// `blitsen.notices.txt.gz` staged into an APK arrives as
-/// [`NOTICES_UNCOMPRESSED`] holding plain text. That was measured by building an
-/// APK and reading the archive back, not inferred from documentation. Looking
-/// for one name only would have meant every Android artifact reporting itself
-/// uncleared for redistribution while carrying the notices it owes — which is
-/// the failure `docs/LICENSING.md` exists to gate against, arriving silently.
-///
-/// So the packaging step writes the uncompressed name on that path and this
-/// reads either. Compression was never load-bearing here: it saves 88 KB inside
-/// a container that deflates its own entries anyway.
+/// Every entry in an APK is stored, so a gzip inside it saves nothing the
+/// archive was going to compress and costs an inflate on the one read that
+/// matters; the Android packaging step therefore stages the text uncompressed
+/// as [`NOTICES_UNCOMPRESSED`], and this reads either. (The second name was
+/// first forced rather than chosen: `aapt` v1, which went with the old
+/// packager, stripped `.gz` from an asset and stored the inflated bytes under
+/// the shortened name.) Looking for one name only would mean every Android
+/// artifact reporting itself uncleared for redistribution while carrying the
+/// notices it owes — which is the failure `docs/LICENSING.md` exists to gate
+/// against, arriving silently.
 ///
 /// `None` when the artifact carries none, or carries something that is neither
 /// the gzipped text nor the plain text it should be. All of those mean the same
@@ -581,20 +579,23 @@ pub(crate) fn load_window_document<E: JsEngine + Clone + 'static>(
     let scripts = document_scripts(&*document.borrow()).map_err(crate::dom_error)?;
     let entrypoint = files.entrypoint_name();
     let loader = files.script_loader();
+    let mut install = InstallOptions::new(
+        width,
+        height,
+        device_pixel_ratio,
+        mode,
+        Some(files.reader()),
+    );
+    if let Some(storage) = storage {
+        install = install.with_storage(storage);
+    }
     let installed = crate::harness::execute_window_scripts_from(
         engine,
         dom_runtime,
         scripts,
-        crate::harness::WindowScriptOptions {
-            entrypoint: &entrypoint,
-            width,
-            height,
-            device_pixel_ratio,
-            mode,
-            loader: loader.as_ref(),
-            reader: Some(files.reader()),
-            storage,
-        },
+        &entrypoint,
+        loader.as_ref(),
+        install,
     )?;
     document
         .borrow_mut()
@@ -619,10 +620,12 @@ pub const NOTICES: &str = "blitsen.notices.txt.gz";
 
 /// The same notices, as they arrive inside an APK (issue #148).
 ///
-/// Not an alternative format: it is the *only* name that survives `aapt`, which
-/// strips `.gz` from an asset and inflates it on the way in. The Android
-/// packaging step therefore stages the text uncompressed under this name, and
-/// [`notices`] reads either. See the argument there.
+/// Not an alternative format. Every entry in an APK is stored, so the gzip a
+/// desktop export carries would save nothing there and cost an inflate on the
+/// one read that matters; the Android packaging step stages the text
+/// uncompressed under this name, and [`notices`] reads either. The name was
+/// originally forced by `aapt` v1, which stripped `.gz` from an asset and
+/// inflated it on the way in; see the argument at [`notices`].
 pub const NOTICES_UNCOMPRESSED: &str = "blitsen.notices.txt";
 
 fn count_files(root: &Path) -> usize {
