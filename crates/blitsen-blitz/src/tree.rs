@@ -90,6 +90,38 @@ impl BlitzDom {
             })
     }
 
+    /// Records that `parent`'s children changed, `inserted` among them if given.
+    ///
+    /// The structural flag is unconditional: a removal can drop a node whose
+    /// id the next element created will take. The control flag needs a form
+    /// control to be involved, which is either in the subtree that arrived or
+    /// is the parent itself, whose child text is a textarea's default value.
+    pub(crate) fn note_structure_change(&mut self, parent: NodeId, inserted: Option<NodeId>) {
+        self.structure_changed = true;
+        self.controls_changed |= self.is_tag(parent, "textarea")
+            || inserted.is_some_and(|node| self.subtree_has_form_controls(node));
+    }
+
+    /// Whether nothing has happened since the last flush that a resolve could
+    /// act on.
+    ///
+    /// Every channel that reaches Blitz without bumping the revision is
+    /// listed: a running or pending animation, a subresource that settled (the
+    /// log counts before the document is told, so the count cannot lag the
+    /// message), a viewport the host changed underneath the document, a scroll
+    /// the end-of-resolve hover refresh has yet to see, and a restyle hint
+    /// queued from Blitz's own event handling — hover, focus, active — which
+    /// marks every ancestor up to the document node, and which Blitz clears
+    /// only after an incremental resolve. Under the full-document fallback the
+    /// flag never clears and this simply never answers yes.
+    pub(crate) fn is_settled(&self) -> bool {
+        !self.scrolled
+            && !self.document.is_animating()
+            && self.resources.settlements() == self.flushed_settlements
+            && *self.document.viewport() == self.flushed_viewport
+            && !self.document.root_node().has_dirty_descendants()
+    }
+
     pub(crate) fn mutate(&mut self, style_node: Option<NodeId>, layout_node: Option<NodeId>) {
         self.revision = self.revision.wrapping_add(1);
         if let Some(node) = style_node {

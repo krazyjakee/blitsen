@@ -1,16 +1,37 @@
 //! Form-control state: the value and checkedness HTML keeps beside the attributes.
 
 use blitsen_dom::{DomBackend, DomName, Namespace};
-use blitz::dom::NodeId;
 use blitz::dom::node::SpecialElementData;
+use blitz::dom::{Node, NodeData, NodeId};
 
 use crate::BlitzDom;
 
 /// The `<option>` and `<textarea>` state Blitz will not settle by itself.
 ///
-/// Walked at the end of a flush that had layout work to do, which is when a
-/// control can have appeared or its defaults changed.
+/// Walked at the end of a flush that had layout work to do and in which a
+/// control can have appeared or had its defaults changed — the flag that says
+/// so is `BlitzDom::controls_changed`, set beside every such mutation.
 const UNSETTLED_CONTROLS: &str = "option, textarea";
+
+/// Compares a node's text content against `expected` without building it.
+///
+/// Mirrors Blitz's `Node::text_content`, which concatenates the text
+/// descendants of elements and anonymous blocks and skips everything else.
+/// Returns what is left of `expected` once the node's text has been consumed
+/// from its front, or `None` where the two diverged.
+fn strip_text_content<'a>(node: &Node, expected: &'a str) -> Option<&'a str> {
+    match &node.data {
+        NodeData::Text(text) => expected.strip_prefix(text.content.as_str()),
+        NodeData::Element(..) | NodeData::AnonymousBlock(..) => {
+            let mut rest = expected;
+            for child in &node.children {
+                rest = strip_text_content(node.with(*child), rest)?;
+            }
+            Some(rest)
+        }
+        _ => Some(expected),
+    }
+}
 
 /// Form-control state HTML keeps beside the content attributes.
 ///
@@ -124,6 +145,20 @@ impl BlitzDom {
         false
     }
 
+    /// Whether a subtree holds a control [`Self::settle_form_controls`] settles.
+    ///
+    /// A `<select>` is named for its options, which arrive inside it.
+    pub(crate) fn subtree_has_form_controls(&self, root: NodeId) -> bool {
+        ["textarea", "option", "select"]
+            .iter()
+            .any(|tag| self.is_tag(root, tag))
+            || self.document.get_node(root).is_some_and(|node| {
+                node.children
+                    .iter()
+                    .any(|child| self.subtree_has_form_controls(*child))
+            })
+    }
+
     /// Settles the control state a resolved layout has just made writable.
     ///
     /// Two things land here. State assigned before the control existed is
@@ -154,6 +189,14 @@ impl BlitzDom {
                 state.pending = false;
             }
         }
+        if !self.controls_changed {
+            return relayout;
+        }
+        // Stays raised while a textarea has no editor to settle into: one
+        // without a box — `display: none`, say — gets its editor at whatever
+        // later flush gives it one, which need not be a structural change.
+        let mut unsettled = false;
+        let selected_attribute = Self::qual_name(&DomName::attribute("selected"));
         for node in self
             .query_selector_all(self.document(), UNSETTLED_CONTROLS)
             .unwrap_or_default()
@@ -165,19 +208,34 @@ impl BlitzDom {
                 if state.and_then(|state| state.checked).is_some() {
                     continue;
                 }
-                let selected = self
-                    .attribute(node, &DomName::attribute("selected"))
-                    .is_ok_and(|value| value.is_some());
+                let selected = self.node(node).is_ok_and(|node| {
+                    node.element_data().is_some_and(|element| {
+                        element
+                            .attrs()
+                            .iter()
+                            .any(|attribute| attribute.name == selected_attribute)
+                    })
+                });
                 if self.checked_state(node) != Some(selected) {
                     self.write_checked_state(node, selected);
                 }
             } else if state.and_then(|state| state.value.as_ref()).is_none()
-                && let Ok(text) = self.text_content(node)
-                && self.editor_text(node).is_some_and(|value| value != text)
+                && let Ok(element) = self.node(node)
             {
-                relayout |= self.write_editor_text(node, &text);
+                let Some(input) = element
+                    .element_data()
+                    .and_then(|data| data.text_input_data())
+                else {
+                    unsettled = true;
+                    continue;
+                };
+                if strip_text_content(element, input.editor.raw_text()) != Some("") {
+                    let text = element.text_content();
+                    relayout |= self.write_editor_text(node, &text);
+                }
             }
         }
+        self.controls_changed = unsettled;
         relayout
     }
 
@@ -197,6 +255,8 @@ impl BlitzDom {
         {
             return;
         }
+        // Written through below, and left for the settling walk to confirm.
+        self.controls_changed |= name.local == "selected";
         let state = self.form_state.get(&node);
         match name.local.as_str() {
             "value" => {
