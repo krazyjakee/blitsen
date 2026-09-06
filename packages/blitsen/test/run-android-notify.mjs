@@ -46,9 +46,10 @@
 import { join } from "node:path";
 
 import {
-  adb, adbOrFail, argument, artifacts, deviceIsAlive, keep as keepIn, sleep, tap, uiHierarchy,
-  uiNodes, waitForBoot,
+  adb, adbOrFail, artifacts, deviceIsAlive, keep as keepIn, sleep, tap, uiHierarchy, uiNodes,
+  waitForBoot,
 } from "./android-device.mjs";
+import { argument } from "./build-addon.mjs";
 import { EXPIRY, PREFIX, TITLES } from "./android-notify-app.mjs";
 
 /// The runtime permission the whole API 33+ half turns on. Spelled here rather than

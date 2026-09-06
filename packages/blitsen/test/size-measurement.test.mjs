@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { gzipSync } from "node:zlib";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { BARE_APP } from "./bare-app.mjs";
 import { pinnedPhase2Runtime } from "./measurement-runtime.mjs";
+import { withTemporaryDirectory } from "./cli-support.mjs";
 import { comparisonFixture, comparisonSummary, footprint } from "./run-size-comparison.mjs";
 import { phase2SizeSummary } from "./size-reports.mjs";
 
@@ -28,8 +28,7 @@ describe("size evidence", () => {
   });
 
   test("measures complete directory contents with a stated compression proxy", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "blitsen-footprint-test-"));
-    try {
+    await withTemporaryDirectory("blitsen-footprint-test-", async directory => {
       const first = Buffer.from("first fixture");
       const second = Buffer.from("second fixture");
       await writeFile(join(directory, "first"), first);
@@ -40,9 +39,7 @@ describe("size evidence", () => {
           + gzipSync(second, { level: 9 }).length,
         files: 2,
       });
-    } finally {
-      await rm(directory, { recursive: true, force: true });
-    }
+    });
   });
 
   test("uses one exact application and pinned comparison versions", async () => {

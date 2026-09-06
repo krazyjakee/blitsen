@@ -9,7 +9,8 @@ import { promisify } from "node:util";
 import { buildPayload, buildTrailer, linkBundle, readBundle, FORMAT_VERSION } from "../src/bundle.mjs";
 import { injectMachOPayload, machOPayloadOffset } from "../src/macho.mjs";
 import { buildStandalone } from "../src/export.mjs";
-import { compileAddon, compiler, exportedName, withStubbedExport } from "./cli-support.mjs";
+import { compileAddon, compiler, exportedName, withStubbedExport, withTemporaryDirectory }
+  from "./cli-support.mjs";
 import { machoFixture } from "./fixtures/macho.mjs";
 
 const run = promisify(execFile);
@@ -148,8 +149,7 @@ describe("Phase 2 link step", () => {
 
   test("a Mach-O link is read through the same payload and trailer contract", async () => {
     for (const cpu of [0x01000007, 0x0100000c]) {
-      const directory = await mkdtemp(join(tmpdir(), "blitsen-bundle-macho-"));
-      try {
+      await withTemporaryDirectory("blitsen-bundle-macho-", async directory => {
         const runtime = join(directory, "runtime");
         const output = join(directory, "MyApp");
         await writeFile(runtime, machoFixture(cpu).executable);
@@ -161,9 +161,7 @@ describe("Phase 2 link step", () => {
         expect(bundle.offset).toBe(machoFixture(cpu).linkeditAt);
         expect(bundle.files.get("index.html").toString()).toContain("waiting");
         expect(report.totalBytes).toBe(bytes.length);
-      } finally {
-        await rm(directory, { recursive: true, force: true });
-      }
+      });
     }
   });
 
@@ -174,8 +172,7 @@ describe("Phase 2 link step", () => {
   });
 
   test("is not fooled by the magic appearing inside the runtime", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "blitsen-bundle-decoy-"));
-    try {
+    await withTemporaryDirectory("blitsen-bundle-decoy-", async directory => {
       const runtime = join(directory, "runtime");
       await writeFile(runtime, Buffer.concat([
         Buffer.alloc(2048, 0x7f),
@@ -187,9 +184,7 @@ describe("Phase 2 link step", () => {
       const output = join(directory, "MyApp");
       await linkBundle({ runtime, output, files: application });
       expect(readBundle(await readFile(output)).files.size).toBe(3);
-    } finally {
-      await rm(directory, { recursive: true, force: true });
-    }
+    });
   });
 
   test("bounds signed-trailer discovery to the reader's 16 MiB window", () => {
@@ -205,8 +200,7 @@ describe("Phase 2 link step", () => {
   // JavaScript-only CI job.
   test.skipIf(!rustRuntimeBuilt)("the Rust runtime reads what this package writes", async () => {
     const runtime = RUST_RUNTIME;
-    const directory = await mkdtemp(join(tmpdir(), "blitsen-bundle-rust-"));
-    try {
+    await withTemporaryDirectory("blitsen-bundle-rust-", async directory => {
       const output = join(directory, "MyApp");
       const report = await linkBundle({ runtime, output, files: application });
       const { stdout } = await run(output, ["--bundle-report"]);
@@ -219,9 +213,7 @@ describe("Phase 2 link step", () => {
       expect(runtimeReport.files.map(file => file.path))
         .toEqual(["assets/app.js", "assets/logo.png", "index.html"]);
       expect(runtimeReport.files.find(file => file.path === "assets/logo.png").bytes).toBe(4);
-    } finally {
-      await rm(directory, { recursive: true, force: true });
-    }
+    });
   });
 
   // Which host an export links into is a size decision everywhere except where
@@ -357,12 +349,10 @@ describe("Phase 2 link step", () => {
     });
   });
 
-  // The case that decides what most users get. A module application used to be
-  // able to force the Bun host, back when the Phase 2 runtime loaded
-  // JavaScriptCore at run time and the library it found might have no module
-  // entry point. The shipped runtime links QuickJS-ng statically and its module
-  // loader is stock, so module scripts no longer change the answer — on any
-  // target, including the cross-target builds nothing here can run.
+  // The case that decides what most users get. Module scripts do not affect
+  // host selection, because the shipped runtime links QuickJS-ng statically with
+  // its stock module loader (docs/JSC.md) — on any target, including the
+  // cross-target builds nothing here can run.
   test("links the small host for a module application on the shipping engine", async () => {
     await withStubbedExport(async ({ directory, outfile, nativePath }) => {
       const root = await staticApp(directory, MODULE_APP, { "app.js": "export const x = 1;\n" });

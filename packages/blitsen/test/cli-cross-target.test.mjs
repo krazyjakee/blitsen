@@ -10,14 +10,14 @@
 // so the extraction is exercised against npm's actual output rather than a
 // hand-written archive that might agree with a hand-written reader.
 import { describe, expect, test } from "bun:test";
-import { copyFile, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { copyFile, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { main } from "../src/cli.mjs";
 import {
   extractFromTarball, fetchRuntime, hostTarget, resolveRuntime, runtimeCacheDir, TARGETS,
 } from "../src/runtime.mjs";
-import { capture, executableStub, nativeStub, phase2Name } from "./cli-support.mjs";
+import { captureConsole, executableStub, nativeStub, phase2Name, withTemporaryDirectory }
+  from "./cli-support.mjs";
 
 const VERSION = "9.9.9";
 const npm = Bun.which("npm");
@@ -28,14 +28,7 @@ const npm = Bun.which("npm");
 // for one rather than name a favourite (#134).
 const elsewhere = () => (hostTarget() === "win32-x64" ? "linux-x64" : "win32-x64");
 
-const withWork = async run => {
-  const directory = await mkdtemp(join(tmpdir(), "blitsen-cross-target-"));
-  try {
-    return await run(directory);
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
-};
+const withWork = run => withTemporaryDirectory("blitsen-cross-target-", run);
 
 /**
  * Seeds the cache the way a completed fetch leaves it.
@@ -229,7 +222,7 @@ describe("cross-target export", () => {
         await seedCache(cache, target, await import("../src/runtime.mjs")
           .then(module => module.packageVersion()));
         const outfile = join(work, `App-${target}`);
-        const { output } = capture();
+        const { output } = captureConsole();
         const code = await main(
           ["build", application, "--target", target, "--outfile", outfile], output);
         expect(code).toBe(0);
@@ -259,7 +252,7 @@ describe("cross-target export", () => {
       // LoadLibrary before reaching the check under test (#134).
       const host = join(work, "host.node");
       await writeFile(host, nativeStub(hostTarget()));
-      const { output, lines } = capture();
+      const { output, lines } = captureConsole();
       const previous = process.env.BLITSEN_NATIVE_PATH;
       process.env.BLITSEN_NATIVE_PATH = host;
       try {
@@ -292,7 +285,7 @@ describe("cross-target export", () => {
       const runtime = join(work, "host-runtime");
       await writeFile(addon, nativeStub(target));
       await writeFile(runtime, executableStub(hostTarget()));
-      const { output, lines } = capture();
+      const { output, lines } = captureConsole();
       const previous = {
         native: process.env.BLITSEN_NATIVE_PATH,
         runtime: process.env.BLITSEN_RUNTIME_PATH,

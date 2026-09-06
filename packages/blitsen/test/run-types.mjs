@@ -16,7 +16,7 @@ import { cp, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { repository } from "./build-addon.mjs";
+import { capture, repository } from "./build-addon.mjs";
 
 const PACKAGE = join(repository, "packages/blitsen");
 const FIXTURES = join(PACKAGE, "test/fixtures/types");
@@ -44,14 +44,13 @@ for (const [name, file] of [["accepted", "accepted.ts"], ["rejected", "rejected.
   await writeFile(join(work, `tsconfig.${name}.json`),
     JSON.stringify({ extends: "blitsen/tsconfig.json", include: [file] }, null, 2));
 
-const run = (cmd, cwd = work) =>
-  Bun.spawnSync({ cmd, cwd, stdout: "pipe", stderr: "pipe" });
-const output = result => `${result.stdout.toString()}${result.stderr.toString()}`.trim();
+const run = (cmd, cwd = work) => capture(cmd, { cwd });
+const output = result => `${result.stdout}${result.stderr}`.trim();
 
 console.log(`installing typescript@${options.typescript}`);
 const install = run(["npm", "install", "--no-audit", "--no-fund", "--silent",
   `typescript@${options.typescript}`]);
-if (install.exitCode !== 0) throw new Error(`could not install typescript:\n${output(install)}`);
+if (install.code !== 0) throw new Error(`could not install typescript:\n${output(install)}`);
 
 // After the install, not before it: npm prunes anything in `node_modules` that
 // no dependency asked for, and would take the staged package straight back out.
@@ -63,7 +62,7 @@ let failed = false;
 for (const name of ["accepted", "rejected"]) {
   const check = run([join(work, "node_modules/.bin/tsc"), "-p", `tsconfig.${name}.json`]);
   const report = output(check);
-  if (check.exitCode === 0) console.log(`${name}: ok`);
+  if (check.code === 0) console.log(`${name}: ok`);
   else {
     failed = true;
     console.log(`${name}: FAILED\n${report}`);

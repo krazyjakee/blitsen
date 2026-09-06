@@ -651,11 +651,8 @@ export async function buildStandalone(
     // copy of Bun for it, because a smaller executable that cannot run the
     // application is not smaller.
     //
-    // Module scripts used to be a second override, back when the Phase 2 host
-    // loaded JavaScriptCore at run time and the library it found might have no
-    // module entry point. The shipped runtime links QuickJS-ng statically and
-    // its module loader is stock, so there is no longer a build whose engine
-    // could turn up without one.
+    // Module scripts do not affect the choice: the shipped runtime links
+    // QuickJS-ng statically with its stock module loader (docs/JSC.md).
     const host = selectStandaloneHost(requested, carriedAddons);
     reportCollection(progress, { manifest, assets, unreferenced, carriedAddons });
     let notices = null;

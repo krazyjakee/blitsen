@@ -149,10 +149,9 @@ export const NOTIFY_APP = `<!doctype html><html><head><meta charset="utf-8"><tit
   //    would otherwise throw on at post time.
   await settled("e.icon",
     notify.show({ title: "${PREFIX}-icon", body: "icon", icon: "blitsen_absent_drawable" }));
-  //    And the one that used to be a failure. An action button is a PendingIntent
-  //    aimed at this Activity (#252), so it is accepted and drawn; the emulator
-  //    run proves it was posted, while the system-shade interaction remains a
-  //    separate activation test.
+  //    An action button is a PendingIntent aimed at this Activity (#252), so it
+  //    is accepted and drawn; the emulator run proves it was posted, while the
+  //    system-shade interaction remains a separate activation test.
   await settled("s.actions", notify.show({
     title: "${PREFIX}-actions", body: "actions", actions: [{ id: "open", title: "Open" }],
   }));

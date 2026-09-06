@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { planIngest, rewriteRootRelativeReferences } from "../src/application-ingest.mjs";
 import { HTML_ASSET_ATTRIBUTES } from "../src/asset-references.mjs";
 import { generateApiManifest } from "../src/api-manifest.mjs";
+import { withTemporaryDirectory } from "./cli-support.mjs";
 
 const JS_TABLE = join(import.meta.dir, "../src/asset-references.mjs");
 const RUST_VALIDATOR = join(import.meta.dir, "../../../crates/blitsen-host/src/assets.rs");
@@ -40,8 +40,7 @@ describe("asset reference rules", () => {
   });
 
   test("one HTML attribute table drives reachability, rewriting, and remote diagnostics", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "blitsen-asset-rules-"));
-    try {
+    await withTemporaryDirectory("blitsen-asset-rules-", async directory => {
       await mkdir(join(directory, "assets"));
       const references = HTML_ASSET_ATTRIBUTES.map((rule, index) => ({
         ...rule, path: `assets/${rule.element}-${rule.attribute}-${index}.bin`,
@@ -68,14 +67,11 @@ describe("asset reference rules", () => {
         expect(new RegExp(rule.pattern, "i").test(
           `<${reference.element} ${reference.attribute}="https://cdn.example/a">`)).toBeTrue();
       }
-    } finally {
-      await rm(directory, { recursive: true, force: true });
-    }
+    });
   });
 
   test("CSS syntax keeps its deliberate scan, rewrite, and diagnostic capabilities", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "blitsen-css-asset-rules-"));
-    try {
+    await withTemporaryDirectory("blitsen-css-asset-rules-", async directory => {
       await mkdir(join(directory, "assets"));
       await writeFile(join(directory, "assets/image.png"), "image");
       await writeFile(join(directory, "assets/import.css"), "body {}");
@@ -94,14 +90,11 @@ describe("asset reference rules", () => {
       const remote = manifest.assets.find(item => item.kind === "css");
       expect(new RegExp(remote.pattern, "i").test('url("//cdn.example/a.png")')).toBeTrue();
       expect(new RegExp(remote.pattern, "i").test('@import "//cdn.example/a.css"')).toBeFalse();
-    } finally {
-      await rm(directory, { recursive: true, force: true });
-    }
+    });
   });
 
   test("discovers repeated and cyclic references once in deterministic order", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "blitsen-cyclic-asset-graph-"));
-    try {
+    await withTemporaryDirectory("blitsen-cyclic-asset-graph-", async directory => {
       await writeFile(join(directory, "index.html"), [
         '<script src="./a.js"></script>',
         '<script src="./a.js"></script>',
@@ -114,8 +107,6 @@ describe("asset reference rules", () => {
       expect(plan.files.map(file => file.relative)).toEqual(["a.js", "b.js", "index.html"]);
       expect([...plan.resolutions.keys()]).toEqual(["index.html", "a.js", "b.js"]);
       expect(plan.unreferenced).toEqual([]);
-    } finally {
-      await rm(directory, { recursive: true, force: true });
-    }
+    });
   });
 });

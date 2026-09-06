@@ -16,7 +16,7 @@ export const HTML_ASSET_ATTRIBUTES = Object.freeze([
   { element: "object", attribute: "data", remote: "asset" },
 ].map(Object.freeze));
 
-export const CSS_ASSET_REFERENCES = Object.freeze([
+const CSS_ASSET_REFERENCES = Object.freeze([
   Object.freeze({
     syntax: "url",
     prefix: "url\\(\\s*[\"']?",

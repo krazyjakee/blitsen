@@ -78,7 +78,7 @@ export async function checkPublishedTypes(manifest) {
 const names = entries => entries.map(entry => `\`${entry.api}\``).join(", ") || "—";
 
 // Renders the capability tiers documented in COMPATIBILITY.md.
-export function renderCapabilityTiers(manifest) {
+function renderCapabilityTiers(manifest) {
   const codes = [...new Set(manifest.apis.map(entry => entry.code))];
   const surface = codes.map(code => {
     const entries = manifest.apis.filter(entry => entry.code === code);
@@ -108,7 +108,7 @@ export function renderCapabilityTiers(manifest) {
 }
 
 // Renders the `blitsen/*` module surface documented in COMPATIBILITY.md.
-export function renderNativeModules(manifest) {
+function renderNativeModules(manifest) {
   const modules = [...new Set(manifest.native.map(entry => entry.module))];
   const members = (module, status) => manifest.native
     .filter(entry => entry.module === module && entry.status === status)

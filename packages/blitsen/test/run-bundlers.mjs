@@ -15,16 +15,16 @@
 import { strict as assert } from "node:assert";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 
-const repository = resolve(import.meta.dir, "../../..");
+import { capture, repository } from "./build-addon.mjs";
+
 const packageRoot = join(repository, "packages/blitsen");
 const workspace = await mkdtemp(join(tmpdir(), "blitsen-bundlers-"));
 const out = entry => join(workspace, "out", entry);
 
-const run = (cmd) =>
-  Bun.spawnSync({ cmd, cwd: workspace, env: process.env, stdout: "pipe", stderr: "pipe" });
-const output = result => `${result.stdout.toString()}${result.stderr.toString()}`;
+const run = cmd => capture(cmd, { cwd: workspace, env: process.env });
+const output = result => `${result.stdout}${result.stderr}`;
 
 // Each builds `src/<entry>.mjs`; `plugin` selects a config that loads our plugin.
 const BUNDLERS = [
@@ -67,7 +67,7 @@ try {
   }));
   const install = run(["npm", "install", "--no-audit", "--no-fund", "--silent",
     "esbuild", "rollup", "webpack", "webpack-cli", "vite", `blitsen@file:${packageRoot}`]);
-  if (install.exitCode !== 0) throw new Error(`bundler install failed:\n${output(install)}`);
+  if (install.code !== 0) throw new Error(`bundler install failed:\n${output(install)}`);
 
   await mkdir(join(workspace, "src"), { recursive: true });
   await writeFile(join(workspace, "src/subpath.mjs"),
@@ -95,15 +95,15 @@ try {
   const summary = [];
   for (const bundler of BUNDLERS) {
     const resolved = run(bundler.build("subpath", false));
-    assert.equal(resolved.exitCode, 0,
+    assert.equal(resolved.code, 0,
       `${bundler.name} could not resolve blitsen/dialog on a default config:\n${output(resolved)}`);
 
     const bare = run(bundler.build("bare", false));
     if (bundler.bare === "fails") {
-      assert.notEqual(bare.exitCode, 0,
+      assert.notEqual(bare.code, 0,
         `${bundler.name} was expected to reject a bare native: specifier by default`);
     } else {
-      assert.equal(bare.exitCode, 0, `${bundler.name} behaviour changed: expected ${bundler.bare}`);
+      assert.equal(bare.code, 0, `${bundler.name} behaviour changed: expected ${bundler.bare}`);
       assert.match(output(bare), /[Uu]nresolved/,
         "Rollup is expected to warn about the unresolved dependency, not accept it quietly");
     }
@@ -121,7 +121,7 @@ try {
   ];
   for (const [name, command] of withPlugin) {
     const result = run(command);
-    assert.equal(result.exitCode, 0,
+    assert.equal(result.code, 0,
       `the ${name} plugin did not make a bare native: specifier build:\n${output(result)}`);
   }
 

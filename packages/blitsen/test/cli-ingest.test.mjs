@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, readdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { main, parseArgs } from "../src/cli.mjs";
 import { buildStandalone, planIngest, rewriteRootRelativeReferences } from "../src/export.mjs";
-import { viteBase, exportedName, withStubbedExport, capture } from "./cli-support.mjs";
+import { viteBase, exportedName, withStubbedExport, withTemporaryDirectory, captureConsole }
+  from "./cli-support.mjs";
 
 describe("directory CLI", () => {
   test("normalizes Vite root-relative HTML and CSS references during ingest", () => {
@@ -84,31 +84,25 @@ describe("directory CLI", () => {
   });
 
   test("fails the build on references it cannot resolve inside the output", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "blitsen-missing-"));
-    try {
+    await withTemporaryDirectory("blitsen-missing-", async directory => {
       await writeFile(join(directory, "index.html"), '<link rel="stylesheet" href="/assets/gone.css">');
       await expect(planIngest(directory)).rejects.toThrow("index.html references /assets/gone.css");
-    } finally {
-      await rm(directory, { recursive: true, force: true });
-    }
+    });
   });
 
   test.skipIf(process.platform === "win32")("rejects symbolic links in application output", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "blitsen-symlink-"));
-    try {
+    await withTemporaryDirectory("blitsen-symlink-", async directory => {
       await writeFile(join(directory, "index.html"), "<html></html>");
       await symlink(join(directory, "index.html"), join(directory, "linked.html"));
       await expect(planIngest(directory))
         .rejects.toThrow("application output contains a symbolic link: linked.html");
-    } finally {
-      await rm(directory, { recursive: true, force: true });
-    }
+    });
   });
 
   test("refuses to build output with compatibility errors", async () => {
     const fixture = join(import.meta.dir, "fixtures/doctor/source-entry");
     let built = false;
-    const { lines, output } = capture();
+    const { lines, output } = captureConsole();
     const runtime = { build: async () => { built = true; return {}; } };
     expect(await main(["build", fixture, "--outfile", "/tmp/blitsen-never"], output, runtime)).toBe(1);
     expect(built).toBeFalse();
@@ -125,7 +119,7 @@ describe("directory CLI", () => {
   test("builds output whose only error was a remote script", async () => {
     const fixture = join(import.meta.dir, "fixtures/doctor/remote");
     let built = false;
-    const { lines, output } = capture();
+    const { lines, output } = captureConsole();
     const runtime = { build: async ({ outfile }) => { built = true; return { outfile, assets: 2, bytes: 512 }; } };
     expect(await main(["build", fixture, "--outfile", "/tmp/blitsen-never"], output, runtime))
       .toBe(0);
@@ -137,7 +131,7 @@ describe("directory CLI", () => {
 
   test("builds output whose only diagnostics are warnings, and reports them", async () => {
     const fixture = join(import.meta.dir, "fixtures/doctor/remote-subresource");
-    const { lines, output } = capture();
+    const { lines, output } = captureConsole();
     const runtime = { build: async ({ outfile }) => ({ outfile, assets: 3, bytes: 1024 }) };
     expect(await main(["build", fixture, "--outfile", "/tmp/blitsen-never"], output, runtime))
       .toBe(0);

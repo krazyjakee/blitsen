@@ -9,7 +9,7 @@ import { BASE, GROUPS, REPO, type DocPage } from "./content.ts";
 import type { Heading } from "./markdown.ts";
 import { escapeHtml } from "./markdown.ts";
 
-export interface PageOptions {
+interface PageOptions {
   title: string;
   description: string;
   /** Site-relative path with trailing slash, e.g. "/docs/tech/". "" for the home page. */
