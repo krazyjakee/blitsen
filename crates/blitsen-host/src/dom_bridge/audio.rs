@@ -27,10 +27,11 @@
 
 use std::collections::HashMap;
 use std::io::Cursor;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use blitsen_js::JsError;
+use blitsen_js::{JsEngine, JsError, TypedArray, TypedArrayKind};
 use parking_lot::Mutex;
 use serde_json::{Value, json};
 use web_audio_api::AudioBuffer;
@@ -42,6 +43,105 @@ use web_audio_api::node::{
 };
 
 use super::net_pool::runtime as net_runtime;
+use super::{argument, json_value, string_arguments};
+
+/// Installs the audio graph the bootstrap's Web Audio classes call through.
+///
+/// Nothing here opens a device: the host is created, and the context inside it
+/// is not built until an application constructs an `AudioContext`.
+/// `BLITSEN_AUDIO_OFFLINE` makes that context an offline one, which is how the
+/// harness asserts on rendered samples rather than on the calls that were made.
+pub(super) fn install<E: JsEngine + 'static>(
+    engine: &mut E,
+    reader: Option<crate::app::AppReader>,
+) -> Result<(), JsError> {
+    let offline = std::env::var("BLITSEN_AUDIO_OFFLINE").is_ok_and(|value| value == "1");
+    let host = Rc::new(AudioHost::new(offline, reader));
+
+    let call_host = Rc::clone(&host);
+    engine.define_global_function(
+        "__blitsenAudioCall",
+        Box::new(move |call| {
+            let mut engine = E::from_value(&call.this);
+            let operation = argument(&mut engine, &call, 0, "audio operation")?;
+            let arguments = string_arguments(&mut engine, &call, 1)?;
+            let result = call_host.dispatch(&operation, &arguments)?;
+            json_value(&mut engine, &result)
+        }),
+    )?;
+
+    let decode_host = Rc::clone(&host);
+    engine.define_global_function(
+        "__blitsenAudioDecode",
+        Box::new(move |call| {
+            let mut engine = E::from_value(&call.this);
+            let bytes = call
+                .arguments
+                .first()
+                .ok_or_else(|| JsError::new("missing encoded audio"))
+                .and_then(|value| engine.to_typed_array(value))?;
+            let id = decode_host.start_decode(bytes.bytes)?;
+            Ok(engine.number(id as f64))
+        }),
+    )?;
+
+    let load_host = Rc::clone(&host);
+    engine.define_global_function(
+        "__blitsenAudioLoad",
+        Box::new(move |call| {
+            let mut engine = E::from_value(&call.this);
+            let url = argument(&mut engine, &call, 0, "audio source")?;
+            let id = load_host.start_load(&url)?;
+            Ok(engine.number(id as f64))
+        }),
+    )?;
+
+    let poll_host = Rc::clone(&host);
+    engine.define_global_function(
+        "__blitsenAudioPoll",
+        Box::new(move |call| {
+            let mut engine = E::from_value(&call.this);
+            json_value(&mut engine, &poll_host.poll())
+        }),
+    )?;
+
+    let pending_host = Rc::clone(&host);
+    engine.define_global_function(
+        "__blitsenAudioPending",
+        Box::new(move |call| {
+            let mut engine = E::from_value(&call.this);
+            Ok(engine.boolean(pending_host.pending()))
+        }),
+    )?;
+
+    let channel_host = Rc::clone(&host);
+    engine.define_global_function(
+        "__blitsenAudioChannel",
+        Box::new(move |call| {
+            let mut engine = E::from_value(&call.this);
+            let buffer = argument(&mut engine, &call, 0, "audio buffer id")?
+                .parse::<u64>()
+                .map_err(|_| JsError::new("invalid audio buffer id"))?;
+            let index = argument(&mut engine, &call, 1, "channel index")?
+                .parse::<usize>()
+                .map_err(|_| JsError::new("invalid channel index"))?;
+            let samples = channel_host.channel_data(buffer, index)?;
+            let bytes = samples
+                .iter()
+                .flat_map(|sample| sample.to_le_bytes())
+                .collect();
+            engine.typed_array(&TypedArray::new(TypedArrayKind::Float32, bytes)?)
+        }),
+    )?;
+
+    engine.define_global_function(
+        "__blitsenAudioDispose",
+        Box::new(move |call| {
+            host.dispose();
+            Ok(call.this)
+        }),
+    )
+}
 
 /// How the bridge is rendering.
 ///
@@ -123,7 +223,7 @@ enum Mode {
     Offline,
 }
 
-pub(super) struct AudioHost {
+struct AudioHost {
     backend: Mutex<Option<Backend>>,
     nodes: Mutex<HashMap<u64, Node>>,
     buffers: Mutex<HashMap<u64, AudioBuffer>>,
@@ -176,16 +276,15 @@ impl<'a> AudioArguments<'a> {
 type DispatchAnswer = Result<Option<Value>, JsError>;
 type DispatchGroup = for<'a> fn(&AudioHost, &str, AudioArguments<'a>) -> DispatchAnswer;
 
-const DISPATCH_GROUPS: [DispatchGroup; 5] = [
+const DISPATCH_GROUPS: [DispatchGroup; 4] = [
     AudioHost::dispatch_context,
     AudioHost::dispatch_nodes,
     AudioHost::dispatch_params,
     AudioHost::dispatch_sources,
-    AudioHost::dispatch_buffers,
 ];
 
 impl AudioHost {
-    pub(super) fn new(offline: bool, reader: Option<crate::app::AppReader>) -> Self {
+    fn new(offline: bool, reader: Option<crate::app::AppReader>) -> Self {
         let mode = if offline { Mode::Offline } else { Mode::Device };
         Self {
             reader,
@@ -355,7 +454,7 @@ impl AudioHost {
     }
 
     /// Drains finished decodes and finished sources.
-    pub(super) fn poll(&self) -> Value {
+    fn poll(&self) -> Value {
         let finished = std::mem::take(&mut *self.shared.decoded.lock());
         let mut delivered = Vec::with_capacity(finished.len());
         for entry in finished {
@@ -393,7 +492,7 @@ impl AudioHost {
     }
 
     /// Whether anything is owed, so the host keeps turning until it lands.
-    pub(super) fn pending(&self) -> bool {
+    fn pending(&self) -> bool {
         self.pending.load(Ordering::Relaxed) > 0 || self.playing.load(Ordering::Relaxed) > 0
     }
 
@@ -442,7 +541,7 @@ impl AudioHost {
         }))
     }
 
-    pub(super) fn dispose(&self) {
+    fn dispose(&self) {
         self.nodes.lock().clear();
         self.buffers.lock().clear();
         self.shared.decoded.lock().clear();
@@ -455,7 +554,7 @@ impl AudioHost {
     }
 
     /// Every operation the bootstrap can name, dispatched by domain.
-    pub(super) fn dispatch(&self, operation: &str, arguments: &[String]) -> Result<Value, JsError> {
+    fn dispatch(&self, operation: &str, arguments: &[String]) -> Result<Value, JsError> {
         let arguments = AudioArguments(arguments);
         for group in DISPATCH_GROUPS {
             if let Some(value) = group(self, operation, arguments)? {
@@ -634,20 +733,6 @@ impl AudioHost {
         }
     }
 
-    fn dispatch_buffers(&self, operation: &str, arguments: AudioArguments<'_>) -> DispatchAnswer {
-        match operation {
-            "bufferInfo" => {
-                let buffer = self.buffer(arguments.id(0)?)?;
-                Ok(Some(buffer_record(arguments.id(0)?, &buffer)))
-            }
-            "releaseBuffer" => {
-                self.buffers.lock().remove(&arguments.id(0)?);
-                Ok(Some(Value::Null))
-            }
-            _ => Ok(None),
-        }
-    }
-
     /// Loads a URL and decodes it, both on the worker pool.
     ///
     /// This exists because `fetch` cannot read a local file — it is http(s) only
@@ -655,7 +740,7 @@ impl AudioHost {
     /// The renderer already reads subresources off disk for images and fonts;
     /// this is the same capability for audio, reached the same way: a URL
     /// already resolved against the document's real base.
-    pub(super) fn start_load(&self, url: &str) -> Result<u64, JsError> {
+    fn start_load(&self, url: &str) -> Result<u64, JsError> {
         let parsed = url::Url::parse(url)
             .map_err(|error| JsError::new(format!("invalid audio source {url}: {error}")))?;
         let id = self.id();
@@ -722,13 +807,13 @@ impl AudioHost {
     }
 
     /// Registers decoded bytes, used by the harness and by `createBuffer`.
-    pub(super) fn start_decode(&self, bytes: Vec<u8>) -> Result<u64, JsError> {
+    fn start_decode(&self, bytes: Vec<u8>) -> Result<u64, JsError> {
         let rate = self.sample_rate()?;
         self.decode(bytes, rate)
     }
 
     /// Copies one channel of a decoded buffer out for `getChannelData`.
-    pub(super) fn channel_data(&self, buffer: u64, channel: usize) -> Result<Vec<f32>, JsError> {
+    fn channel_data(&self, buffer: u64, channel: usize) -> Result<Vec<f32>, JsError> {
         let buffer = self.buffer(buffer)?;
         if channel >= buffer.number_of_channels() {
             return Err(JsError::new("the audio buffer has no such channel"));
@@ -776,197 +861,4 @@ fn state_name(state: AudioContextState) -> &'static str {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn dispatch(host: &AudioHost, operation: &str, arguments: &[&str]) -> Result<Value, JsError> {
-        let arguments = arguments
-            .iter()
-            .map(|argument| (*argument).to_owned())
-            .collect::<Vec<_>>();
-        host.dispatch(operation, &arguments)
-    }
-
-    fn id(value: &Value) -> String {
-        value.as_u64().expect("node id").to_string()
-    }
-
-    fn error(host: &AudioHost, operation: &str, arguments: &[&str]) -> String {
-        dispatch(host, operation, arguments)
-            .expect_err("operation should fail")
-            .message()
-            .to_owned()
-    }
-
-    #[test]
-    fn dispatch_routes_each_audio_operation_family() {
-        let host = AudioHost::new(true, None);
-        assert_eq!(dispatch(&host, "mode", &["offline"]), Ok(Value::Null));
-
-        let gain = id(&dispatch(&host, "create", &["gain"]).unwrap());
-        let panner = id(&dispatch(&host, "create", &["panner"]).unwrap());
-        let source = id(&dispatch(&host, "create", &["source"]).unwrap());
-        assert_eq!(
-            dispatch(&host, "connect", &[&gain, &panner]),
-            Ok(Value::Null)
-        );
-
-        assert_eq!(
-            dispatch(&host, "paramSet", &[&gain, "gain", "0.25"]),
-            Ok(Value::Null)
-        );
-        assert_eq!(
-            dispatch(&host, "paramValue", &[&gain, "gain"]),
-            Ok(json!(0.25))
-        );
-        for arguments in [
-            vec![&gain, "gain", "setValueAtTime", "0.5", "0"],
-            vec![&gain, "gain", "linearRampToValueAtTime", "0.75", "0.1"],
-            vec![&gain, "gain", "exponentialRampToValueAtTime", "0.5", "0.2"],
-            vec![&gain, "gain", "setTargetAtTime", "0.25", "0.3", "0.1"],
-            vec![&gain, "gain", "cancelScheduledValues", "0", "0.4"],
-        ] {
-            assert_eq!(
-                dispatch(&host, "paramSchedule", &arguments),
-                Ok(Value::Null)
-            );
-        }
-
-        let buffer_id = 500;
-        host.buffers.lock().insert(
-            buffer_id,
-            AudioBuffer::from(vec![vec![0.0f32; 16]], OFFLINE_SAMPLE_RATE),
-        );
-        let buffer_id = buffer_id.to_string();
-        assert_eq!(
-            dispatch(&host, "sourceBuffer", &[&source, &buffer_id]),
-            Ok(Value::Null)
-        );
-        assert_eq!(
-            dispatch(&host, "sourceLoop", &[&source, "1"]),
-            Ok(Value::Null)
-        );
-        assert_eq!(
-            dispatch(&host, "sourceStart", &[&source, "0", "0"]),
-            Ok(Value::Null)
-        );
-        assert_eq!(
-            dispatch(&host, "sourceStop", &[&source, "0.2"]),
-            Ok(Value::Null)
-        );
-
-        let record = dispatch(&host, "bufferInfo", &[&buffer_id]).unwrap();
-        assert_eq!(record["id"], json!(500));
-        assert_eq!(record["length"], json!(16));
-        assert_eq!(
-            dispatch(&host, "releaseBuffer", &[&buffer_id]),
-            Ok(Value::Null)
-        );
-        assert_eq!(dispatch(&host, "disconnect", &[&gain]), Ok(Value::Null));
-        assert_eq!(dispatch(&host, "release", &[&panner]), Ok(Value::Null));
-    }
-
-    #[test]
-    fn dispatch_preserves_context_and_protocol_errors() {
-        let host = AudioHost::new(true, None);
-        assert_eq!(
-            error(&host, "notAnAudioOperation", &[]),
-            "unknown audio operation: notAnAudioOperation"
-        );
-        assert_eq!(error(&host, "create", &[]), "missing audio argument 0");
-        assert_eq!(
-            error(&host, "release", &["not-a-number"]),
-            "invalid audio argument 0"
-        );
-        assert_eq!(
-            error(&host, "mode", &["impossible"]),
-            "unknown audio mode: impossible"
-        );
-        assert_eq!(
-            error(&host, "create", &["oscillator"]),
-            "unknown audio node: oscillator"
-        );
-
-        dispatch(&host, "context", &[]).unwrap();
-        assert_eq!(
-            error(&host, "mode", &[]),
-            "the audio context is already open"
-        );
-    }
-
-    #[test]
-    fn dispatch_preserves_param_source_and_buffer_error_order() {
-        let host = AudioHost::new(true, None);
-        let gain = id(&dispatch(&host, "create", &["gain"]).unwrap());
-
-        // `paramSet` validates the assigned value before looking up the node.
-        assert_eq!(
-            error(&host, "paramSet", &["bad-id", "gain", "bad-value"]),
-            "invalid audio argument 2"
-        );
-        assert_eq!(
-            error(&host, "paramValue", &[&gain, "frequency"]),
-            "no audio parameter named frequency"
-        );
-        assert_eq!(
-            error(
-                &host,
-                "paramSchedule",
-                &[&gain, "gain", "unknownSchedule", "1", "0"],
-            ),
-            "unknown parameter schedule: unknownSchedule"
-        );
-        assert_eq!(
-            error(
-                &host,
-                "paramSchedule",
-                &[&gain, "gain", "setTargetAtTime", "1", "0"],
-            ),
-            "missing audio argument 5"
-        );
-
-        // A wrong node kind is diagnosed before source-only arguments are read.
-        assert_eq!(
-            error(&host, "sourceLoop", &[&gain, "bad-loop"]),
-            "only a buffer source loops"
-        );
-        assert_eq!(
-            error(&host, "sourceStart", &[&gain, "bad-when", "bad-offset"]),
-            "only a buffer source can be started"
-        );
-        // Buffer lookup precedes the source-kind check for assignment.
-        assert_eq!(
-            error(&host, "sourceBuffer", &[&gain, "999"]),
-            "the audio buffer has been released"
-        );
-        assert_eq!(
-            error(&host, "bufferInfo", &["999"]),
-            "the audio buffer has been released"
-        );
-    }
-
-    #[test]
-    fn audio_file_loads_are_confined_to_the_application() {
-        let root = tempfile::tempdir().unwrap();
-        let entrypoint = root.path().join("index.html");
-        std::fs::write(&entrypoint, "<p>audio</p>").unwrap();
-        let files = crate::app::AppFiles::directory(&entrypoint).unwrap();
-        let host = AudioHost::new(true, Some(files.reader()));
-
-        let outside = tempfile::NamedTempFile::new().unwrap();
-        std::fs::write(outside.path(), b"not audio").unwrap();
-        let url = url::Url::from_file_path(outside.path()).unwrap();
-        host.start_load(url.as_str()).unwrap();
-
-        while host.pending() && host.shared.decoded.lock().is_empty() {
-            std::thread::yield_now();
-        }
-        let result = host.poll();
-        assert_eq!(
-            result["decoded"][0]["error"],
-            format!(
-                "an audio source is a file this application shipped, or an http or https URL, not {url}"
-            )
-        );
-    }
-}
+mod tests;

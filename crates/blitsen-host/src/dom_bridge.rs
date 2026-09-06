@@ -1,17 +1,15 @@
 //! Native DOM object installation, against whichever engine is hosting.
 //!
 //! Nothing here names a JavaScript host. Callbacks recover their engine from
-//! the value the engine handed them ([`JsEngine::from_value`]), which is the
-//! whole of what the Phase 1 addon previously used a captured `napi_env` for.
+//! the value the engine handed them ([`JsEngine::from_value`]), so no callback
+//! holds a captured environment handle.
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
 use blitsen_core::{WindowState, WrapperTable};
 use blitsen_dom::DomBackend;
-use blitsen_js::{
-    ExternalId, JsEngine, JsError, JsType, NativeCall, NativeClass, TypedArray, TypedArrayKind,
-};
+use blitsen_js::{ExternalId, JsEngine, JsError, JsType, NativeCall, NativeClass, TypedArrayKind};
 use blitz::dom::NodeId;
 use serde_json::Value;
 
@@ -38,7 +36,7 @@ pub(crate) mod tray;
 // The thread pool the network runs on. Not a web worker — those are
 // [`crate::worker`], and the two were one name for long enough to be worth
 // spelling out.
-mod net_pool;
+pub(crate) mod net_pool;
 mod ops;
 mod storage;
 mod web_socket;
@@ -89,14 +87,6 @@ const BOOTSTRAP: &str = concat!(
     include_str!("dom_bridge/bootstrap/globals.js"),
     "})();\n",
 );
-
-/// The process-wide network pool, for the rest of the host.
-///
-/// `fetch`, `WebSocket` and the dev server are all a socket being waited on, and
-/// one pool is what keeps them from being three sets of parked threads.
-pub(crate) fn net_runtime() -> Result<&'static tokio::runtime::Runtime, JsError> {
-    net_pool::runtime()
-}
 
 /// Whether a document receives only application globals or test-only helpers too.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -298,31 +288,23 @@ pub(crate) fn install_with_hooks<E: JsEngine + 'static>(
                 .arguments
                 .get(1)
                 .ok_or_else(|| JsError::new("viewport surface contents are required"))?;
-            let pixels = engine.to_typed_array(pixels)?;
-            if !matches!(
-                pixels.kind,
-                TypedArrayKind::Uint8 | TypedArrayKind::Uint8Clamped
-            ) {
-                return Err(JsError::new(
-                    "viewport surface contents must be a Uint8Array or Uint8ClampedArray",
-                ));
-            }
+            let pixels = byte_argument(&mut engine, pixels, "viewport surface contents")?;
             viewport_runtime
                 .document
                 .borrow_mut()
-                .write_native_viewport(node, &pixels.bytes)
+                .write_native_viewport(node, &pixels)
                 .map_err(crate::dom_error)?;
             Ok(call.this)
         }),
     )?;
     canvas::install(engine, runtime.clone())?;
     install_text_codec(engine)?;
-    install_fetch(engine, reader.clone())?;
+    fetch::install(engine, reader.clone())?;
     install_messaging(engine, reader.clone())?;
-    install_audio(engine, reader)?;
-    install_web_socket(engine)?;
-    install_event_source(engine)?;
-    install_intl(engine)?;
+    audio::install(engine, reader)?;
+    web_socket::install(engine)?;
+    event_source::install(engine)?;
+    intl::install(engine)?;
     storage::install(engine, storage)?;
     gamepad::install(engine)?;
     window_modes::install(engine, mode.is_test_harness())?;
@@ -407,421 +389,6 @@ fn install_messaging<E: JsEngine + 'static>(
     crate::messaging::install(engine, &host)
 }
 
-/// Installs the audio graph the bootstrap's Web Audio classes call through.
-///
-/// Nothing here opens a device: the host is created, and the context inside it
-/// is not built until an application constructs an `AudioContext`.
-/// `BLITSEN_AUDIO_OFFLINE` makes that context an offline one, which is how the
-/// harness asserts on rendered samples rather than on the calls that were made.
-fn install_audio<E: JsEngine + 'static>(
-    engine: &mut E,
-    reader: Option<crate::app::AppReader>,
-) -> Result<(), JsError> {
-    let offline = std::env::var("BLITSEN_AUDIO_OFFLINE").is_ok_and(|value| value == "1");
-    let host = Rc::new(audio::AudioHost::new(offline, reader));
-
-    let call_host = Rc::clone(&host);
-    engine.define_global_function(
-        "__blitsenAudioCall",
-        Box::new(move |call| {
-            let mut engine = E::from_value(&call.this);
-            let operation = argument(&mut engine, &call, 0, "audio operation")?;
-            let arguments = string_arguments(&mut engine, &call, 1)?;
-            let result = call_host.dispatch(&operation, &arguments)?;
-            json_value(&mut engine, &result)
-        }),
-    )?;
-
-    let decode_host = Rc::clone(&host);
-    engine.define_global_function(
-        "__blitsenAudioDecode",
-        Box::new(move |call| {
-            let mut engine = E::from_value(&call.this);
-            let bytes = call
-                .arguments
-                .first()
-                .ok_or_else(|| JsError::new("missing encoded audio"))
-                .and_then(|value| engine.to_typed_array(value))?;
-            let id = decode_host.start_decode(bytes.bytes)?;
-            Ok(engine.number(id as f64))
-        }),
-    )?;
-
-    let load_host = Rc::clone(&host);
-    engine.define_global_function(
-        "__blitsenAudioLoad",
-        Box::new(move |call| {
-            let mut engine = E::from_value(&call.this);
-            let url = argument(&mut engine, &call, 0, "audio source")?;
-            let id = load_host.start_load(&url)?;
-            Ok(engine.number(id as f64))
-        }),
-    )?;
-
-    let poll_host = Rc::clone(&host);
-    engine.define_global_function(
-        "__blitsenAudioPoll",
-        Box::new(move |call| {
-            let mut engine = E::from_value(&call.this);
-            json_value(&mut engine, &poll_host.poll())
-        }),
-    )?;
-
-    let pending_host = Rc::clone(&host);
-    engine.define_global_function(
-        "__blitsenAudioPending",
-        Box::new(move |call| {
-            let mut engine = E::from_value(&call.this);
-            Ok(engine.boolean(pending_host.pending()))
-        }),
-    )?;
-
-    let channel_host = Rc::clone(&host);
-    engine.define_global_function(
-        "__blitsenAudioChannel",
-        Box::new(move |call| {
-            let mut engine = E::from_value(&call.this);
-            let buffer = argument(&mut engine, &call, 0, "audio buffer id")?
-                .parse::<u64>()
-                .map_err(|_| JsError::new("invalid audio buffer id"))?;
-            let index = argument(&mut engine, &call, 1, "channel index")?
-                .parse::<usize>()
-                .map_err(|_| JsError::new("invalid channel index"))?;
-            let samples = channel_host.channel_data(buffer, index)?;
-            let bytes = samples
-                .iter()
-                .flat_map(|sample| sample.to_le_bytes())
-                .collect();
-            engine.typed_array(&TypedArray::new(TypedArrayKind::Float32, bytes)?)
-        }),
-    )?;
-
-    engine.define_global_function(
-        "__blitsenAudioDispose",
-        Box::new(move |call| {
-            host.dispose();
-            Ok(call.this)
-        }),
-    )
-}
-
-/// Installs the transport the bootstrap's `fetch` classes call through.
-fn install_fetch<E: JsEngine + 'static>(
-    engine: &mut E,
-    reader: Option<crate::app::AppReader>,
-) -> Result<(), JsError> {
-    let host = Rc::new(fetch::FetchHost::new(reader)?);
-
-    let start_host = Rc::clone(&host);
-    engine.define_global_function(
-        "__blitsenFetchStart",
-        Box::new(move |call| {
-            let mut engine = E::from_value(&call.this);
-            let spec = argument(&mut engine, &call, 0, "fetch request")?;
-            let spec = serde_json::from_str(&spec)
-                .map_err(|error| JsError::new(format!("invalid fetch request: {error}")))?;
-            let body = match call.arguments.get(1) {
-                Some(value) if engine.value_type(value)? == JsType::TypedArray => {
-                    Some(engine.to_typed_array(value)?.bytes)
-                }
-                _ => None,
-            };
-            let id = start_host.start(&spec, body)?;
-            Ok(engine.number(id as f64))
-        }),
-    )?;
-
-    let poll_host = Rc::clone(&host);
-    engine.define_global_function(
-        "__blitsenFetchPoll",
-        Box::new(move |call| {
-            let mut engine = E::from_value(&call.this);
-            json_value(&mut engine, &poll_host.poll())
-        }),
-    )?;
-
-    let body_host = Rc::clone(&host);
-    engine.define_global_function(
-        "__blitsenFetchBody",
-        Box::new(move |call| {
-            let mut engine = E::from_value(&call.this);
-            let id = fetch_id(&mut engine, &call)?;
-            let kind = argument(&mut engine, &call, 1, "body kind")?;
-            let bytes = body_host.take_body(id)?;
-            match kind.as_str() {
-                "text" => engine.string(&String::from_utf8_lossy(&bytes)),
-                "bytes" => engine.typed_array(&TypedArray::new(TypedArrayKind::Uint8, bytes)?),
-                other => Err(JsError::new(format!("invalid body kind: {other}"))),
-            }
-        }),
-    )?;
-
-    let cancel_host = Rc::clone(&host);
-    engine.define_global_function(
-        "__blitsenFetchCancel",
-        Box::new(move |call| {
-            let mut engine = E::from_value(&call.this);
-            cancel_host.cancel(fetch_id(&mut engine, &call)?);
-            Ok(call.this)
-        }),
-    )?;
-
-    engine.define_global_function(
-        "__blitsenFetchDispose",
-        Box::new(move |call| {
-            host.dispose();
-            Ok(call.this)
-        }),
-    )
-}
-
-fn fetch_id<E: JsEngine>(engine: &mut E, call: &NativeCall<E::Value>) -> Result<u64, JsError> {
-    argument(engine, call, 0, "request id")?
-        .parse::<u64>()
-        .map_err(|_| JsError::new("invalid fetch request id"))
-}
-
-/// Installs the transport the bootstrap's `WebSocket` class calls through.
-fn install_web_socket<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsError> {
-    let host = Rc::new(web_socket::WebSocketHost::new()?);
-
-    let open_host = Rc::clone(&host);
-    engine.define_global_function(
-        "__blitsenSocketOpen",
-        Box::new(move |call| {
-            let mut engine = E::from_value(&call.this);
-            let url = argument(&mut engine, &call, 0, "WebSocket address")?;
-            let protocols = argument(&mut engine, &call, 1, "WebSocket subprotocols")?;
-            let protocols: Vec<String> = serde_json::from_str(&protocols)
-                .map_err(|error| JsError::new(format!("invalid subprotocol list: {error}")))?;
-            let id = open_host.open(&url, &protocols)?;
-            Ok(engine.number(id as f64))
-        }),
-    )?;
-
-    let text_host = Rc::clone(&host);
-    engine.define_global_function(
-        "__blitsenSocketSendText",
-        Box::new(move |call| {
-            let mut engine = E::from_value(&call.this);
-            let id = socket_id(&mut engine, &call)?;
-            text_host.send_text(id, argument(&mut engine, &call, 1, "message text")?);
-            Ok(call.this)
-        }),
-    )?;
-
-    let binary_host = Rc::clone(&host);
-    engine.define_global_function(
-        "__blitsenSocketSendBinary",
-        Box::new(move |call| {
-            let mut engine = E::from_value(&call.this);
-            let id = socket_id(&mut engine, &call)?;
-            let payload = call
-                .arguments
-                .get(1)
-                .ok_or_else(|| JsError::new("missing message payload"))?;
-            binary_host.send_binary(id, engine.to_typed_array(payload)?.bytes);
-            Ok(call.this)
-        }),
-    )?;
-
-    let buffered_host = Rc::clone(&host);
-    engine.define_global_function(
-        "__blitsenSocketBuffered",
-        Box::new(move |call| {
-            let mut engine = E::from_value(&call.this);
-            let bytes = buffered_host.buffered(socket_id(&mut engine, &call)?);
-            Ok(engine.number(bytes as f64))
-        }),
-    )?;
-
-    let close_host = Rc::clone(&host);
-    engine.define_global_function(
-        "__blitsenSocketClose",
-        Box::new(move |call| {
-            let mut engine = E::from_value(&call.this);
-            let id = socket_id(&mut engine, &call)?;
-            // An empty code is a close with no status, which is a different
-            // frame from one carrying 1005.
-            let code = argument(&mut engine, &call, 1, "close code")?;
-            let code = match code.as_str() {
-                "" => None,
-                code => Some(
-                    code.parse::<u16>()
-                        .map_err(|_| JsError::new("invalid WebSocket close code"))?,
-                ),
-            };
-            close_host.close(id, code, &argument(&mut engine, &call, 2, "close reason")?);
-            Ok(call.this)
-        }),
-    )?;
-
-    let poll_host = Rc::clone(&host);
-    engine.define_global_function(
-        "__blitsenSocketPoll",
-        Box::new(move |call| {
-            let mut engine = E::from_value(&call.this);
-            json_value(&mut engine, &poll_host.poll())
-        }),
-    )?;
-
-    let payload_host = Rc::clone(&host);
-    engine.define_global_function(
-        "__blitsenSocketBinary",
-        Box::new(move |call| {
-            let mut engine = E::from_value(&call.this);
-            let id = socket_id(&mut engine, &call)?;
-            let sequence = argument(&mut engine, &call, 1, "message sequence")?
-                .parse::<u64>()
-                .map_err(|_| JsError::new("invalid WebSocket message sequence"))?;
-            let bytes = payload_host.take_binary(id, sequence)?;
-            engine.typed_array(&TypedArray::new(TypedArrayKind::Uint8, bytes)?)
-        }),
-    )?;
-
-    engine.define_global_function(
-        "__blitsenSocketDispose",
-        Box::new(move |call| {
-            host.dispose();
-            Ok(call.this)
-        }),
-    )
-}
-
-fn socket_id<E: JsEngine>(engine: &mut E, call: &NativeCall<E::Value>) -> Result<u64, JsError> {
-    argument(engine, call, 0, "socket id")?
-        .parse::<u64>()
-        .map_err(|_| JsError::new("invalid WebSocket id"))
-}
-
-/// Installs the transport the bootstrap's `EventSource` class calls through.
-fn install_event_source<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsError> {
-    let host = Rc::new(event_source::EventSourceHost::new()?);
-
-    let open_host = Rc::clone(&host);
-    engine.define_global_function(
-        "__blitsenEventSourceOpen",
-        Box::new(move |call| {
-            let mut engine = E::from_value(&call.this);
-            let url = argument(&mut engine, &call, 0, "EventSource address")?;
-            let id = open_host.open(&url)?;
-            Ok(engine.number(id as f64))
-        }),
-    )?;
-
-    let close_host = Rc::clone(&host);
-    engine.define_global_function(
-        "__blitsenEventSourceClose",
-        Box::new(move |call| {
-            let mut engine = E::from_value(&call.this);
-            close_host.close(stream_id(&mut engine, &call)?);
-            Ok(call.this)
-        }),
-    )?;
-
-    let poll_host = Rc::clone(&host);
-    engine.define_global_function(
-        "__blitsenEventSourcePoll",
-        Box::new(move |call| {
-            let mut engine = E::from_value(&call.this);
-            json_value(&mut engine, &poll_host.poll())
-        }),
-    )?;
-
-    engine.define_global_function(
-        "__blitsenEventSourceDispose",
-        Box::new(move |call| {
-            host.dispose();
-            Ok(call.this)
-        }),
-    )
-}
-
-fn stream_id<E: JsEngine>(engine: &mut E, call: &NativeCall<E::Value>) -> Result<u64, JsError> {
-    argument(engine, call, 0, "stream id")?
-        .parse::<u64>()
-        .map_err(|_| JsError::new("invalid EventSource id"))
-}
-
-/// Installs the formatters the bootstrap's `Intl` object calls through.
-///
-/// Shared with the worker scope through [`install_worker_services`]: `Intl` is
-/// a language global rather than a document one, and a worker that formats a
-/// number is the ordinary case rather than an exotic one.
-pub(crate) fn install_intl<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsError> {
-    let host = Rc::new(intl::IntlHost::default());
-
-    let resolve_host = Rc::clone(&host);
-    engine.define_global_function(
-        "__blitsenIntlResolve",
-        Box::new(move |call| {
-            let mut engine = E::from_value(&call.this);
-            let kind = argument(&mut engine, &call, 0, "formatter kind")?;
-            let options = argument(&mut engine, &call, 1, "formatter options")?;
-            let options: Value = serde_json::from_str(&options)
-                .map_err(|error| JsError::new(format!("invalid Intl options: {error}")))?;
-            let resolved = resolve_host.resolve(&kind, &options)?;
-            json_value(&mut engine, &resolved)
-        }),
-    )?;
-
-    let format_host = Rc::clone(&host);
-    engine.define_global_function(
-        "__blitsenIntlFormat",
-        Box::new(move |call| {
-            let mut engine = E::from_value(&call.this);
-            let handle = intl_handle(&mut engine, &call)?;
-            let value = argument(&mut engine, &call, 1, "value")?;
-            let formatted = format_host.format(handle, &value)?;
-            engine.string(&formatted)
-        }),
-    )?;
-
-    let select_host = Rc::clone(&host);
-    engine.define_global_function(
-        "__blitsenIntlSelect",
-        Box::new(move |call| {
-            let mut engine = E::from_value(&call.this);
-            let handle = intl_handle(&mut engine, &call)?;
-            let value = argument(&mut engine, &call, 1, "value")?;
-            let category = select_host.select(handle, &value)?;
-            engine.string(&category)
-        }),
-    )?;
-
-    let compare_host = Rc::clone(&host);
-    engine.define_global_function(
-        "__blitsenIntlCompare",
-        Box::new(move |call| {
-            let mut engine = E::from_value(&call.this);
-            let handle = intl_handle(&mut engine, &call)?;
-            let left = argument(&mut engine, &call, 1, "left string")?;
-            let right = argument(&mut engine, &call, 2, "right string")?;
-            let ordering = compare_host.compare(handle, &left, &right)?;
-            Ok(engine.number(f64::from(ordering)))
-        }),
-    )?;
-
-    engine.define_global_function(
-        "__blitsenIntlJoin",
-        Box::new(move |call| {
-            let mut engine = E::from_value(&call.this);
-            let handle = intl_handle(&mut engine, &call)?;
-            let items = argument(&mut engine, &call, 1, "list items")?;
-            let items: Vec<String> = serde_json::from_str(&items)
-                .map_err(|error| JsError::new(format!("invalid list: {error}")))?;
-            let joined = host.join(handle, &items)?;
-            engine.string(&joined)
-        }),
-    )
-}
-
-fn intl_handle<E: JsEngine>(engine: &mut E, call: &NativeCall<E::Value>) -> Result<usize, JsError> {
-    argument(engine, call, 0, "formatter handle")?
-        .parse::<usize>()
-        .map_err(|_| JsError::new("invalid Intl formatter handle"))
-}
-
 /// Reads a required string argument, refusing a value that is not one.
 ///
 /// Deliberately not string coercion: the bootstrap is the only caller, it
@@ -834,6 +401,25 @@ pub(crate) fn argument<E: JsEngine>(
     name: &str,
 ) -> Result<String, JsError> {
     string_value(engine, call.argument(index, name)?)
+}
+
+/// Reads a byte buffer, refusing any typed array other than the two that hold
+/// bytes; `what` names the buffer in the error, as the caller's message did.
+fn byte_argument<E: JsEngine>(
+    engine: &mut E,
+    value: &E::Value,
+    what: &str,
+) -> Result<Vec<u8>, JsError> {
+    let array = engine.to_typed_array(value)?;
+    if !matches!(
+        array.kind,
+        TypedArrayKind::Uint8 | TypedArrayKind::Uint8Clamped
+    ) {
+        return Err(JsError::new(format!(
+            "{what} must be a Uint8Array or Uint8ClampedArray"
+        )));
+    }
+    Ok(array.bytes)
 }
 
 fn string_value<E: JsEngine>(engine: &mut E, value: &E::Value) -> Result<String, JsError> {

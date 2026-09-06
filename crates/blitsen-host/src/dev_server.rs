@@ -191,7 +191,7 @@ impl DevServer {
     fn request(&self, path: &str) -> Result<Option<Vec<u8>>, String> {
         let url = self.resolve(path)?;
         let client = self.client.clone();
-        let pool = crate::dom_bridge::net_runtime().map_err(|error| error.to_string())?;
+        let pool = crate::dom_bridge::net_pool::runtime().map_err(|error| error.to_string())?;
         pool.block_on(async move {
             let response = client
                 .get(url)

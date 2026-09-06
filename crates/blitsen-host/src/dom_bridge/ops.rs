@@ -24,6 +24,7 @@ use blitz::dom::NodeId;
 use serde_json::{Value, json};
 
 use super::{DomRuntime, web_url};
+use crate::dom_error;
 
 /// A group's answer: `None` when the operation belongs to another group.
 type Answer = Result<Option<Value>, JsError>;
@@ -134,10 +135,6 @@ fn attribute_arg_ns(arguments: &[String], index: usize) -> Result<DomName, JsErr
         bridge_arg(arguments, index, "namespace")?,
         bridge_arg(arguments, index + 1, "attribute name")?,
     )
-}
-
-fn dom_error(error: DomError) -> JsError {
-    JsError::new(error.to_string())
 }
 
 const HTML_NAMESPACE: &str = "http://www.w3.org/1999/xhtml";

@@ -1,6 +1,6 @@
 use blitsen_js::{JsEngine, JsError, TypedArray, TypedArrayKind};
 
-use super::super::{argument, hid, json_value};
+use super::super::{argument, byte_argument, hid, json_value};
 
 /// Reads a report argument, refusing anything past the conservative ceiling.
 ///
@@ -13,23 +13,15 @@ fn report_argument<E: JsEngine>(
     call: &blitsen_js::NativeCall<E::Value>,
     index: usize,
 ) -> Result<Vec<u8>, JsError> {
-    let report = engine.to_typed_array(call.argument(index, "HID report")?)?;
-    if !matches!(
-        report.kind,
-        TypedArrayKind::Uint8 | TypedArrayKind::Uint8Clamped
-    ) {
-        return Err(JsError::new(
-            "a HID report must be a Uint8Array or Uint8ClampedArray",
-        ));
-    }
+    let report = byte_argument(engine, call.argument(index, "HID report")?, "a HID report")?;
     let ceiling = crate::native_window::hid::MAX_REPORT_BYTES;
-    if report.bytes.len() > ceiling {
+    if report.len() > ceiling {
         return Err(JsError::new(format!(
             "a HID report of {} bytes exceeds the {ceiling}-byte ceiling",
-            report.bytes.len()
+            report.len()
         )));
     }
-    Ok(report.bytes)
+    Ok(report)
 }
 
 pub(super) fn install<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsError> {

@@ -11,10 +11,11 @@
 //! for. The bootstrap releases an unread body when its `Response` is collected.
 
 use std::collections::HashMap;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use blitsen_js::JsError;
+use blitsen_js::{JsEngine, JsError, JsType, NativeCall, TypedArray, TypedArrayKind};
 use parking_lot::Mutex;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use reqwest::{Client, Method, Url};
@@ -23,12 +24,89 @@ use serde_json::{Value, json};
 use tokio::runtime::Runtime;
 
 use super::net_pool::{client, runtime as net_runtime};
+use super::{argument, json_value};
+
+/// Installs the transport the bootstrap's `fetch` classes call through.
+pub(super) fn install<E: JsEngine + 'static>(
+    engine: &mut E,
+    reader: Option<crate::app::AppReader>,
+) -> Result<(), JsError> {
+    let host = Rc::new(FetchHost::new(reader)?);
+
+    let start_host = Rc::clone(&host);
+    engine.define_global_function(
+        "__blitsenFetchStart",
+        Box::new(move |call| {
+            let mut engine = E::from_value(&call.this);
+            let spec = argument(&mut engine, &call, 0, "fetch request")?;
+            let spec = serde_json::from_str(&spec)
+                .map_err(|error| JsError::new(format!("invalid fetch request: {error}")))?;
+            let body = match call.arguments.get(1) {
+                Some(value) if engine.value_type(value)? == JsType::TypedArray => {
+                    Some(engine.to_typed_array(value)?.bytes)
+                }
+                _ => None,
+            };
+            let id = start_host.start(&spec, body)?;
+            Ok(engine.number(id as f64))
+        }),
+    )?;
+
+    let poll_host = Rc::clone(&host);
+    engine.define_global_function(
+        "__blitsenFetchPoll",
+        Box::new(move |call| {
+            let mut engine = E::from_value(&call.this);
+            json_value(&mut engine, &poll_host.poll())
+        }),
+    )?;
+
+    let body_host = Rc::clone(&host);
+    engine.define_global_function(
+        "__blitsenFetchBody",
+        Box::new(move |call| {
+            let mut engine = E::from_value(&call.this);
+            let id = fetch_id(&mut engine, &call)?;
+            let kind = argument(&mut engine, &call, 1, "body kind")?;
+            let bytes = body_host.take_body(id)?;
+            match kind.as_str() {
+                "text" => engine.string(&String::from_utf8_lossy(&bytes)),
+                "bytes" => engine.typed_array(&TypedArray::new(TypedArrayKind::Uint8, bytes)?),
+                other => Err(JsError::new(format!("invalid body kind: {other}"))),
+            }
+        }),
+    )?;
+
+    let cancel_host = Rc::clone(&host);
+    engine.define_global_function(
+        "__blitsenFetchCancel",
+        Box::new(move |call| {
+            let mut engine = E::from_value(&call.this);
+            cancel_host.cancel(fetch_id(&mut engine, &call)?);
+            Ok(call.this)
+        }),
+    )?;
+
+    engine.define_global_function(
+        "__blitsenFetchDispose",
+        Box::new(move |call| {
+            host.dispose();
+            Ok(call.this)
+        }),
+    )
+}
+
+fn fetch_id<E: JsEngine>(engine: &mut E, call: &NativeCall<E::Value>) -> Result<u64, JsError> {
+    argument(engine, call, 0, "request id")?
+        .parse::<u64>()
+        .map_err(|_| JsError::new("invalid fetch request id"))
+}
 
 /// A `fetch` call as the bootstrap describes it, with the body passed
 /// separately so binary payloads never round-trip through a string.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub(super) struct RequestSpec {
+struct RequestSpec {
     url: String,
     method: String,
     headers: Vec<(String, String)>,
@@ -42,7 +120,7 @@ struct Shared {
 }
 
 /// The `fetch` executor owned by one JavaScript context.
-pub(super) struct FetchHost {
+struct FetchHost {
     runtime: &'static Runtime,
     client: Client,
     next_id: AtomicU64,
@@ -193,7 +271,7 @@ async fn completion(
 
 impl FetchHost {
     /// Creates a host bound to the shared worker pool.
-    pub(super) fn new(reader: Option<crate::app::AppReader>) -> Result<Self, JsError> {
+    fn new(reader: Option<crate::app::AppReader>) -> Result<Self, JsError> {
         let runtime = net_runtime()?;
         Ok(Self {
             runtime,
@@ -206,7 +284,7 @@ impl FetchHost {
     }
 
     /// Issues a request on the worker pool and returns its identifier.
-    pub(super) fn start(&self, spec: &RequestSpec, body: Option<Vec<u8>>) -> Result<u64, JsError> {
+    fn start(&self, spec: &RequestSpec, body: Option<Vec<u8>>) -> Result<u64, JsError> {
         let method = Method::from_bytes(spec.method.as_bytes())
             .map_err(|_| JsError::new(format!("invalid HTTP method: {}", spec.method)))?;
         let url = Url::parse(&spec.url)
@@ -305,7 +383,7 @@ impl FetchHost {
     }
 
     /// Drains everything that finished since the previous frame turn.
-    pub(super) fn poll(&self) -> Value {
+    fn poll(&self) -> Value {
         let completed = std::mem::take(&mut *self.shared.completed.lock());
         let mut inflight = self.inflight.lock();
         for record in &completed {
@@ -319,7 +397,7 @@ impl FetchHost {
     /// Cancels a request and forgets anything it already produced.
     ///
     /// Also the release path for a `Response` whose body was never read.
-    pub(super) fn cancel(&self, id: u64) {
+    fn cancel(&self, id: u64) {
         if let Some(task) = self.inflight.lock().remove(&id) {
             task.abort();
         }
@@ -331,7 +409,7 @@ impl FetchHost {
     }
 
     /// Takes the response body, which may be read exactly once.
-    pub(super) fn take_body(&self, id: u64) -> Result<Vec<u8>, JsError> {
+    fn take_body(&self, id: u64) -> Result<Vec<u8>, JsError> {
         self.shared
             .bodies
             .lock()
@@ -340,7 +418,7 @@ impl FetchHost {
     }
 
     /// Cancels every request and drops every unread body.
-    pub(super) fn dispose(&self) {
+    fn dispose(&self) {
         for (_, task) in self.inflight.lock().drain() {
             task.abort();
         }

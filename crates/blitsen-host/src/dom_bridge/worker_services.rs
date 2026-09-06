@@ -3,7 +3,7 @@
 use blitsen_js::{JsEngine, JsError, TypedArray, TypedArrayKind};
 use serde_json::{Value, json};
 
-use super::{argument, install_fetch, install_intl, json_value, web_url};
+use super::{argument, fetch, intl, json_value, web_url};
 
 /// Installs the services available in a worker's global scope.
 pub fn install_worker_services<E: JsEngine + 'static>(
@@ -11,11 +11,11 @@ pub fn install_worker_services<E: JsEngine + 'static>(
     reader: Option<crate::app::AppReader>,
 ) -> Result<(), JsError> {
     install_text_codec(engine)?;
-    install_fetch(engine, reader)?;
+    fetch::install(engine, reader)?;
     // `Intl` is a language global rather than a document one, so a worker has
     // the same one — and formatting a table of numbers off the main thread is
     // exactly the work a worker is for.
-    install_intl(engine)?;
+    intl::install(engine)?;
     // The same three facts the document's `navigator` states. A worker has one
     // in a browser, and library code reaches for it to decide what it is running
     // on — Monaco's platform detection gives up without it.

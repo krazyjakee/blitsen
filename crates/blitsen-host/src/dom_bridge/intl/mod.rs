@@ -31,10 +31,92 @@ mod text;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::rc::Rc;
 
-use blitsen_js::JsError;
+use blitsen_js::{JsEngine, JsError, NativeCall};
 use icu_locale_core::Locale;
 use serde_json::{Value, json};
+
+use super::{argument, json_value};
+
+/// Installs the formatters the bootstrap's `Intl` object calls through.
+///
+/// Shared with the worker scope through [`super::install_worker_services`]: `Intl` is
+/// a language global rather than a document one, and a worker that formats a
+/// number is the ordinary case rather than an exotic one.
+pub(super) fn install<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsError> {
+    let host = Rc::new(IntlHost::default());
+
+    let resolve_host = Rc::clone(&host);
+    engine.define_global_function(
+        "__blitsenIntlResolve",
+        Box::new(move |call| {
+            let mut engine = E::from_value(&call.this);
+            let kind = argument(&mut engine, &call, 0, "formatter kind")?;
+            let options = argument(&mut engine, &call, 1, "formatter options")?;
+            let options: Value = serde_json::from_str(&options)
+                .map_err(|error| JsError::new(format!("invalid Intl options: {error}")))?;
+            let resolved = resolve_host.resolve(&kind, &options)?;
+            json_value(&mut engine, &resolved)
+        }),
+    )?;
+
+    let format_host = Rc::clone(&host);
+    engine.define_global_function(
+        "__blitsenIntlFormat",
+        Box::new(move |call| {
+            let mut engine = E::from_value(&call.this);
+            let handle = intl_handle(&mut engine, &call)?;
+            let value = argument(&mut engine, &call, 1, "value")?;
+            let formatted = format_host.format(handle, &value)?;
+            engine.string(&formatted)
+        }),
+    )?;
+
+    let select_host = Rc::clone(&host);
+    engine.define_global_function(
+        "__blitsenIntlSelect",
+        Box::new(move |call| {
+            let mut engine = E::from_value(&call.this);
+            let handle = intl_handle(&mut engine, &call)?;
+            let value = argument(&mut engine, &call, 1, "value")?;
+            let category = select_host.select(handle, &value)?;
+            engine.string(&category)
+        }),
+    )?;
+
+    let compare_host = Rc::clone(&host);
+    engine.define_global_function(
+        "__blitsenIntlCompare",
+        Box::new(move |call| {
+            let mut engine = E::from_value(&call.this);
+            let handle = intl_handle(&mut engine, &call)?;
+            let left = argument(&mut engine, &call, 1, "left string")?;
+            let right = argument(&mut engine, &call, 2, "right string")?;
+            let ordering = compare_host.compare(handle, &left, &right)?;
+            Ok(engine.number(f64::from(ordering)))
+        }),
+    )?;
+
+    engine.define_global_function(
+        "__blitsenIntlJoin",
+        Box::new(move |call| {
+            let mut engine = E::from_value(&call.this);
+            let handle = intl_handle(&mut engine, &call)?;
+            let items = argument(&mut engine, &call, 1, "list items")?;
+            let items: Vec<String> = serde_json::from_str(&items)
+                .map_err(|error| JsError::new(format!("invalid list: {error}")))?;
+            let joined = host.join(handle, &items)?;
+            engine.string(&joined)
+        }),
+    )
+}
+
+fn intl_handle<E: JsEngine>(engine: &mut E, call: &NativeCall<E::Value>) -> Result<usize, JsError> {
+    argument(engine, call, 0, "formatter handle")?
+        .parse::<usize>()
+        .map_err(|_| JsError::new("invalid Intl formatter handle"))
+}
 
 /// What the bootstrap asks for, and what it gets back a handle to.
 enum Formatter {
@@ -51,7 +133,7 @@ enum Formatter {
 
 /// The `Intl` implementation owned by one JavaScript context.
 #[derive(Default)]
-pub(super) struct IntlHost {
+struct IntlHost {
     /// Formatters by the key their options canonicalise to, so the same options
     /// asked for twice are one formatter.
     handles: RefCell<HashMap<String, usize>>,
@@ -124,7 +206,7 @@ impl IntlHost {
     ///
     /// Returns the handle and the options that were honoured, which is what
     /// `resolvedOptions()` answers with.
-    pub(super) fn resolve(&self, kind: &str, options: &Value) -> Result<Value, JsError> {
+    fn resolve(&self, kind: &str, options: &Value) -> Result<Value, JsError> {
         let key = format!("{kind}\u{1f}{options}");
         if let Some(&handle) = self.handles.borrow().get(&key) {
             let formatters = self.formatters.borrow();
@@ -170,7 +252,7 @@ impl IntlHost {
     /// The value is a string for a number — the decimal the application meant,
     /// rather than the binary double it is stored as — and the milliseconds
     /// since the epoch for a date.
-    pub(super) fn format(&self, handle: usize, value: &str) -> Result<String, JsError> {
+    fn format(&self, handle: usize, value: &str) -> Result<String, JsError> {
         match &*self.formatter(handle)? {
             Formatter::Number(formatter) => formatter.format(value),
             Formatter::DateTime(formatter) => formatter.format(value),
@@ -180,7 +262,7 @@ impl IntlHost {
     }
 
     /// Answers `PluralRules.select`, and `Collator.compare` when two are given.
-    pub(super) fn select(&self, handle: usize, value: &str) -> Result<String, JsError> {
+    fn select(&self, handle: usize, value: &str) -> Result<String, JsError> {
         match &*self.formatter(handle)? {
             Formatter::Plural(rules) => Ok(rules.select(value)),
             _ => Err(JsError::new("this Intl formatter does not select a value")),
@@ -188,7 +270,7 @@ impl IntlHost {
     }
 
     /// Answers `Collator.compare`, as the sign of the comparison.
-    pub(super) fn compare(&self, handle: usize, left: &str, right: &str) -> Result<i8, JsError> {
+    fn compare(&self, handle: usize, left: &str, right: &str) -> Result<i8, JsError> {
         match &*self.formatter(handle)? {
             Formatter::Collator(collator) => Ok(collator.compare(left, right)),
             _ => Err(JsError::new("this Intl formatter does not compare")),
@@ -196,7 +278,7 @@ impl IntlHost {
     }
 
     /// Answers `ListFormat.format`.
-    pub(super) fn join(&self, handle: usize, items: &[String]) -> Result<String, JsError> {
+    fn join(&self, handle: usize, items: &[String]) -> Result<String, JsError> {
         match &*self.formatter(handle)? {
             Formatter::List(list) => Ok(list.format(items)),
             _ => Err(JsError::new("this Intl formatter does not join a list")),
