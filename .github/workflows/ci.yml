@@ -81,9 +81,7 @@ jobs:
   # Issue #123: the workspace is tested on all three platforms, not just the one
   # this project is developed on. Clippy and rustfmt run once, on Linux — a lint
   # result is not per-platform — and the tests run everywhere, because behaviour
-  # is. Until #278 the rustfmt half of that sentence was an intention rather than
-  # a description: the component was installed on every runner and no step ever
-  # called it, so `main` accumulated formatting drift while CI reported green.
+  # is (the rustfmt step was missing until #278).
   #
   # No engine library is installed on any of them: the runtime links QuickJS-ng
   # statically, so the engine arrives with the Rust build and there is nothing
@@ -152,11 +150,11 @@ jobs:
       - run: cargo build --release -p blitsen-node -p blitsen-runtime
 
   # Issue #277: `rust-version` is a promise made to whoever builds Blitsen from
-  # source, and until now nothing here had ever kept it. Every other Rust job in
-  # this file installs a current compiler, so the declared floor was free to fall
-  # behind the locked graph — and it had, by six minor releases. This job builds
-  # the workspace with exactly the declared minimum, which is the only way that
-  # number stops being a guess.
+  # source. Every other Rust job in this file installs a current compiler, so
+  # the declared floor is free to fall behind the locked graph (the history is
+  # on the field in the root Cargo.toml). This job builds the workspace with
+  # exactly the declared minimum, which is the only way that number stops being
+  # a guess.
   #
   # One job rather than a fourth column of the matrix above. A locked metadata
   # check compares every resolved package's declared minimum, including packages
@@ -656,18 +654,13 @@ jobs:
   # behaviour, so m2, m3b, layout conformance, determinism and the size gate
   # stay on the targets that already run them — the same line #133 drew.
   #
-  # ## The artifact, which this job now packages
+  # ## The artifact
   #
-  # When this job was written it stopped at the cross-compile, and the reason
-  # was not a decision about tiers: `blitsen build --android` could not emit an
-  # APK containing Blitsen's engine at all. It generated a cdylib whose one line
-  # invoked `blitsen_android::android_main!()`, a macro `blitsen-android` never
-  # exported — it is itself the `cdylib`. #148 landed the opposite and #143 ran
-  # the result on a device, so the CLI compiles `-p blitsen-android` directly
-  # and packages it with `aapt2 link`, an archive written in process, `zipalign
-  # -p` and `apksigner`. There is an artifact now, so this job builds one, and
-  # it builds it by running `bin/blitsen.mjs` rather than by re-implementing the
-  # steps: the point is to exercise the command a user runs.
+  # The CLI compiles `-p blitsen-android` directly and packages it with `aapt2
+  # link`, an archive written in process, `zipalign -p` and `apksigner` (#148,
+  # #143). This job builds that artifact by running `bin/blitsen.mjs` rather
+  # than by re-implementing the steps: the point is to exercise the command a
+  # user runs.
   #
   # Three prerequisites were found by trying, and are fixed rather than
   # documented: `RANLIB_<triple>` and `BINDGEN_EXTRA_CLANG_ARGS_<triple>`, which

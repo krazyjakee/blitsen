@@ -38,7 +38,7 @@ These examples contain framework or editor source rather than runnable output. I
 locked dependencies and build them before pointing Blitsen at `dist`:
 
 ```sh
-cd examples/monaco # or examples/reactflow
+cd examples/monaco # or examples/reactflow, examples/agent-runner
 npm ci
 npm run build
 blitsen dist
@@ -55,6 +55,7 @@ blitsen dist
 
 | Example | What it demonstrates |
 | --- | --- |
+| [agent-runner](agent-runner/) | A TypeScript application that scans Markdown agent files, hot reloads them and launches CLI runs in the OS terminal |
 | [monaco](monaco/) | Monaco Editor, including its TypeScript worker and off-screen text-input focus model |
 | [reactflow](reactflow/) | A real React Flow graph with dragging, connections and compatibility fallbacks for current renderer gaps |
 | [vite-react](vite-react/) | The Vite/React adoption and conformance application used by the automated test suite |

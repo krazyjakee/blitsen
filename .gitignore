@@ -17,8 +17,11 @@ target/
 
 # Default output when `blitsen build` is run from an example directory: a
 # binary named after the directory — or after the configured application name
-# (`blitsen.name` in package.json), which only monaco sets — plus `.exe` on
-# Windows. One explicit pair per example, never a wildcard that could hide source.
+# (`blitsen.name` in package.json), which monaco and agent-runner set — plus
+# `.exe` on Windows. One explicit pair per example, never a wildcard that could
+# hide source.
+/examples/agent-runner/Agency Runner
+/examples/agent-runner/Agency Runner.exe
 /examples/assets/assets
 /examples/assets/assets.exe
 /examples/audio/audio
