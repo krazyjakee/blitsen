@@ -91,17 +91,17 @@
     getAttribute(name) { return call("getAttribute", this[handle], String(name)); }
     setAttribute(name, value) {
       name = String(name);
-      const oldValue = this.getAttribute(name);
+      const oldValue = mutationObserved("attributes") ? this.getAttribute(name) : null;
       call("setAttribute", this[handle], name, String(value));
-      notifyMutation({ type: "attributes", target: this, attributeName: name,
-        attributeNamespace: null, oldValue });
+      notifyMutation("attributes", () => ({ target: this, attributeName: name,
+        attributeNamespace: null, oldValue }));
     }
     removeAttribute(name) {
       name = String(name);
-      const oldValue = this.getAttribute(name);
+      const oldValue = mutationObserved("attributes") ? this.getAttribute(name) : null;
       call("removeAttribute", this[handle], name);
-      notifyMutation({ type: "attributes", target: this, attributeName: name,
-        attributeNamespace: null, oldValue });
+      notifyMutation("attributes", () => ({ target: this, attributeName: name,
+        attributeNamespace: null, oldValue }));
     }
     hasAttribute(name) { return call("hasAttribute", this[handle], String(name)); }
     hasAttributes() { return this.getAttributeNames().length > 0; }
@@ -125,18 +125,18 @@
     setAttributeNS(namespace, name, value) {
       namespace = namespace == null ? "" : String(namespace);
       name = String(name);
-      const oldValue = this.getAttributeNS(namespace, name);
+      const oldValue = mutationObserved("attributes") ? this.getAttributeNS(namespace, name) : null;
       call("setAttributeNS", this[handle], namespace, name, String(value));
-      notifyMutation({ type: "attributes", target: this, attributeName: name,
-        attributeNamespace: namespace || null, oldValue });
+      notifyMutation("attributes", () => ({ target: this, attributeName: name,
+        attributeNamespace: namespace || null, oldValue }));
     }
     removeAttributeNS(namespace, name) {
       namespace = namespace == null ? "" : String(namespace);
       name = String(name);
-      const oldValue = this.getAttributeNS(namespace, name);
+      const oldValue = mutationObserved("attributes") ? this.getAttributeNS(namespace, name) : null;
       call("removeAttributeNS", this[handle], namespace, name);
-      notifyMutation({ type: "attributes", target: this, attributeName: name,
-        attributeNamespace: namespace || null, oldValue });
+      notifyMutation("attributes", () => ({ target: this, attributeName: name,
+        attributeNamespace: namespace || null, oldValue }));
     }
     get id() { return this.getAttribute("id") ?? ""; }
     set id(value) { this.setAttribute("id", value); }
@@ -177,9 +177,9 @@
       const inserted = call("insertAdjacentHTML", this[handle], position, String(html)).map(wrap);
       if (inserted.length === 0) return;
       const target = /^(?:beforebegin|afterend)$/i.test(position) ? this.parentNode : this;
-      notifyMutation({ type: "childList", target, addedNodes: new NodeList(inserted),
+      notifyMutation("childList", () => ({ target, addedNodes: new NodeList(inserted),
         removedNodes: new NodeList([]), previousSibling: inserted[0].previousSibling,
-        nextSibling: inserted[inserted.length - 1].nextSibling });
+        nextSibling: inserted[inserted.length - 1].nextSibling }));
     }
     insertAdjacentElement(position, element) {
       if (!(element instanceof Element)) throw new TypeError("argument is not an Element");
@@ -329,9 +329,9 @@
     const moved = [...fragment.childNodes];
     const anchor = reference == null ? "" : requireNode(reference);
     for (const child of moved) call("insertBefore", parent[handle], child[handle], anchor);
-    if (moved.length > 0) notifyMutation({ type: "childList", target: parent,
+    if (moved.length > 0) notifyMutation("childList", () => ({ target: parent,
       addedNodes: new NodeList(moved), removedNodes: new NodeList([]),
-      previousSibling: moved[0].previousSibling, nextSibling: reference });
+      previousSibling: moved[0].previousSibling, nextSibling: reference }));
     return fragment;
   };
 
@@ -624,7 +624,7 @@
       this._supported = supported;
     }
     _text() { return (this._element.getAttribute(this._attribute) ?? "").trim(); }
-    _tokens() { return this._text() ? this._text().split(/\s+/) : []; }
+    _tokens() { const text = this._text(); return text ? text.split(/\s+/) : []; }
     _validate(tokens) {
       for (const token of tokens) {
         if (!token || /\s/.test(token)) throw new DOMException("The token must not be empty or contain whitespace", "SyntaxError");
@@ -653,9 +653,12 @@
     }
     toggle(token, force) {
       this._validate([token]);
-      const present = this.contains(token);
+      const values = this._tokens();
+      const present = values.includes(token);
       const desired = force === undefined ? !present : Boolean(force);
-      if (desired !== present) (desired ? this.add(token) : this.remove(token));
+      if (desired === present) return desired;
+      const updated = desired ? [...values, token] : values.filter(value => value !== token);
+      this._element.setAttribute(this._attribute, updated.join(" "));
       return desired;
     }
     toString() { return this._element.getAttribute(this._attribute) ?? ""; }

@@ -91,15 +91,12 @@
     __blitsenAnimationFrameTick: animationFrameTick,
     __blitsenAnimationFramesPending: animationFramesPending,
     __blitsenForcedLayoutsThisFrame: () => forcedLayoutsThisFrame,
-    __blitsenEventInternals: eventInternals,
     ...(testHarness ? {
-      __blitsenDispatchMouseEvent: dispatchMouseEvent,
       __blitsenDispatchPointerEvent: dispatchPointerEvent,
       __blitsenDispatchKeyboardEvent: dispatchKeyboardEvent,
       __blitsenDispatchImeEvent: dispatchImeEvent,
       __blitsenDispatchLockedPointerMotion: dispatchLockedPointerMotion,
       __blitsenReleaseWindowModes: releaseWindowModes,
-      __blitsenDispatchDragEvent: dispatchDragEvent,
       __blitsenWrapperCacheSize: () => wrapperCache.size,
       __blitsenWrapperCacheProbe: wrapper => {
         const rawHandle = requireNode(wrapper);

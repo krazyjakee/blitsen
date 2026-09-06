@@ -61,15 +61,15 @@
     appendChild(child) {
       if (child instanceof DocumentFragment) return insertFragment(this, child, null);
       call("appendChild", this[handle], requireNode(child));
-      notifyMutation({ type: "childList", target: this, addedNodes: new NodeList([child]),
-        removedNodes: new NodeList([]), previousSibling: child.previousSibling, nextSibling: null });
+      notifyMutation("childList", () => ({ target: this, addedNodes: new NodeList([child]),
+        removedNodes: new NodeList([]), previousSibling: child.previousSibling, nextSibling: null }));
       return child;
     }
     insertBefore(child, reference) {
       if (child instanceof DocumentFragment) return insertFragment(this, child, reference ?? null);
       call("insertBefore", this[handle], requireNode(child), reference == null ? "" : requireNode(reference));
-      notifyMutation({ type: "childList", target: this, addedNodes: new NodeList([child]),
-        removedNodes: new NodeList([]), previousSibling: child.previousSibling, nextSibling: reference });
+      notifyMutation("childList", () => ({ target: this, addedNodes: new NodeList([child]),
+        removedNodes: new NodeList([]), previousSibling: child.previousSibling, nextSibling: reference }));
       return child;
     }
     before(...nodes) {
@@ -87,11 +87,12 @@
       return other instanceof Node && call("contains", this[handle], other[handle]);
     }
     removeChild(child) {
-      const previousSibling = child.previousSibling;
-      const nextSibling = child.nextSibling;
+      const observed = mutationObserved("childList");
+      const previousSibling = observed ? child.previousSibling : null;
+      const nextSibling = observed ? child.nextSibling : null;
       call("removeChild", this[handle], requireNode(child));
-      notifyMutation({ type: "childList", target: this, addedNodes: new NodeList([]),
-        removedNodes: new NodeList([child]), previousSibling, nextSibling });
+      notifyMutation("childList", () => ({ target: this, addedNodes: new NodeList([]),
+        removedNodes: new NodeList([child]), previousSibling, nextSibling }));
       return child;
     }
     remove() { call("remove", this[handle]); windowModesTreeMutation(); }
@@ -109,15 +110,16 @@
       if (child.parentNode !== this) {
         throw new DOMException("the node to replace is not a child of this node", "NotFoundError");
       }
-      const previousSibling = child.previousSibling;
-      const nextSibling = child.nextSibling;
       if (replacement instanceof DocumentFragment) {
         insertFragment(this, replacement, child);
         return this.removeChild(child);
       }
+      const observed = mutationObserved("childList");
+      const previousSibling = observed ? child.previousSibling : null;
+      const nextSibling = observed ? child.nextSibling : null;
       call("replaceWith", removed, requireNode(replacement));
-      notifyMutation({ type: "childList", target: this, addedNodes: new NodeList([replacement]),
-        removedNodes: new NodeList([child]), previousSibling, nextSibling });
+      notifyMutation("childList", () => ({ target: this, addedNodes: new NodeList([replacement]),
+        removedNodes: new NodeList([child]), previousSibling, nextSibling }));
       return child;
     }
     get parentNode() { return wrap(call("parentNode", this[handle])); }
@@ -172,7 +174,7 @@
     get textContent() { return call("textContent", this[handle]); }
     set textContent(value) {
       call("setTextContent", this[handle], String(value));
-      notifyMutation({ type: "characterData", target: this, oldValue: null });
+      notifyMutation("characterData", () => ({ target: this, oldValue: null }));
     }
   }
 
