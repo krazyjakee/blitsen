@@ -1,4 +1,3 @@
-#[cfg(not(target_os = "android"))]
 use blitsen_js::{JsEngine, JsError};
 #[cfg(not(target_os = "android"))]
 use serde_json::json;
