@@ -46,7 +46,9 @@ export async function withTemporaryDirectory(prefix, run) {
   try {
     return await run(directory);
   } finally {
-    await rm(directory, { recursive: true, force: true });
+    // Windows may still hold a file a child process just closed; retry the
+    // removal instead of failing a test that has already run.
+    await rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
   }
 }
 

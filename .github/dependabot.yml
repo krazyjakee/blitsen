@@ -19,3 +19,9 @@ updates:
     open-pull-requests-limit: 10
     commit-message:
       prefix: deps
+    ignore:
+      # Pinned exactly to the version `windows = "0.62"` pairs with (see
+      # crates/blitsen-host/Cargo.toml). Moving it alone lets cpal's `windows`
+      # resolve against a different `windows-core` and the COM vtables stop
+      # matching (#380); the two move together by hand.
+      - dependency-name: windows-core
