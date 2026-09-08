@@ -99,5 +99,8 @@ try {
   }
   console.log(`Standalone Pong verified: ${result.bytes} bytes${nativeCadence === null ? "" : `, ${nativeCadence} fps`}`);
 } finally {
-  await rm(testDirectory, { recursive: true, force: true });
+  // Windows can still hold the exported executable for a moment after its
+  // process has exited, and the first `rm` then fails with EBUSY. Retry
+  // rather than fail a check that has already passed.
+  await rm(testDirectory, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
 }
