@@ -33,6 +33,7 @@ use blitsen_dom::{
 };
 use blitz::dom::{DocumentConfig, NodeId};
 use blitz::html::{HtmlDocument, HtmlProvider};
+use blitz::traits::shell::Viewport;
 
 use canvas::{CanvasState, TextEngine};
 use forms::FormState;
@@ -63,6 +64,29 @@ pub struct BlitzDom {
     document: HtmlDocument,
     revision: u64,
     flushed_revision: u64,
+    /// Whether a node has entered, left or been dropped from the document
+    /// since the surface widgets were last attached and swept.
+    ///
+    /// Attaching walks the whole document by selector, and a dropped node's
+    /// id can be handed to the next element created, so the walk has to run
+    /// after any of those and need not run after anything else.
+    structure_changed: bool,
+    /// Whether a form control the renderer will not settle by itself may have
+    /// appeared, or had the default it settles from changed. See `forms`.
+    controls_changed: bool,
+    /// Whether a scroll offset was written since the last flush.
+    ///
+    /// A scroll bumps no revision, but Blitz re-resolves hover from the pointer
+    /// position at the end of a resolve, so a flush after one still owes it.
+    scrolled: bool,
+    /// The subresource settlement count at the end of the last flush.
+    flushed_settlements: u64,
+    /// The viewport the last flush resolved against.
+    ///
+    /// The host resizes, rescales and re-themes through the Blitz document
+    /// directly, which only dirties the stylist — nothing visible from here —
+    /// so the value is kept to compare against.
+    flushed_viewport: Viewport,
     invalidation: InvalidationTracker<NodeId>,
     last_invalidation_metrics: InvalidationMetrics,
     last_frame_was_full_document: bool,
@@ -126,6 +150,13 @@ impl BlitzDom {
             document,
             revision: 0,
             flushed_revision: u64::MAX,
+            // The parsed document has surfaces and controls to attach and
+            // settle before anything is mutated.
+            structure_changed: true,
+            controls_changed: true,
+            scrolled: false,
+            flushed_settlements: 0,
+            flushed_viewport: Viewport::default(),
             invalidation: InvalidationTracker::new(invalidation_mode),
             last_invalidation_metrics: InvalidationMetrics::default(),
             last_frame_was_full_document: false,
@@ -196,7 +227,11 @@ impl BlitzDom {
         if *count == 0 {
             self.js_references.remove(&node);
         }
-        Ok(self.collect_detached_tree(node))
+        let collected = self.collect_detached_tree(node);
+        // A dropped surface's id can be reused, so its state has to be swept
+        // before the next attach finds it under a new element.
+        self.structure_changed |= collected;
+        Ok(collected)
     }
 
     /// Drains observable invalidation work for the next frame.

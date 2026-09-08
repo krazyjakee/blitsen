@@ -1,4 +1,16 @@
+import { readFile, stat, writeFile } from "node:fs/promises";
+import { gzipSync } from "node:zlib";
+
 const bytes = value => `${(value / 1_000_000).toFixed(1)} MB`;
+
+export const fileSize = async path => (await stat(path)).size;
+export const gzippedSize = async path => gzipSync(await readFile(path), { level: 9 }).length;
+
+/** Appends a report to the job summary when there is one to append to. */
+export async function appendStepSummary(markdown) {
+  if (!process.env.GITHUB_STEP_SUMMARY) return;
+  await writeFile(process.env.GITHUB_STEP_SUMMARY, `${markdown}\n\n`, { flag: "a" });
+}
 
 export function phase2SizeSummary(record) {
   const components = record.components;

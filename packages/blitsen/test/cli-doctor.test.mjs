@@ -1,13 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { buildManifest, generateApiManifest, loadApiManifest, readBootstrapScript, renderCompatibilityDoc } from "../src/api-manifest.mjs";
 import { main, parseArgs } from "../src/cli.mjs";
 import { doctorApplication } from "../src/doctor.mjs";
 import { checkNativeModuleTable } from "../src/native-modules.mjs";
 import { resolvePhase2Runtime } from "../src/runtime.mjs";
-import { capture } from "./cli-support.mjs";
+import { captureConsole, withTemporaryDirectory } from "./cli-support.mjs";
 
 // Resolved once at the top so the absence of a built runtime reads as a skip in
 // the report rather than a silent pass (the cli-runtime.test.mjs precedent).
@@ -40,7 +39,7 @@ describe("directory CLI", () => {
 
     // A canvas is no longer one of these (issue #99): what is left in this
     // fixture degrades, so the build is graded and not refused.
-    const { lines, output } = capture();
+    const { lines, output } = captureConsole();
     expect(await main(["doctor", join(fixtures, "unsupported")], output)).toBe(0);
     expect(lines.some(([, line]) => line.includes("WEB_CANVAS") && line.includes("2D context is")))
       .toBeTrue();
@@ -48,7 +47,7 @@ describe("directory CLI", () => {
 
     // What still blocks: an entry point that names source rather than output,
     // because nothing in the runtime transpiles it and the window stays blank.
-    const blocked = capture();
+    const blocked = captureConsole();
     expect(await main(["doctor", join(fixtures, "source-entry")], blocked.output)).toBe(1);
     expect(blocked.lines.some(([, line]) =>
       line.includes("HTML_SOURCE_ENTRY") && line.includes("vite build"))).toBeTrue();
@@ -78,8 +77,7 @@ describe("directory CLI", () => {
   // that renders correctly. A reference is not a call, and the scan cannot see
   // the guard around it, so none of them may block a build.
   test("does not block a build on absent APIs a bundle feature-detects", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "blitsen-guarded-test-"));
-    try {
+    await withTemporaryDirectory("blitsen-guarded-test-", async directory => {
       await writeFile(join(directory, "app.js"), [
         `typeof XMLHttpRequest<"u"&&new XMLHttpRequest;`,
         `typeof ShadowRoot<"u"&&e instanceof ShadowRoot;`,
@@ -95,14 +93,11 @@ describe("directory CLI", () => {
       expect([...new Set(report.diagnostics.map(diagnostic => diagnostic.code))].sort())
         .toEqual(["WEB_CANVAS", "WEB_COMPONENTS", "WEB_COOKIE", "WEB_NAVIGATION", "WEB_STORAGE",
           "WEB_WORKER", "WEB_XHR"]);
-    } finally {
-      await rm(directory, { recursive: true, force: true });
-    }
+    });
   });
 
   test("accepts the routing and fetch surface the runtime actually implements", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "blitsen-doctor-test-"));
-    try {
+    await withTemporaryDirectory("blitsen-doctor-test-", async directory => {
       await writeFile(join(directory, "app.js"), [
         `history.pushState({ page: 1 }, "", "/reports");`,
         `history.replaceState(null, "", location.pathname);`,
@@ -120,17 +115,14 @@ describe("directory CLI", () => {
       const codes = (await doctorApplication(directory)).diagnostics
         .map(diagnostic => `${diagnostic.severity}:${diagnostic.code}`);
       expect(codes).toEqual(["error:WEB_FETCH", "warning:WEB_NAVIGATION", "warning:WEB_STREAM"]);
-    } finally {
-      await rm(directory, { recursive: true, force: true });
-    }
+    });
   });
 
   // Issue #125: fetch reads the files the application shipped, so the question
   // a literal path raises is whether the export carries it — not whether it
   // starts with a slash.
   test("reports a fetched path the output does not ship, and nothing for one it does", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "blitsen-doctor-fetch-"));
-    try {
+    await withTemporaryDirectory("blitsen-doctor-fetch-", async directory => {
       await writeFile(join(directory, "data.json"), `{"ok":true}`);
       await mkdir(join(directory, "assets"), { recursive: true });
       await writeFile(join(directory, "assets", "blip.wav"), "RIFF");
@@ -159,22 +151,17 @@ describe("directory CLI", () => {
       const modules = await doctorApplication(directory);
       expect(modules.diagnostics.filter(entry => entry.code === "WEB_FETCH")
         .map(entry => entry.target)).toEqual(["./absent.wav"]);
-    } finally {
-      await rm(directory, { recursive: true, force: true });
-    }
+    });
   });
 
   test.skipIf(process.platform === "win32")("ignores symbolic links while grading output", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "blitsen-doctor-link-"));
-    try {
+    await withTemporaryDirectory("blitsen-doctor-link-", async directory => {
       await writeFile(join(directory, "app.js"), "new SharedWorker(url);");
       await symlink(join(directory, "app.js"), join(directory, "linked.js"));
       const report = await doctorApplication(directory);
       expect(report.files).toBe(1);
       expect(report.diagnostics.map(diagnostic => diagnostic.code)).toEqual(["WEB_WORKER"]);
-    } finally {
-      await rm(directory, { recursive: true, force: true });
-    }
+    });
   });
 
   test("keeps the API manifest and the documented tiers generated from the runtime source", async () => {
@@ -237,8 +224,7 @@ describe("directory CLI", () => {
   });
 
   test("diagnoses what the manifest calls absent, and nothing it calls implemented", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "blitsen-manifest-test-"));
-    try {
+    await withTemporaryDirectory("blitsen-manifest-test-", async directory => {
       await writeFile(join(directory, "app.js"),
         "new SharedWorker(url); customElements.define(); indexedDB.open('x'); window.open('/x');\n"
         + "localStorage.setItem('theme', 'dark');");
@@ -251,9 +237,7 @@ describe("directory CLI", () => {
         .filter(entry => entry.status === "implemented" && entry.kind === "global")
         .map(entry => `void ${entry.api};`).join("\n"));
       expect(await doctorApplication(directory)).toMatchObject({ errors: 0, warnings: 0 });
-    } finally {
-      await rm(directory, { recursive: true, force: true });
-    }
+    });
   });
 
   // Issue #147. The table is declared rather than derived — a `cfg` in the Rust
@@ -267,8 +251,7 @@ describe("directory CLI", () => {
   // rather than an `undefined` at run time (#147). Android is the reason the
   // rule exists; desktop targets implement all five imported modules.
   test("reports a blitsen/* module the target being built for does not have", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "blitsen-native-target-"));
-    try {
+    await withTemporaryDirectory("blitsen-native-target-", async directory => {
       await writeFile(join(directory, "app.js"), [
         `import clipboard from "blitsen/clipboard";`,
         `import dialog from "blitsen/dialog";`,
@@ -310,13 +293,11 @@ describe("directory CLI", () => {
 
       // Absent modules are warnings, so an Android grading still exits 0 — the
       // application degrades rather than failing to render.
-      const { lines, output } = capture();
+      const { lines, output } = captureConsole();
       expect(await main(["doctor", directory, "--target", "android-arm64"], output)).toBe(0);
       expect(lines.some(([, line]) => line.includes("NATIVE_MODULE_ABSENT")
         && line.includes("blitsen/clipboard does not exist on android"))).toBeTrue();
-    } finally {
-      await rm(directory, { recursive: true, force: true });
-    }
+    });
   });
 
   // Issue #247. Raw HID is the one capability whose remaining requirement is
@@ -326,8 +307,7 @@ describe("directory CLI", () => {
   // the opposite thing: there is nothing to package, because the grant happens
   // while the application runs.
   test("reports the packaging raw HID needs, per platform", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "blitsen-hid-doctor-"));
-    try {
+    await withTemporaryDirectory("blitsen-hid-doctor-", async directory => {
       await writeFile(join(directory, "app.js"), [
         `import hid from "blitsen/hid";`,
         `export { hid };`,
@@ -353,9 +333,7 @@ describe("directory CLI", () => {
       expect(android[0].guidance).not.toContain("Until it does");
       expect((await doctorApplication(directory, { target: "android-arm64" }))
         .diagnostics.map(entry => entry.code)).not.toContain("NATIVE_MODULE_ABSENT");
-    } finally {
-      await rm(directory, { recursive: true, force: true });
-    }
+    });
   });
 
   // Grading for a platform is not claiming to build for one: Android has no

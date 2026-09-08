@@ -26,6 +26,11 @@
   }
 
   const mutationObservers = new Set();
+  const mutationObserved = type => {
+    for (const observer of mutationObservers)
+      if (observer._observations.some(({ options }) => options[type])) return true;
+    return false;
+  };
   const isObservedTarget = (observed, target, subtree) => {
     if (observed === target) return true;
     if (!subtree) return false;
@@ -33,13 +38,17 @@
       if (ancestor === observed) return true;
     return false;
   };
-  const notifyMutation = record => {
+  // Everything past `type` in a record — siblings, old values — is a bridge
+  // read, so `build` runs only when an observer can receive the record.
+  const notifyMutation = (type, build) => {
     treeRevision += 1;
     windowModesTreeMutation();
+    if (!mutationObserved(type)) return;
+    const record = Object.freeze({ type, ...build() });
     for (const observer of mutationObservers) {
       if (!observer._observations.some(({ target, options }) =>
-        options[record.type] && isObservedTarget(target, record.target, options.subtree))) continue;
-      observer._records.push(Object.freeze(record));
+        options[type] && isObservedTarget(target, record.target, options.subtree))) continue;
+      observer._records.push(record);
       if (observer._queued) continue;
       observer._queued = true;
       queueMicrotask(() => {

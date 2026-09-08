@@ -201,18 +201,6 @@ pub struct FrameLoop<E: JsEngine> {
 
 impl<E: JsEngine> FrameLoop<E> {
     /// Prepares a loop over an already-loaded document.
-    pub fn new(
-        engine: E,
-        document: Rc<RefCell<BlitzDom>>,
-        width: u32,
-        height: u32,
-        trace: Option<Rc<InputTrace>>,
-    ) -> Self {
-        let mut frame_loop = Self::build(engine, document, width, height, trace, None);
-        frame_loop.enable_instrumentation();
-        frame_loop
-    }
-
     pub(crate) fn new_with_hooks(
         engine: E,
         document: Rc<RefCell<BlitzDom>>,

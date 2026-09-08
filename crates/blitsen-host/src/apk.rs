@@ -186,26 +186,6 @@ impl ApkAssets {
         Self::with_index(Source::Manager(manager), root)
     }
 
-    /// The same, from a raw `AAssetManager *`.
-    ///
-    /// Offered because the typed constructor only accepts the `ndk` major this
-    /// crate resolved, and a consumer that reached its asset manager through a
-    /// different `android-activity` may hold a different one. A pointer has no
-    /// version.
-    ///
-    /// # Safety
-    ///
-    /// `manager` must be a valid `AAssetManager *` that outlives the returned
-    /// value — the activity's own, which lives as long as the process.
-    #[cfg(target_os = "android")]
-    pub unsafe fn open_raw(manager: *mut std::ffi::c_void, root: &str) -> Option<Self> {
-        let pointer = std::ptr::NonNull::new(manager.cast())?;
-        Some(Self::open(
-            unsafe { ndk::asset::AssetManager::from_ptr(pointer) },
-            root,
-        ))
-    }
-
     /// Reads the application under `root` in a directory standing in for
     /// `assets/`.
     pub fn open_directory(assets: impl Into<PathBuf>, root: &str) -> Self {

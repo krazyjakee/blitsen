@@ -331,19 +331,22 @@
     state.propagationStopped = false;
     state.immediatePropagationStopped = false;
     const path = hintedPropagationPath(target, hint) ?? propagationPath(target);
+    const last = path.length - 1;
     try {
-      for (const currentTarget of path.slice(0, -1)) {
-        const snapshot = [...(listenerMaps.get(currentTarget)?.get(state.type) ?? [])];
-        invokeListenerSnapshot(currentTarget, event, 1, true, snapshot);
+      for (let index = 0; index < last; index++) {
+        const listeners = listenerMaps.get(path[index])?.get(state.type);
+        if (!listeners) continue;
+        invokeListenerSnapshot(path[index], event, 1, true, [...listeners]);
         if (state.propagationStopped) return !state.defaultPrevented;
       }
       const snapshot = [...(listenerMaps.get(target)?.get(state.type) ?? [])];
       invokeListenerSnapshot(target, event, 2, true, snapshot);
       invokeListenerSnapshot(target, event, 2, false, snapshot);
       if (state.bubbles && !state.propagationStopped) {
-        for (const currentTarget of path.slice(0, -1).reverse()) {
-          const listeners = [...(listenerMaps.get(currentTarget)?.get(state.type) ?? [])];
-          invokeListenerSnapshot(currentTarget, event, 3, false, listeners);
+        for (let index = last - 1; index >= 0; index--) {
+          const listeners = listenerMaps.get(path[index])?.get(state.type);
+          if (!listeners) continue;
+          invokeListenerSnapshot(path[index], event, 3, false, [...listeners]);
           if (state.propagationStopped) break;
         }
       }

@@ -137,19 +137,11 @@ const VERSION_CODE_PLACES = { minor: 1_000, patch: 1 };
  * legible at a glance in Play's console and in `dumpsys package`, and inside
  * the ceiling above for every major version below 2100.
  *
- * This is a decision that was made twice and reversed. The first answer was
- * this scheme, and it was abandoned because `cargo apk` **panics** if the
- * manifest carries a version code at all — it derives one as
- * `apk_id << 24 | major << 16 | minor << 8 | patch`, a byte per component, and
- * treats a value already there as a bug. So what Blitsen reported had to be the
- * packager's number rather than a better one, since reporting a number the
- * artifact does not carry is wrong in the one place anyone checks it.
- *
- * Decision 4 then dropped `cargo apk`, and this build writes the manifest
- * itself. The constraint is gone with the packager, and with it the ceiling of
- * 255 per component that made `1.0.256` unshippable. What remains is refused
- * up front rather than at upload, because a version code cannot be walked back:
- * Play refuses an upload numbered at or below one already published, forever.
+ * This build writes the manifest itself, so the number in it is this one; the
+ * `cargo apk` packager that decision 4 dropped derived a byte-per-component
+ * code of its own. What is over the ceiling is refused up front rather than at
+ * upload, because a version code cannot be walked back: Play refuses an upload
+ * numbered at or below one already published, forever.
  *
  * Pre-release and build metadata are dropped. Android has nowhere to put them,
  * and `versionName` carries the whole string including them.
@@ -261,12 +253,8 @@ export function apkPlan({
     ANDROID_NDK_ROOT: toolchain.ndk,
     LIBCLANG_PATH: toolchain.libclang,
   };
-  // The two variables this graph needs beyond a compiler and an archiver.
-  // Neither is visible from reading; both were found by building an APK against
-  // Blitsen's own dependencies for the first time (#149), when the compile was
-  // still driven by a packager that set `CC_`, `CFLAGS_`, `AR_` and a linker
-  // per target and stopped there — enough for a crate whose C is one
-  // `cc::Build`, and not enough for this one.
+  // The two variables this graph needs beyond a compiler and an archiver,
+  // both found by building an APK against Blitsen's own dependencies (#149).
   //
   //   * `RANLIB_<triple>` — `openssl-sys` builds OpenSSL vendored on Android
   //     (blitz-net asks reqwest for `native-tls-vendored` there), and OpenSSL's
@@ -283,14 +271,9 @@ export function apkPlan({
   //     it generated itself.
   //
   // Underscored triples, because that is the spelling both readers agree on:
-  // the `cc` crate takes either and bindgen takes only this one.
-  //
-  // Decision 4 then replaced that packager with `cargo ndk`, which sets both
-  // itself, to these same two paths, and wins where the two disagree — so on
-  // the path the CLI takes today these are belt and braces rather than the
-  // difference between building and not. They stay because this plan is the
-  // record of what the compile needs, and a record that leaves out the two
-  // things a person would spend a day rediscovering is not one.
+  // the `cc` crate takes either and bindgen takes only this one. `cargo ndk`
+  // sets both too, to these same paths; they stay because this plan is the
+  // record of what the compile needs.
   for (const abi of project.abis) {
     const triple = ANDROID_ABIS[abi];
     const key = triple.replace(/-/g, "_");
@@ -419,21 +402,11 @@ export async function ensureDebugKeystore(path, run = defaultRun) {
 }
 
 /// What the notices are called inside an APK, and why it is not
-/// [`blitsen.notices.txt.gz`], which is what a desktop export carries.
-///
-/// The name was forced before it was chosen. `aapt` v1 treats an asset whose
-/// name ends in `.gz` as pre-compressed, **strips the suffix and stores the
-/// inflated bytes** under the shortened name — measured on a real APK — so
-/// every Android artifact built through `cargo apk` would have reported itself
-/// uncleared for redistribution while carrying exactly the notices it owes,
-/// because the reader was looking for a name that no longer existed.
-///
-/// Decision 4 dropped `aapt` v1 with the packager, and the name would now
-/// survive. It stays anyway, and now for a reason rather than a workaround:
-/// every entry in the archive is stored, so a gzip inside it compresses nothing
-/// the APK was going to compress and costs an inflate on the one read that
-/// matters. `blitsen_host::app::notices` reads both names, so an APK built by
-/// either path is understood.
+/// [`blitsen.notices.txt.gz`], which is what a desktop export carries: every
+/// entry in the archive is stored, so a gzip inside it compresses nothing the
+/// APK was going to compress and costs an inflate on the one read that matters
+/// (and `aapt` v1 strips a `.gz` suffix, storing the inflated bytes under the
+/// shortened name). `blitsen_host::app::notices` reads both names.
 export const ANDROID_NOTICES_FILE = "blitsen.notices.txt";
 
 /**

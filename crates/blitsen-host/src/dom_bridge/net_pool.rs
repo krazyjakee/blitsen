@@ -20,7 +20,10 @@ use reqwest::Client;
 use tokio::runtime::Runtime;
 
 /// Returns the process-wide network pool, starting it on first use.
-pub(super) fn runtime() -> Result<&'static Runtime, JsError> {
+///
+/// `fetch`, `WebSocket` and the dev server are all a socket being waited on, and
+/// one pool is what keeps them from being three sets of parked threads.
+pub(crate) fn runtime() -> Result<&'static Runtime, JsError> {
     static RUNTIME: OnceLock<Result<Runtime, String>> = OnceLock::new();
     RUNTIME
         .get_or_init(|| {

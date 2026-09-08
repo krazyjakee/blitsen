@@ -24,11 +24,12 @@
 //! order amounts to for well-formed UTF-8.
 
 use std::collections::HashMap;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
-use blitsen_js::JsError;
+use blitsen_js::{JsEngine, JsError, NativeCall};
 use futures_util::StreamExt;
 use parking_lot::Mutex;
 use reqwest::header::{ACCEPT, CACHE_CONTROL, CONTENT_TYPE, HeaderValue};
@@ -37,6 +38,56 @@ use serde_json::{Value, json};
 use tokio::runtime::Runtime;
 
 use super::net_pool::{client, runtime as net_runtime};
+use super::{argument, json_value};
+
+/// Installs the transport the bootstrap's `EventSource` class calls through.
+pub(super) fn install<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsError> {
+    let host = Rc::new(EventSourceHost::new()?);
+
+    let open_host = Rc::clone(&host);
+    engine.define_global_function(
+        "__blitsenEventSourceOpen",
+        Box::new(move |call| {
+            let mut engine = E::from_value(&call.this);
+            let url = argument(&mut engine, &call, 0, "EventSource address")?;
+            let id = open_host.open(&url)?;
+            Ok(engine.number(id as f64))
+        }),
+    )?;
+
+    let close_host = Rc::clone(&host);
+    engine.define_global_function(
+        "__blitsenEventSourceClose",
+        Box::new(move |call| {
+            let mut engine = E::from_value(&call.this);
+            close_host.close(stream_id(&mut engine, &call)?);
+            Ok(call.this)
+        }),
+    )?;
+
+    let poll_host = Rc::clone(&host);
+    engine.define_global_function(
+        "__blitsenEventSourcePoll",
+        Box::new(move |call| {
+            let mut engine = E::from_value(&call.this);
+            json_value(&mut engine, &poll_host.poll())
+        }),
+    )?;
+
+    engine.define_global_function(
+        "__blitsenEventSourceDispose",
+        Box::new(move |call| {
+            host.dispose();
+            Ok(call.this)
+        }),
+    )
+}
+
+fn stream_id<E: JsEngine>(engine: &mut E, call: &NativeCall<E::Value>) -> Result<u64, JsError> {
+    argument(engine, call, 0, "stream id")?
+        .parse::<u64>()
+        .map_err(|_| JsError::new("invalid EventSource id"))
+}
 
 /// How long to wait before reconnecting when no server has said otherwise.
 ///
@@ -70,7 +121,7 @@ impl Shared {
 }
 
 /// The event-stream executor owned by one JavaScript context.
-pub(super) struct EventSourceHost {
+struct EventSourceHost {
     runtime: &'static Runtime,
     client: Client,
     next_id: AtomicU64,
@@ -302,7 +353,7 @@ async fn run(id: u64, client: Client, url: Url, shared: Arc<Shared>) {
 
 impl EventSourceHost {
     /// Creates a host bound to the shared worker pool.
-    pub(super) fn new() -> Result<Self, JsError> {
+    fn new() -> Result<Self, JsError> {
         let runtime = net_runtime()?;
         Ok(Self {
             runtime,
@@ -319,7 +370,7 @@ impl EventSourceHost {
     /// that is not there, or answers with something that is not a stream, is
     /// reported as an `error` event, because that is what an application has a
     /// listener for.
-    pub(super) fn open(&self, url: &str) -> Result<u64, JsError> {
+    fn open(&self, url: &str) -> Result<u64, JsError> {
         let parsed = Url::parse(url)
             .map_err(|error| JsError::new(format!("invalid EventSource URL {url}: {error}")))?;
         if !matches!(parsed.scheme(), "http" | "https") {
@@ -344,14 +395,14 @@ impl EventSourceHost {
     /// Nothing is queued in answer: `close()` is synchronous in the application
     /// and the specification fires no event for it, so the only observable is
     /// the `readyState` the bootstrap has already set.
-    pub(super) fn close(&self, id: u64) {
+    fn close(&self, id: u64) {
         if let Some(task) = self.open.lock().remove(&id) {
             task.abort();
         }
     }
 
     /// Drains everything the streams observed since the previous frame turn.
-    pub(super) fn poll(&self) -> Value {
+    fn poll(&self) -> Value {
         let events = std::mem::take(&mut *self.shared.events.lock());
         let mut open = self.open.lock();
         for event in &events {
@@ -365,7 +416,7 @@ impl EventSourceHost {
     }
 
     /// Drops every stream and everything they had queued.
-    pub(super) fn dispose(&self) {
+    fn dispose(&self) {
         for (_, task) in self.open.lock().drain() {
             task.abort();
         }

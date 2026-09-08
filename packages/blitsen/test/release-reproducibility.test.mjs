@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { compareReleaseBuilds, hashReleaseArtifacts }
   from "../../../scripts/compare-release-builds.mjs";
 import { repository } from "./build-addon.mjs";
+import { withTemporaryDirectory } from "./cli-support.mjs";
 
 function peFixture({ timestamp, payload = Buffer.alloc(256) }) {
   const bytes = Buffer.alloc(0x300);
@@ -25,16 +25,15 @@ function peFixture({ timestamp, payload = Buffer.alloc(256) }) {
 
 describe("release reproducibility", () => {
   test("compares both unsigned artifacts and names the first differing byte", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "blitsen-repro-"));
-    const first = join(directory, "first");
-    const second = join(directory, "second");
-    await mkdir(first);
-    await mkdir(second);
-    await Bun.write(join(first, "addon"), Buffer.from([1, 2, 3, 4]));
-    await Bun.write(join(first, "runtime"), Buffer.from([5, 6, 7, 8]));
-    await Bun.write(join(second, "addon"), Buffer.from([1, 2, 3, 4]));
-    await Bun.write(join(second, "runtime"), Buffer.from([5, 6, 9, 8]));
-    try {
+    await withTemporaryDirectory("blitsen-repro-", async directory => {
+      const first = join(directory, "first");
+      const second = join(directory, "second");
+      await mkdir(first);
+      await mkdir(second);
+      await Bun.write(join(first, "addon"), Buffer.from([1, 2, 3, 4]));
+      await Bun.write(join(first, "runtime"), Buffer.from([5, 6, 7, 8]));
+      await Bun.write(join(second, "addon"), Buffer.from([1, 2, 3, 4]));
+      await Bun.write(join(second, "runtime"), Buffer.from([5, 6, 9, 8]));
       const lines = [];
       await expect(compareReleaseBuilds({
         firstRoot: first, secondRoot: second, library: "addon", executable: "runtime",
@@ -43,14 +42,11 @@ describe("release reproducibility", () => {
       expect(lines.join("\n")).toContain("clean build A blitsen.node:");
       expect(lines.join("\n")).toContain("clean build B runtime:");
       expect(lines.join("\n")).toMatch(/[0-9a-f]{64}/);
-    } finally {
-      await rm(directory, { recursive: true, force: true });
-    }
+    });
   });
 
   test("records matching SHA-256 hashes without changing the artifacts", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "blitsen-repro-hash-"));
-    try {
+    await withTemporaryDirectory("blitsen-repro-hash-", async directory => {
       await writeFile(join(directory, "addon"), "addon");
       await writeFile(join(directory, "runtime"), "runtime");
       const before = await readFile(join(directory, "addon"));
@@ -61,55 +57,47 @@ describe("release reproducibility", () => {
       expect(records).toHaveLength(2);
       expect(records.every(record => /^[0-9a-f]{64}$/.test(record.hash))).toBeTrue();
       expect(await readFile(join(directory, "addon"))).toEqual(before);
-    } finally {
-      await rm(directory, { recursive: true, force: true });
-    }
+    });
   });
 
   test("explains /Brepro-style PE timestamps separately from section bytes", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "blitsen-pe-repro-"));
-    const first = join(directory, "first", "target", "release");
-    const second = join(directory, "second", "target", "release");
-    await mkdir(first, { recursive: true });
-    await mkdir(second, { recursive: true });
-    await writeFile(join(first, "addon"), peFixture({ timestamp: 0x12345678 }));
-    await writeFile(join(second, "addon"), peFixture({ timestamp: 0x87654321 }));
-    await writeFile(join(first, "runtime"), "same");
-    await writeFile(join(second, "runtime"), "same");
-    try {
+    await withTemporaryDirectory("blitsen-pe-repro-", async directory => {
+      const first = join(directory, "first", "target", "release");
+      const second = join(directory, "second", "target", "release");
+      await mkdir(first, { recursive: true });
+      await mkdir(second, { recursive: true });
+      await writeFile(join(first, "addon"), peFixture({ timestamp: 0x12345678 }));
+      await writeFile(join(second, "addon"), peFixture({ timestamp: 0x87654321 }));
+      await writeFile(join(first, "runtime"), "same");
+      await writeFile(join(second, "runtime"), "same");
       await expect(compareReleaseBuilds({
         firstRoot: first, secondRoot: second, library: "addon", executable: "runtime",
         output: () => {}, summaryPath: null,
       })).rejects.toThrow(
         /PE COFF TimeDateStamp A=0x12345678, B=0x87654321;.*no PE section payload differences/,
       );
-    } finally {
-      await rm(directory, { recursive: true, force: true });
-    }
+    });
   });
 
   test("names changed PE sections and leaked checkout-root spellings", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "blitsen-pe-path-"));
-    const firstSource = join(directory, "first");
-    const secondSource = join(directory, "other");
-    const first = join(firstSource, "target", "release");
-    const second = join(secondSource, "target", "release");
-    await mkdir(first, { recursive: true });
-    await mkdir(second, { recursive: true });
-    const firstPayload = Buffer.from(firstSource.replaceAll("/", "\\"));
-    const secondPayload = Buffer.from(secondSource.replaceAll("/", "\\"));
-    await writeFile(join(first, "addon"), peFixture({ timestamp: 1, payload: firstPayload }));
-    await writeFile(join(second, "addon"), peFixture({ timestamp: 2, payload: secondPayload }));
-    await writeFile(join(first, "runtime"), "same");
-    await writeFile(join(second, "runtime"), "same");
-    try {
+    await withTemporaryDirectory("blitsen-pe-path-", async directory => {
+      const firstSource = join(directory, "first");
+      const secondSource = join(directory, "other");
+      const first = join(firstSource, "target", "release");
+      const second = join(secondSource, "target", "release");
+      await mkdir(first, { recursive: true });
+      await mkdir(second, { recursive: true });
+      const firstPayload = Buffer.from(firstSource.replaceAll("/", "\\"));
+      const secondPayload = Buffer.from(secondSource.replaceAll("/", "\\"));
+      await writeFile(join(first, "addon"), peFixture({ timestamp: 1, payload: firstPayload }));
+      await writeFile(join(second, "addon"), peFixture({ timestamp: 2, payload: secondPayload }));
+      await writeFile(join(first, "runtime"), "same");
+      await writeFile(join(second, "runtime"), "same");
       await expect(compareReleaseBuilds({
         firstRoot: first, secondRoot: second, library: "addon", executable: "runtime",
         output: () => {}, summaryPath: null,
       })).rejects.toThrow(/changed PE sections: \.rdata\(256B\).*checkout-root occurrences A=/);
-    } finally {
-      await rm(directory, { recursive: true, force: true });
-    }
+    });
   });
 
   test("passes both Windows path spellings to rustc and the native compiler", async () => {

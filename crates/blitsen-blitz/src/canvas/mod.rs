@@ -111,6 +111,13 @@ pub(crate) struct CanvasState {
     attached: bool,
     destructive: bool,
     scene: Scene,
+    /// The contents rasterised for use as another canvas's image source, and
+    /// the revision they were rasterised at.
+    ///
+    /// Every change to the contents bumps the revision, so a mismatch is the
+    /// whole of the invalidation: a batch that draws this canvas into another
+    /// several times, or every frame, pays for one rasterisation per change.
+    readback: Option<(u64, ImageData)>,
 }
 
 impl Default for CanvasState {
@@ -122,6 +129,7 @@ impl Default for CanvasState {
             attached: false,
             destructive: false,
             scene: Scene::new(),
+            readback: None,
         }
     }
 }
@@ -575,11 +583,19 @@ impl BlitzDom {
     fn canvas_source_element(&mut self, node: NodeId) -> Result<ImageData, DomError> {
         if self.is_tag(node, CANVAS_TAG) {
             let state = self.canvas_state(node)?;
-            let (width, height) = state.borrow().size();
+            let mut state = state.borrow_mut();
+            let (width, height) = state.size();
             if width == 0 || height == 0 {
                 return Ok(empty_image());
             }
-            return Ok(readback::to_image(&state.borrow().scene, width, height));
+            if let Some((revision, image)) = &state.readback
+                && *revision == state.revision
+            {
+                return Ok(image.clone());
+            }
+            let image = readback::to_image(&state.scene, width, height);
+            state.readback = Some((state.revision, image.clone()));
+            return Ok(image);
         }
         let raster = self
             .node(node)?

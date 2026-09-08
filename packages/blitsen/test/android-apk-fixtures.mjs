@@ -1,15 +1,8 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { withTemporaryDirectory } from "./cli-support.mjs";
 
-export const withAndroidWork = async run => {
-  const directory = await mkdtemp(join(tmpdir(), "blitsen-android-"));
-  try {
-    return await run(directory);
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
-};
+export const withAndroidWork = run => withTemporaryDirectory("blitsen-android-", run);
 
 /** A small application on disk, with one reference for the rewriter to follow. */
 export async function androidApplication(directory) {

@@ -6,7 +6,7 @@ import { main } from "../src/cli.mjs";
 import { buildStandalone, runtimeRecord } from "../src/export.mjs";
 import { describeRuntime, hostTarget, openRuntime, phase2Binary, resolvePhase2Runtime, resolveRuntime, TARGETS }
   from "../src/runtime.mjs";
-import { viteBase, engineBuilt, executableStub, nativeStub, platformPackages, cliVersion, withPlatformPackages, withStubbedExport, capture } from "./cli-support.mjs";
+import { viteBase, engineBuilt, executableStub, nativeStub, platformPackages, cliVersion, withPlatformPackages, withStubbedExport, captureConsole } from "./cli-support.mjs";
 
 describe("runtime resolution", () => {
   test("adapts an engine with its resolved metadata and the caller's wait strategy", async () => {
@@ -305,7 +305,7 @@ describe("runtime resolution", () => {
       // The stamp survives the link, so a shipped executable names its own runtime.
       expect((await readFile(result.outfile)).includes(JSON.stringify(runtime))).toBeTrue();
     });
-    const { lines, output } = capture();
+    const { lines, output } = captureConsole();
     expect(await main(["build", join(import.meta.dir, "../../../examples/pong"),
       "--outfile", "/tmp/blitsen-never"], output,
     { build: async () => ({ outfile: "/tmp/pong", assets: 3, bytes: 123, runtime }) })).toBe(0);

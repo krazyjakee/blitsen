@@ -8,21 +8,17 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { join, resolve } from "node:path";
+import { argument, repository } from "./build-addon.mjs";
 
-const [addonPath, tracePath, reportPath, ...rest] = process.argv.slice(2);
+const [addonPath, tracePath, reportPath] = process.argv.slice(2);
 if (!addonPath || !tracePath || !reportPath)
   throw new Error("usage: bun replay-once.mjs <addon.node> <trace.json> <report.json>");
 
-const option = name => {
-  const index = rest.indexOf(name);
-  return index === -1 ? null : rest[index + 1];
-};
-const recordInto = option("--record");
-const recordFrames = option("--frames")?.split(",").map(Number) ?? null;
+const recordInto = argument("record");
+const recordFrames = argument("frames")?.split(",").map(Number) ?? null;
 
 const native = createRequire(import.meta.url)(resolve(addonPath));
 const trace = await readFile(tracePath, "utf8");
-const repository = resolve(import.meta.dir, "../../..");
 const entrypoint = join(repository, JSON.parse(trace).application, "index.html");
 const report = native.replayDocumentFrames(entrypoint, trace, recordInto, recordFrames);
 await writeFile(reportPath, report);

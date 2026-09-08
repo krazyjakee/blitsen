@@ -117,18 +117,6 @@ impl TrayAction {
     }
 }
 
-/// One configured entry in the system tray context menu.
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(default, rename_all = "camelCase")]
-pub struct TrayMenuItem {
-    /// Operation selected by this entry.
-    pub action: TrayAction,
-    /// Optional label overriding the action's default.
-    pub label: Option<String>,
-    /// Whether the item accepts input.
-    pub enabled: bool,
-}
-
 /// One declarative menu entry before platform-native objects are created.
 ///
 /// The same shape describes a tray menu and an application menu: the two are
@@ -176,16 +164,6 @@ pub struct TrayMenu {
     pub icons: Vec<Vec<u8>>,
 }
 
-impl Default for TrayMenuItem {
-    fn default() -> Self {
-        Self {
-            action: TrayAction::Separator,
-            label: None,
-            enabled: true,
-        }
-    }
-}
-
 /// Decoded tray configuration ready for the platform implementation.
 #[derive(Clone, Debug)]
 pub struct TrayOptions {
@@ -197,10 +175,8 @@ pub struct TrayOptions {
     pub open_on_click: bool,
     /// Whether the native close control hides rather than exits.
     pub close_to_tray: bool,
-    /// Ordered context-menu entries.
-    pub context_menu: Vec<TrayMenuItem>,
-    /// Rich context-menu tree. When present, this replaces `context_menu`.
-    pub menu: Option<TrayMenu>,
+    /// Context-menu tree.
+    pub menu: TrayMenu,
 }
 
 /// The identity a notification activation is addressed to, and the entry point

@@ -15,7 +15,7 @@ export const TARGETS = ["darwin-arm64", "darwin-x64", "linux-arm64", "linux-x64"
   "win32-arm64", "win32-x64"];
 export const RUNTIME_BINARY = "blitsen.node";
 // What `cargo build -p blitsen-node` leaves behind, for a checkout that built its own.
-const CARGO_LIBRARIES = {
+export const CARGO_LIBRARIES = {
   linux: "libblitsen_node.so", darwin: "libblitsen_node.dylib", win32: "blitsen_node.dll",
 };
 

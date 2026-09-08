@@ -83,7 +83,7 @@ export function checkWorkflowSource(source, file = "workflow.yml") {
   return errors;
 }
 
-export async function checkWorkflowDirectory(directory = ".github/workflows") {
+async function checkWorkflowDirectory(directory = ".github/workflows") {
   const names = (await readdir(directory))
     .filter((name) => name.endsWith(".yml") || name.endsWith(".yaml"))
     .sort();

@@ -3,7 +3,7 @@ import { mkdir, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createReloadCoordinator, main } from "../src/cli.mjs";
 import { buildStandalone } from "../src/export.mjs";
-import { icon, withStubbedExport, capture } from "./cli-support.mjs";
+import { icon, withStubbedExport, captureConsole } from "./cli-support.mjs";
 
 describe("directory CLI", () => {
   test("opens a resolved directory through the native runtime", async () => {
@@ -33,7 +33,7 @@ describe("directory CLI", () => {
         return { outfile: "/tmp/pong", assets: 3, bytes: 123 };
       },
     };
-    const { lines, output } = capture();
+    const { lines, output } = captureConsole();
     expect(await main(["build", fixture, "--outfile", "/tmp/pong", "--icon", "app.png",
       "--sign", "codesign"], output, runtime)).toBe(0);
     expect(built.command).toBe("build");
@@ -61,7 +61,7 @@ describe("directory CLI", () => {
       build: async () => ({ outfile: "/tmp/pong", assets: 3, bytes: 123,
         notices: { path: "/runtime/NOTICES.txt", bytes: 895_322, file: "blitsen.notices.txt.gz" } }),
     };
-    const { lines, output } = capture();
+    const { lines, output } = captureConsole();
     expect(await main(["build", fixture, "--outfile", "/tmp/pong"], output, runtime)).toBe(0);
     expect(lines.at(-1)[1]).toBe(
       "Third-party notices: embedded, 895322 bytes (run the executable with --licenses)");
@@ -77,7 +77,7 @@ describe("directory CLI", () => {
       const root = join(directory, "source");
       await mkdir(root);
       await writeFile(join(root, "index.html"), '<link rel="stylesheet" href="/assets/gone.css">');
-      const { lines, output } = capture();
+      const { lines, output } = captureConsole();
       const runtime = { build: options => buildStandalone(options, nativePath) };
       expect(await main(["build", root, "--out", outfile], output, runtime)).toBe(1);
       expect(lines.at(-1)).toEqual(["err", "blitsen: unresolved local references in the "

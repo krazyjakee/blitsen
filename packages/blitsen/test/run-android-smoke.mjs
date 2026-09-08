@@ -45,9 +45,9 @@
 // into noise, which is to say into a pass.
 import { join } from "node:path";
 
-import {
-  adb, argument, artifacts, deviceIsAlive, keep as keepIn, sleep, waitForBoot,
-} from "./android-device.mjs";
+import { adb, artifacts, deviceIsAlive, keep as keepIn, sleep, waitForBoot }
+  from "./android-device.mjs";
+import { argument } from "./build-addon.mjs";
 
 /// A frame is not blank if it has at least this many distinct colours, and if
 /// no single colour covers more than this much of it.

@@ -438,10 +438,9 @@ export const NATIVE_CONDITIONAL = {
 // Globals the *engine* supplies rather than the bridge, so their status cannot
 // be read out of `dom_bridge.rs` like everything else here.
 //
-// Blitsen hosts QuickJS-ng (spikes/s8), which ships
-// no `Intl` and no `WebAssembly`. Nothing in Blitsen deletes them — they were
-// never installed — so the bootstrap-deletion invariants below do not apply and
-// these are declared here instead. `cli-doctor.test.mjs` runs the built runtime
+// Blitsen hosts QuickJS-ng (spikes/s8), which ships no `WebAssembly`. Nothing
+// in Blitsen deletes it — it was never installed — so the bootstrap-deletion
+// invariants below do not apply and it is declared here instead. `cli-doctor.test.mjs` runs the built runtime
 // and fails if it disagrees, which is what keeps this list from drifting into
 // fiction the way an unverified declaration would.
 export const ENGINE_ABSENT = {
@@ -664,13 +663,11 @@ export const USAGE_RULES = [
 // shadcn-admin renders its whole admin shell with three remote links refused,
 // Google Fonts among them, and vue3-realworld renders with two.
 //
-// A remote `<script src>` used to be the exception, because the loader aborted
-// the whole run on one — which is what stopped wordle-plus loading. It no longer
-// does: `blitsen-core`'s script loader skips that one script, says so on stderr,
-// and runs the rest of the page. So the reason this was ever graded an error is
-// gone, and grading it one now only blocks a build that would have worked. What
-// keeps an exported application from silently phoning home is the runtime
-// refusing to fetch the script, not the severity of this rule.
+// A remote `<script src>` degrades too: `blitsen-core`'s script loader skips
+// that one script, says so on stderr, and runs the rest of the page, so grading
+// it an error would only block a build that would have worked. What keeps an
+// exported application from silently phoning home is the runtime refusing to
+// fetch the script, not the severity of this rule.
 const REMOTE_ASSET = [
   "A remote asset is not part of a self-contained export; the request is answered with nothing.",
   "Bundle the asset into the output directory and reference its local path, and check the page "
@@ -694,11 +691,8 @@ export const ASSET_RULES = [
 // none of that is in this list. So nothing here is an error: refusing the build
 // leaves the user with nothing, which is strictly worse than the degradation.
 //
-// These were errors, graded from the S6 capture. The conformance corpus since
-// showed that capture was caused by the stale-transition defect (gap G2) rather
-// than by the properties blamed for it: `visibility`, `opacity` and `transform`
-// all behave correctly, and `paint-suppression.html` gates that. Diagnosing
-// working CSS as a build-blocking error refused the stock create-vite template.
+// `visibility`, `opacity` and `transform` are not listed: they behave
+// correctly, and `paint-suppression.html` in the conformance corpus gates that.
 export const RENDERER_RULES = [
   ["css", "CSS_TRANSITION", "warning", "(?:^|[;{])\\s*transition(?:-property)?\\s*:",
     "A property named by `transition` keeps its pre-stylesheet value (Blitz bug 689).",

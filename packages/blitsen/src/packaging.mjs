@@ -11,7 +11,8 @@ const ICNS_TYPES = { 128: "ic07", 256: "ic08", 512: "ic09", 1024: "ic10" };
 const PNG_SIGNATURE = [137, 80, 78, 71, 13, 10, 26, 10];
 
 const XML_ESCAPES = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" };
-const escapeXml = text => String(text).replace(/[&<>"']/g, character => XML_ESCAPES[character]);
+export const escapeXml = text =>
+  String(text).replace(/[&<>"']/g, character => XML_ESCAPES[character]);
 
 function slug(text) {
   const cleaned = text.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");

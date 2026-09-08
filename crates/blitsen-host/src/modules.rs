@@ -458,10 +458,7 @@ impl ModuleRegistry {
                 cache.reset();
                 Ok(call.this)
             }),
-        )?;
-
-        let origin = engine.string(APP_ORIGIN)?;
-        engine.set_global("__blitsenAppOrigin", &origin)
+        )
     }
 }
 

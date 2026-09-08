@@ -14,12 +14,7 @@
 import { spawnSync } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-
-/** One `--name value` off the command line. */
-export function argument(name, fallback = null) {
-  const at = process.argv.indexOf(`--${name}`);
-  return at < 0 ? fallback : process.argv[at + 1];
-}
+import { argument } from "./build-addon.mjs";
 
 /// Which device, when more than one is attached. `ANDROID_SERIAL` is adb's own
 /// spelling of the same choice, so a caller that has already set it for adb does

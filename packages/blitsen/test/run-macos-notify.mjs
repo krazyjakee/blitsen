@@ -21,7 +21,7 @@ import { copyFile, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "nod
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
-import { buildAddon, repository } from "./build-addon.mjs";
+import { buildAddon, capture, repository } from "./build-addon.mjs";
 import { developmentBundle, developmentIdentifier, DEVELOPMENT_SIGNATURE, packageBuild,
   signArtifact } from "../src/packaging.mjs";
 import { packageVersion } from "../src/runtime.mjs";
@@ -54,18 +54,10 @@ await writeFile(entrypoint,
   + `<body></body></html>\n`);
 
 function run(cmd, { env = {} } = {}) {
-  const result = Bun.spawnSync({
-    cmd,
+  return capture(cmd, {
     cwd: workspace,
     env: { ...process.env, BLITSEN_NATIVE_PATH: addon, ...env },
-    stdout: "pipe",
-    stderr: "pipe",
   });
-  return {
-    code: result.exitCode,
-    stdout: result.stdout.toString(),
-    stderr: result.stderr.toString(),
-  };
 }
 
 /** Launches the probe under `launcher` and returns the one line it prints. */

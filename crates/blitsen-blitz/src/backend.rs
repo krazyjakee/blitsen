@@ -72,6 +72,7 @@ impl DomBackend for BlitzDom {
         self.node(child)?;
         self.check_no_cycle(parent, child)?;
         self.document.mutate().append_children(parent, &[child]);
+        self.note_structure_change(parent, Some(child));
         self.mutate(Some(parent), Some(parent));
         Ok(())
     }
@@ -94,6 +95,7 @@ impl DomBackend for BlitzDom {
         self.document
             .mutate()
             .insert_nodes_before(reference, &[child]);
+        self.note_structure_change(parent, Some(child));
         self.mutate(Some(parent), Some(parent));
         Ok(())
     }
@@ -102,6 +104,7 @@ impl DomBackend for BlitzDom {
         let parent = self.node(node)?.parent.ok_or(DomError::NotFound)?;
         self.document.mutate().remove_node(node);
         self.collect_detached_tree(node);
+        self.note_structure_change(parent, None);
         self.mutate(Some(parent), Some(parent));
         Ok(())
     }
@@ -114,6 +117,7 @@ impl DomBackend for BlitzDom {
             .mutate()
             .replace_node_with(old, &[replacement]);
         self.collect_detached_tree(old);
+        self.note_structure_change(parent, Some(replacement));
         self.mutate(Some(parent), Some(parent));
         Ok(())
     }
@@ -471,13 +475,20 @@ impl DomBackend for BlitzDom {
             .flatten();
         let text = normalized.as_deref().unwrap_or(text);
         match self.node_kind(node)? {
-            NodeKind::Text => self.document.mutate().set_node_text(node, text),
+            NodeKind::Text => {
+                self.document.mutate().set_node_text(node, text);
+                // A textarea's default value is its child text.
+                if let Some(parent) = self.node(node)?.parent {
+                    self.controls_changed |= self.is_tag(parent, "textarea");
+                }
+            }
             NodeKind::Element | NodeKind::Document | NodeKind::Fragment => {
                 self.detach_children(node)?;
                 if !text.is_empty() {
                     let text = self.document.mutate().create_text_node(text);
                     self.document.mutate().append_children(node, &[text]);
                 }
+                self.note_structure_change(node, None);
             }
             NodeKind::Comment => return Err(DomError::InvalidNodeType),
         }
@@ -518,6 +529,7 @@ impl DomBackend for BlitzDom {
         self.ensure_element(node)?;
         self.detach_children(node)?;
         self.document.mutate().set_inner_html(node, html);
+        self.note_structure_change(node, Some(node));
         self.mutate(Some(node), Some(node));
         Ok(())
     }
@@ -557,8 +569,18 @@ impl DomBackend for BlitzDom {
         let settle_controls = self.layout_is_dirty();
         let now = self.animation_time;
         self.take_frame_invalidation();
-        self.attach_native_viewports()?;
-        self.attach_canvases()?;
+        if self.structure_changed {
+            self.attach_native_viewports()?;
+            self.attach_canvases()?;
+            self.structure_changed = false;
+        }
+        // Attaching is itself a mutation Blitz has to resolve, which is why it
+        // comes before the question of whether there is anything to resolve.
+        if !settle_controls && self.is_settled() {
+            self.resize_native_viewports();
+            return Ok(LayoutSnapshot::new(self.revision));
+        }
+        self.scrolled = false;
         for _ in 0..RESOURCE_RESOLVE_PASSES {
             let settled = self.resources.settlements();
             self.document.resolve(now);
@@ -572,6 +594,8 @@ impl DomBackend for BlitzDom {
             self.document.resolve(now);
         }
         self.resize_native_viewports();
+        self.flushed_settlements = self.resources.settlements();
+        self.flushed_viewport = self.document.viewport().clone();
         self.flushed_revision = self.revision;
         Ok(LayoutSnapshot::new(self.revision))
     }
@@ -795,6 +819,7 @@ impl DomBackend for BlitzDom {
         snapshot: LayoutSnapshot,
     ) -> Result<(), DomError> {
         self.ensure_layout_fresh(snapshot)?;
+        self.scrolled = true;
         if self
             .document
             .try_root_element()

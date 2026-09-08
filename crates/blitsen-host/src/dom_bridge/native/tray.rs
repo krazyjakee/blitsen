@@ -1,11 +1,9 @@
-#[cfg(not(target_os = "android"))]
-use blitsen_js::TypedArrayKind;
 use blitsen_js::{JsEngine, JsError};
 #[cfg(not(target_os = "android"))]
 use serde_json::json;
 
 #[cfg(not(target_os = "android"))]
-use super::super::{argument, json_value, tray};
+use super::super::{argument, byte_argument, json_value, tray};
 
 #[cfg(not(target_os = "android"))]
 #[derive(serde::Deserialize)]
@@ -48,32 +46,13 @@ pub(super) fn install<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsErr
                 .arguments
                 .get(1)
                 .ok_or_else(|| JsError::new("missing tray icon bytes"))?;
-            let icon = engine.to_typed_array(icon)?;
-            if !matches!(
-                icon.kind,
-                TypedArrayKind::Uint8 | TypedArrayKind::Uint8Clamped
-            ) {
-                return Err(JsError::new(
-                    "tray icon must be a Uint8Array or Uint8ClampedArray",
-                ));
-            }
+            let icon = byte_argument(&mut engine, icon, "tray icon")?;
 
             let menu_icons = call
                 .arguments
                 .iter()
                 .skip(2)
-                .map(|value| {
-                    let icon = engine.to_typed_array(value)?;
-                    if !matches!(
-                        icon.kind,
-                        TypedArrayKind::Uint8 | TypedArrayKind::Uint8Clamped
-                    ) {
-                        return Err(JsError::new(
-                            "tray menu icons must be Uint8Array or Uint8ClampedArray values",
-                        ));
-                    }
-                    Ok(icon.bytes)
-                })
+                .map(|value| byte_argument(&mut engine, value, "a tray menu icon"))
                 .collect::<Result<Vec<_>, JsError>>()?;
             let (menu, has_quit) = parse_tray_menu(options.menu, &menu_icons)?;
             if options.close_to_tray && !has_quit {
@@ -82,7 +61,7 @@ pub(super) fn install<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsErr
                 ));
             }
             let id = tray::configure(TraySpec {
-                icon: icon.bytes,
+                icon,
                 tooltip: options.tooltip,
                 open_on_click: options.open_on_click,
                 close_to_tray: options.close_to_tray,

@@ -14,14 +14,14 @@ export interface Heading {
   slug: string;
 }
 
-export interface RenderResult {
+interface RenderResult {
   html: string;
   headings: Heading[];
   /** First paragraph, stripped to plain text — used for meta descriptions. */
   summary: string;
 }
 
-export type LinkRewriter = (href: string) => string;
+type LinkRewriter = (href: string) => string;
 
 const HTML_ESCAPES: Record<string, string> = {
   "&": "&amp;",
@@ -40,7 +40,7 @@ export function escapeHtml(value: string): string {
  * other with anchors like `#development-your-own-dev-server`, and those links must
  * keep working once the same headings are rendered here.
  */
-export function slugify(text: string): string {
+function slugify(text: string): string {
   return text
     .toLowerCase()
     .replace(/<[^>]+>/g, "")

@@ -13,10 +13,11 @@
 //! the shape `binaryType` asked for rather than through a string.
 
 use std::collections::HashMap;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
-use blitsen_js::JsError;
+use blitsen_js::{JsEngine, JsError, NativeCall, TypedArray, TypedArrayKind};
 use futures_util::{SinkExt, StreamExt};
 use parking_lot::Mutex;
 use serde_json::{Value, json};
@@ -31,6 +32,120 @@ use tokio_tungstenite::tungstenite::{Bytes, Message, Utf8Bytes, protocol::CloseF
 use url::Url;
 
 use super::net_pool::runtime as net_runtime;
+use super::{argument, json_value};
+
+/// Installs the transport the bootstrap's `WebSocket` class calls through.
+pub(super) fn install<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsError> {
+    let host = Rc::new(WebSocketHost::new()?);
+
+    let open_host = Rc::clone(&host);
+    engine.define_global_function(
+        "__blitsenSocketOpen",
+        Box::new(move |call| {
+            let mut engine = E::from_value(&call.this);
+            let url = argument(&mut engine, &call, 0, "WebSocket address")?;
+            let protocols = argument(&mut engine, &call, 1, "WebSocket subprotocols")?;
+            let protocols: Vec<String> = serde_json::from_str(&protocols)
+                .map_err(|error| JsError::new(format!("invalid subprotocol list: {error}")))?;
+            let id = open_host.open(&url, &protocols)?;
+            Ok(engine.number(id as f64))
+        }),
+    )?;
+
+    let text_host = Rc::clone(&host);
+    engine.define_global_function(
+        "__blitsenSocketSendText",
+        Box::new(move |call| {
+            let mut engine = E::from_value(&call.this);
+            let id = socket_id(&mut engine, &call)?;
+            text_host.send_text(id, argument(&mut engine, &call, 1, "message text")?);
+            Ok(call.this)
+        }),
+    )?;
+
+    let binary_host = Rc::clone(&host);
+    engine.define_global_function(
+        "__blitsenSocketSendBinary",
+        Box::new(move |call| {
+            let mut engine = E::from_value(&call.this);
+            let id = socket_id(&mut engine, &call)?;
+            let payload = call
+                .arguments
+                .get(1)
+                .ok_or_else(|| JsError::new("missing message payload"))?;
+            binary_host.send_binary(id, engine.to_typed_array(payload)?.bytes);
+            Ok(call.this)
+        }),
+    )?;
+
+    let buffered_host = Rc::clone(&host);
+    engine.define_global_function(
+        "__blitsenSocketBuffered",
+        Box::new(move |call| {
+            let mut engine = E::from_value(&call.this);
+            let bytes = buffered_host.buffered(socket_id(&mut engine, &call)?);
+            Ok(engine.number(bytes as f64))
+        }),
+    )?;
+
+    let close_host = Rc::clone(&host);
+    engine.define_global_function(
+        "__blitsenSocketClose",
+        Box::new(move |call| {
+            let mut engine = E::from_value(&call.this);
+            let id = socket_id(&mut engine, &call)?;
+            // An empty code is a close with no status, which is a different
+            // frame from one carrying 1005.
+            let code = argument(&mut engine, &call, 1, "close code")?;
+            let code = match code.as_str() {
+                "" => None,
+                code => Some(
+                    code.parse::<u16>()
+                        .map_err(|_| JsError::new("invalid WebSocket close code"))?,
+                ),
+            };
+            close_host.close(id, code, &argument(&mut engine, &call, 2, "close reason")?);
+            Ok(call.this)
+        }),
+    )?;
+
+    let poll_host = Rc::clone(&host);
+    engine.define_global_function(
+        "__blitsenSocketPoll",
+        Box::new(move |call| {
+            let mut engine = E::from_value(&call.this);
+            json_value(&mut engine, &poll_host.poll())
+        }),
+    )?;
+
+    let payload_host = Rc::clone(&host);
+    engine.define_global_function(
+        "__blitsenSocketBinary",
+        Box::new(move |call| {
+            let mut engine = E::from_value(&call.this);
+            let id = socket_id(&mut engine, &call)?;
+            let sequence = argument(&mut engine, &call, 1, "message sequence")?
+                .parse::<u64>()
+                .map_err(|_| JsError::new("invalid WebSocket message sequence"))?;
+            let bytes = payload_host.take_binary(id, sequence)?;
+            engine.typed_array(&TypedArray::new(TypedArrayKind::Uint8, bytes)?)
+        }),
+    )?;
+
+    engine.define_global_function(
+        "__blitsenSocketDispose",
+        Box::new(move |call| {
+            host.dispose();
+            Ok(call.this)
+        }),
+    )
+}
+
+fn socket_id<E: JsEngine>(engine: &mut E, call: &NativeCall<E::Value>) -> Result<u64, JsError> {
+    argument(engine, call, 0, "socket id")?
+        .parse::<u64>()
+        .map_err(|_| JsError::new("invalid WebSocket id"))
+}
 
 /// Reported when a connection ends without a close frame from either side.
 const ABNORMAL_CLOSURE: u16 = 1006;
@@ -79,7 +194,7 @@ struct Connection {
 }
 
 /// The WebSocket executor owned by one JavaScript context.
-pub(super) struct WebSocketHost {
+struct WebSocketHost {
     runtime: &'static Runtime,
     next_id: AtomicU64,
     open: Mutex<HashMap<u64, Connection>>,
@@ -196,7 +311,7 @@ async fn run(
 
 impl WebSocketHost {
     /// Creates a host bound to the shared worker pool.
-    pub(super) fn new() -> Result<Self, JsError> {
+    fn new() -> Result<Self, JsError> {
         Ok(Self {
             runtime: net_runtime()?,
             next_id: AtomicU64::new(1),
@@ -210,7 +325,7 @@ impl WebSocketHost {
     /// Only the address is refused here. Everything else a handshake can go
     /// wrong about is reported as `error` then `close`, because that is what the
     /// application has a listener for.
-    pub(super) fn open(&self, url: &str, protocols: &[String]) -> Result<u64, JsError> {
+    fn open(&self, url: &str, protocols: &[String]) -> Result<u64, JsError> {
         let parsed = Url::parse(url)
             .map_err(|error| JsError::new(format!("invalid WebSocket URL {url}: {error}")))?;
         if !matches!(parsed.scheme(), "ws" | "wss") {
@@ -266,18 +381,18 @@ impl WebSocketHost {
         }
     }
 
-    pub(super) fn send_text(&self, id: u64, text: String) {
+    fn send_text(&self, id: u64, text: String) {
         let bytes = text.len();
         self.queue(id, Message::Text(Utf8Bytes::from(text)), bytes);
     }
 
-    pub(super) fn send_binary(&self, id: u64, payload: Vec<u8>) {
+    fn send_binary(&self, id: u64, payload: Vec<u8>) {
         let bytes = payload.len();
         self.queue(id, Message::Binary(Bytes::from(payload)), bytes);
     }
 
     /// Bytes queued and not yet handed to the transport.
-    pub(super) fn buffered(&self, id: u64) -> usize {
+    fn buffered(&self, id: u64) -> usize {
         self.open
             .lock()
             .get(&id)
@@ -285,7 +400,7 @@ impl WebSocketHost {
     }
 
     /// Starts the close handshake. The `close` event follows from the worker.
-    pub(super) fn close(&self, id: u64, code: Option<u16>, reason: &str) {
+    fn close(&self, id: u64, code: Option<u16>, reason: &str) {
         let open = self.open.lock();
         let Some(connection) = open.get(&id) else {
             return;
@@ -298,7 +413,7 @@ impl WebSocketHost {
     }
 
     /// Drains everything the connections observed since the previous frame turn.
-    pub(super) fn poll(&self) -> Value {
+    fn poll(&self) -> Value {
         let events = std::mem::take(&mut *self.shared.events.lock());
         let mut open = self.open.lock();
         for event in &events {
@@ -312,7 +427,7 @@ impl WebSocketHost {
     }
 
     /// Takes a binary message's bytes, which are handed over exactly once.
-    pub(super) fn take_binary(&self, id: u64, sequence: u64) -> Result<Vec<u8>, JsError> {
+    fn take_binary(&self, id: u64, sequence: u64) -> Result<Vec<u8>, JsError> {
         self.shared
             .payloads
             .lock()
@@ -321,7 +436,7 @@ impl WebSocketHost {
     }
 
     /// Drops every connection and everything they had queued.
-    pub(super) fn dispose(&self) {
+    fn dispose(&self) {
         for (_, connection) in self.open.lock().drain() {
             connection.task.abort();
         }

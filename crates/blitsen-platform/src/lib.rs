@@ -44,7 +44,7 @@ impl PlatformError {
         Self(message.into())
     }
 
-    /// The message.
+    /// The text the bridge reports to JavaScript, verbatim.
     pub fn message(&self) -> &str {
         &self.0
     }

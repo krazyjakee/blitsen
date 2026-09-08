@@ -1,18 +1,19 @@
 import { describe, expect, test } from "bun:test";
-import { cp, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { cp, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { main } from "../src/cli.mjs";
 import {
   CONFIG_SCHEMA, defineConfig, loadConfig, recordTrayConfiguration, runBuildCommand, validateConfig,
 } from "../src/config.mjs";
-import { configFixtures, capture } from "./cli-support.mjs";
+import { configFixtures, captureConsole, withTemporaryDirectory } from "./cli-support.mjs";
 
+// The CLI reports canonical paths (#134), so these compare against `realpath`:
 // macOS's temporary directory is a symlink — `/var` is `/private/var` — and
-// every path the CLI reports has been through `process.cwd()` or `realpath`.
-// A test that keeps `mkdtemp`'s spelling compares two names for one directory,
-// which is a pass on Linux and Windows and a failure on macOS (#134).
-const temporaryDirectory = async prefix => realpath(await mkdtemp(join(tmpdir(), prefix)));
+// every path the CLI reports has been through `process.cwd()` or `realpath`,
+// so a test that kept `mkdtemp`'s spelling would compare two names for one
+// directory, passing on Linux and Windows and failing on macOS.
+const withCanonicalDirectory = (prefix, run) =>
+  withTemporaryDirectory(prefix, async created => run(await realpath(created)));
 
 describe("directory CLI", () => {
   test("publishes the schema it validates against", async () => {
@@ -82,15 +83,14 @@ describe("directory CLI", () => {
         ],
       },
     });
-    const root = await temporaryDirectory("blitsen-rich-tray-");
-    const png = Buffer.from(
-      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgQIAffRr7QAAAABJRU5ErkJggg==",
-      "base64",
-    );
-    await mkdir(join(root, "native"));
-    await Promise.all(["tray.png", "open.png", "theme.png"]
-      .map(name => writeFile(join(root, "native", name), png)));
-    try {
+    await withCanonicalDirectory("blitsen-rich-tray-", async root => {
+      const png = Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgQIAffRr7QAAAABJRU5ErkJggg==",
+        "base64",
+      );
+      await mkdir(join(root, "native"));
+      await Promise.all(["tray.png", "open.png", "theme.png"]
+        .map(name => writeFile(join(root, "native", name), png)));
       const recorded = await recordTrayConfiguration(config.tray, root);
       expect(recorded.icon).toBe(join(root, "native/tray.png"));
       expect(recorded.menuIcons).toEqual([
@@ -102,9 +102,7 @@ describe("directory CLI", () => {
       await expect(recordTrayConfiguration({ icon: "native/tray.png", contextMenu: [
         { id: "open", label: "Open", icon: "../outside.png" },
       ] }, root)).rejects.toThrow("escapes the package");
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
+    });
 
     expect(() => defineConfig({ output: "dist", tray: { icon: "tray.png", contextMenu: [
       { id: "same", label: "One" },
@@ -222,65 +220,59 @@ describe("directory CLI", () => {
         contextMenu: [{ action: "show" }, { action: "quit" }],
       } });
     // A package.json without the key is not a config, and neither is no package.json.
-    const bare = await mkdtemp(join(tmpdir(), "blitsen-config-"));
-    try {
+    await withTemporaryDirectory("blitsen-config-", async bare => {
       expect(await loadConfig(bare)).toEqual({ path: null, root: null, config: null });
       await writeFile(join(bare, "package.json"), '{"name":"bare"}');
       expect(await loadConfig(bare))
         .toEqual({ path: join(bare, "package.json"), root: null, config: null });
       await writeFile(join(bare, "package.json"), "{ not json");
       await expect(loadConfig(bare)).rejects.toThrow("package.json is not valid JSON");
-    } finally {
-      await rm(bare, { recursive: true, force: true });
-    }
+    });
   });
 
   test("fails the build when the configured command does", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "blitsen-command-"));
-    try {
+    await withTemporaryDirectory("blitsen-command-", async directory => {
       await expect(runBuildCommand("exit 3", directory))
         .rejects.toThrow("build command failed with exit code 3: exit 3");
-    } finally {
-      await rm(directory, { recursive: true, force: true });
-    }
+    });
   });
 
   test("runs the configured build and ingests the directory it wrote", async () => {
-    const workspace = await temporaryDirectory("blitsen-wrapped-");
-    const project = join(workspace, "app");
-    await cp(join(configFixtures, "wrapped"), project, { recursive: true });
-    const cwd = process.cwd();
-    let built;
-    try {
-      process.chdir(project);
-      const here = process.cwd();
-      const { lines, output } = capture();
-      const runtime = {
-        build: async options => {
-          built = options;
-          return { outfile: options.outfile, assets: 1, bytes: 1 };
-        },
-      };
-      expect(await main(["build"], output, runtime)).toBe(0);
-      expect(lines[0][1])
-        .toBe(`⓪ build   node emit-dist.mjs (configured in ${join(project, "package.json")})`);
-      // The command really ran: Blitsen only knows the directory it left behind.
-      expect(await readFile(join(project, "dist/index.html"), "utf8")).toContain("wrapped");
-      expect(built.root).toBe(await realpath(join(project, "dist")));
-      expect(built.title).toBe("Wrapped App");
-      expect(built.outfile).toBe(join(here, "Wrapped App"));
-      // Configured addon paths are the user's, relative to their package.json.
-      expect(built.addons).toEqual([join(project, "native/greet.node")]);
-      expect(built.window).toEqual({ type: "borderless", resizable: false });
-      expect(built.tray).toEqual({
-        icon: join(project, "native/tray.png"), closeToTray: true,
-        contextMenu: [{ action: "show" }, { action: "quit" }],
-        menuIcons: [],
-      });
-    } finally {
-      process.chdir(cwd);
-      await rm(workspace, { recursive: true, force: true });
-    }
+    await withCanonicalDirectory("blitsen-wrapped-", async workspace => {
+      const project = join(workspace, "app");
+      await cp(join(configFixtures, "wrapped"), project, { recursive: true });
+      const cwd = process.cwd();
+      let built;
+      try {
+        process.chdir(project);
+        const here = process.cwd();
+        const { lines, output } = captureConsole();
+        const runtime = {
+          build: async options => {
+            built = options;
+            return { outfile: options.outfile, assets: 1, bytes: 1 };
+          },
+        };
+        expect(await main(["build"], output, runtime)).toBe(0);
+        expect(lines[0][1])
+          .toBe(`⓪ build   node emit-dist.mjs (configured in ${join(project, "package.json")})`);
+        // The command really ran: Blitsen only knows the directory it left behind.
+        expect(await readFile(join(project, "dist/index.html"), "utf8")).toContain("wrapped");
+        expect(built.root).toBe(await realpath(join(project, "dist")));
+        expect(built.title).toBe("Wrapped App");
+        expect(built.outfile).toBe(join(here, "Wrapped App"));
+        // Configured addon paths are the user's, relative to their package.json.
+        expect(built.addons).toEqual([join(project, "native/greet.node")]);
+        expect(built.window).toEqual({ type: "borderless", resizable: false });
+        expect(built.tray).toEqual({
+          icon: join(project, "native/tray.png"), closeToTray: true,
+          contextMenu: [{ action: "show" }, { action: "quit" }],
+          menuIcons: [],
+        });
+      } finally {
+        process.chdir(cwd);
+      }
+    });
     // These two spawn a real `node` against a copied fixture, and the default
     // 5s was not enough on the arm64 Windows runner: the test timed out, the
     // `finally` above deleted the workspace, and the process that was still
@@ -288,83 +280,83 @@ describe("directory CLI", () => {
   }, 60_000);
 
   test("runs the configured build and opens the directory it wrote", async () => {
-    const workspace = await temporaryDirectory("blitsen-wrapped-run-");
-    const project = join(workspace, "app");
-    await cp(join(configFixtures, "wrapped"), project, { recursive: true });
-    const cwd = process.cwd();
-    let opened;
-    try {
-      process.chdir(project);
-      const { lines, output } = capture();
-      let pumps = 0;
-      expect(await main([], output, {
-        openDirectory: async options => { opened = options; },
-        pumpWindow: () => ++pumps < 2,
-        waitForNextFrame: async () => {},
-      })).toBe(0);
-      expect(lines[0][1])
-        .toBe(`⓪ build   node emit-dist.mjs (configured in ${join(project, "package.json")})`);
-      // The same directory `blitsen build` would have ingested, found the same
-      // way: the run proves what ships rather than something beside it.
-      expect(opened.root).toBe(await realpath(join(project, "dist")));
-      expect(opened.title).toBe("Wrapped App");
-      expect(opened.window).toEqual({ type: "borderless", resizable: false });
-      expect(opened.tray.icon).toBe(join(project, "native/tray.png"));
-    } finally {
-      process.chdir(cwd);
-      await rm(workspace, { recursive: true, force: true });
-    }
+    await withCanonicalDirectory("blitsen-wrapped-run-", async workspace => {
+      const project = join(workspace, "app");
+      await cp(join(configFixtures, "wrapped"), project, { recursive: true });
+      const cwd = process.cwd();
+      let opened;
+      try {
+        process.chdir(project);
+        const { lines, output } = captureConsole();
+        let pumps = 0;
+        expect(await main([], output, {
+          openDirectory: async options => { opened = options; },
+          pumpWindow: () => ++pumps < 2,
+          waitForNextFrame: async () => {},
+        })).toBe(0);
+        expect(lines[0][1])
+          .toBe(`⓪ build   node emit-dist.mjs (configured in ${join(project, "package.json")})`);
+        // The same directory `blitsen build` would have ingested, found the same
+        // way: the run proves what ships rather than something beside it.
+        expect(opened.root).toBe(await realpath(join(project, "dist")));
+        expect(opened.title).toBe("Wrapped App");
+        expect(opened.window).toEqual({ type: "borderless", resizable: false });
+        expect(opened.tray.icon).toBe(join(project, "native/tray.png"));
+      } finally {
+        process.chdir(cwd);
+      }
+    });
   }, 60_000);
 
   test("still opens the directory you are standing in when it has no config", async () => {
-    const directory = await temporaryDirectory("blitsen-unconfigured-run-");
-    const cwd = process.cwd();
-    try {
-      process.chdir(directory);
-      await writeFile(join(directory, "index.html"), "<p>hi");
-      const { output } = capture();
-      let opened;
-      let pumps = 0;
-      expect(await main([], output, {
-        openDirectory: async options => { opened = options; },
-        pumpWindow: () => ++pumps < 2,
-        waitForNextFrame: async () => {},
-      })).toBe(0);
-      expect(opened.root).toBe(await realpath(directory));
-    } finally {
-      process.chdir(cwd);
-      await rm(directory, { recursive: true, force: true });
-    }
+    await withCanonicalDirectory("blitsen-unconfigured-run-", async directory => {
+      const cwd = process.cwd();
+      try {
+        process.chdir(directory);
+        await writeFile(join(directory, "index.html"), "<p>hi");
+        const { output } = captureConsole();
+        let opened;
+        let pumps = 0;
+        expect(await main([], output, {
+          openDirectory: async options => { opened = options; },
+          pumpWindow: () => ++pumps < 2,
+          waitForNextFrame: async () => {},
+        })).toBe(0);
+        expect(opened.root).toBe(await realpath(directory));
+      } finally {
+        process.chdir(cwd);
+      }
+    });
   });
 
   test("asks for a directory or a config when there is nothing here to build", async () => {
-    const directory = await temporaryDirectory("blitsen-unconfigured-");
-    const cwd = process.cwd();
-    try {
-      process.chdir(directory);
-      const { lines, output } = capture();
-      expect(await main(["build"], output, { build: async () => ({}) })).toBe(1);
-      expect(lines[0][1]).toContain("pass one, or add an index.html here");
-      expect(lines[0][1]).toContain('add a "blitsen" config to');
+    await withCanonicalDirectory("blitsen-unconfigured-", async directory => {
+      const cwd = process.cwd();
+      try {
+        process.chdir(directory);
+        const { lines, output } = captureConsole();
+        expect(await main(["build"], output, { build: async () => ({}) })).toBe(1);
+        expect(lines[0][1]).toContain("pass one, or add an index.html here");
+        expect(lines[0][1]).toContain('add a "blitsen" config to');
 
-      // A directory of static output is already an application — there is no
-      // build command to configure, and `blitsen` opens this same directory
-      // with no argument, so `blitsen build` exports it with no argument too.
-      await writeFile(join(directory, "index.html"), "<p>hi");
-      const exported = capture();
-      const built = [];
-      expect(await main(["build"], exported.output, {
-        build: async options => { built.push(options); return { outfile: "app", assets: 1, bytes: 2 }; },
-      })).toBe(0);
-      expect(built[0].root).toBe(await realpath(directory));
-    } finally {
-      process.chdir(cwd);
-      await rm(directory, { recursive: true, force: true });
-    }
+        // A directory of static output is already an application — there is no
+        // build command to configure, and `blitsen` opens this same directory
+        // with no argument, so `blitsen build` exports it with no argument too.
+        await writeFile(join(directory, "index.html"), "<p>hi");
+        const exported = captureConsole();
+        const built = [];
+        expect(await main(["build"], exported.output, {
+          build: async options => { built.push(options); return { outfile: "app", assets: 1, bytes: 2 }; },
+        })).toBe(0);
+        expect(built[0].root).toBe(await realpath(directory));
+      } finally {
+        process.chdir(cwd);
+      }
+    });
   });
 
   test("reports missing entrypoints and unavailable native addons", async () => {
-    const { lines, output } = capture();
+    const { lines, output } = captureConsole();
     expect(await main([import.meta.dir], output, {})).toBe(1);
     expect(lines[0][1]).toContain("missing or unreadable entrypoint");
   });

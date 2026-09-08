@@ -12,17 +12,19 @@
 //     GPU allocations, so it is a floor for idle RAM, not idle RAM.
 //   * windowed first frame / idle RSS — the real P2 and P3 metrics. They need a
 //     desktop session, so they only appear when a human runs `bench:windowed`.
-import { appendFile, readFile, writeFile } from "node:fs/promises";
+import { appendFile, readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { argument } from "./build-addon.mjs";
 import { formatBytes, measureExport } from "./measure-export.mjs";
+import { appendStepSummary } from "./size-reports.mjs";
 
 const historyFile = join(import.meta.dir, "metrics/benchmark-history.jsonl");
 
 const argv = process.argv.slice(2);
-const measurementsIndex = argv.indexOf("--measurements");
-const record = measurementsIndex < 0
+const measurements = argument("measurements");
+const record = measurements === null
   ? await measureExport({ runs: 5, windowed: argv.includes("--windowed") })
-  : JSON.parse(await readFile(argv[measurementsIndex + 1], "utf8"));
+  : JSON.parse(await readFile(measurements, "utf8"));
 
 const history = (await readFile(historyFile, "utf8").catch(() => ""))
   .split("\n").filter(Boolean).map(line => JSON.parse(line))
@@ -85,9 +87,7 @@ const report = [
   ...notes.map(note => `> ${note}`),
 ].join("\n");
 console.log(report);
-if (process.env.GITHUB_STEP_SUMMARY) {
-  await writeFile(process.env.GITHUB_STEP_SUMMARY, `${report}\n\n`, { flag: "a" });
-}
+await appendStepSummary(report);
 // CI cannot push, so the committed series only grows from local runs; CI keeps
 // its own copy as a build artifact.
 if (argv.includes("--record")) {

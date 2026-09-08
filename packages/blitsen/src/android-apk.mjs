@@ -6,6 +6,8 @@
 import { readdir, readFile } from "node:fs/promises";
 import { join, posix } from "node:path";
 
+import { escapeXml } from "./packaging.mjs";
+
 /// 1980-01-01 00:00:00, which is the earliest instant MS-DOS date fields can
 /// express: a year field of 0, month 1, day 1. Zip has no "unset".
 const DOS_TIME = 0;
@@ -112,10 +114,6 @@ export function storedZip(entries) {
 export const CONFIG_CHANGES = ["orientation", "keyboardHidden", "keyboard", "screenSize",
   "screenLayout", "smallestScreenSize", "locale", "layoutDirection", "density", "uiMode",
   "fontScale", "navigation", "mcc", "mnc"].join("|");
-
-const escapeXml = text => String(text)
-  .replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")
-  .replaceAll("\"", "&quot;").replaceAll("'", "&apos;");
 
 /**
  * The whole of the Java side of a Blitsen application.

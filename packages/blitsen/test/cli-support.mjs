@@ -8,7 +8,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { extname, join } from "node:path";
 import { packageVersion } from "../src/cli.mjs";
-import { hostTarget } from "../src/runtime.mjs";
+import { CARGO_LIBRARIES, hostTarget } from "../src/runtime.mjs";
 
 // What `blitsen build` names an export, given the path asked for: Windows
 // executes by extension, so a `win32-*` target is `.exe` whoever asked for what.
@@ -31,9 +31,8 @@ export const signHook =
 // decides. The fixtures are C, so a host compiler is what gates these tests, and
 // the Windows toolchain needs an import library the fixture deliberately lacks.
 export const compiler = process.platform === "win32" ? null : (Bun.which("cc") ?? Bun.which("gcc"));
-export const engineAddon = join(import.meta.dir, "../../../target/release", {
-  linux: "libblitsen_node.so", darwin: "libblitsen_node.dylib", win32: "blitsen_node.dll",
-}[process.platform] ?? "missing");
+export const engineAddon = join(import.meta.dir, "../../../target/release",
+  CARGO_LIBRARIES[process.platform] ?? "missing");
 // Proving a real load needs a real engine to launch. `bun run test:standalone`
 // builds it; without it the exported-executable test declares itself skipped
 // rather than pretending the export path was exercised.
@@ -41,11 +40,20 @@ export const engineBuilt = await Bun.file(engineAddon).exists();
 export const platformPackages = join(import.meta.dir, "../../platforms");
 export const cliVersion = await packageVersion();
 
+// A scratch directory for the duration of `run`, removed however `run` ends.
+export async function withTemporaryDirectory(prefix, run) {
+  const directory = await mkdtemp(join(tmpdir(), prefix));
+  try {
+    return await run(directory);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+}
+
 // A real node_modules tree, so resolution is proven through the resolver every package
 // manager writes for, against the committed manifests rather than a copy of them.
-export async function withPlatformPackages(installed, run) {
-  const directory = await mkdtemp(join(tmpdir(), "blitsen-runtime-"));
-  try {
+export function withPlatformPackages(installed, run) {
+  return withTemporaryDirectory("blitsen-runtime-", async directory => {
     for (const [target, { version, binary = true, phase2 = false }] of Object.entries(installed)) {
       const packaged = join(directory, "node_modules/@blitsen", target);
       await mkdir(packaged, { recursive: true });
@@ -58,9 +66,7 @@ export async function withPlatformPackages(installed, run) {
       }
     }
     return await run({ directory, require: createRequire(join(directory, "resolve.mjs")) });
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
+  });
 }
 
 export function compileAddon(directory, source = "greet.c", name = "greet.node") {
@@ -192,41 +198,38 @@ export const phase2Name = target => `blitsen-runtime${target.startsWith("win32-"
 // including these. Stubbing the Phase 2 runtime rather than reaching for the
 // one this checkout built also keeps these tests off a 37 MB copy per export.
 //
-// Nothing in the export pipeline runs the stub any more: the host decision that
-// used to interrogate a runtime with `--engine-report` — asking a dynamically
-// loaded JavaScriptCore whether it could link a module graph — went with that
-// engine, and what is left reads the file rather than executing it.
-export async function withStubbedExport(run) {
-  const directory = await mkdtemp(join(tmpdir(), "blitsen-export-test-"));
-  const nativePath = join(directory, "blitsen.node");
-  const runtimePath = join(directory, phase2Name(`${process.platform}-${process.arch}`));
-  await writeFile(nativePath, nativeStub());
-  await writeFile(runtimePath, executableStub());
-  const previous = process.env.BLITSEN_RUNTIME_PATH;
-  process.env.BLITSEN_RUNTIME_PATH = runtimePath;
-  try {
-    return await run({ directory, nativePath, runtimePath, outfile: join(directory, "App") });
-  } finally {
-    if (previous === undefined) delete process.env.BLITSEN_RUNTIME_PATH;
-    else process.env.BLITSEN_RUNTIME_PATH = previous;
-    await rm(directory, { recursive: true, force: true });
-  }
+// Nothing in the export pipeline runs the stub: module scripts do not affect
+// host selection, because the shipped runtime links QuickJS-ng statically with
+// its stock module loader (docs/JSC.md), so the pipeline reads the file rather
+// than executing it.
+export function withStubbedExport(run) {
+  return withTemporaryDirectory("blitsen-export-test-", async directory => {
+    const nativePath = join(directory, "blitsen.node");
+    const runtimePath = join(directory, phase2Name(`${process.platform}-${process.arch}`));
+    await writeFile(nativePath, nativeStub());
+    await writeFile(runtimePath, executableStub());
+    const previous = process.env.BLITSEN_RUNTIME_PATH;
+    process.env.BLITSEN_RUNTIME_PATH = runtimePath;
+    try {
+      return await run({ directory, nativePath, runtimePath, outfile: join(directory, "App") });
+    } finally {
+      if (previous === undefined) delete process.env.BLITSEN_RUNTIME_PATH;
+      else process.env.BLITSEN_RUNTIME_PATH = previous;
+    }
+  });
 }
 
 // Step ⑤ is file generation over an already-linked artifact, so the macOS and
 // Windows layouts are exercised on any host by handing it a stand-in executable.
-export async function withArtifact(run, name = "Pong") {
-  const directory = await mkdtemp(join(tmpdir(), "blitsen-package-test-"));
-  const executable = join(directory, name);
-  await writeFile(executable, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
-  try {
+export function withArtifact(run, name = "Pong") {
+  return withTemporaryDirectory("blitsen-package-test-", async directory => {
+    const executable = join(directory, name);
+    await writeFile(executable, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
     return await run({ directory, executable });
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
+  });
 }
 
-export function capture() {
+export function captureConsole() {
   const lines = [];
   return {
     lines,

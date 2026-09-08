@@ -88,7 +88,7 @@ pub fn print_engine() {
         Ok(mut loaded) => json!({
             "loaded": true,
             "engine": engine::NAME,
-            "modules": engine::supports_modules(&loaded),
+            "modules": loaded.supports_modules(),
             "absentGlobals": engine::absent_globals(&mut loaded, ENGINE_GLOBALS),
             // Reported rather than assumed by the size table, which asserts
             // that nothing ships beside the executable.

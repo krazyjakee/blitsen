@@ -6,7 +6,7 @@
 // cannot drift from the repository.
 
 export const REPO = "https://github.com/krazyjakee/blitsen";
-export const REPO_BLOB = `${REPO}/blob/main`;
+const REPO_BLOB = `${REPO}/blob/main`;
 
 /** The custom domain serves from the root, so the sub-path is empty unless overridden. */
 export const BASE = (process.env.SITE_BASE ?? "").replace(/\/$/, "");
@@ -24,7 +24,7 @@ export interface DocPage {
   blurb: string;
 }
 
-export interface DocGroup {
+interface DocGroup {
   name: string;
   note: string;
   pages: DocPage[];
@@ -138,7 +138,7 @@ export const GROUPS: DocGroup[] = [
 // the user documentation navigation. These are contributor specifications,
 // historical decisions and milestone records rather than instructions for using
 // the current product.
-export const INTERNAL_PAGES: DocPage[] = [
+const INTERNAL_PAGES: DocPage[] = [
   { file: "PRODUCT.md", slug: "product", nav: "Product specification", title: "Product specification", blurb: "Contributor product specification." },
   { file: "TECH.md", slug: "tech", nav: "Technical specification", title: "Technical specification", blurb: "Contributor architecture specification." },
   { file: "MODULES.md", slug: "modules", nav: "Module resolution record", title: "Module resolution in the shipped binary", blurb: "Internal module-resolution design record." },

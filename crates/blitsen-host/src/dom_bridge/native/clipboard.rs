@@ -5,7 +5,7 @@ use blitsen_js::{TypedArray, TypedArrayKind};
 use blitsen_platform::clipboard::{self, Image};
 
 #[cfg(not(target_os = "android"))]
-use super::super::argument;
+use super::super::{argument, byte_argument};
 #[cfg(not(target_os = "android"))]
 use super::failed;
 
@@ -78,15 +78,7 @@ pub(super) fn install<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsErr
                 .arguments
                 .get(2)
                 .ok_or_else(|| JsError::new("missing image pixels"))?;
-            let pixels = engine.to_typed_array(pixels)?;
-            if !matches!(
-                pixels.kind,
-                TypedArrayKind::Uint8 | TypedArrayKind::Uint8Clamped
-            ) {
-                return Err(JsError::new(
-                    "clipboard image pixels must be a Uint8Array or Uint8ClampedArray",
-                ));
-            }
+            let pixels = byte_argument(&mut engine, pixels, "clipboard image pixels")?;
             let dimension = |value: String, name: &str| {
                 value
                     .parse::<usize>()
@@ -95,7 +87,7 @@ pub(super) fn install<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsErr
             clipboard::write_image(&Image {
                 width: dimension(width, "width")?,
                 height: dimension(height, "height")?,
-                rgba: pixels.bytes,
+                rgba: pixels,
             })
             .map_err(failed)?;
             Ok(call.this)

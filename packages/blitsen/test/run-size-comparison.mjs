@@ -10,7 +10,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { BARE_APP } from "./bare-app.mjs";
+import { argument } from "./build-addon.mjs";
 import { formatBytes } from "./measure-export.mjs";
+import { appendStepSummary } from "./size-reports.mjs";
 
 export const comparisonFixture = join(import.meta.dir, "fixtures/size-comparison");
 
@@ -34,11 +36,6 @@ export async function footprint(path) {
     total.files += measured.files;
   }
   return total;
-}
-
-function run(command, options = {}) {
-  const result = Bun.spawnSync({ cmd: command, stdout: "inherit", stderr: "inherit", ...options });
-  if (result.exitCode !== 0) throw new Error(`${command[0]} exited ${result.exitCode}`);
 }
 
 async function electronBuild(directory) {
@@ -68,10 +65,14 @@ async function tauriBuild(directory) {
   // ignored; CI still starts clean and measures only the final executable.
   const target = join(comparisonFixture, "tauri/target");
   const cli = join(comparisonFixture, "node_modules/@tauri-apps/cli/tauri.js");
-  run([process.execPath, cli, "build", "--ci", "--no-bundle", "--", "--locked"], {
+  const build = Bun.spawnSync({
+    cmd: [process.execPath, cli, "build", "--ci", "--no-bundle", "--", "--locked"],
     cwd: join(comparisonFixture, "tauri"),
     env: { ...process.env, CARGO_TARGET_DIR: target },
+    stdout: "inherit",
+    stderr: "inherit",
   });
+  if (build.exitCode !== 0) throw new Error(`tauri build exited ${build.exitCode}`);
   return join(target, "release", `blitsen-size-tauri${process.platform === "win32" ? ".exe" : ""}`);
 }
 
@@ -94,7 +95,7 @@ export function comparisonSummary(record) {
   ].join("\n");
 }
 
-export async function measureComparison(blitsenRecord) {
+async function measureComparison(blitsenRecord) {
   if (blitsenRecord.application !== "bare") throw new Error("the Blitsen input is not the bare app");
   const directory = await mkdtemp(join(tmpdir(), "blitsen-size-comparison-"));
   try {
@@ -131,19 +132,14 @@ export async function measureComparison(blitsenRecord) {
 }
 
 if (import.meta.main) {
-  const argv = process.argv.slice(2);
-  const inputIndex = argv.indexOf("--blitsen");
-  const outIndex = argv.indexOf("--out");
-  if (inputIndex < 0 || !argv[inputIndex + 1]) {
-    throw new Error("size:compare requires --blitsen <phase2-size.json>");
-  }
-  const record = await measureComparison(JSON.parse(await readFile(argv[inputIndex + 1], "utf8")));
+  const input = argument("blitsen");
+  const outFile = argument("out");
+  if (!input) throw new Error("size:compare requires --blitsen <phase2-size.json>");
+  const record = await measureComparison(JSON.parse(await readFile(input, "utf8")));
   const serialized = `${JSON.stringify(record, null, 2)}\n`;
-  if (outIndex < 0) process.stdout.write(serialized);
-  else await writeFile(argv[outIndex + 1], serialized);
+  if (outFile === null) process.stdout.write(serialized);
+  else await writeFile(outFile, serialized);
   const summary = comparisonSummary(record);
   console.log(summary);
-  if (process.env.GITHUB_STEP_SUMMARY) {
-    await writeFile(process.env.GITHUB_STEP_SUMMARY, `${summary}\n\n`, { flag: "a" });
-  }
+  await appendStepSummary(summary);
 }

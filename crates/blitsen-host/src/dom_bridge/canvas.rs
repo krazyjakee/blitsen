@@ -20,6 +20,8 @@
 use blitsen_dom::{CanvasCommands, CanvasTextStyle, DomBackend as _};
 use blitsen_js::{JsEngine, JsError, JsType, NativeCall, TypedArray, TypedArrayKind};
 
+use super::byte_argument;
+
 use super::{DomRuntime, argument};
 use crate::dom_error;
 
@@ -207,16 +209,7 @@ fn bytes<E: JsEngine>(
     if engine.value_type(value)? != JsType::TypedArray {
         return Ok(Vec::new());
     }
-    let array = engine.to_typed_array(value)?;
-    if !matches!(
-        array.kind,
-        TypedArrayKind::Uint8 | TypedArrayKind::Uint8Clamped
-    ) {
-        return Err(JsError::new(
-            "canvas pixel data must be a Uint8Array or Uint8ClampedArray",
-        ));
-    }
-    Ok(array.bytes)
+    byte_argument(engine, value, "canvas pixel data")
 }
 
 /// Answers with numbers, which is every answer that is not bytes or a string.

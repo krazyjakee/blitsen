@@ -3,11 +3,11 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { HELP, main, packageVersion, parseArgs, resolveApplication } from "../src/cli.mjs";
 import { TARGETS } from "../src/runtime.mjs";
-import { capture } from "./cli-support.mjs";
+import { captureConsole } from "./cli-support.mjs";
 
 describe("directory CLI", () => {
   test("prints help", async () => {
-    const { lines, output } = capture();
+    const { lines, output } = captureConsole();
     expect(await main(["--help"], output)).toBe(0);
     expect(lines[0][1]).toContain("Usage: blitsen [directory|url]");
   });
@@ -125,7 +125,7 @@ describe("directory CLI", () => {
   });
 
   test("reports the manifest version rather than a literal", async () => {
-    const { lines, output } = capture();
+    const { lines, output } = captureConsole();
     expect(await main(["--version"], output)).toBe(0);
     expect(lines[0][1]).toBe(await packageVersion());
   });

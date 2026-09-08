@@ -26,8 +26,7 @@
 // And `spikes/s9` proved this exact path produces an APK that runs, so what is
 // weighed here is a thing that works rather than a plausible archive.
 import { execFile } from "node:child_process";
-import { cp, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { gzipSync } from "node:zlib";
+import { cp, mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
@@ -37,21 +36,15 @@ import { ANDROID_ABIS, DEFAULT_ABIS, resolveAbis } from "../src/android.mjs";
 import { MIN_SDK, TARGET_SDK, detectAndroidToolchain, missing } from "../src/android-toolchain.mjs";
 import { BARE_APP } from "./bare-app.mjs";
 import { stageAndroidAssets } from "../src/android-assets.mjs";
-import { repository } from "./build-addon.mjs";
+import { argument, repository } from "./build-addon.mjs";
+import { fileSize as bytes, gzippedSize as gzipped } from "./size-reports.mjs";
 
 const run = promisify(execFile);
-const argv = process.argv.slice(2);
-const flag = name => {
-  const index = argv.indexOf(name);
-  return index === -1 ? null : argv[index + 1];
-};
-const abis = resolveAbis(flag("--abis")?.split(",").map(value => value.trim()) ?? DEFAULT_ABIS);
-const attribute = argv.includes("--attribute");
-const bundletool = flag("--bundletool");
-const outFile = flag("--out");
+const abis = resolveAbis(argument("abis")?.split(",").map(value => value.trim()) ?? DEFAULT_ABIS);
+const attribute = process.argv.includes("--attribute");
+const bundletool = argument("bundletool");
+const outFile = argument("out");
 
-const bytes = async path => (await stat(path)).size;
-const gzipped = async path => gzipSync(await readFile(path), { level: 9 }).length;
 const mb = value => `${(value / 1e6).toFixed(1)} MB`;
 const pad = (value, width) => String(value).padStart(width);
 

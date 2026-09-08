@@ -4,7 +4,9 @@
 // every megabyte added to the export has to be an argued-for decision.
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { argument } from "./build-addon.mjs";
 import { formatBytes, measureExport } from "./measure-export.mjs";
+import { appendStepSummary } from "./size-reports.mjs";
 
 const baselineFile = join(import.meta.dir, "metrics/size-baseline.json");
 const COMPONENTS = {
@@ -14,13 +16,12 @@ const COMPONENTS = {
   packagingBytes: "packaging",
 };
 
-const argv = process.argv.slice(2);
-const measurementsIndex = argv.indexOf("--measurements");
-const update = argv.includes("--update");
+const measurements = argument("measurements");
+const update = process.argv.includes("--update");
 
-const record = measurementsIndex < 0
+const record = measurements === null
   ? await measureExport({ runs: 1 })
-  : JSON.parse(await readFile(argv[measurementsIndex + 1], "utf8"));
+  : JSON.parse(await readFile(measurements, "utf8"));
 const baseline = JSON.parse(await readFile(baselineFile, "utf8"));
 
 if (update) {
@@ -106,8 +107,6 @@ const report = [
   ...failures.map(failure => `> **FAIL** ${failure}`),
 ].join("\n");
 console.log(report);
-if (process.env.GITHUB_STEP_SUMMARY) {
-  await writeFile(process.env.GITHUB_STEP_SUMMARY, `${report}\n\n`, { flag: "a" });
-}
+await appendStepSummary(report);
 if (failures.length > 0) process.exit(1);
 console.log(`Size gate passed for ${record.platform}.`);

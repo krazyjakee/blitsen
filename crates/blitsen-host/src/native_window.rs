@@ -1,4 +1,10 @@
-//! The native window: winit application, input translation and frame pumping.
+//! The native window: the winit application's shared state, and the pieces
+//! every part of a session reaches for.
+//!
+//! The behaviour lives in the submodules — `session` opens the window and owns
+//! its lifetime, `lifecycle` handles the winit events, `input` translates
+//! keyboard and IME input, `renderer` paints — and the tray, application menu,
+//! notifications, HID and gamepad controllers each have a module of their own.
 
 use std::cell::RefCell;
 use std::collections::HashMap;

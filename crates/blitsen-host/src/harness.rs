@@ -169,34 +169,14 @@ pub fn active_document_harness() -> Option<ActiveDocumentHarness> {
 /// disposing whatever the previous document left on the global object. An
 /// exported Phase 2 application has no filesystem to read the external scripts
 /// from; its loader reads the section appended to the executable instead.
-/// Inputs that belong to one document-script execution rather than its engine.
-pub(crate) struct WindowScriptOptions<'a> {
-    pub(crate) entrypoint: &'a str,
-    pub(crate) width: u32,
-    pub(crate) height: u32,
-    pub(crate) device_pixel_ratio: f64,
-    pub(crate) mode: DocumentMode,
-    pub(crate) loader: &'a dyn blitsen_core::ScriptLoader,
-    pub(crate) reader: Option<crate::app::AppReader>,
-    pub(crate) storage: Option<crate::storage::LocalStorage>,
-}
-
 pub(crate) fn execute_window_scripts_from<E: JsEngine + 'static>(
     engine: &mut E,
     runtime: DomRuntime,
     scripts: Vec<DocumentScript>,
-    options: WindowScriptOptions<'_>,
+    entrypoint: &str,
+    loader: &dyn blitsen_core::ScriptLoader,
+    install: InstallOptions,
 ) -> Result<dom_bridge::InstalledDom<E::StrongRef>, JsError> {
-    let WindowScriptOptions {
-        entrypoint,
-        width,
-        height,
-        device_pixel_ratio,
-        mode,
-        loader,
-        reader,
-        storage,
-    } = options;
     let module_root = Path::new(entrypoint)
         .parent()
         .unwrap_or_else(|| Path::new("."))
@@ -226,10 +206,6 @@ pub(crate) fn execute_window_scripts_from<E: JsEngine + 'static>(
             })()"#
     .replace("__BLITSEN_RELOAD_ROOT__", &module_root);
     engine.evaluate_script(&cleanup, "blitsen:dispose-document-context")?;
-    let mut install = InstallOptions::new(width, height, device_pixel_ratio, mode, reader);
-    if let Some(storage) = storage {
-        install = install.with_storage(storage);
-    }
     let installed = dom_bridge::install_with_hooks(engine, runtime, install)?;
     engine.evaluate_script(
         r#"(() => {
@@ -525,15 +501,27 @@ pub fn execute_document_harness<E: JsEngine + Clone + 'static>(
 ) -> Result<HarnessSnapshot, JsError> {
     // Mirrors a shipped window exactly, including the absence of test-only
     // injection globals, so the fixture guard against them stays meaningful.
-    let (_, document) =
-        load_document_harness(engine, entrypoint, width, height, DocumentMode::Application)?;
+    let (_, document, _) = load_document_harness_with_hooks(
+        engine,
+        entrypoint,
+        width,
+        height,
+        DocumentMode::Application,
+    )?;
     ACTIVE_DOCUMENT_HARNESS.with(|active| {
         *active.borrow_mut() = Some((Rc::clone(&document), width, height));
     });
     snapshot_harness(document, width, height)
 }
 
-/// Parses an entrypoint, installs the bridge and runs its document scripts.
+type LoadedHarness<E> = (
+    E,
+    Rc<RefCell<BlitzDom>>,
+    crate::dom_bridge::HostHooks<<E as JsEngine>::StrongRef>,
+);
+
+/// Loads an application document for a headless harness at a fixed viewport:
+/// parses the entrypoint, installs the bridge and runs its document scripts.
 ///
 /// The directory is opened as an application rather than as loose files, which
 /// is the same thing a window does with it (`app::load_document`). It used to
@@ -543,25 +531,6 @@ pub fn execute_document_harness<E: JsEngine + Clone + 'static>(
 /// instead of an application URL, so `new URL("./data.json", import.meta.url)`
 /// named a path `fetch` refuses, and the Phase 1 export failed the read that the
 /// Phase 2 one completed (#126, #90).
-type LoadedHarness<E> = (
-    E,
-    Rc<RefCell<BlitzDom>>,
-    crate::dom_bridge::HostHooks<<E as JsEngine>::StrongRef>,
-);
-
-/// Loads an application document for a headless harness at a fixed viewport.
-pub fn load_document_harness<E: JsEngine + Clone + 'static>(
-    engine: E,
-    entrypoint: &Path,
-    width: u32,
-    height: u32,
-    mode: DocumentMode,
-) -> Result<(E, Rc<RefCell<BlitzDom>>), JsError> {
-    let (engine, document, _) =
-        load_document_harness_with_hooks(engine, entrypoint, width, height, mode)?;
-    Ok((engine, document))
-}
-
 pub(crate) fn load_document_harness_with_hooks<E: JsEngine + Clone + 'static>(
     mut engine: E,
     entrypoint: &Path,

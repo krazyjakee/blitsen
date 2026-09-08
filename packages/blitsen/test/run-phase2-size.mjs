@@ -9,25 +9,21 @@
 //     bun run --cwd packages/blitsen size:phase2 [--out measurements.json]
 import { strict as assert } from "node:assert";
 import { execFile } from "node:child_process";
-import { cp, mkdtemp, mkdir, rm, stat, writeFile } from "node:fs/promises";
-import { gzipSync } from "node:zlib";
-import { readFile } from "node:fs/promises";
+import { cp, mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
 import { BARE_APP } from "./bare-app.mjs";
-import { buildAddon, repository } from "./build-addon.mjs";
+import { argument, buildAddon, repository } from "./build-addon.mjs";
 import { buildStandalone } from "../src/export.mjs";
 import { pinnedPhase2Runtime } from "./measurement-runtime.mjs";
-import { phase2SizeSummary } from "./size-reports.mjs";
+import { appendStepSummary, fileSize as bytes, gzippedSize as gzipped, phase2SizeSummary }
+  from "./size-reports.mjs";
 
 const run = promisify(execFile);
-const outIndex = process.argv.indexOf("--out");
-const outFile = outIndex === -1 ? null : process.argv[outIndex + 1];
+const outFile = argument("out");
 
-const bytes = async path => (await stat(path)).size;
-const gzipped = async path => gzipSync(await readFile(path), { level: 9 }).length;
 const mb = value => `${(value / 1e6).toFixed(1)} MB`;
 
 // The bare app P1 is written against lives in `bare-app.mjs`, because the
@@ -192,10 +188,7 @@ try {
     await writeFile(outFile, `${JSON.stringify(measurements, null, 2)}\n`);
     console.log(`  written to               ${outFile}`);
   }
-  const summary = phase2SizeSummary(measurements);
-  if (process.env.GITHUB_STEP_SUMMARY) {
-    await writeFile(process.env.GITHUB_STEP_SUMMARY, `${summary}\n\n`, { flag: "a" });
-  }
+  await appendStepSummary(phase2SizeSummary(measurements));
 } finally {
   await rm(directory, { recursive: true, force: true });
 }

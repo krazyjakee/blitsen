@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { copyFile, cp, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { copyFile, cp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
@@ -7,7 +7,7 @@ import { buildStandalone, describeExecutableBinary, describeNativeBinary, notifi
   from "../src/export.mjs";
 import { activationEntryPoint, developmentBundle, developmentIdentifier,
   notificationActivatorClsid, packageBuild, signArgv, signArtifact } from "../src/packaging.mjs";
-import { viteBase, addonFixtures, icon, signHook, compiler, engineAddon, engineBuilt, compileAddon, elfHeader, executableStub, exportedName, nativeStub, withStubbedExport, withArtifact } from "./cli-support.mjs";
+import { viteBase, addonFixtures, icon, signHook, compiler, engineAddon, engineBuilt, compileAddon, elfHeader, executableStub, exportedName, nativeStub, withStubbedExport, withArtifact, withTemporaryDirectory } from "./cli-support.mjs";
 
 describe("directory CLI", () => {
   test("reads the container header a .node must have to load on this host", () => {
@@ -121,8 +121,7 @@ describe("directory CLI", () => {
 
   test.skipIf(!compiler || !engineBuilt)(
     "loads a carried addon from the exported executable", async () => {
-      const workspace = await mkdtemp(join(tmpdir(), "blitsen-addon-export-"));
-      try {
+      await withTemporaryDirectory("blitsen-addon-export-", async workspace => {
         const root = join(workspace, "app");
         await cp(join(addonFixtures, "app"), root, { recursive: true });
         const addon = compileAddon(workspace);
@@ -153,9 +152,7 @@ describe("directory CLI", () => {
           expect(run.stderr.toString()).toBe("");
           expect(run.exitCode).toBe(0);
         }
-      } finally {
-        await rm(workspace, { recursive: true, force: true });
-      }
+      });
     }, 120_000);
 
   test("packages a Linux desktop entry, icon and signature into the build", async () => {

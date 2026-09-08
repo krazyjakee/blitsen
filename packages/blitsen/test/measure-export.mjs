@@ -5,12 +5,12 @@ import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildStandalone } from "../src/export.mjs";
-import { buildAddon, repository } from "./build-addon.mjs";
+import { argument, buildAddon, repository } from "./build-addon.mjs";
 import { pinnedPhase2Runtime } from "./measurement-runtime.mjs";
 
 export { repository } from "./build-addon.mjs";
 
-export const platformKey = `${process.platform}-${process.arch}`;
+const platformKey = `${process.platform}-${process.arch}`;
 
 export function measurementStorageEnvironment(platform, directory) {
   if (platform === "win32") {
@@ -257,14 +257,13 @@ export function formatBytes(bytes) {
 }
 
 if (import.meta.main) {
-  const argv = process.argv.slice(2);
-  const outIndex = argv.indexOf("--out");
-  const runsIndex = argv.indexOf("--runs");
+  const outFile = argument("out");
+  const runs = argument("runs");
   const record = await measureExport({
-    runs: runsIndex < 0 ? undefined : Number(argv[runsIndex + 1]),
-    windowed: argv.includes("--windowed"),
+    runs: runs === null ? undefined : Number(runs),
+    windowed: process.argv.includes("--windowed"),
   });
   const serialized = `${JSON.stringify(record, null, 2)}\n`;
-  if (outIndex < 0) process.stdout.write(serialized);
-  else await writeFile(argv[outIndex + 1], serialized);
+  if (outFile === null) process.stdout.write(serialized);
+  else await writeFile(outFile, serialized);
 }

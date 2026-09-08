@@ -25,7 +25,7 @@ import {
 import { MIN_SDK } from "../src/android-toolchain.mjs";
 import { main, parseArgs } from "../src/cli.mjs";
 import { changed, decodeFrame, describe as describeFrame } from "./run-android-smoke.mjs";
-import { capture } from "./cli-support.mjs";
+import { captureConsole } from "./cli-support.mjs";
 import {
   androidApplication as application, withAndroidWork as withWork,
 } from "./android-apk-fixtures.mjs";
@@ -187,10 +187,8 @@ describe("the application ID", () => {
 });
 
 describe("the version code", () => {
-  // This scheme is Blitsen's again. It was abandoned once because `cargo apk`
-  // panics if the manifest carries a version code at all and imposed a byte per
-  // component; this build writes the manifest, so the number in it is the one
-  // chosen here and `1.0.256` ships.
+  // This build writes the manifest, so the number in it is the one chosen here
+  // rather than a packager's byte-per-component derivation, and `1.0.256` ships.
   test("is the semver, in decimal places that read back", () => {
     expect(versionCode("1.2.3")).toBe(1_002_003);
     expect(versionCode("0.1.0")).toBe(1_000);
@@ -200,8 +198,7 @@ describe("the version code", () => {
   test("orders the way semver does", () => {
     expect(versionCode("1.0.0")).toBeGreaterThan(versionCode("0.999.999"));
     expect(versionCode("0.2.0")).toBeGreaterThan(versionCode("0.1.999"));
-    // The ceiling the packager imposed is gone, and this is the version that
-    // could not previously be expressed at all.
+    // A component over 255, which a byte-per-component code cannot express.
     expect(versionCode("1.0.256")).toBe(1_000_256);
   });
 
@@ -280,7 +277,7 @@ describe("the command line", () => {
   });
 
   test("help lists the Android flags under their own heading", async () => {
-    const { lines } = capture();
+    const { lines } = captureConsole();
     const help = [];
     await main(["--help"], { log: line => help.push(line), error: line => help.push(line) });
     expect(lines).toEqual([]);
@@ -298,7 +295,7 @@ describe("the command line", () => {
         "import { writeText } from \"blitsen/clipboard\";\n"
         + "import { platform } from \"blitsen/os\";\n"
         + "export const ready = [writeText, platform];\n");
-      const { lines, output } = capture();
+      const { lines, output } = captureConsole();
       const previous = process.env.ANDROID_HOME;
       process.env.ANDROID_HOME = join(directory, "no-sdk-here");
       try {
@@ -318,7 +315,7 @@ describe("the command line", () => {
   test("a build with no SDK fails saying so, and resolves no desktop runtime", async () => {
     await withWork(async directory => {
       const root = await application(directory);
-      const { lines, output } = capture();
+      const { lines, output } = captureConsole();
       const previous = process.env.ANDROID_HOME;
       process.env.ANDROID_HOME = join(directory, "no-sdk-here");
       try {

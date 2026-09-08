@@ -16,40 +16,32 @@ import { cp, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
-import { buildAddon, repository } from "./build-addon.mjs";
+import { buildAddon, capture, repository } from "./build-addon.mjs";
+import { RUST_TARGETS } from "./generate-notices.mjs";
 import { auditNotices, collectNotices, writeNotices } from "../src/notices.mjs";
-import { hostTarget, packageVersion, resolvePhase2Runtime } from "../src/runtime.mjs";
+import { hostTarget, packageVersion, resolvePhase2Runtime, TARGETS } from "../src/runtime.mjs";
 
 const CLI = join(repository, "packages/blitsen/bin/blitsen.mjs");
-const RUST_TARGETS = {
-  "linux-x64": "x86_64-unknown-linux-gnu", "linux-arm64": "aarch64-unknown-linux-gnu",
-  "darwin-x64": "x86_64-apple-darwin", "darwin-arm64": "aarch64-apple-darwin",
-  "win32-x64": "x86_64-pc-windows-msvc", "win32-arm64": "aarch64-pc-windows-msvc",
-};
 
-const run = async (command, args) => {
-  const result = Bun.spawnSync({ cmd: [command, ...args], cwd: repository, stdout: "pipe", stderr: "pipe" });
-  return { code: result.exitCode, stdout: result.stdout.toString(), stderr: result.stderr.toString() };
-};
+const run = (command, args) => capture([command, ...args], { cwd: repository });
 
 const addon = await buildAddon({ purpose: "the redistribution gate", release: true });
 const runtime = await resolvePhase2Runtime();
+// The gate links a platform package, and the notices table also has Android
+// rows that no platform package carries — so the host has to be a desktop one.
 const target = hostTarget();
+if (!TARGETS.includes(target)) throw new Error(`no platform package to gate on ${target}`);
 
 function cli(directory, args, environment = {}) {
-  const result = Bun.spawnSync({
-    cmd: [process.execPath, CLI, ...args],
+  return capture([process.execPath, CLI, ...args], {
     cwd: directory,
     env: { ...process.env, BLITSEN_NATIVE_PATH: addon, ...environment },
-    stdout: "pipe",
-    stderr: "pipe",
   });
-  return { code: result.exitCode, stdout: result.stdout.toString(), stderr: result.stderr.toString() };
 }
 
 function licenses(executable) {
-  const result = Bun.spawnSync({ cmd: [executable, "--licenses"], stdout: "pipe", stderr: "pipe" });
-  return { code: result.exitCode, text: result.stdout.toString(), error: result.stderr.toString() };
+  const { code, stdout: text, stderr: error } = capture([executable, "--licenses"]);
+  return { code, text, error };
 }
 
 const workspace = await mkdtemp(join(tmpdir(), "blitsen-licensing-"));

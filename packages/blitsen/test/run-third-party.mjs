@@ -21,7 +21,7 @@ import { tmpdir } from "node:os";
 import { dirname, extname, join } from "node:path";
 import { planIngest, rewriteRootRelativeReferences } from "../src/export.mjs";
 import { REWRITTEN_EXTENSIONS } from "../src/files.mjs";
-import { buildAddon, repository } from "./build-addon.mjs";
+import { buildAddon, capture, repository } from "./build-addon.mjs";
 
 const WIDTH = 1280;
 const HEIGHT = 800;
@@ -74,9 +74,8 @@ const FIXTURES = [
   })),
 ];
 
-const run = (cmd, cwd, env = process.env) =>
-  Bun.spawnSync({ cmd, cwd, env, stdout: "pipe", stderr: "pipe" });
-const output = result => `${result.stdout.toString()}${result.stderr.toString()}`;
+const run = (cmd, cwd, env = process.env) => capture(cmd, { cwd, env });
+const output = result => `${result.stdout}${result.stderr}`;
 const lastLine = text => text.split("\n").filter(line => line.trim()).at(-1) ?? "";
 
 // Renders one staged application in its own process: a failed document load
@@ -172,7 +171,7 @@ for (const fixture of FIXTURES) {
     await rm(source, { recursive: true, force: true });
     if (fixture.scaffold) {
       const scaffold = run(fixture.scaffold, work);
-      if (scaffold.exitCode !== 0) throw new Error(`scaffold failed:\n${output(scaffold)}`);
+      if (scaffold.code !== 0) throw new Error(`scaffold failed:\n${output(scaffold)}`);
     } else {
       await mkdir(source, { recursive: true });
       for (const command of [
@@ -182,13 +181,13 @@ for (const fixture of FIXTURES) {
         ["git", "checkout", "-q", "--detach", "FETCH_HEAD"],
       ]) {
         const step = run(command, source);
-        if (step.exitCode !== 0) throw new Error(`${command.join(" ")} failed:\n${output(step)}`);
+        if (step.code !== 0) throw new Error(`${command.join(" ")} failed:\n${output(step)}`);
       }
     }
   }
   for (const command of [fixture.install, fixture.build]) {
     const step = run(command, source);
-    if (step.exitCode !== 0) {
+    if (step.code !== 0) {
       result.status = `the application's own '${command.join(" ")}' failed`;
       break;
     }
@@ -197,7 +196,7 @@ for (const fixture of FIXTURES) {
 
   const dist = join(source, "dist");
   const doctor = run([process.execPath, cli, "doctor", dist, "--json"], source, environment);
-  const report = JSON.parse(doctor.stdout.toString());
+  const report = JSON.parse(doctor.stdout);
   result.doctor = { errors: report.errors, warnings: report.warnings };
   result.codes = [...new Set(report.diagnostics
     .filter(item => item.severity === "error").map(item => item.code))].sort();
@@ -207,7 +206,7 @@ for (const fixture of FIXTURES) {
   const exported = run(
     [process.execPath, cli, "build", dist, "--outfile", join(options.out, fixture.name)],
     source, environment);
-  result.build = exported.exitCode === 0 ? "ok" : lastLine(exported.stderr.toString());
+  result.build = exported.code === 0 ? "ok" : lastLine(exported.stderr);
   console.log(`blitsen build: ${result.build}`);
 
   const staging = join(work, `${fixture.name}.staged`);
@@ -228,7 +227,7 @@ for (const fixture of FIXTURES) {
   // An exception thrown inside the application's own render pass — React catches
   // and rethrows it — reaches the host as an unhandled error rather than through
   // the harness call, so the reason a mount produced nothing is only in stderr.
-  result.render.error ??= rendered.stderr.toString()
+  result.render.error ??= rendered.stderr
     .match(/^(?:[A-Za-z]*Error|error): .+$/m)?.[0] ?? null;
   result.rendered = result.render.loaded
     && result.render.elements >= MOUNTED_ELEMENTS

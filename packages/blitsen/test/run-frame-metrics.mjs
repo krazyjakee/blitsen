@@ -10,18 +10,15 @@
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildAddon, repository } from "./build-addon.mjs";
+import { argument, buildAddon, capture, repository } from "./build-addon.mjs";
+import { appendStepSummary } from "./size-reports.mjs";
 
 const argv = process.argv.slice(2);
-const option = name => {
-  const index = argv.indexOf(name);
-  return index === -1 ? null : argv[index + 1];
-};
 const debug = argv.includes("--debug");
 // Counting allocations wraps the global allocator, so the audit is a separate
 // build: a shipped addon should not pay for a number nobody reads.
 const audit = argv.includes("--alloc-audit");
-const outFile = option("--out");
+const outFile = argument("out");
 
 const traceFile = join(import.meta.dir, "replay/pong.trace.json");
 
@@ -29,17 +26,13 @@ const addon = await buildAddon({ purpose: "frame-metrics target", release: !debu
   features: audit ? ["alloc-audit"] : [] });
 
 const run = (script, extra = []) => {
-  const result = Bun.spawnSync({
-    cmd: [process.execPath, join(import.meta.dir, script), addon, ...extra],
-    cwd: repository,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  if (result.exitCode !== 0) {
-    process.stderr.write(result.stderr.toString());
-    throw new Error(`${script} exited ${result.exitCode}`);
+  const result = capture([process.execPath, join(import.meta.dir, script), addon, ...extra],
+    { cwd: repository });
+  if (result.code !== 0) {
+    process.stderr.write(result.stderr);
+    throw new Error(`${script} exited ${result.code}`);
   }
-  return result.stdout.toString();
+  return result.stdout;
 };
 
 const workspace = await mkdtemp(join(tmpdir(), "blitsen-frame-metrics-"));
@@ -108,9 +101,7 @@ const report = [
 ].join("\n");
 
 console.log(report);
-if (process.env.GITHUB_STEP_SUMMARY) {
-  await writeFile(process.env.GITHUB_STEP_SUMMARY, `${report}\n\n`, { flag: "a" });
-}
+await appendStepSummary(report);
 if (outFile) {
   await writeFile(outFile, `${JSON.stringify({
     recorded: new Date().toISOString(),
