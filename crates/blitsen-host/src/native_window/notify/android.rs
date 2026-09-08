@@ -23,7 +23,8 @@ use std::sync::{Arc, OnceLock, RwLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use android_activity::AndroidApp;
-use jni::objects::{JObject, JString, JValue};
+use jni::objects::{JClass, JClassLoader, JObject, JString, JValue};
+use jni::refs::LoaderContext;
 use jni::{Env, JavaVM, jni_sig, jni_str};
 use parking_lot::Mutex;
 use serde_json::{Value, json};
@@ -326,15 +327,41 @@ fn envelope(
 }
 
 /// A private receiver PendingIntent that persists `activation` before launch.
+/// The private receiver's class, resolved through the application's loader.
+///
+/// `FindClass` decides which loader to ask from the calling Java frame, and a
+/// thread attached with `attach_current_thread` — the session thread, here —
+/// has none, so it falls back to the system loader, which has never seen the
+/// APK's `classes.dex`. Every `post()` then failed after creating the channel,
+/// which is the "channel present, zero records" shape of #375. The activity's
+/// own loader is the one that loaded the receiver.
+fn receiver_class<'env>(
+    env: &mut Env<'env>,
+    activity: &JObject<'_>,
+) -> jni::errors::Result<JClass<'env>> {
+    let loader = env
+        .call_method(
+            activity,
+            jni_str!("getClassLoader"),
+            jni_sig!("()Ljava/lang/ClassLoader;"),
+            &[],
+        )?
+        .l()?;
+    let loader = env.cast_local::<JClassLoader>(loader)?;
+    LoaderContext::Loader(&loader).load_class(
+        env,
+        jni_str!("com.blitsen.runtime.NotificationBridge$ActivationReceiver"),
+        true,
+    )
+}
+
 fn trampoline<'env>(
     env: &mut Env<'env>,
     activity: &JObject<'_>,
     activation: &Activation,
     launch: bool,
 ) -> jni::errors::Result<JObject<'env>> {
-    let receiver = JObject::from(env.find_class(jni_str!(
-        "com/blitsen/runtime/NotificationBridge$ActivationReceiver"
-    ))?);
+    let receiver = JObject::from(receiver_class(env, activity)?);
     let intent = env.new_object(
         jni_str!("android/content/Intent"),
         jni_sig!("(Landroid/content/Context;Ljava/lang/Class;)V"),
