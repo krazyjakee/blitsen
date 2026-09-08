@@ -2,10 +2,11 @@
 //
 // # Why the shade is the only channel out
 //
-// An APK's stdout and stderr go nowhere: `console.log` is `println!` in the host,
-// and fd 1 of an Android application is `/dev/null`. `blitsen-android`'s `logcat`
-// module writes only what `android_main` itself can say, and deliberately does not
-// route the engine's records. `localStorage` is a session, not a file. `fetch`
+// An APK's stdout and stderr reach only logcat: `android-activity` pipes both
+// into it under the `RustStdoutStderr` tag, which the harness records for
+// diagnosis but does not assert on. `blitsen-android`'s `logcat` module writes
+// only what `android_main` itself can say, and deliberately does not route the
+// engine's records. `localStorage` is a session, not a file. `fetch`
 // cannot open a socket, because the generated manifest asks for
 // `POST_NOTIFICATIONS` and nothing else — an APK that reported its results over
 // `adb reverse` would need `INTERNET` in every application Blitsen builds, which is
@@ -174,6 +175,10 @@ export const NOTIFY_APP = `<!doctype html><html><head><meta charset="utf-8"><tit
   say("done");
 })().catch(failure => {
   document.querySelector("#app").textContent = "fixture failed: " + failure.message;
+  // android-activity pipes the process's stderr into logcat under the
+  // RustStdoutStderr tag, so a failure before the first notification lands
+  // is named there instead of leaving only an empty transcript (#375).
+  console.error("fixture failed: " + failure.message);
 });
 </script>
 </body></html>
