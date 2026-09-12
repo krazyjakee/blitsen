@@ -73,15 +73,17 @@ impl Appearance {
     /// The preferences the document should report right now.
     fn preferences(&self) -> MediaPreferences {
         #[cfg(not(any(target_os = "android", target_os = "ios")))]
-        let platform = self.watcher.current();
-        #[cfg(any(target_os = "android", target_os = "ios"))]
-        let platform = blitsen_platform_fallback();
-        let color_scheme = platform
-            .color_scheme
-            .map(|scheme| match scheme {
+        let (platform_color_scheme, reduced_motion) = {
+            let platform = self.watcher.current();
+            let color_scheme = platform.color_scheme.map(|scheme| match scheme {
                 blitsen_platform::appearance::ColorScheme::Light => ColorScheme::Light,
                 blitsen_platform::appearance::ColorScheme::Dark => ColorScheme::Dark,
-            })
+            });
+            (color_scheme, platform.reduced_motion.unwrap_or(false))
+        };
+        #[cfg(any(target_os = "android", target_os = "ios"))]
+        let (platform_color_scheme, reduced_motion): (Option<ColorScheme>, bool) = (None, false);
+        let color_scheme = platform_color_scheme
             .or_else(|| {
                 self.theme.map(|theme| match theme {
                     Theme::Light => ColorScheme::Light,
@@ -91,16 +93,9 @@ impl Appearance {
             .unwrap_or_default();
         MediaPreferences {
             color_scheme,
-            reduced_motion: platform.reduced_motion.unwrap_or(false),
+            reduced_motion,
         }
     }
-}
-
-/// The platform reading on a target that has no watcher: nothing, so the
-/// window's theme and the documented fallbacks answer.
-#[cfg(any(target_os = "android", target_os = "ios"))]
-fn blitsen_platform_fallback() -> blitsen_platform::appearance::Preferences {
-    blitsen_platform::appearance::Preferences::default()
 }
 
 impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Rend, E> {
