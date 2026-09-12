@@ -995,7 +995,9 @@
     // A running child keeps the loop turning for the reason an open HID device
     // does: its output is already in the host, and only a frame delivers it.
     keepAlive: () => liveProcesses.size > 0,
-    onMessage: message => {
+    // Promise reactions to spawn run first, so even output and exit queued
+    // in the same native batch reach listeners installed by `await spawn()`.
+    onMessage: message => Promise.resolve().then(() => {
       const state = liveProcesses.get(message.id);
       if (!state) return;
       if (message.type === "output") {
@@ -1009,7 +1011,7 @@
       state.status = Object.freeze({ code: message.code, signal: message.signal });
       deliverCommandListeners(state.exitListeners, state.status, "child process exit");
       state.settleExit(state.status);
-    },
+    }),
   });
   const settleProcesses = processChannel.settle;
   const disposeProcesses = hosted("__blitsenNativeProcessDisposeAll")

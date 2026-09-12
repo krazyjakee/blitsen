@@ -189,6 +189,8 @@ struct Entry {
 }
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
+// Reload invalidates launches that have not reached the registry yet.
+static GENERATION: AtomicU64 = AtomicU64::new(0);
 /// Every child that has started and not yet ended, by handle.
 static PROCESSES: Mutex<BTreeMap<u64, Entry>> = Mutex::new(BTreeMap::new());
 /// What the worker threads learned, waiting for a frame turn. Process-visible
@@ -211,11 +213,12 @@ fn push(event: Event) {
 /// not an error here.
 pub fn spawn(request: SpawnRequest) -> u64 {
     let command_id = next_id();
+    let generation = GENERATION.load(Ordering::Acquire);
     platform::register_exit_cleanup();
     let started = std::thread::Builder::new()
         .name("blitsen-process".to_owned())
         .spawn(move || match launch(&request) {
-            Ok(child) => supervise(command_id, child),
+            Ok(child) => supervise(command_id, generation, child),
             Err(failure) => push(Event::Spawned {
                 command_id,
                 result: Err(failure),
@@ -289,7 +292,11 @@ pub fn take() -> Vec<Event> {
 /// and the new one has no handle to reach them by. Forced rather than polite,
 /// so it is finished when it returns.
 pub fn dispose_all() {
-    let processes = std::mem::take(&mut *PROCESSES.lock());
+    let processes = {
+        let mut processes = PROCESSES.lock();
+        GENERATION.fetch_add(1, Ordering::Release);
+        std::mem::take(&mut *processes)
+    };
     for entry in processes.values() {
         entry.tree.kill(true);
     }
@@ -338,10 +345,38 @@ fn launch(request: &SpawnRequest) -> Result<Child, Failure> {
 }
 
 /// Owns a child for its whole life, from the thread that started it.
-fn supervise(command_id: u64, mut child: Child) {
+fn supervise(command_id: u64, generation: u64, mut child: Child) {
     let id = next_id();
     let pid = child.id();
-    let tree = platform::Tree::adopt(&child);
+    let tree = match platform::Tree::adopt(&child) {
+        Ok(tree) => tree,
+        Err(error) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            push(Event::Spawned {
+                command_id,
+                result: Err(Failure::Operation(error.to_string())),
+            });
+            return;
+        }
+    };
+    let mut processes = PROCESSES.lock();
+    if generation != GENERATION.load(Ordering::Acquire) {
+        tree.kill(true);
+        let _ = child.kill();
+        let _ = child.wait();
+        return;
+    }
+    if let Err(error) = tree.resume(&child) {
+        tree.kill(true);
+        let _ = child.kill();
+        let _ = child.wait();
+        push(Event::Spawned {
+            command_id,
+            result: Err(Failure::Operation(error.to_string())),
+        });
+        return;
+    }
     let stdin = child.stdin.take().map(|stdin| {
         let (sender, receiver) = mpsc::channel();
         spawn_named("blitsen-process-stdin", move || {
@@ -351,7 +386,8 @@ fn supervise(command_id: u64, mut child: Child) {
     });
     // Registered before the answer is queued, so a write that follows the
     // resolved spawn on the very next line finds the child.
-    PROCESSES.lock().insert(id, Entry { tree, stdin });
+    processes.insert(id, Entry { tree, stdin });
+    drop(processes);
     push(Event::Spawned {
         command_id,
         result: Ok(Spawned { id, pid }),
@@ -382,6 +418,11 @@ fn supervise(command_id: u64, mut child: Child) {
     })
     .collect::<Vec<_>>();
     let status = child.wait();
+    // Descendants may still hold the output pipes open. End the tree before
+    // joining readers, otherwise EOF (and the exit event) may never arrive.
+    if let Some(entry) = PROCESSES.lock().get(&id) {
+        entry.tree.kill(true);
+    }
     // After the last of the output: the readers stop at end of file, which is
     // when the child and everything it handed its pipes to have let go.
     for reader in readers.into_iter().flatten() {
@@ -458,10 +499,14 @@ mod platform {
     }
 
     impl Tree {
-        pub(super) fn adopt(child: &std::process::Child) -> Self {
-            Self {
+        pub(super) fn adopt(child: &std::process::Child) -> std::io::Result<Self> {
+            Ok(Self {
                 group: child.id() as libc::pid_t,
-            }
+            })
+        }
+
+        pub(super) fn resume(&self, _child: &std::process::Child) -> std::io::Result<()> {
+            Ok(())
         }
 
         pub(super) fn kill(&self, force: bool) {
@@ -551,14 +596,17 @@ mod platform {
     use std::os::windows::io::AsRawHandle;
     use std::process::Command;
 
-    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, TH32CS_SNAPTHREAD, THREADENTRY32, Thread32First, Thread32Next,
+    };
     use windows_sys::Win32::System::JobObjects::{
         AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
         JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
         SetInformationJobObject, TerminateJobObject,
     };
     use windows_sys::Win32::System::Threading::{
-        CREATE_NO_WINDOW, OpenProcess, PROCESS_TERMINATE, TerminateProcess,
+        CREATE_NO_WINDOW, CREATE_SUSPENDED, OpenThread, ResumeThread, THREAD_SUSPEND_RESUME,
     };
 
     use super::ExitStatus;
@@ -568,11 +616,9 @@ mod platform {
     /// termination from a child that exited with 1 itself.
     const TERMINATED: u32 = 1;
 
-    /// The job object the child was assigned to, or the process alone when
-    /// the assignment was refused.
+    /// The job object assigned before the child's first instruction runs.
     pub(super) struct Tree {
         job: HANDLE,
-        pid: u32,
     }
 
     // SAFETY: a job handle is a kernel object reference that any thread may
@@ -580,50 +626,78 @@ mod platform {
     unsafe impl Send for Tree {}
 
     impl Tree {
-        pub(super) fn adopt(child: &std::process::Child) -> Self {
-            let pid = child.id();
-            // SAFETY: plain kernel calls with valid or null arguments; every
-            // failure is checked and leaves `job` null.
-            let job = unsafe {
-                let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
-                if job.is_null() {
-                    return Self { job, pid };
-                }
+        pub(super) fn adopt(child: &std::process::Child) -> std::io::Result<Self> {
+            // SAFETY: null pointers request default security and an unnamed
+            // job. Every successful handle is owned by Tree from this point.
+            let job = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
+            if job.is_null() {
+                return Err(std::io::Error::last_os_error());
+            }
+            let tree = Self { job };
+            // SAFETY: the fully initialized limits structure lives through the
+            // call and the child handle belongs to a live, suspended Child.
+            unsafe {
                 let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
                 limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-                let configured = SetInformationJobObject(
+                if SetInformationJobObject(
                     job,
                     JobObjectExtendedLimitInformation,
                     (&raw const limits).cast(),
                     std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
-                ) != 0;
-                let assigned = configured
-                    && AssignProcessToJobObject(job, child.as_raw_handle() as HANDLE) != 0;
-                if assigned {
-                    job
-                } else {
-                    CloseHandle(job);
-                    std::ptr::null_mut()
+                ) == 0
+                    || AssignProcessToJobObject(job, child.as_raw_handle() as HANDLE) == 0
+                {
+                    return Err(std::io::Error::last_os_error());
                 }
-            };
-            Self { job, pid }
+            }
+            Ok(tree)
+        }
+
+        pub(super) fn resume(&self, child: &std::process::Child) -> std::io::Result<()> {
+            // Stable std does not expose Child's primary thread handle. The
+            // suspended process has exactly its initial thread; find that
+            // thread through Toolhelp and resume it only after job assignment.
+            // SAFETY: the snapshot and opened thread are closed on every path;
+            // THREADENTRY32 has the documented size before enumeration starts.
+            unsafe {
+                let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+                if snapshot == INVALID_HANDLE_VALUE {
+                    return Err(std::io::Error::last_os_error());
+                }
+                let result = (|| {
+                    let mut entry: THREADENTRY32 = std::mem::zeroed();
+                    entry.dwSize = std::mem::size_of::<THREADENTRY32>() as u32;
+                    let mut found = Thread32First(snapshot, &raw mut entry);
+                    while found != 0 {
+                        if entry.th32OwnerProcessID == child.id() {
+                            let thread = OpenThread(THREAD_SUSPEND_RESUME, 0, entry.th32ThreadID);
+                            if thread.is_null() {
+                                return Err(std::io::Error::last_os_error());
+                            }
+                            let resumed = ResumeThread(thread);
+                            let error = std::io::Error::last_os_error();
+                            CloseHandle(thread);
+                            return if resumed == u32::MAX {
+                                Err(error)
+                            } else {
+                                Ok(())
+                            };
+                        }
+                        found = Thread32Next(snapshot, &raw mut entry);
+                    }
+                    Err(std::io::Error::new(
+                        std::io::ErrorKind::NotFound,
+                        "the suspended child's initial thread was not found",
+                    ))
+                })();
+                CloseHandle(snapshot);
+                result
+            }
         }
 
         pub(super) fn kill(&self, _force: bool) {
-            if !self.job.is_null() {
-                // SAFETY: `job` is the handle created in `adopt` and still open.
-                unsafe { TerminateJobObject(self.job, TERMINATED) };
-                return;
-            }
-            // SAFETY: the handle is opened and closed here; a process that has
-            // already gone opens as null and is skipped.
-            unsafe {
-                let process = OpenProcess(PROCESS_TERMINATE, 0, self.pid);
-                if !process.is_null() {
-                    TerminateProcess(process, TERMINATED);
-                    CloseHandle(process);
-                }
-            }
+            // SAFETY: job is the valid handle owned by this Tree.
+            unsafe { TerminateJobObject(self.job, TERMINATED) };
         }
     }
 
@@ -642,7 +716,7 @@ mod platform {
     pub(super) fn prepare(command: &mut Command) {
         use std::os::windows::process::CommandExt;
 
-        command.creation_flags(CREATE_NO_WINDOW);
+        command.creation_flags(CREATE_NO_WINDOW | CREATE_SUSPENDED);
     }
 
     pub(super) fn exit_status(status: std::process::ExitStatus) -> ExitStatus {
@@ -888,6 +962,28 @@ mod tests {
         }
         assert!(!alive(grandchild), "the grandchild outlived the tree");
         kill(id, true);
+    }
+
+    #[test]
+    fn root_exit_kills_descendants_before_waiting_for_pipe_eof() {
+        let _serial = SERIAL.lock();
+        spawn(request("sh", &["-c", "sleep 60 & printf done; exit 4"]));
+        let events = collect(|events| exited(events).is_some());
+        assert_eq!(output(&events, Stream::Stdout), b"done");
+        assert_eq!(exited(&events).and_then(|status| status.code), Some(4));
+    }
+
+    #[test]
+    fn a_launch_in_flight_cannot_register_after_dispose() {
+        let _serial = SERIAL.lock();
+        let generation = GENERATION.load(Ordering::Acquire);
+        let child = launch(&request("sleep", &["60"])).expect("started");
+        let pid = child.id();
+        dispose_all();
+        supervise(next_id(), generation, child);
+        assert!(!alive(pid as i32), "the stale launch was killed and reaped");
+        assert!(PROCESSES.lock().is_empty());
+        assert!(take().is_empty(), "the old document receives no spawn");
     }
 
     #[test]

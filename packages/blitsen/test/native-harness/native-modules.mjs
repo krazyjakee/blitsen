@@ -606,12 +606,48 @@ if (processModule.spawn) {
       process.stdin.setEncoding("utf8");
       process.stdin.on("data", chunk => { text += chunk; });
       process.stdin.on("end", () => { process.stdout.write(text.toUpperCase()); process.exit(0); });
+    } else if (mode === "orphan") {
+      Bun.spawn([process.execPath, "-e", "setInterval(() => {}, 1000)"], {
+        stdout: "inherit", stderr: "inherit",
+      });
+      process.stdout.write("root finished");
+      process.exit(4);
     } else if (mode === "tree") {
       const grandchild = Bun.spawn([process.execPath, "-e", "setInterval(() => {}, 1000)"]);
       process.stdout.write(String(grandchild.pid) + "\\n");
       setInterval(() => {}, 1000);
     }
   `);
+
+  // A fast child can finish before the first frame collects its spawn.
+  // Listeners attached by the spawn promise must still receive that batch.
+  let fastChild;
+  const fastOutput = [];
+  const fastSpawn = processModule.spawn({ command: process.execPath, args: [script, "streams"] })
+    .then(child => {
+      fastChild = child;
+      child.onStdout(chunk => fastOutput.push(decoder().decode(chunk)));
+      child.onExit(status => fastOutput.push(status.code));
+    });
+  await Bun.sleep(500);
+  await settle(() => fastChild?.exited);
+  await fastSpawn;
+  assert.deepEqual(fastOutput.slice(0, -1).join(""), "one\ntwo\n",
+    "output queued alongside spawn reaches promise-installed listeners");
+  assert.equal(fastOutput.at(-1), 3, "exit follows the queued output");
+
+  let orphanRoot;
+  const orphanOutput = [];
+  const orphanSpawn = processModule.spawn({ command: process.execPath, args: [script, "orphan"] })
+    .then(child => {
+      orphanRoot = child;
+      child.onStdout(chunk => orphanOutput.push(decoder().decode(chunk)));
+    });
+  await settle(() => orphanRoot?.exited);
+  await orphanSpawn;
+  assert.equal(orphanRoot.status.code, 4);
+  assert.equal(orphanOutput.join(""), "root finished",
+    "descendants holding output pipes do not prevent root exit delivery");
 
   // Launch failure: a program that does not exist rejects with the name an
   // application branches on, on a frame turn.
