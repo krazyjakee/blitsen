@@ -124,6 +124,7 @@
     deliverSecondInstances();
     settleDialogs();
     settleShell();
+    settleProcesses();
     settleTrays();
     settleMenus();
     settleHid();

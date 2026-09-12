@@ -81,6 +81,10 @@
     "./shell": {
       "types": "./src/native/shell.d.ts",
       "import": "./src/native/shell.mjs"
+    },
+    "./process": {
+      "types": "./src/native/process.d.ts",
+      "import": "./src/native/process.mjs"
     }
   },
   "types": "./index.d.ts",

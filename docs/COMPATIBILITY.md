@@ -1592,6 +1592,7 @@ lib. The capability tiers above are the list, and `blitsen doctor` is the check.
 | `blitsen/notify` | `show`, `permission`, `requestPermission`, `update`, `close`, `onEvent` | — |
 | `blitsen/os` | `cpu`, `memory`, `storage`, `host`, `batteries`, `locale` | `displays`, `idleTime` |
 | `blitsen/shell` | `openExternal`, `openPath`, `showItemInFolder` | — |
+| `blitsen/process` | `spawn` | — |
 
 | Absent member | Why |
 | --- | --- |
@@ -1624,6 +1625,7 @@ lib. The capability tiers above are the list, and `blitsen doctor` is the check.
 | `blitsen/tray` | android | Android has no desktop notification area or status-item menu. Its persistent status UI is a notification, which belongs to blitsen/notify and carries its own runtime permission and channel semantics rather than pretending to be a tray icon. |
 | `blitsen/menu` | android | Android has no application menu bar. Its equivalents are the app bar's overflow menu and the navigation drawer, which are views inside the activity's own layout rather than a menu the platform owns, and neither has this shape. |
 | `blitsen/shell` | android | Opening a URL or a file on Android is an Intent the Activity sends, answered by the system's chooser rather than by a handler this process spawns, and there is no file manager to reveal an item in. It needs a module shaped for Intents, over JNI, rather than these three desktop operations answering with something else. |
+| `blitsen/process` | android | An Android application has no developer tools to run: there is no `gh` or `claude` on the device, an app process may not execute what is not in its own APK, and a process it did start would be killed with it by the platform's own lifecycle. The supervisor this module is — process groups, exit cleanup, piped streams on a frame turn — answers a desktop question. |
 
 | Conditional native member | Platform where absent | Why |
 | --- | --- | --- |

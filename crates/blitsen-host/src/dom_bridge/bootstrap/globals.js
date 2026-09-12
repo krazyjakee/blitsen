@@ -48,7 +48,7 @@
     || pendingResizeObservations() > 0 || audioPending()
     || waitingImages() > 0 || waitingLinks() > 0
     || nativePending() || nativeDialogPending() || shellChannel.workPending()
-    || nativeTrayWorkPending()
+    || processChannel.workPending() || nativeTrayWorkPending()
     || nativeMenuWorkPending()
     || nativeNotifyWorkPending() || nativeHidWorkPending() || gamepadWorkPending()
     || call("isAnimating")
@@ -128,6 +128,10 @@
       liveWorkers.clear();
       dialogChannel.clear();
       shellChannel.clear();
+      // The old document's tools must not run on under the new one, which has
+      // no handle to reach them by.
+      disposeProcesses();
+      processChannel.clear();
       // A press held across a reload would otherwise keep the old document's
       // field alive to drag a selection in, and a pointer captured by an element
       // of the old document would retarget the new document's events at it.

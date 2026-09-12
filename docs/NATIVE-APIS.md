@@ -75,11 +75,12 @@ its `requestPermission` counterpart even though reading the setting does not wai
 | `blitsen/hid` | `devices`, `open`, `onDeviceChange` |
 | `blitsen/os` | `cpu`, `memory`, `storage`, `host`, `batteries`, `locale` |
 | `blitsen/shell` | `openExternal`, `openPath`, `showItemInFolder` |
+| `blitsen/process` | `spawn` |
 
 The declaration files installed with `blitsen` document parameters and result types. The
 [generated native module matrix](COMPATIBILITY.md#native-modules) is available when you need the
 exact per-member runtime manifest. On Android the `app`, `window`, `clipboard`, `tray`, `menu`,
-`dialog` and `shell` modules are absent whole.
+`dialog`, `shell` and `process` modules are absent whole.
 
 ## Window lifetime
 
@@ -520,6 +521,68 @@ file manager over `org.freedesktop.FileManager1` — which Nautilus, Dolphin, Th
 implement — falling back to opening the containing directory where no file manager registers
 one. macOS uses `open` and `open -R`; Windows uses `ShellExecute` and the Explorer selection API.
 The module is absent on Android, where opening anything is an `Intent` the Activity sends.
+
+## Child processes
+
+`blitsen/process` runs the command-line tools a local-first application wraps — `gh`, `tea`,
+`codex`, `claude` — for seconds or hours while the window keeps painting. It is a supervisor, not
+a shell: `spawn` takes an executable and an argument array, and no argument is ever parsed by a
+shell, so one containing a space, a quote, a `$` or a Unicode character reaches the child exactly
+as written.
+
+```js
+import process from "blitsen/process";
+
+const child = await process.spawn({
+  command: "gh",
+  args: ["issue", "list", "--json", "number,title"],
+  cwd: worktree,
+  env: { NO_COLOR: "1", GH_PAGER: "" },
+});
+const decoder = new TextDecoder();
+let json = "";
+child.onStdout(chunk => { json += decoder.decode(chunk, { stream: true }); });
+child.onStderr(chunk => log(decoder.decode(chunk, { stream: true })));
+const { code, signal } = await child.wait();
+```
+
+`spawn` resolves once the child is running and rejects on a frame turn when it is not:
+`NotFoundError` for a program or working directory that does not exist, `NotAllowedError` for one
+this process may not execute, `OperationError` for anything else the platform refused. A mistake
+in the options — a non-string argument, a `stdin` mode that is not `"piped"`, `"inherit"` or
+`"null"` — is a `TypeError` where the call was made.
+
+Output crosses as bytes, in the order it was read from each stream, and undecoded: a chunk may end
+in the middle of a character, which is what `TextDecoder`'s `{ stream: true }` is for. The exit is
+delivered once, after the last of the output, both to `onExit` listeners and to `wait()`. A child
+that is running keeps the frame loop turning, so its output arrives even while nothing else
+animates. `stdin` defaults to `"null"`; a child that should read from the application is spawned
+with `stdin: "piped"`, written to with `write`, which resolves once the bytes are handed over, and
+told it has everything with `closeStdin`.
+
+A child is the root of a tree the runtime owns as a whole. On Linux and macOS the child leads a
+process group of its own, and on Windows it is assigned to a job object, so `kill()` — `SIGTERM`,
+or `SIGKILL` with `{ force: true }`; Windows has no polite signal and terminates the job either way
+— ends the tools the child started as well as the child. Graceful-then-forced is the application's
+to compose:
+
+```js
+child.kill();
+const exited = await Promise.race([child.wait(), timeout(5000)]);
+if (!exited) child.kill({ force: true });
+```
+
+A child that exits takes with it anything it left running in its group or job, so a helper that
+outlives the tool it belonged to does not outlive the application's knowledge of it; a daemon that
+starts a session of its own escapes that, deliberately. Reloading the document kills every tree the
+old document owned, and so does the process exiting — through the job handles closing on Windows
+and an exit handler on Unix, which runs for `process.exit` as well as for a window closing. Linux
+additionally asks the kernel to kill the child if this process is killed outright.
+
+The exit reports `code` and `signal`, and the child object remembers whether `kill` was called on
+it in `killed`, which is what tells a Windows termination from a child that exited with `1` itself.
+A terminal emulator or PTY is not part of this: a child sees a pipe, and a tool that behaves
+differently without a terminal is told so through its own flags. The module is absent on Android.
 
 ## Clipboard images
 

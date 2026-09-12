@@ -8,6 +8,7 @@ import hid from "blitsen/hid";
 import input from "blitsen/input";
 import menu from "blitsen/menu";
 import notify from "blitsen/notify";
+import processModule from "blitsen/process";
 import shell from "blitsen/shell";
 import tray from "blitsen/tray";
 import nativeWindow from "blitsen/window";
@@ -51,6 +52,24 @@ if (nativeWindow.monitors) {
 if (dialog.openFile) {
   void dialog.openFile({ filters: [{ name: "Text", extensions: ["txt"] }] })
     .then((chosen: string | null) => chosen);
+}
+if (processModule.spawn) {
+  void processModule.spawn({
+    command: "gh", args: ["issue", "list", "--json", "number"], cwd: "/work/tree",
+    env: { GH_PAGER: "", NO_COLOR: "1", TERM: null }, stdin: "piped",
+  }).then(async child => {
+    const pid: number = child.pid;
+    void pid;
+    const stop: () => void = child.onStdout((chunk: Uint8Array) => chunk.byteLength);
+    child.onStderr((chunk: Uint8Array) => chunk);
+    child.onExit(status => { const code: number | null = status.code; void code; });
+    await child.write("input\n");
+    child.closeStdin();
+    child.kill({ force: false });
+    const status: { code: number | null; signal: string | null } = await child.wait();
+    void status;
+    stop();
+  }).catch((error: DOMException) => error.name);
 }
 if (shell.openExternal) {
   void shell.openExternal("https://github.com/krazyjakee/blitsen").then((done: void) => done);

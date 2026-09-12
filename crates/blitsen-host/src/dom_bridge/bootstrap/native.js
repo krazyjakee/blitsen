@@ -973,6 +973,152 @@
     openPath: shellOperation("openPath", localPath),
     showItemInFolder: shellOperation("showItemInFolder", localPath),
   };
+  // Managed child processes (#383): the authenticated CLIs a local-first
+  // desktop application wraps, run for seconds or hours without the window
+  // stalling. An executable and an argument array, never a command line;
+  // output as byte chunks in the order they were read, with decoding left to
+  // `TextDecoder` and its `stream` option; and one exit after the last of it.
+  // Every answer lands on a frame turn through one FIFO, the way a HID report
+  // does, because a supervisor thread must never re-enter the application.
+  //
+  // A child is the root of a tree: `kill` ends the tools it started as well,
+  // a child that exits takes what it left running with it, and a document
+  // that reloads or a process that exits kills every tree it still owns.
+  const processInstalled = hosted("__blitsenNativeProcessSpawn");
+  const liveProcesses = new Map();
+  const nativeProcessPending = hosted("__blitsenNativeProcessPending")
+    ? __blitsenNativeProcessPending : () => false;
+  const processChannel = makeCommandChannel({
+    pending: nativeProcessPending,
+    take: () => __blitsenNativeProcessTake(),
+    decode: ({ json, data }) => ({ ...JSON.parse(json), data }),
+    // A running child keeps the loop turning for the reason an open HID device
+    // does: its output is already in the host, and only a frame delivers it.
+    keepAlive: () => liveProcesses.size > 0,
+    // Promise reactions to spawn run first, so even output and exit queued
+    // in the same native batch reach listeners installed by `await spawn()`.
+    onMessage: message => Promise.resolve().then(() => {
+      const state = liveProcesses.get(message.id);
+      if (!state) return;
+      if (message.type === "output") {
+        deliverCommandListeners(
+          message.stream === "stdout" ? state.stdoutListeners : state.stderrListeners,
+          message.data, `child process ${message.stream}`);
+        return;
+      }
+      // The one terminal event, after the last of the output.
+      liveProcesses.delete(message.id);
+      state.status = Object.freeze({ code: message.code, signal: message.signal });
+      deliverCommandListeners(state.exitListeners, state.status, "child process exit");
+      state.settleExit(state.status);
+    }),
+  });
+  const settleProcesses = processChannel.settle;
+  const disposeProcesses = hosted("__blitsenNativeProcessDisposeAll")
+    ? () => { liveProcesses.clear(); __blitsenNativeProcessDisposeAll(); }
+    : () => {};
+  const stdioModes = new Set(["piped", "inherit", "null"]);
+  const stdioMode = (value, name, fallback) => {
+    if (value === undefined) return fallback;
+    const mode = String(value);
+    if (!stdioModes.has(mode))
+      throw new TypeError(`${name} must be "piped", "inherit" or "null", not ${JSON.stringify(mode)}`);
+    return mode;
+  };
+  const processString = (value, what) => {
+    if (typeof value !== "string") throw new TypeError(`${what} must be a string`);
+    if (value.includes("\u0000")) throw new TypeError(`${what} must not contain a NUL byte`);
+    return value;
+  };
+  // Everything the options say is checked here, so a mistake in the call is an
+  // exception where it was made rather than a rejection a frame later.
+  const normaliseSpawn = options => {
+    if (options === null || typeof options !== "object")
+      throw new TypeError("spawn options must be an object");
+    const { command, args = [], cwd, env, inheritEnv = true, stdin, stdout, stderr } = options;
+    if (processString(command, "the command").length === 0)
+      throw new TypeError("the command must be a non-empty executable name or path");
+    if (!Array.isArray(args)) throw new TypeError("args must be an array of strings");
+    const argv = args.map(arg => processString(arg, "every argument"));
+    if (cwd !== undefined && processString(cwd, "cwd").length === 0)
+      throw new TypeError("cwd must be a non-empty path");
+    const environment = [];
+    if (env !== undefined) {
+      if (env === null || typeof env !== "object")
+        throw new TypeError("env must be an object of strings, or null to remove a variable");
+      for (const [name, value] of Object.entries(env)) {
+        if (name.length === 0 || name.includes("=") || name.includes("\u0000"))
+          throw new TypeError(`${JSON.stringify(name)} is not an environment variable name`);
+        if (value !== null) processString(value, `env.${name}`);
+        environment.push([name, value]);
+      }
+    }
+    return {
+      command, args: argv, cwd: cwd ?? null, env: environment, inheritEnv: Boolean(inheritEnv),
+      stdin: stdioMode(stdin, "stdin", "null"),
+      stdout: stdioMode(stdout, "stdout", "piped"),
+      stderr: stdioMode(stderr, "stderr", "piped"),
+    };
+  };
+  const childProcess = (spawned, spec) => {
+    const id = String(spawned.id);
+    let settleExit;
+    const exit = new Promise(resolve => { settleExit = resolve; });
+    const state = {
+      status: null,
+      killed: false,
+      stdinOpen: spec.stdin === "piped",
+      stdoutListeners: new Set(),
+      stderrListeners: new Set(),
+      exitListeners: new Set(),
+      settleExit,
+    };
+    liveProcesses.set(id, state);
+    const running = () => {
+      if (state.status !== null)
+        throw new DOMException(`child process ${spawned.pid} has exited`, "InvalidStateError");
+    };
+    return Object.freeze({
+      pid: spawned.pid,
+      get exited() { return state.status !== null; },
+      get killed() { return state.killed; },
+      get status() { return state.status; },
+      write: data => {
+        running();
+        if (!state.stdinOpen)
+          throw new DOMException(`child process ${spawned.pid}'s stdin is not open`, "InvalidStateError");
+        const bytes = typeof data === "string" ? new TextEncoder().encode(data) : data;
+        if (!(bytes instanceof Uint8Array) && !(bytes instanceof Uint8ClampedArray))
+          throw new TypeError("stdin data must be a string, Uint8Array or Uint8ClampedArray");
+        return processChannel.run(__blitsenNativeProcessWrite(id, bytes)).then(() => undefined);
+      },
+      closeStdin: () => {
+        if (!state.stdinOpen) return;
+        state.stdinOpen = false;
+        if (state.status === null) __blitsenNativeProcessCloseStdin(id);
+      },
+      kill: (options = {}) => {
+        if (options === null || typeof options !== "object")
+          throw new TypeError("kill options must be an object");
+        if (state.status !== null) return;
+        state.killed = true;
+        __blitsenNativeProcessKill(id, Boolean(options.force));
+      },
+      wait: () => exit,
+      onStdout: listener => commandListener(state.stdoutListeners, listener, "child process stdout"),
+      onStderr: listener => commandListener(state.stderrListeners, listener, "child process stderr"),
+      onExit: listener => commandListener(state.exitListeners, listener, "child process exit"),
+    });
+  };
+  const nativeProcess = {
+    spawn: !processInstalled ? undefined : options => {
+      const spec = normaliseSpawn(options);
+      // Built inside the settle, before any output queued behind the spawn's
+      // answer is delivered, so the first chunk finds its listeners' home.
+      return processChannel.run(__blitsenNativeProcessSpawn(JSON.stringify(spec)),
+        { transform: spawned => childProcess(spawned, spec) });
+    },
+  };
   globalThis[Symbol.for("blitsen.native")] = Object.freeze({
     app: nativeMembers(nativeApp),
     clipboard: nativeMembers(nativeClipboard),
@@ -985,4 +1131,5 @@
     os: nativeMembers(nativeOs),
     dialog: nativeMembers(nativeDialog),
     shell: nativeMembers(nativeShell),
+    process: nativeMembers(nativeProcess),
   });

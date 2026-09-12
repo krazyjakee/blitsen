@@ -5099,6 +5099,12 @@
       "module": "shell",
       "member": "showItemInFolder",
       "status": "implemented"
+    },
+    {
+      "api": "process.spawn",
+      "module": "process",
+      "member": "spawn",
+      "status": "implemented"
     }
   ],
   "diagnostics": {

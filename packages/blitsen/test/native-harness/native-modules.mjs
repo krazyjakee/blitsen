@@ -13,6 +13,7 @@ import input from "../../src/native/input.mjs";
 import menu from "../../src/native/menu.mjs";
 import notify from "../../src/native/notify.mjs";
 import os from "../../src/native/os.mjs";
+import processModule from "../../src/native/process.mjs";
 import shell from "../../src/native/shell.mjs";
 import tray from "../../src/native/tray.mjs";
 import windowModule from "../../src/native/window.mjs";
@@ -24,7 +25,8 @@ import { addonPath, native } from "./addon.mjs";
 // asserted is the installed namespace, not a description of it.
 const nativeManifest = await loadApiManifest();
 const namespaces = {
-  app, clipboard, dialog, hid, input, menu, notify, os, shell, tray, window: windowModule,
+  app, clipboard, dialog, hid, input, menu, notify, os, process: processModule, shell, tray,
+  window: windowModule,
 };
 // The members whose presence is a platform fact rather than a version fact.
 // An application menu is the macOS main menu or the Windows menu bar.
@@ -559,6 +561,216 @@ if (shell.openExternal) {
   }
   assert.equal(globalThis.__blitsenAnimationFramesPending(), false,
     "answered hand-offs stop asking for frames");
+}
+
+// Managed child processes, against real ones: Bun is the host of this harness
+// and so the one executable every CI runner has, which makes it the child on
+// all three platforms. Every event crosses on a frame turn, so the wait is for
+// the host to report work and the delivery is a tick.
+if (processModule.spawn) {
+  for (const [call, refusal] of [
+    [() => processModule.spawn(null), /options must be an object/],
+    [() => processModule.spawn({}), /command must be a string/],
+    [() => processModule.spawn({ command: "" }), /non-empty executable/],
+    [() => processModule.spawn({ command: "bun\u0000" }), /NUL byte/],
+    [() => processModule.spawn({ command: "bun", args: "-e" }), /array of strings/],
+    [() => processModule.spawn({ command: "bun", args: [1] }), /every argument must be a string/],
+    [() => processModule.spawn({ command: "bun", cwd: "" }), /cwd must be a non-empty path/],
+    [() => processModule.spawn({ command: "bun", env: "PATH=x" }), /env must be an object/],
+    [() => processModule.spawn({ command: "bun", env: { "A=B": "x" } }), /not an environment variable/],
+    [() => processModule.spawn({ command: "bun", env: { A: 1 } }), /env.A must be a string/],
+    [() => processModule.spawn({ command: "bun", stdin: "tty" }), /stdin must be "piped"/],
+  ]) assert.throws(call, refusal, "a mistaken spawn is refused where the call was made");
+
+  const settle = async until => {
+    for (let turn = 0; turn < 2000; turn++) {
+      globalThis.__blitsenAnimationFrameTick(turn);
+      await Bun.sleep(0);
+      if (await until()) return;
+      await Bun.sleep(5);
+    }
+    throw new Error("the child process story did not finish in time");
+  };
+  const decoder = () => new TextDecoder();
+  const script = join(mkdtempSync(join(tmpdir(), "blitsen-process-")), "child.mjs");
+  writeFileSync(script, `
+    const [mode, ...rest] = process.argv.slice(2);
+    if (mode === "echo") {
+      process.stdout.write(JSON.stringify({ args: rest, cwd: process.cwd(),
+        env: process.env.BLITSEN_HARNESS_ENV ?? null, home: "HOME" in process.env }));
+    } else if (mode === "streams") {
+      process.stdout.write("one\\n"); process.stderr.write("err"); process.stdout.write("two\\n");
+      process.exit(3);
+    } else if (mode === "upper") {
+      let text = "";
+      process.stdin.setEncoding("utf8");
+      process.stdin.on("data", chunk => { text += chunk; });
+      process.stdin.on("end", () => { process.stdout.write(text.toUpperCase()); process.exit(0); });
+    } else if (mode === "orphan") {
+      Bun.spawn([process.execPath, "-e", "setInterval(() => {}, 1000)"], {
+        stdout: "inherit", stderr: "inherit",
+      });
+      process.stdout.write("root finished");
+      process.exit(4);
+    } else if (mode === "tree") {
+      const grandchild = Bun.spawn([process.execPath, "-e", "setInterval(() => {}, 1000)"]);
+      process.stdout.write(String(grandchild.pid) + "\\n");
+      setInterval(() => {}, 1000);
+    }
+  `);
+
+  // A fast child can finish before the first frame collects its spawn.
+  // Listeners attached by the spawn promise must still receive that batch.
+  let fastChild;
+  const fastOutput = [];
+  const fastSpawn = processModule.spawn({ command: process.execPath, args: [script, "streams"] })
+    .then(child => {
+      fastChild = child;
+      child.onStdout(chunk => fastOutput.push(decoder().decode(chunk)));
+      child.onExit(status => fastOutput.push(status.code));
+    });
+  await Bun.sleep(500);
+  await settle(() => fastChild?.exited);
+  await fastSpawn;
+  assert.deepEqual(fastOutput.slice(0, -1).join(""), "one\ntwo\n",
+    "output queued alongside spawn reaches promise-installed listeners");
+  assert.equal(fastOutput.at(-1), 3, "exit follows the queued output");
+
+  let orphanRoot;
+  const orphanOutput = [];
+  const orphanSpawn = processModule.spawn({ command: process.execPath, args: [script, "orphan"] })
+    .then(child => {
+      orphanRoot = child;
+      child.onStdout(chunk => orphanOutput.push(decoder().decode(chunk)));
+    });
+  await settle(() => orphanRoot?.exited);
+  await orphanSpawn;
+  assert.equal(orphanRoot.status.code, 4);
+  assert.equal(orphanOutput.join(""), "root finished",
+    "descendants holding output pipes do not prevent root exit delivery");
+
+  // Launch failure: a program that does not exist rejects with the name an
+  // application branches on, on a frame turn.
+  let launchFailure = null;
+  const missingProgram = processModule.spawn({ command: "blitsen-no-such-program-383" })
+    .catch(error => { launchFailure = error; });
+  await settle(() => launchFailure !== null);
+  await missingProgram;
+  assert(launchFailure instanceof DOMException);
+  assert.equal(launchFailure.name, "NotFoundError", launchFailure.message);
+  let cwdFailure = null;
+  const missingCwd = processModule.spawn({ command: process.execPath, cwd: join(tmpdir(), "no-such-dir-383") })
+    .catch(error => { cwdFailure = error; });
+  await settle(() => cwdFailure !== null);
+  await missingCwd;
+  assert.equal(cwdFailure.name, "NotFoundError");
+  assert.match(cwdFailure.message, /working directory/);
+
+  // Output ordering, exit code, and arguments that reach the child unchanged.
+  const hostile = ["with space", "\"quoted\"", "it's", "$HOME `id` ; rm -rf / | cat && echo",
+    "ünïcödé → ✓", "--flag=value", ""];
+  const echo = await (async () => {
+    let child = null;
+    const spawned = processModule.spawn({
+      command: process.execPath, args: [script, "echo", ...hostile], cwd: tmpdir(),
+      env: { BLITSEN_HARNESS_ENV: "set", HOME: null },
+    }).then(started => { child = started; });
+    await settle(() => child !== null);
+    await spawned;
+    return child;
+  })();
+  assert.equal(typeof echo.pid, "number");
+  assert.equal(echo.exited, false);
+  assert.throws(() => echo.write("x"), /stdin is not open/, "stdin defaults to null");
+  const echoChunks = [];
+  const stopEcho = echo.onStdout(chunk => { echoChunks.push(chunk); });
+  assert.equal(typeof stopEcho, "function");
+  assert.throws(() => echo.onExit("not a function"), /must be a function/);
+  const echoExit = echo.wait();
+  await settle(() => echo.exited);
+  const echoStatus = await echoExit;
+  assert.deepEqual(echoStatus, { code: 0, signal: null });
+  assert.equal(echo.status, echoStatus);
+  assert(echoChunks.every(chunk => chunk instanceof Uint8Array), "output crosses as bytes");
+  const reported = JSON.parse(decoder().decode(Buffer.concat(echoChunks)));
+  assert.deepEqual(reported.args, hostile, "every argument reaches the child unchanged");
+  assert.equal(reported.env, "set");
+  assert.equal(reported.home, false, "a null env entry removes the inherited variable");
+  assert.equal(basename(reported.cwd), basename(tmpdir()));
+  assert.throws(() => echo.write("x"), /has exited/);
+
+  const streams = await (async () => {
+    let child = null;
+    const spawned = processModule.spawn({ command: process.execPath, args: [script, "streams"] })
+      .then(started => { child = started; });
+    await settle(() => child !== null);
+    await spawned;
+    return child;
+  })();
+  const order = [];
+  streams.onStdout(chunk => order.push(["stdout", decoder().decode(chunk)]));
+  streams.onStderr(chunk => order.push(["stderr", decoder().decode(chunk)]));
+  streams.onExit(status => order.push(["exit", status.code]));
+  await settle(() => streams.exited);
+  assert.equal(order.at(-1)[1], 3, "the exit code is the child's");
+  assert.equal(order.filter(([stream]) => stream === "stdout").map(([, text]) => text).join(""),
+    "one\ntwo\n", "stdout arrives in order");
+  assert.equal(order.filter(([stream]) => stream === "stderr").map(([, text]) => text).join(""),
+    "err");
+  assert.equal(order.findIndex(([stream]) => stream === "exit"), order.length - 1,
+    "the exit is delivered after the last of the output");
+
+  // Stdin: written, closed, and answered.
+  const upper = await (async () => {
+    let child = null;
+    const spawned = processModule.spawn({
+      command: process.execPath, args: [script, "upper"], stdin: "piped",
+    }).then(started => { child = started; });
+    await settle(() => child !== null);
+    await spawned;
+    return child;
+  })();
+  const upperChunks = [];
+  upper.onStdout(chunk => upperChunks.push(chunk));
+  const writes = [upper.write("hello "), upper.write(new TextEncoder().encode("world"))];
+  assert.throws(() => upper.write(42), /string, Uint8Array or Uint8ClampedArray/);
+  upper.closeStdin();
+  upper.closeStdin();
+  assert.throws(() => upper.write("late"), /stdin is not open/);
+  await settle(() => upper.exited);
+  assert.deepEqual(await Promise.all(writes), [undefined, undefined], "each write settles");
+  assert.equal(decoder().decode(Buffer.concat(upperChunks)), "HELLO WORLD");
+
+  // Cancellation ends the tree, not only its root.
+  const tree = await (async () => {
+    let child = null;
+    const spawned = processModule.spawn({ command: process.execPath, args: [script, "tree"] })
+      .then(started => { child = started; });
+    await settle(() => child !== null);
+    await spawned;
+    return child;
+  })();
+  let grandchild = "";
+  tree.onStdout(chunk => { grandchild += decoder().decode(chunk); });
+  await settle(() => grandchild.includes("\n"));
+  const grandchildPid = Number(grandchild.trim());
+  const alive = pid => { try { process.kill(pid, 0); return true; } catch { return false; } };
+  assert(alive(grandchildPid), "the grandchild is running before the kill");
+  assert.equal(tree.killed, false);
+  tree.kill();
+  assert.equal(tree.killed, true);
+  await settle(() => tree.exited);
+  if (process.platform === "win32") {
+    assert.equal(tree.status.signal, null);
+  } else {
+    assert.deepEqual(tree.status, { code: null, signal: "SIGTERM" });
+  }
+  await settle(() => !alive(grandchildPid));
+  assert(!alive(grandchildPid), "the grandchild died with the tree");
+  tree.kill({ force: true });
+  assert.equal(globalThis.__blitsenAnimationFramesPending(), false,
+    "finished children stop asking for frames");
+  rmSync(script, { force: true });
 }
 
 // The single-instance lock, over the real Unix socket or Windows named pipe:
