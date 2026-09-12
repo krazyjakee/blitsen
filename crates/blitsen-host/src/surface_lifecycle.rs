@@ -145,6 +145,9 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Ren
         for id in windows {
             self.sync_native_window(id);
         }
+        // The window exists, so its theme can be read and the desktop's
+        // preferences applied before the first frame paints.
+        self.sync_appearance();
         // A recreated surface has nothing in it. The first frame after a cycle
         // has to be asked for, because the document has not changed and so
         // nothing else in the loop will ask.

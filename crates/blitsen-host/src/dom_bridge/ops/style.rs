@@ -123,6 +123,19 @@ pub(super) fn dispatch(
                 .map_err(dom_error)?;
             Ok(json!({ "media": query.media, "matches": query.matches }))
         }
+        // What the preference-driven media features currently report, read
+        // each frame beside the viewport so a `MediaQueryList` is re-evaluated
+        // exactly when the device it was evaluated against changed.
+        "mediaPreferences" => {
+            let preferences = dom.media_preferences();
+            Ok(json!({
+                "colorScheme": match preferences.color_scheme {
+                    blitsen_dom::ColorScheme::Light => "light",
+                    blitsen_dom::ColorScheme::Dark => "dark",
+                },
+                "reducedMotion": preferences.reduced_motion,
+            }))
+        }
         _ => return Ok(None),
     }?;
     Ok(Some(value))

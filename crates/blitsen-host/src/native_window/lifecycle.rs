@@ -144,6 +144,8 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> ApplicationHandler
     fn proxy_wake_up(&mut self, event_loop: &dyn ActiveEventLoop) {
         self.inner.proxy_wake_up(event_loop);
         self.apply_menu_signals(event_loop);
+        // The appearance watcher wakes the loop when a preference changes.
+        self.sync_appearance();
         self.maybe_dispatch_load();
         // Renderer readiness and resource completion both arrive through the
         // proxy. Whichever one was last now schedules the hidden startup paint.
@@ -258,7 +260,18 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> ApplicationHandler
         {
             view.is_visible = false;
         }
+        let theme_changed = match &event {
+            WindowEvent::ThemeChanged(theme) => Some(*theme),
+            _ => None,
+        };
         self.inner.window_event(event_loop, window_id, event);
+        // After blitz-shell has taken the theme into the viewport, so the
+        // preferences applied here — which may be the desktop's rather than
+        // the window's — have the last word.
+        if let Some(theme) = theme_changed {
+            self.appearance.set_theme(theme);
+            self.sync_appearance();
+        }
         if redraw
             && !self.has_parked_error()
             && let Err(error) = self.sync_ime(window_id)

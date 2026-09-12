@@ -5,6 +5,7 @@ mod canvas;
 mod cursor;
 mod forms;
 mod images;
+mod media;
 mod ranges;
 mod stylesheets;
 mod surfaces;
