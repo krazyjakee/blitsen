@@ -471,6 +471,12 @@ impl<E: JsEngine + Clone + 'static> WindowSession<E> {
         if crate::dom_bridge::hid::pending() {
             self.request_redraw();
         }
+        // A child's output landed while the loop idled; the frame that
+        // delivers it is the one this asks for.
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
+        if blitsen_platform::process::pending() {
+            self.request_redraw();
+        }
         if let Some(error) = self.error.borrow_mut().take() {
             return Err(error);
         }

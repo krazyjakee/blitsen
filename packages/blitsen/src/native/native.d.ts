@@ -910,6 +910,104 @@ export interface NativeShell {
   showItemInFolder?(path: string): Promise<void>;
 }
 
+/** How one of a child's standard streams is connected. */
+export type StdioMode = "piped" | "inherit" | "null";
+
+/** What `process.spawn` starts. */
+export interface SpawnOptions {
+  /** The executable: an absolute path, or a name looked up on `PATH`. */
+  command: string;
+  /** Arguments, each one an `argv` element. Nothing is interpreted by a shell. */
+  args?: readonly string[];
+  /** Working directory, or this process's. */
+  cwd?: string;
+  /**
+   * Variables to set over the inherited environment, or `null` to remove one.
+   * With `inheritEnv: false` this is the whole environment.
+   */
+  env?: Readonly<Record<string, string | null>>;
+  /** Whether the child starts from this process's environment. Defaults to true. */
+  inheritEnv?: boolean;
+  /** Defaults to `"null"`: a child that should read from the application says so. */
+  stdin?: StdioMode;
+  /** Defaults to `"piped"`. */
+  stdout?: StdioMode;
+  /** Defaults to `"piped"`. */
+  stderr?: StdioMode;
+}
+
+/** How a child ended: an exit code, or on Unix the signal that ended it. */
+export interface ExitStatus {
+  /** The exit code, or `null` when a signal ended the child. */
+  readonly code: number | null;
+  /** The signal's name, such as `"SIGTERM"`, or `null` when the child exited. */
+  readonly signal: string | null;
+}
+
+/**
+ * A running or finished child. Every event reaches its listeners on a frame
+ * turn: output chunks in the order they were read from each stream, and the
+ * exit once, after the last of the output.
+ */
+export interface ChildProcess {
+  /** The operating system's process id. */
+  readonly pid: number;
+  /** False until the exit has been delivered. */
+  readonly exited: boolean;
+  /** Whether `kill` was called on this child. */
+  readonly killed: boolean;
+  /** How the child ended, or `null` while it runs. */
+  readonly status: ExitStatus | null;
+  /**
+   * Writes to the child's stdin; a string is encoded as UTF-8. Resolves once
+   * the bytes have been handed to the child. Throws `InvalidStateError` when
+   * stdin was not `"piped"`, has been closed, or the child has exited.
+   */
+  write(data: string | Uint8Array | Uint8ClampedArray): Promise<void>;
+  /** Closes stdin after every queued write, which is how a filter is told it has everything. */
+  closeStdin(): void;
+  /**
+   * Ends the child and everything it started. On Unix `SIGTERM`, or `SIGKILL`
+   * with `force`, to the child's process group; on Windows, which has no
+   * polite signal, both terminate the job. Nothing happens to a child that has
+   * already exited.
+   */
+  kill(options?: { force?: boolean }): void;
+  /** Resolves with the exit status; already resolved for a child that has exited. */
+  wait(): Promise<ExitStatus>;
+  /** Listens for stdout chunks; returns an unsubscribe function. */
+  onStdout(listener: (chunk: Uint8Array) => void): () => void;
+  /** Listens for stderr chunks; returns an unsubscribe function. */
+  onStderr(listener: (chunk: Uint8Array) => void): () => void;
+  /** Listens for the one exit event; returns an unsubscribe function. */
+  onExit(listener: (status: ExitStatus) => void): () => void;
+}
+
+/**
+ * `blitsen/process`: managed child processes for CLI-driven applications.
+ *
+ * `spawn` resolves once the child is running and rejects with a `DOMException`
+ * when it is not: `NotFoundError` for a program or working directory that does
+ * not exist, `NotAllowedError` for one this process may not execute, and
+ * `OperationError` for anything else the platform refused. An argument
+ * containing a space, a quote, a `$` or a Unicode character reaches the child
+ * exactly as written, because no shell ever sees it.
+ *
+ * Output is bytes, undecoded, so a chunk may end mid-character: decode with a
+ * `TextDecoder` and its `{ stream: true }` option. A child keeps the frame
+ * loop turning while it runs, so its output is delivered even when nothing
+ * else animates.
+ *
+ * A child is the root of a tree. `kill` ends what the child started as well as
+ * the child; a child that exits takes with it anything it left running in its
+ * process group or job; a document that reloads and a process that exits kill
+ * every tree they still own. Absent on Android.
+ */
+export interface NativeProcess {
+  /** Starts a program with the arguments, directory, environment and streams given. */
+  spawn?(options: SpawnOptions): Promise<ChildProcess>;
+}
+
 /**
  * What a native module namespace is, whichever module it is.
  *

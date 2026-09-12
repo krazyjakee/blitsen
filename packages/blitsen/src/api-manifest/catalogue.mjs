@@ -297,7 +297,10 @@ export const CATALOGUE = {
 // Nothing here has a Node or web spelling — that is the entry condition for a
 // `blitsen/<module>` member (TECH.md §9), which is why `argv`, `execPath` and `quit` are
 // not listed as absent: they are `process.argv`, `process.execPath` and
-// `process.exit`, and they are not this layer's to name.
+// `process.exit`, and they are not this layer's to name. `blitsen/process` is
+// not `node:child_process` under another name: the runtime has no Node
+// builtins at all, and TECH.md §9 records why child processes are a core
+// capability rather than an addon's (#383).
 // Note what `window` does not name: size, position and scale factor. Those are
 // `innerWidth`, `innerHeight` and `devicePixelRatio`, and the `resize` event
 // says when they changed — the additive rule applies to the web surface as well
@@ -324,6 +327,9 @@ export const NATIVE = {
   // security consequences: a URL goes to the browser, a path runs its
   // associated application, and a revealed item runs nothing (#384).
   shell: ["openExternal", "openPath", "showItemInFolder"],
+  // One entry point: everything a running child offers is on the object
+  // `spawn` resolves with, and is typed there (#383).
+  process: ["spawn"],
 };
 
 // Which member reads back each `blitsen/window` setter, declared rather than

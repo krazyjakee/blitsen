@@ -63,7 +63,7 @@ const ABSENT = {
   linux: ["menu"],
   darwin: [],
   win32: [],
-  android: ["app", "clipboard", "dialog", "window", "tray", "menu", "shell"],
+  android: ["app", "clipboard", "dialog", "window", "tray", "menu", "shell", "process"],
 };
 
 // Why, per platform, in the words of the module that made the call. Keyed
@@ -106,6 +106,11 @@ const REASONS = {
     + "by the system's chooser rather than by a handler this process spawns, and there is no file "
     + "manager to reveal an item in. It needs a module shaped for Intents, over JNI, rather than "
     + "these three desktop operations answering with something else.",
+  "android.process": "An Android application has no developer tools to run: there is no `gh` or "
+    + "`claude` on the device, an app process may not execute what is not in its own APK, and a "
+    + "process it did start would be killed with it by the platform's own lifecycle. The "
+    + "supervisor this module is — process groups, exit cleanup, piped streams on a frame turn — "
+    + "answers a desktop question.",
 };
 
 /// The `blitsen/*` modules that do not exist on `target`, each with its reason.

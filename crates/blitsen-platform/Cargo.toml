@@ -1,6 +1,6 @@
 [package]
 name = "blitsen-platform"
-description = "JavaScript-free application, clipboard, dialog, shell, and OS services for Blitsen"
+description = "JavaScript-free application, clipboard, dialog, shell, process, and OS services for Blitsen"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -64,6 +64,9 @@ libc = "0.2"
 # `Win32_UI_WindowsAndMessaging` are `blitsen/shell`'s (#384): `ShellExecuteW`
 # for a URL or a file, and `SHOpenFolderAndSelectItems` for revealing one in
 # Explorer through the API rather than an `explorer /select,` command line.
+# `Win32_System_JobObjects` is `blitsen/process`'s (#383): a child is assigned
+# to a job with kill-on-close, which is what makes terminating it terminate the
+# tools it started, and what ends the tree when this process exits.
 [target.'cfg(windows)'.dependencies]
 widestring = "1"
 windows-sys = { version = "0.61", features = [
@@ -71,6 +74,7 @@ windows-sys = { version = "0.61", features = [
     "Win32_Security",
     "Win32_Security_Authorization",
     "Win32_System_Com",
+    "Win32_System_JobObjects",
     "Win32_System_Pipes",
     "Win32_System_Threading",
     "Win32_UI_Shell",

@@ -50,4 +50,5 @@ export function nativeModule(name) {
 /// implements it — that is exactly what the namespace reports at run time.
 export const NATIVE_MODULES = [
   "app", "window", "dialog", "clipboard", "tray", "menu", "notify", "input", "hid", "os", "shell",
+  "process",
 ];

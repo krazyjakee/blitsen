@@ -681,11 +681,20 @@ import app from "blitsen/app";
 | `blitsen/hid` | deliberately raw HID reports for non-keyboard/pointer devices: desktop enumeration, opaque device ids, input/output/feature reports and hot-plug, with the protected Generic Desktop collections refused. The Android half [S10](../spikes/s10/README.md) specified is the same module over `UsbManager`: enumeration without a grant, an `open()` that stays unsettled while the system permission dialog is up, and reports through USB control and interrupt transfers (#248) |
 | `blitsen/os` | processor, memory, storage volumes, OS identity, batteries and locale. Displays stay `blitsen/window`'s `monitors`, and idle time is absent by decision (#98) |
 | `blitsen/shell` | a URL to the browser, a path to its associated application, and a path revealed in the file manager (#384). Three members because they have three security consequences; the scheme allow-list and the absolute-path rule are refused at the call, and nothing is a command line |
+| `blitsen/process` | managed child processes (#383): an executable and an argument array with no shell, piped or inherited or null streams, byte-chunk output and one exit on frame turns, stdin writes, and termination of the whole process tree — a process group on Unix, a job object on Windows — on `kill`, on reload and at exit |
 
 The shipped runtime has no Node or Bun builtins and refuses `node:*` and `bun:*` specifiers. Native
 capabilities therefore live only in the focused `blitsen/*` modules; there is no parallel
 `blitsen/fs` or `blitsen/net` surface. `blitsen/shell` is not one either: it hands a URL or a
-path to the desktop and reads nothing back. Raw HID is deliberately separate from `blitsen/input`, and
+path to the desktop and reads nothing back.
+
+Child processes are the one exception to "native integration is an addon", and the decision is
+recorded here (#383). Running the developer tools an application wraps is common enough — every
+CLI-driven desktop tool does it — and the cross-platform lifecycle hard enough — process groups,
+job objects, `PR_SET_PDEATHSIG`, exit-time cleanup, streaming that never re-enters the frame turn
+— that every application solving it separately behind a Node-API addon, and carrying the larger
+Phase 1 host to do so, was the wrong answer. What `blitsen/process` is not is a shell or a
+terminal: there is no command string, no PTY, and no Android implementation. Raw HID is deliberately separate from `blitsen/input`, and
 [S10](../spikes/s10/README.md) records its platform permission and protected-device boundary.
 
 These are real npm subpaths which an ordinary bundler resolves before the runtime sees them. The
