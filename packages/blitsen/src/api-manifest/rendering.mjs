@@ -18,7 +18,8 @@ export const COMPATIBILITY_DOC = join(import.meta.dirname, "../../../../docs/COM
 const TYPE_DEFINITIONS = join(import.meta.dirname, "../native/native.d.ts");
 const MODULE_INTERFACES = { app: "NativeApp", window: "NativeWindow",
   dialog: "NativeDialog", clipboard: "NativeClipboard", tray: "NativeTray",
-  menu: "NativeMenu", input: "NativeInput", hid: "NativeHid", notify: "NativeNotify", os: "NativeOs" };
+  menu: "NativeMenu", input: "NativeInput", hid: "NativeHid", notify: "NativeNotify", os: "NativeOs",
+  shell: "NativeShell" };
 
 /** Reads the members each `Native*` interface declares, by module. */
 export function readDeclaredNativeMembers(definitions) {

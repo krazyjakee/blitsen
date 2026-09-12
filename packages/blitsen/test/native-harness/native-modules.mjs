@@ -13,6 +13,7 @@ import input from "../../src/native/input.mjs";
 import menu from "../../src/native/menu.mjs";
 import notify from "../../src/native/notify.mjs";
 import os from "../../src/native/os.mjs";
+import shell from "../../src/native/shell.mjs";
 import tray from "../../src/native/tray.mjs";
 import windowModule from "../../src/native/window.mjs";
 
@@ -22,7 +23,9 @@ import { addonPath, native } from "./addon.mjs";
 // does — through the `blitsen/app` and `blitsen/clipboard` proxies — so what is
 // asserted is the installed namespace, not a description of it.
 const nativeManifest = await loadApiManifest();
-const namespaces = { app, clipboard, dialog, hid, input, menu, notify, os, tray, window: windowModule };
+const namespaces = {
+  app, clipboard, dialog, hid, input, menu, notify, os, shell, tray, window: windowModule,
+};
 // The members whose presence is a platform fact rather than a version fact.
 // An application menu is the macOS main menu or the Windows menu bar.
 const absentOn = new Map();
@@ -498,6 +501,64 @@ if (dialog.openFile) {
   ]) assert.throws(call, /no application window yet/);
   assert.equal(globalThis.__blitsenAnimationFramesPending(), outstanding,
     "a dialog that never opened leaves nothing for a frame turn to settle");
+}
+
+// Handing a URL or a path to the desktop. The scheme allow-list and the
+// absolute-path rule are the call's own contract, refused where the call was
+// made and before any process is spawned — which is what makes them testable
+// on a runner with no browser and no file manager. What does cross the whole
+// boundary is a path that does not exist: the worker reports it and the answer
+// arrives on a frame turn, as a real hand-off's would.
+if (shell.openExternal) {
+  for (const [call, refusal] of [
+    [() => shell.openExternal(42), /must be a string/],
+    [() => shell.openExternal(""), /not an absolute URL/],
+    [() => shell.openExternal("example.com/docs"), /not an absolute URL/],
+    [() => shell.openExternal("javascript:alert(1)"), /javascript: is not a scheme/],
+    [() => shell.openExternal("file:///etc/passwd"), /file: is not a scheme/],
+    [() => shell.openExternal("ftp://example.com/"), /ftp: is not a scheme/],
+    [() => shell.openExternal("ms-settings:display"), /ms-settings: is not a scheme/],
+    [() => shell.openExternal("https://example.com/a b"), /whitespace or control/],
+    [() => shell.openExternal("https://example.com/\n--flag"), /whitespace or control/],
+    [() => shell.openExternal("https://example.com/\u0000"), /whitespace or control/],
+    [() => shell.openExternal("mailto:"), /names no address/],
+    [() => shell.openPath(null), /must be a string/],
+    [() => shell.openPath(""), /must not be empty/],
+    [() => shell.openPath("relative/file.txt"), /not an absolute path/],
+    [() => shell.openPath("-rf"), /not an absolute path/],
+    [() => shell.openPath("/tmp/\u0000"), /NUL byte/],
+    [() => shell.showItemInFolder("./file.txt"), /not an absolute path/],
+    [() => shell.showItemInFolder("~/file.txt"), /not an absolute path/],
+  ]) assert.throws(call, refusal, "a hostile shell argument is refused where the call was made");
+  assert.equal(globalThis.__blitsenAnimationFramesPending(), false,
+    "a refused hand-off leaves nothing for a frame turn to settle");
+
+  const missing = join(tmpdir(), `blitsen-shell-${process.pid}-missing.txt`);
+  const settled = [];
+  const revealed = shell.showItemInFolder(missing).then(
+    () => settled.push("resolved"), error => settled.push(error));
+  const opened = shell.openPath(missing).then(
+    () => settled.push("resolved"), error => settled.push(error));
+  assert.equal(globalThis.__blitsenAnimationFramesPending(), true,
+    "an unanswered hand-off keeps the host turning");
+  // The existence check runs on a worker, so the wait is for the host to report
+  // the answers; delivering them is one turn.
+  let waiting = true;
+  for (let turn = 0; turn < 400 && waiting; turn++) {
+    globalThis.__blitsenAnimationFrameTick(0);
+    await Promise.all([revealed, opened].map(promise => Promise.race([promise, Bun.sleep(0)])));
+    waiting = settled.length < 2;
+    if (waiting) await Bun.sleep(5);
+  }
+  await Promise.all([revealed, opened]);
+  assert.equal(settled.length, 2, "both hand-offs answered on a frame turn");
+  for (const outcome of settled) {
+    assert(outcome instanceof DOMException, "a failed hand-off rejects with a DOMException");
+    assert.equal(outcome.name, "NotFoundError", `${outcome.name}: ${outcome.message}`);
+    assert.match(outcome.message, /does not exist/);
+  }
+  assert.equal(globalThis.__blitsenAnimationFramesPending(), false,
+    "answered hand-offs stop asking for frames");
 }
 
 // The single-instance lock, over the real Unix socket or Windows named pipe:

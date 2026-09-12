@@ -207,7 +207,7 @@ replacement, timeout expiry and `close` are verified on booted API 32 and 33 emu
 Body/action tap activation, swipe dismissal and stopped-process delivery have not yet run on an
 emulator or device, because nothing taps or swipes in an unattended run. The standard Web `Notification` global appears
 only where that lifecycle contract is present. Android does not support Blitsen's app, clipboard,
-dialog, window, tray or menu native modules in this release.
+dialog, window, tray, menu or shell native modules in this release.
 
 Android rasterises native windows on the CPU and presents the finished buffer through
 `ANativeWindow`. This is the shipping default rather than an adapter probe: the API 32/33 CI

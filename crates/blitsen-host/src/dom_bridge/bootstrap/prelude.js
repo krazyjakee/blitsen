@@ -123,6 +123,7 @@
     settleLinks();
     deliverSecondInstances();
     settleDialogs();
+    settleShell();
     settleTrays();
     settleMenus();
     settleHid();

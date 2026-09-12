@@ -320,6 +320,10 @@ export const NATIVE = {
   hid: ["devices", "open", "onDeviceChange"],
   notify: ["show", "permission", "requestPermission", "update", "close", "onEvent"],
   os: ["cpu", "memory", "storage", "host", "displays", "batteries", "locale", "idleTime"],
+  // Three members rather than one `open`, because they have three different
+  // security consequences: a URL goes to the browser, a path runs its
+  // associated application, and a revealed item runs nothing (#384).
+  shell: ["openExternal", "openPath", "showItemInFolder"],
 };
 
 // Which member reads back each `blitsen/window` setter, declared rather than

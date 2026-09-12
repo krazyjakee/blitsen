@@ -5081,6 +5081,24 @@
       "member": "idleTime",
       "status": "absent",
       "reason": "Seconds since the last input is a different mechanism on every platform — the X11 screensaver extension, `CGEventSourceSecondsSinceLastEventType`, `GetLastInputInfo` — and Wayland has no answer at all for a client that is not focused: the idle-notify protocol reports crossing a threshold the compositor was asked about, not a duration. Reporting zero on the sessions that cannot answer would be indistinguishable from a machine in use. It is also the one reading in this module that describes the person rather than the machine — how long they have been away from the keyboard, available to any application that asks for it — so implementing it where it happens to work would buy that signal on three platforms in exchange for a wrong answer on the fourth."
+    },
+    {
+      "api": "shell.openExternal",
+      "module": "shell",
+      "member": "openExternal",
+      "status": "implemented"
+    },
+    {
+      "api": "shell.openPath",
+      "module": "shell",
+      "member": "openPath",
+      "status": "implemented"
+    },
+    {
+      "api": "shell.showItemInFolder",
+      "module": "shell",
+      "member": "showItemInFolder",
+      "status": "implemented"
     }
   ],
   "diagnostics": {

@@ -31,6 +31,10 @@ pub mod dialog;
 // `cfg`, because that reading is a different library and does not compile there.
 // See the module docs.
 pub mod os;
+// Absent on Android: opening a URL or a file there is an `Intent` the Activity
+// sends, and there is no file manager to reveal an item in (#384).
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+pub mod shell;
 
 use std::fmt;
 

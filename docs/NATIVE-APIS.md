@@ -74,11 +74,12 @@ its `requestPermission` counterpart even though reading the setting does not wai
 | `blitsen/input` | `snapshot`, `vibrateGamepad`, `onDeviceChange` (the latter two desktop-only) |
 | `blitsen/hid` | `devices`, `open`, `onDeviceChange` |
 | `blitsen/os` | `cpu`, `memory`, `storage`, `host`, `batteries`, `locale` |
+| `blitsen/shell` | `openExternal`, `openPath`, `showItemInFolder` |
 
 The declaration files installed with `blitsen` document parameters and result types. The
 [generated native module matrix](COMPATIBILITY.md#native-modules) is available when you need the
-exact per-member runtime manifest. On Android the `app`, `window`, `clipboard`, `tray`, `menu` and
-`dialog` modules are absent whole.
+exact per-member runtime manifest. On Android the `app`, `window`, `clipboard`, `tray`, `menu`,
+`dialog` and `shell` modules are absent whole.
 
 ## Window lifetime
 
@@ -480,6 +481,45 @@ if (path) {
 File dialogs resolve to `null` when dismissed. The dialog module is available on Linux, macOS and
 Windows desktop targets and absent on Android. Feature detection is still recommended at runtime
 boundaries.
+
+## Opening things outside the window
+
+`blitsen/shell` hands a URL or a path to the desktop. It is the route for "open the issue in my
+browser" and "show me the file", which the web surface deliberately lacks: `window.open` is absent
+and assigning `location.href` throws, because a Blitsen document does not navigate.
+
+```js
+import shell from "blitsen/shell";
+
+await shell.openExternal?.("https://github.com/krazyjakee/blitsen/issues/384");
+await shell.showItemInFolder?.(reportPath);
+```
+
+The three members have three different consequences, and choosing between them is a security
+decision rather than a stylistic one:
+
+- **`openExternal(url)`** sends the person to their browser or mail client. Only `http:`, `https:`
+  and `mailto:` are handed on; a `javascript:`, `file:`, `data:` or custom-scheme URL is a
+  `TypeError` at the call and never reaches the operating system, as is a URL containing whitespace
+  or a control character. The URL crosses as one argument, never as a command line.
+- **`openPath(path)`** opens a file or directory in whatever the desktop associates with it. For a
+  document that is the viewer; for a script or an executable it is the script or the executable,
+  so this is for paths the application chose.
+- **`showItemInFolder(path)`** reveals a file or directory in the file manager, selected, and runs
+  nothing. Reach for it when the path came from a tool's output, a dialog, or anywhere else the
+  application does not control.
+
+Paths must be absolute — the desktop has no working directory to resolve against — and are checked
+for existence on the way: a missing one rejects with a `NotFoundError`. A desktop with no handler
+for the URL or file rejects with `NotSupportedError`, and a handler that was found and failed with
+`OperationError`. Every promise settles on a frame turn; the hand-off itself runs off the frame
+thread, because `xdg-open` may not return until the handler it started does.
+
+On Linux, `openExternal` and `openPath` go through `xdg-open`, and `showItemInFolder` asks the
+file manager over `org.freedesktop.FileManager1` — which Nautilus, Dolphin, Thunar and Nemo
+implement — falling back to opening the containing directory where no file manager registers
+one. macOS uses `open` and `open -R`; Windows uses `ShellExecute` and the Explorer selection API.
+The module is absent on Android, where opening anything is an `Intent` the Activity sends.
 
 ## Clipboard images
 

@@ -911,6 +911,68 @@
       })), button => button);
     },
   };
+  // Handing something to the desktop (#384): a URL to the browser, a path to
+  // the application registered for it, or a path revealed in the file manager.
+  // Not navigation — the document stays — and not a shell: the target crosses
+  // as one argument the platform treats as a URL or a path, never as text.
+  //
+  // Three operations with three different consequences, which is why they are
+  // three members. `openExternal` sends the person to their browser;
+  // `openPath` runs whatever the desktop associates with a file, which for a
+  // script is the script; `showItemInFolder` only shows a file, and is the one
+  // to reach for when the path came from somewhere the application does not
+  // control. The scheme allow-list and the absolute-path rule are checked here,
+  // at the call, because a `javascript:` URL or a relative path is a mistake in
+  // the line of code that made it and never reaches the platform.
+  const nativeShellPending = hosted("__blitsenNativeShellPending")
+    ? __blitsenNativeShellPending : () => false;
+  const shellChannel = makeCommandChannel({
+    take: () => JSON.parse(__blitsenNativeShellTake()),
+    completion: () => true,
+    commandId: finished => finished.id,
+    result: () => undefined,
+    keepAlive: nativeShellPending,
+    pollPendingCommands: true,
+  });
+  const settleShell = shellChannel.settle;
+  const shellInstalled = hosted("__blitsenNativeShellOpen");
+  const externalSchemes = new Set(["http:", "https:", "mailto:"]);
+  const unprintable = character => character <= " " || character === "\u007f";
+  const externalUrl = value => {
+    if (typeof value !== "string") throw new TypeError("an external URL must be a string");
+    if ([...value].some(unprintable))
+      throw new TypeError("an external URL must not contain whitespace or control characters");
+    let parsed;
+    try { parsed = new URL(value); }
+    catch { throw new TypeError(`${JSON.stringify(value)} is not an absolute URL`); }
+    if (!externalSchemes.has(parsed.protocol))
+      throw new TypeError(`${parsed.protocol} is not a scheme shell.openExternal hands to the `
+        + "desktop; http:, https: and mailto: are");
+    if (parsed.protocol === "mailto:" ? parsed.pathname === "" : parsed.hostname === "")
+      throw new TypeError(`${JSON.stringify(value)} names no `
+        + `${parsed.protocol === "mailto:" ? "address" : "host"}`);
+    return value;
+  };
+  const localPath = value => {
+    if (typeof value !== "string") throw new TypeError("a path must be a string");
+    if (value.length === 0) throw new TypeError("a path must not be empty");
+    if (value.includes("\u0000")) throw new TypeError("a path must not contain a NUL byte");
+    // Absolute on every desktop: a POSIX root, a drive letter, or a UNC or
+    // device path. The desktop has no working directory to resolve against.
+    const letter = value.charCodeAt(0) | 0x20;
+    const drive = letter >= 0x61 && letter <= 0x7a && value[1] === ":"
+      && (value[2] === "\\" || value[2] === "/");
+    if (!value.startsWith("/") && !value.startsWith("\\\\") && !drive)
+      throw new TypeError(`${JSON.stringify(value)} is not an absolute path`);
+    return value;
+  };
+  const shellOperation = (kind, check) => !shellInstalled ? undefined
+    : target => shellChannel.run(__blitsenNativeShellOpen(kind, check(target)));
+  const nativeShell = {
+    openExternal: shellOperation("openExternal", externalUrl),
+    openPath: shellOperation("openPath", localPath),
+    showItemInFolder: shellOperation("showItemInFolder", localPath),
+  };
   globalThis[Symbol.for("blitsen.native")] = Object.freeze({
     app: nativeMembers(nativeApp),
     clipboard: nativeMembers(nativeClipboard),
@@ -922,4 +984,5 @@
     notify: nativeMembers(nativeNotify),
     os: nativeMembers(nativeOs),
     dialog: nativeMembers(nativeDialog),
+    shell: nativeMembers(nativeShell),
   });

@@ -77,6 +77,10 @@
     "./os": {
       "types": "./src/native/os.d.ts",
       "import": "./src/native/os.mjs"
+    },
+    "./shell": {
+      "types": "./src/native/shell.d.ts",
+      "import": "./src/native/shell.mjs"
     }
   },
   "types": "./index.d.ts",

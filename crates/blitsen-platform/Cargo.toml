@@ -1,6 +1,6 @@
 [package]
 name = "blitsen-platform"
-description = "JavaScript-free application, clipboard, dialog, and OS services for Blitsen"
+description = "JavaScript-free application, clipboard, dialog, shell, and OS services for Blitsen"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -59,15 +59,31 @@ libc = "0.2"
 # A named pipe is system-wide, so its discoverable name and protected DACL use
 # the caller's Windows SID. These are already `interprocess` dependencies on
 # Windows; listing them directly adds no crate to that target graph.
+#
+# `Win32_UI_Shell` (with its `Common` item lists), `Win32_System_Com` and
+# `Win32_UI_WindowsAndMessaging` are `blitsen/shell`'s (#384): `ShellExecuteW`
+# for a URL or a file, and `SHOpenFolderAndSelectItems` for revealing one in
+# Explorer through the API rather than an `explorer /select,` command line.
 [target.'cfg(windows)'.dependencies]
 widestring = "1"
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Security",
     "Win32_Security_Authorization",
+    "Win32_System_Com",
     "Win32_System_Pipes",
     "Win32_System_Threading",
+    "Win32_UI_Shell",
+    "Win32_UI_Shell_Common",
+    "Win32_UI_WindowsAndMessaging",
 ] }
+
+# `blitsen/shell` reveals an item through `org.freedesktop.FileManager1`, the
+# selection interface every major Linux file manager implements (#384). The
+# same zbus major, features and transport `blitsen-host` already links for the
+# notification portal, so naming it here compiles no new crate.
+[target.'cfg(target_os = "linux")'.dependencies]
+zbus = { version = "5", default-features = false, features = ["blocking-api", "tokio"] }
 
 # `rfd` provides native asynchronous dialogs on every desktop target. On Linux
 # it speaks the portal's D-Bus interface itself and falls back to `zenity`.

@@ -10,7 +10,8 @@
 //! answers "no" to most of it. `os`, focused `input` snapshots, notifications
 //! and — since #248 gave it a `UsbManager` backend — raw HID survive there; app,
 //! clipboard, dialog, window and tray remain absent for the reasons their module
-//! or platform documentation states.
+//! or platform documentation states, and so does `shell`, whose three
+//! operations are an Activity's `Intent` there rather than a desktop's.
 
 mod app;
 mod clipboard;
@@ -20,6 +21,7 @@ mod input;
 mod menu;
 mod notify;
 mod os;
+mod shell;
 mod tray;
 mod window;
 
@@ -43,5 +45,6 @@ pub(super) fn install<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsErr
     notify::install(engine)?;
     input::install(engine)?;
     os::install(engine)?;
+    shell::install(engine)?;
     dialog::install(engine)
 }
