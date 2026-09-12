@@ -287,33 +287,36 @@ mod helper {
                 }
                 _ => Failure::Operation(format!("{program} could not be started: {error}")),
             })?;
-        let stderr = child.stderr.take();
-        let read_stderr = move || {
-            let mut text = String::new();
-            if let Some(mut stderr) = stderr {
-                let _ = std::io::Read::read_to_string(&mut stderr, &mut text);
-            }
-            text.trim().to_owned()
+        let mut stderr = child.stderr.take().expect("stderr is piped");
+        // Drain while the helper runs: waiting first deadlocks when a handler
+        // fills the pipe. Nonblocking reads also let us finish when a handler
+        // inherits stderr but outlives the desktop helper itself.
+        use std::os::fd::AsRawFd;
+        let fd = stderr.as_raw_fd();
+        // SAFETY: fd belongs to the live stderr pipe and fcntl touches no memory.
+        let nonblocking = unsafe {
+            let flags = libc::fcntl(fd, libc::F_GETFL);
+            flags >= 0 && libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) >= 0
         };
-        let Some(settle) = settle else {
-            let status = child
-                .wait()
-                .map_err(|error| Failure::Operation(format!("{program} was lost: {error}")))?;
-            return Ok(Some(Exit {
-                code: status.code(),
-                stderr: read_stderr(),
-            }));
-        };
+        if !nonblocking {
+            let error = std::io::Error::last_os_error();
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(Failure::Operation(format!("{program}'s stderr: {error}")));
+        }
+        let mut diagnostic = Vec::new();
         let started = Instant::now();
         loop {
+            drain_stderr(&mut stderr, &mut diagnostic);
             match child.try_wait() {
                 Ok(Some(status)) => {
+                    drain_stderr(&mut stderr, &mut diagnostic);
                     return Ok(Some(Exit {
                         code: status.code(),
-                        stderr: read_stderr(),
+                        stderr: String::from_utf8_lossy(&diagnostic).trim().to_owned(),
                     }));
                 }
-                Ok(None) if started.elapsed() < settle => {
+                Ok(None) if settle.is_none_or(|limit| started.elapsed() < limit) => {
                     std::thread::sleep(Duration::from_millis(25));
                 }
                 Ok(None) => {
@@ -322,8 +325,13 @@ mod helper {
                     std::thread::Builder::new()
                         .name("blitsen-shell-reaper".to_owned())
                         .spawn(move || {
-                            let _ = child.wait();
-                            drop(read_stderr());
+                            loop {
+                                drain_stderr(&mut stderr, &mut diagnostic);
+                                match child.try_wait() {
+                                    Ok(None) => std::thread::sleep(Duration::from_millis(25)),
+                                    _ => break,
+                                }
+                            }
                         })
                         .ok();
                     return Ok(None);
@@ -331,6 +339,22 @@ mod helper {
                 Err(error) => {
                     return Err(Failure::Operation(format!("{program} was lost: {error}")));
                 }
+            }
+        }
+    }
+    fn drain_stderr(pipe: &mut impl std::io::Read, diagnostic: &mut Vec<u8>) {
+        let mut buffer = [0_u8; 8192];
+        // Bound both retained diagnostics and work per poll, even for a
+        // continuously noisy handler. Keep draining after the buffer is full.
+        for _ in 0..32 {
+            match pipe.read(&mut buffer) {
+                Ok(0) => break,
+                Ok(count) => {
+                    let keep = count.min((64 * 1024_usize).saturating_sub(diagnostic.len()));
+                    diagnostic.extend_from_slice(&buffer[..keep]);
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(_) => break,
             }
         }
     }
@@ -614,6 +638,22 @@ fn file_uri(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn a_noisy_helper_finishes_without_filling_its_stderr_pipe() {
+        use std::ffi::OsStr;
+        let exit = helper::run(
+            "sh",
+            &[OsStr::new("-c"), OsStr::new(
+                "i=0; while [ $i -lt 10000 ]; do printf 'a diagnostic line of output\\n' >&2; i=$((i + 1)); done; exit 7"
+            )],
+            Some(std::time::Duration::from_secs(5)),
+        ).expect("helper starts").expect("helper exits before the deadline");
+        assert_eq!(exit.code, Some(7));
+        assert!(exit.stderr.starts_with("a diagnostic line"));
+        assert!(exit.stderr.len() <= 64 * 1024);
+    }
 
     #[test]
     fn web_and_mail_urls_are_handed_on_unchanged() {
