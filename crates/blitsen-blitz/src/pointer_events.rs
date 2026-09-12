@@ -53,7 +53,9 @@ impl BlitzDom {
             let Ok(css) = self.text_content(node) else {
                 continue;
             };
-            if let Some(rewritten) = normalize_css(&css) {
+            // A sheet also carries media queries, so the whole stylesheet
+            // pipeline runs here rather than this module's half of it.
+            if let Some(rewritten) = self.media.normalize_stylesheet(&css) {
                 let _ = self.set_text_content(node, &rewritten);
             }
         }
@@ -75,10 +77,14 @@ impl BlitzDom {
 ///
 /// A subresource handler sees fonts and images as well as stylesheets and is not
 /// told which it has, so this asks the bytes: text that is not UTF-8 is not a
-/// stylesheet, and text that never names the property has nothing to rewrite.
-pub(crate) fn normalize_subresource(bytes: &[u8]) -> Option<Vec<u8>> {
+/// stylesheet, and text that never names the property — or the media feature
+/// `media_features` resolves — has nothing to rewrite.
+pub(crate) fn normalize_subresource(
+    bytes: &[u8],
+    media: &crate::media_features::MediaState,
+) -> Option<Vec<u8>> {
     let css = std::str::from_utf8(bytes).ok()?;
-    normalize_css(css).map(String::into_bytes)
+    media.normalize_stylesheet(css).map(String::into_bytes)
 }
 
 /// The values stylo drops that mean the element is hit-testable.
@@ -200,7 +206,7 @@ fn declared_value_at(css: &str, index: usize) -> Option<(usize, usize)> {
 }
 
 /// The index past the `*/` that closes a comment opened before `from`.
-fn comment_end(bytes: &[u8], from: usize) -> usize {
+pub(crate) fn comment_end(bytes: &[u8], from: usize) -> usize {
     let mut index = from;
     while index + 1 < bytes.len() {
         if bytes[index] == b'*' && bytes[index + 1] == b'/' {
@@ -212,7 +218,7 @@ fn comment_end(bytes: &[u8], from: usize) -> usize {
 }
 
 /// The index past the quote closing the string that opens at `start`.
-fn string_end(bytes: &[u8], start: usize) -> usize {
+pub(crate) fn string_end(bytes: &[u8], start: usize) -> usize {
     let quote = bytes[start];
     let mut index = start + 1;
     while index < bytes.len() {

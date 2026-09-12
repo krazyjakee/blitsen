@@ -335,6 +335,7 @@ pub(crate) fn install_with_hooks<E: JsEngine + 'static>(
         "globalThis.__blitsenInstallReplacedGlobals()",
         "blitsen:install-replaced-globals",
     )?;
+    let preferences_document = runtime.document();
     let resize_state = Rc::clone(&window_state);
     let resize_runtime = runtime;
     engine.define_global_function(
@@ -359,6 +360,42 @@ pub(crate) fn install_with_hooks<E: JsEngine + 'static>(
                 "globalThis.__blitsenDispatchLifecycleEvent('resize')",
                 "blitsen:test-window-resize",
             )?;
+            Ok(call.this)
+        }),
+    )?;
+    // The system preferences the media features follow, settable from the
+    // harness and the native window alike. Takes effect at the next frame
+    // boundary, which is where `notifyMediaQueries` reads it back.
+    engine.define_global_function(
+        "__blitsenMediaPreferences",
+        Box::new(move |call| {
+            let mut engine = E::from_value(&call.this);
+            let color_scheme = match argument(&mut engine, &call, 0, "colour scheme")?.as_str() {
+                "light" => blitsen_dom::ColorScheme::Light,
+                "dark" => blitsen_dom::ColorScheme::Dark,
+                other => {
+                    return Err(JsError::new(format!(
+                        "{other:?} is not a colour scheme: light or dark"
+                    )));
+                }
+            };
+            let reduced_motion =
+                match argument(&mut engine, &call, 1, "motion preference")?.as_str() {
+                    "reduce" => true,
+                    "no-preference" => false,
+                    other => {
+                        return Err(JsError::new(format!(
+                            "{other:?} is not a motion preference: reduce or no-preference"
+                        )));
+                    }
+                };
+            preferences_document
+                .borrow_mut()
+                .set_media_preferences(blitsen_dom::MediaPreferences {
+                    color_scheme,
+                    reduced_motion,
+                })
+                .map_err(crate::dom_error)?;
             Ok(call.this)
         }),
     )?;

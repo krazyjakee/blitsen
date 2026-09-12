@@ -67,6 +67,7 @@ libc = "0.2"
 # `Win32_System_JobObjects` is `blitsen/process`'s (#383): a child is assigned
 # to a job with kill-on-close, which is what makes terminating it terminate the
 # tools it started, and what ends the tree when this process exits.
+# Appearance also reads the animation setting through SystemParametersInfoW.
 [target.'cfg(windows)'.dependencies]
 widestring = "1"
 windows-sys = { version = "0.61", features = [
@@ -85,10 +86,15 @@ windows-sys = { version = "0.61", features = [
 
 # `blitsen/shell` reveals an item through `org.freedesktop.FileManager1`, the
 # selection interface every major Linux file manager implements (#384). The
-# same zbus major, features and transport `blitsen-host` already links for the
+# settings portal also supplies appearance and animation preferences (#385).
+# This is the same zbus major, features and transport `blitsen-host` links for the
 # notification portal, so naming it here compiles no new crate.
 [target.'cfg(target_os = "linux")'.dependencies]
 zbus = { version = "5", default-features = false, features = ["blocking-api", "tokio"] }
+
+# Reduce Motion is an accessibility setting NSWorkspace answers (#385).
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-app-kit = { version = "0.3", default-features = false, features = ["NSAccessibility", "NSWorkspace", "std"] }
 
 # `rfd` provides native asynchronous dialogs on every desktop target. On Linux
 # it speaks the portal's D-Bus interface itself and falls back to `zenity`.

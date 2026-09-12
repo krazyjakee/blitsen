@@ -272,6 +272,7 @@ impl<E: JsEngine + Clone + 'static> WindowSession<E> {
             gamepads: super::gamepad::Controller::platform(),
             quit_requested: false,
             system_scale_override,
+            appearance: super::appearance::Appearance::start(event_loop.create_proxy()),
         };
         drop(guard);
         Ok(Self {
@@ -370,6 +371,10 @@ impl<E: JsEngine + Clone + 'static> WindowSession<E> {
         application.applied_cursor.clear();
         application.pointer_ids.clear();
         application.load_dispatched = false;
+        // The replaced document was created with the fallback preferences;
+        // it is told the real ones before its first frame.
+        application.appearance.forget_applied();
+        application.sync_appearance();
         Ok(())
     }
 

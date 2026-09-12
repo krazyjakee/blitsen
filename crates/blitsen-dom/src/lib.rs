@@ -17,9 +17,10 @@ pub use invalidation::{
 };
 pub use types::{
     CANVAS_TAG, CanvasCommands, CanvasEncoding, CanvasSurface, CanvasTextMetrics, CanvasTextStyle,
-    CaretPosition, DomError, DomName, HitTest, ImageState, LayoutMetrics, LayoutSnapshot,
-    LinkState, MediaQueryMatch, NATIVE_VIEWPORT_BYTES_PER_PIXEL, NATIVE_VIEWPORT_TAG, Namespace,
-    NodeKind, Rect, SelectionDirection, TextEdit, TextMotion, TextSelection, ViewportSurface,
+    CaretPosition, ColorScheme, DomError, DomName, HitTest, ImageState, LayoutMetrics,
+    LayoutSnapshot, LinkState, MediaPreferences, MediaQueryMatch, NATIVE_VIEWPORT_BYTES_PER_PIXEL,
+    NATIVE_VIEWPORT_TAG, Namespace, NodeKind, Rect, SelectionDirection, TextEdit, TextMotion,
+    TextSelection, ViewportSurface,
 };
 
 /// Boundary implemented by every DOM and renderer backend.
@@ -342,6 +343,17 @@ pub trait DomBackend {
     /// feature the style engine does not implement is unknown here too, and an
     /// unknown feature makes the query not match.
     fn media_query(&mut self, query: &str) -> Result<MediaQueryMatch, DomError>;
+
+    /// The system preferences the media features currently report.
+    fn media_preferences(&self) -> MediaPreferences;
+
+    /// Changes what the media features report, for the cascade and for
+    /// `matchMedia` alike.
+    ///
+    /// Affected style is invalidated; the caller re-evaluates its live
+    /// `MediaQueryList`s at the next frame boundary, which is where a
+    /// `change` event is dispatched from.
+    fn set_media_preferences(&mut self, preferences: MediaPreferences) -> Result<(), DomError>;
 
     /// Sets one or both scroll axes without bubbling into an ancestor scroller.
     fn set_scroll_offset(
