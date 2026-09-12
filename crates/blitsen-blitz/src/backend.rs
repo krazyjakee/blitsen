@@ -6,16 +6,18 @@
 use blitsen_dom::{
     CanvasCommands, CanvasEncoding, CanvasSurface, CanvasTextMetrics, CanvasTextStyle,
     CaretPosition, DomBackend, DomError, DomName, HitTest, ImageState, LayoutMetrics,
-    LayoutSnapshot, LinkState, MediaQueryMatch, NATIVE_VIEWPORT_TAG, NodeKind, Rect, TextEdit,
-    TextMotion, TextSelection, ViewportSurface,
+    LayoutSnapshot, LinkState, MediaPreferences, MediaQueryMatch, NATIVE_VIEWPORT_TAG, NodeKind,
+    Rect, TextEdit, TextMotion, TextSelection, ViewportSurface,
 };
 use blitz::dom::node::ImageData;
 use blitz::dom::{NodeData, NodeId};
+use blitz::traits::shell::ColorScheme;
 use style::context::QuirksMode;
 use style::properties::{PropertyDeclaration, PropertyId};
 use style::stylesheets::{CssRule, CustomMediaEvaluator};
 use style::values::computed::Overflow;
 
+use crate::media_features;
 use crate::pointer_events;
 use crate::resources::ResourceState;
 use crate::{BlitzDom, RESOURCE_RESOLVE_PASSES, css_pixels};
@@ -471,7 +473,7 @@ impl DomBackend for BlitzDom {
         // by a bundler's CSS-in-JS shim reaches the cascade.
         let normalized = self
             .is_tag(node, "style")
-            .then(|| pointer_events::normalize_css(text))
+            .then(|| self.media.normalize_stylesheet(text))
             .flatten();
         let text = normalized.as_deref().unwrap_or(text);
         match self.node_kind(node)? {
@@ -781,6 +783,10 @@ impl DomBackend for BlitzDom {
 
     fn media_query(&mut self, query: &str) -> Result<MediaQueryMatch, DomError> {
         let guard = self.document.guard().clone();
+        // The one feature the cascade does not know is resolved here exactly
+        // as it is for a stylesheet, so the two cannot disagree.
+        let resolved = media_features::rewrite(query, self.media.reduced_motion());
+        let query = resolved.as_deref().unwrap_or(query);
         // Parsed as the stylesheet rule it is, so a query reaches JavaScript
         // through the same parser and the same error handling the cascade uses.
         // The rule needs a body a parser will not discard.
@@ -798,8 +804,9 @@ impl DomBackend for BlitzDom {
             })
             .ok_or_else(|| DomError::Syntax(format!("not a media query: {query}")))?;
         // `MediaList` derives its `Debug` from its CSS serialization, which is
-        // what CSSOM asks `MediaQueryList.media` to report.
-        let text = format!("{media:?}");
+        // what CSSOM asks `MediaQueryList.media` to report — with the author's
+        // spelling put back where a stand-in was evaluated.
+        let text = media_features::restore(&format!("{media:?}"));
         let matches = media.evaluate(
             self.document.stylist_device(),
             QuirksMode::NoQuirks,
@@ -809,6 +816,67 @@ impl DomBackend for BlitzDom {
             media: text,
             matches,
         })
+    }
+
+    fn media_preferences(&self) -> MediaPreferences {
+        MediaPreferences {
+            color_scheme: match self.document.viewport().color_scheme {
+                ColorScheme::Light => blitsen_dom::ColorScheme::Light,
+                ColorScheme::Dark => blitsen_dom::ColorScheme::Dark,
+            },
+            reduced_motion: self.media.reduced_motion(),
+        }
+    }
+
+    fn set_media_preferences(&mut self, preferences: MediaPreferences) -> Result<(), DomError> {
+        let current = self.media_preferences();
+        if preferences.color_scheme != current.color_scheme {
+            // The device carries the colour scheme, and replacing the viewport
+            // rebuilds it and dirties every stylesheet origin; the flush notices
+            // the viewport changed and restyles.
+            let mut viewport = self.document.viewport().clone();
+            viewport.color_scheme = match preferences.color_scheme {
+                blitsen_dom::ColorScheme::Light => ColorScheme::Light,
+                blitsen_dom::ColorScheme::Dark => ColorScheme::Dark,
+            };
+            self.document.set_viewport(viewport);
+        }
+        if preferences.reduced_motion != current.reduced_motion {
+            self.media.set_reduced_motion(preferences.reduced_motion);
+            // Every `<style>` that carries the feature is rewritten in place,
+            // which re-parses it; every linked sheet that did is fetched again
+            // through the loader that rewrote it the first time.
+            let sheets = self.query_selector_all(self.document(), "style")?;
+            for node in sheets {
+                let css = self.text_content(node)?;
+                if let Some(rewritten) = media_features::rewrite(&css, preferences.reduced_motion) {
+                    self.set_text_content(node, &rewritten)?;
+                }
+            }
+            let href = DomName::attribute("href");
+            let rel = DomName::attribute("rel");
+            let links = self.query_selector_all(self.document(), "link[href]")?;
+            let mut reload = Vec::new();
+            for node in links {
+                let is_stylesheet = self.attribute(node, &rel)?.is_some_and(|rel| {
+                    rel.split_ascii_whitespace()
+                        .any(|value| value.eq_ignore_ascii_case("stylesheet"))
+                });
+                let Some(href) = self.attribute(node, &href)? else {
+                    continue;
+                };
+                let resolved = self.document.url().join(&href).ok();
+                if is_stylesheet
+                    && resolved.is_some_and(|url| self.media.sheet_was_rewritten(url.as_str()))
+                {
+                    reload.push(href);
+                }
+            }
+            for href in reload {
+                self.document.reload_resource_by_href(&href);
+            }
+        }
+        Ok(())
     }
 
     fn set_scroll_offset(

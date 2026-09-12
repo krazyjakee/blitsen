@@ -18,6 +18,11 @@
 // executable to spawn, and the single-instance lock is the platform's own job.
 #[cfg(not(target_os = "android"))]
 pub mod app;
+// The desktop's appearance and motion preferences (#385). Absent on Android,
+// where the configuration is the Activity's to read and the window already
+// follows it.
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+pub mod appearance;
 // Absent on Android: `arboard` has no backend there, and the service it would
 // wrap refuses a read unless the application holds focus.
 #[cfg(not(target_os = "android"))]

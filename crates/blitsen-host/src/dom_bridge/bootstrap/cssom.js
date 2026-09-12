@@ -215,14 +215,19 @@
     mediaStates.set(list, { query, onchange: null, ...call("matchMedia", query) });
     return list;
   };
-  // The only device state an exported application can change is the viewport:
-  // the colour scheme is fixed for the life of the process, so a query can only
-  // flip when the window does.
-  let mediaViewport = null;
+  // A query flips when the device it was evaluated against does: the viewport,
+  // and the two system preferences the host follows — colour scheme and
+  // reduced motion. The preferences are read from the same document state the
+  // cascade evaluates `@media` against, so the two cannot disagree, and both
+  // are sampled here at the top of the frame turn, which is the one place a
+  // `change` event is dispatched from.
+  let mediaDevice = null;
   const notifyMediaQueries = () => {
-    const viewport = `${innerWidth}x${innerHeight}@${devicePixelRatio}`;
-    if (viewport === mediaViewport) return;
-    mediaViewport = viewport;
+    const preferences = call("mediaPreferences");
+    const device = `${innerWidth}x${innerHeight}@${devicePixelRatio}`
+      + `/${preferences.colorScheme}/${preferences.reducedMotion}`;
+    if (device === mediaDevice) return;
+    mediaDevice = device;
     for (const list of mediaQueryLists) {
       const state = mediaStateFor(list);
       const { matches } = call("matchMedia", state.query);

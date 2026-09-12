@@ -1,0 +1,2 @@
+#linked { width: 10px }
+@media (prefers-reduced-motion: reduce) { #linked { width: 20px } }

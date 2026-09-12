@@ -116,12 +116,58 @@ const readBack = JSON.parse(native.runBridgeHarness(
      expect(notElement === "TypeError" && pseudo === "NotSupportedError",
        "a non-element and a pseudo-element are refused rather than answered");
 
+     // The documented fallbacks, which are what a headless harness has: light,
+     // and no motion preference.
      expect(matchMedia("(prefers-color-scheme: light)").matches &&
        !matchMedia("(prefers-color-scheme: dark)").matches, "the window's colour scheme");
-     const unknownFeature = matchMedia("(prefers-reduced-motion: reduce)");
+     const reduce = matchMedia("(prefers-reduced-motion: reduce)");
+     const noPreference = matchMedia("(prefers-reduced-motion: no-preference)");
+     expect(!reduce.matches && noPreference.matches
+       && reduce.media === "(prefers-reduced-motion: reduce)"
+       && noPreference.media === "(prefers-reduced-motion: no-preference)",
+       "reduced motion defaults to no-preference and serializes as written");
+     const unknownFeature = matchMedia("(prefers-contrast: more)");
      const invalid = matchMedia("!!!");
      expect(!unknownFeature.matches && !invalid.matches && invalid.media === "not all",
        "an unknown feature does not match and an invalid query serializes as not all");
+     // A system preference change: the cascade and every live list follow it
+     // at the next frame boundary, with one change event per list that flipped.
+     const themed = document.createElement("style");
+     themed.textContent = "@media (prefers-color-scheme: dark) { #observed { width: 111px } }"
+       + "@media (prefers-reduced-motion: reduce) { #observed { height: 22px } }";
+     document.head.appendChild(themed);
+     const dark = matchMedia("(prefers-color-scheme: dark)");
+     const preferenceChanges = [];
+     const stopDark = dark.addEventListener("change", event =>
+       preferenceChanges.push(["dark", event.matches]));
+     const onReduce = event => preferenceChanges.push(["reduce", event.matches]);
+     reduce.addEventListener("change", onReduce);
+     noPreference.onchange = event => preferenceChanges.push(["no-preference", event.matches]);
+     __blitsenMediaPreferences("dark", "reduce");
+     expect(!dark.matches && !reduce.matches,
+       "a preference change is not observed part-way through a turn");
+     __blitsenAnimationFrameTick(32);
+     const observedBox = getComputedStyle(document.getElementById("observed"));
+     expect(dark.matches && reduce.matches && !noPreference.matches,
+       "live lists follow the system preference");
+     expect(observedBox.width === "111px" && observedBox.height === "22px",
+       "the cascade follows the same preference: " + observedBox.width + " " + observedBox.height);
+     expect(JSON.stringify(preferenceChanges) === JSON.stringify(
+       [["dark", true], ["reduce", true], ["no-preference", false]]),
+       "one change per list that flipped: " + JSON.stringify(preferenceChanges));
+     __blitsenAnimationFrameTick(48);
+     expect(preferenceChanges.length === 3, "an unchanged preference dispatches nothing");
+     reduce.removeEventListener("change", onReduce);
+     __blitsenMediaPreferences("light", "no-preference");
+     __blitsenAnimationFrameTick(64);
+     expect(!dark.matches && !reduce.matches && noPreference.matches
+       && getComputedStyle(document.getElementById("observed")).width !== "111px",
+       "the preference is followed back again");
+     expect(JSON.stringify(preferenceChanges.slice(3)) === JSON.stringify(
+       [["dark", false], ["no-preference", true]]),
+       "a removed listener hears nothing: " + JSON.stringify(preferenceChanges.slice(3)));
+     themed.remove();
+     void stopDark;
      const query = matchMedia("(min-width: 500px)");
      expect(query instanceof MediaQueryList && query.media === "(min-width: 500px)" &&
        !query.matches, "the viewport is 320px wide");

@@ -59,6 +59,10 @@ libc = "0.2"
 # A named pipe is system-wide, so its discoverable name and protected DACL use
 # the caller's Windows SID. These are already `interprocess` dependencies on
 # Windows; listing them directly adds no crate to that target graph.
+#
+# `Win32_UI_WindowsAndMessaging` is `appearance`'s (#385): the "Show animations
+# in Windows" setting, read through `SystemParametersInfoW`, is what a
+# reduced-motion preference means there.
 [target.'cfg(windows)'.dependencies]
 widestring = "1"
 windows-sys = { version = "0.61", features = [
@@ -67,7 +71,21 @@ windows-sys = { version = "0.61", features = [
     "Win32_Security_Authorization",
     "Win32_System_Pipes",
     "Win32_System_Threading",
+    "Win32_UI_WindowsAndMessaging",
 ] }
+
+# The desktop settings portal is the one source of the colour-scheme and
+# animation preferences every Linux desktop agrees on (#385). The same zbus
+# major, features and transport `blitsen-host` already links for the
+# notification portal, so naming it here compiles no new crate.
+[target.'cfg(target_os = "linux")'.dependencies]
+zbus = { version = "5", default-features = false, features = ["blocking-api", "tokio"] }
+
+# Reduce Motion is an accessibility setting `NSWorkspace` answers (#385). The
+# crate is already resolved behind winit at this version; the two features
+# are the class and the accessibility category the one method lives in.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-app-kit = { version = "0.3", default-features = false, features = ["NSAccessibility", "NSWorkspace", "std"] }
 
 # `rfd` provides native asynchronous dialogs on every desktop target. On Linux
 # it speaks the portal's D-Bus interface itself and falls back to `zenity`.

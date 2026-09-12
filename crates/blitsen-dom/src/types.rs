@@ -335,6 +335,29 @@ impl LinkState {
     };
 }
 
+/// The colour scheme a document is rendered for: `prefers-color-scheme`.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum ColorScheme {
+    /// The documented fallback where the platform states no preference.
+    #[default]
+    Light,
+    /// A dark appearance.
+    Dark,
+}
+
+/// The system preferences the media features report.
+///
+/// One value for the cascade and for `matchMedia`, which is what keeps
+/// `@media` and a `MediaQueryList` from disagreeing about the same query.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct MediaPreferences {
+    /// What `prefers-color-scheme` matches.
+    pub color_scheme: ColorScheme,
+    /// Whether `prefers-reduced-motion: reduce` matches; the fallback is
+    /// `no-preference`.
+    pub reduced_motion: bool,
+}
+
 /// One CSS media query evaluated against the current device.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MediaQueryMatch {

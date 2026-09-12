@@ -10,6 +10,7 @@ mod cursor;
 mod fonts;
 mod forms;
 mod hit_test;
+mod media_features;
 mod pointer_events;
 pub mod resources;
 mod stylesheets;
@@ -98,6 +99,9 @@ pub struct BlitzDom {
     /// Parley's shaping caches, built the first time a canvas draws text.
     text_engine: Option<TextEngine>,
     resources: ResourceLog,
+    /// The reduced-motion preference and the linked sheets it was baked into,
+    /// shared with the subresource handler. See `media_features`.
+    media: media_features::MediaState,
     form_state: HashMap<NodeId, FormState>,
     animation_time: f64,
     base_url: Option<String>,
@@ -111,7 +115,8 @@ impl BlitzDom {
     /// [`resources::LocalResources`] rather than Blitz's silent no-op provider.
     pub fn from_html(html: &str, mut config: DocumentConfig) -> Self {
         config.html_parser_provider = Some(Arc::new(HtmlProvider));
-        let (provider, log) = resources::track(config.net_provider.take());
+        let media = media_features::MediaState::default();
+        let (provider, log) = resources::track(config.net_provider.take(), media.clone());
         config.net_provider = Some(provider);
         // Kept because Blitz's own resolver is crate-private, and anything
         // outside the renderer that has to turn a document-relative URL into a
@@ -126,6 +131,7 @@ impl BlitzDom {
         let mut dom = Self::new(HtmlDocument::from_html(html, config));
         dom.canvas_fonts = canvas_fonts;
         dom.resources = log;
+        dom.media = media;
         dom.base_url = base_url;
         dom.normalize_pointer_events();
         dom
@@ -169,6 +175,7 @@ impl BlitzDom {
             canvas_fonts: fonts::shared_context().1,
             text_engine: None,
             resources: ResourceLog::default(),
+            media: media_features::MediaState::default(),
             form_state: HashMap::new(),
             animation_time: 0.0,
             base_url: None,

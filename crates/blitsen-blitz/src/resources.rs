@@ -152,6 +152,7 @@ impl ResourceLog {
 struct TrackedProvider {
     inner: Arc<dyn NetProvider>,
     log: ResourceLog,
+    media: crate::media_features::MediaState,
 }
 
 impl NetProvider for TrackedProvider {
@@ -169,6 +170,7 @@ impl NetProvider for TrackedProvider {
                 id,
                 entry,
                 log: self.log.clone(),
+                media: self.media.clone(),
             }),
         );
     }
@@ -194,6 +196,7 @@ struct TrackedHandler {
     id: u64,
     entry: Arc<Inflight>,
     log: ResourceLog,
+    media: crate::media_features::MediaState,
 }
 
 impl NetHandler for TrackedHandler {
@@ -210,8 +213,15 @@ impl NetHandler for TrackedHandler {
         // The one place a linked stylesheet's text is in Blitsen's hands before
         // the cascade parses it. See `pointer_events` for what is rewritten and
         // why the bytes rather than the request decide whether it is CSS.
-        let bytes = match crate::pointer_events::normalize_subresource(&bytes) {
-            Some(rewritten) => Bytes::from(rewritten),
+        let bytes = match crate::pointer_events::normalize_subresource(&bytes, &self.media) {
+            Some(rewritten) => {
+                // Remembered by resolved URL, so a preference change reloads
+                // this sheet and not every sheet.
+                if crate::media_features::carries_stand_in(&rewritten) {
+                    self.media.sheet_rewritten(&resolved_url);
+                }
+                Bytes::from(rewritten)
+            }
             None => bytes,
         };
         inner.bytes(resolved_url, bytes);
@@ -229,12 +239,16 @@ impl Drop for TrackedHandler {
 /// Wraps a document's net provider so its request outcomes become observable.
 ///
 /// Installs [`local`] when the configuration carries no provider of its own.
-pub(crate) fn track(provider: Option<Arc<dyn NetProvider>>) -> (Arc<dyn NetProvider>, ResourceLog) {
+pub(crate) fn track(
+    provider: Option<Arc<dyn NetProvider>>,
+    media: crate::media_features::MediaState,
+) -> (Arc<dyn NetProvider>, ResourceLog) {
     let log = ResourceLog::default();
     let inner = provider.unwrap_or_else(|| Arc::new(LocalResources) as Arc<dyn NetProvider>);
     let tracked = TrackedProvider {
         inner,
         log: log.clone(),
+        media,
     };
     (Arc::new(tracked) as Arc<dyn NetProvider>, log)
 }
@@ -337,7 +351,7 @@ mod tests {
     #[test]
     fn local_resources_answer_data_and_file_urls_and_refuse_the_network() {
         let collector = Collector::default();
-        let (provider, log) = track(None);
+        let (provider, log) = track(None, crate::media_features::MediaState::default());
         let data = "data:text/plain;base64,aGVsbG8=";
         fetch(&*provider, data, &collector);
         fetch(&*provider, "https://example.com/a.png", &collector);
@@ -374,7 +388,10 @@ mod tests {
 
     #[test]
     fn a_request_that_has_not_answered_yet_stays_loading() {
-        let (provider, log) = track(Some(Arc::new(NeverAnswers::default())));
+        let (provider, log) = track(
+            Some(Arc::new(NeverAnswers::default())),
+            crate::media_features::MediaState::default(),
+        );
         provider.fetch(
             0,
             Request::get(Url::parse("https://example.com/slow.woff2").unwrap()),
@@ -391,7 +408,10 @@ mod tests {
     fn stopping_cancels_every_transfer_in_flight_and_settles_what_it_was_loading() {
         let collector = Collector::default();
         let network = Arc::new(NeverAnswers::default());
-        let (provider, log) = track(Some(Arc::clone(&network) as Arc<dyn NetProvider>));
+        let (provider, log) = track(
+            Some(Arc::clone(&network) as Arc<dyn NetProvider>),
+            crate::media_features::MediaState::default(),
+        );
         let sheet = "https://example.com/app.css";
         let font = "https://example.com/app.woff2";
         fetch(&*provider, sheet, &collector);
@@ -432,7 +452,7 @@ mod tests {
     #[test]
     fn stopping_with_nothing_in_flight_settles_nothing_and_disturbs_nothing() {
         let collector = Collector::default();
-        let (provider, log) = track(None);
+        let (provider, log) = track(None, crate::media_features::MediaState::default());
         let data = "data:text/plain;base64,aGVsbG8=";
         fetch(&*provider, data, &collector);
 

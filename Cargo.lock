@@ -604,6 +604,7 @@ dependencies = [
  "dirs",
  "interprocess",
  "libc",
+ "objc2-app-kit",
  "parking_lot",
  "pollster 1.0.1",
  "raw-window-handle",
@@ -614,6 +615,7 @@ dependencies = [
  "sysinfo",
  "widestring",
  "windows-sys 0.61.2",
+ "zbus",
 ]
 
 [[package]]

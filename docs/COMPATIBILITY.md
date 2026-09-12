@@ -643,16 +643,29 @@ a library still installs; the event is a `MediaQueryListEvent` with `media` and 
 
 The features the style engine implements are `width`, `height`, `device-width`, `device-height`,
 `orientation`, `aspect-ratio`, `resolution`, `device-pixel-ratio`, `scan`, `pointer`, `any-pointer`,
-`hover`, `any-hover` and `prefers-color-scheme`. Anything else — `prefers-reduced-motion`,
-`prefers-contrast`, `forced-colors` — is an unknown feature to the engine, and an unknown feature
-does not match, which is the CSS answer rather than a Blitsen one. An unparsable query serializes
-as `not all` and does not match, as it does in a browser.
+`hover`, `any-hover` and `prefers-color-scheme`, and Blitsen adds `prefers-reduced-motion` on top
+(#385). Anything else — `prefers-contrast`, `forced-colors` — is an unknown feature to the engine,
+and an unknown feature does not match, which is the CSS answer rather than a Blitsen one. An
+unparsable query serializes as `not all` and does not match, as it does in a browser.
 
-`prefers-color-scheme` is **`light` for the life of the process**: the window is created with a
-light colour scheme and nothing changes it yet, so a dark-mode toggle driven by the system
-preference stays light while one driven by a class or `localStorage` works normally. The only
-device state that can change is the viewport, so a `change` event is dispatched when — and only
-when — a window resize flips a query, at the start of the frame turn.
+**`prefers-color-scheme` and `prefers-reduced-motion` follow the operating system.** On startup
+the window reads the system's appearance and motion preferences, and while it runs it follows
+changes to them: on Linux through the desktop settings portal (`org.freedesktop.appearance
+color-scheme`, and GNOME's `enable-animations` for motion), on macOS and Windows through the
+window's own theme notification for colour and the accessibility and animation settings for motion.
+A change is applied at the start of a frame turn — never part-way through one — where it
+invalidates the affected style and dispatches one `change` event on each live `MediaQueryList`
+whose result flipped; nothing reloads. `@media` in a stylesheet and `matchMedia()` read the same
+state, so they cannot disagree about the same query. Where a platform has no trustworthy answer,
+the fallback is one documented value rather than a guess: `light`, and `no-preference`. A dark-mode
+toggle driven by a class or `localStorage` continues to work as it always did, and takes precedence
+over the system value in the ordinary CSS way.
+
+`prefers-reduced-motion` is not a feature Stylo's engine knows, so Blitsen resolves it as a
+stylesheet or query arrives and re-resolves it when the preference changes: a `<style>` element's
+text is rewritten in place, a linked sheet that used the feature is fetched again, and the text a
+`MediaQueryList` reports is the query as written. What this cannot reach is a `media` attribute on
+`<link>` or `<style>`, which the engine does not evaluate at all.
 
 **`ResizeObserver`** observes elements, with `observe`, `unobserve` and `disconnect`. An entry
 carries `target`, `contentRect`, `borderBoxSize` and `contentBoxSize`; `contentRect` is the content

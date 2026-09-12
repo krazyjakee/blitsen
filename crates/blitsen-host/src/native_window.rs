@@ -24,6 +24,7 @@ use crate::drag_drop::PendingDrag;
 use crate::pointer_input::{PendingPointerInput, PointerIds};
 use crate::surface_lifecycle::{SurfaceState, SyntheticPhase};
 
+mod appearance;
 mod borderless_resize;
 pub(crate) mod gamepad;
 pub(crate) mod hid;
@@ -143,6 +144,8 @@ pub struct WindowApplication<Rend: anyrender::WindowRenderer, E: JsEngine + Clon
     pub(crate) quit_requested: bool,
     /// XSettings' toolkit scale, needed on X11 desktops that keep Xft/DPI at 96.
     pub(crate) system_scale_override: Option<f64>,
+    /// The system preferences the media features follow (#385).
+    pub(crate) appearance: appearance::Appearance,
 }
 
 /// Forgets the window the `blitsen/window` module addresses.
