@@ -63,7 +63,7 @@ const ABSENT = {
   linux: ["menu"],
   darwin: [],
   win32: [],
-  android: ["app", "clipboard", "dialog", "window", "tray", "menu"],
+  android: ["app", "clipboard", "dialog", "window", "tray", "menu", "shell"],
 };
 
 // Why, per platform, in the words of the module that made the call. Keyed
@@ -102,6 +102,10 @@ const REASONS = {
   "android.tray": "Android has no desktop notification area or status-item menu. Its persistent "
     + "status UI is a notification, which belongs to blitsen/notify and carries its own runtime "
     + "permission and channel semantics rather than pretending to be a tray icon.",
+  "android.shell": "Opening a URL or a file on Android is an Intent the Activity sends, answered "
+    + "by the system's chooser rather than by a handler this process spawns, and there is no file "
+    + "manager to reveal an item in. It needs a module shaped for Intents, over JNI, rather than "
+    + "these three desktop operations answering with something else.",
 };
 
 /// The `blitsen/*` modules that do not exist on `target`, each with its reason.

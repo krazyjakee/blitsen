@@ -1591,6 +1591,7 @@ lib. The capability tiers above are the list, and `blitsen doctor` is the check.
 | `blitsen/hid` | `devices`, `open`, `onDeviceChange` | — |
 | `blitsen/notify` | `show`, `permission`, `requestPermission`, `update`, `close`, `onEvent` | — |
 | `blitsen/os` | `cpu`, `memory`, `storage`, `host`, `batteries`, `locale` | `displays`, `idleTime` |
+| `blitsen/shell` | `openExternal`, `openPath`, `showItemInFolder` | — |
 
 | Absent member | Why |
 | --- | --- |
@@ -1622,6 +1623,7 @@ lib. The capability tiers above are the list, and `blitsen doctor` is the check.
 | `blitsen/window` | android | winit accepts every setter on Android and discards it, then answers the getter as though the request had never been made: `setDecorations(false)` is followed by `isDecorated()` saying true, on a platform with no decorations. The monitor list goes too, and it is the one worth naming because it looks like the survivor — winit enumerates no monitors there, so `monitors()` would report a device with no display. Immersive mode and orientation are the real capabilities here and are not these under another name. |
 | `blitsen/tray` | android | Android has no desktop notification area or status-item menu. Its persistent status UI is a notification, which belongs to blitsen/notify and carries its own runtime permission and channel semantics rather than pretending to be a tray icon. |
 | `blitsen/menu` | android | Android has no application menu bar. Its equivalents are the app bar's overflow menu and the navigation drawer, which are views inside the activity's own layout rather than a menu the platform owns, and neither has this shape. |
+| `blitsen/shell` | android | Opening a URL or a file on Android is an Intent the Activity sends, answered by the system's chooser rather than by a handler this process spawns, and there is no file manager to reveal an item in. It needs a module shaped for Intents, over JNI, rather than these three desktop operations answering with something else. |
 
 | Conditional native member | Platform where absent | Why |
 | --- | --- | --- |

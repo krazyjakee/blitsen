@@ -879,6 +879,38 @@ export interface Locale {
 }
 
 /**
+ * `blitsen/shell`: handing a URL or a path to the desktop.
+ *
+ * Three operations with three different security consequences, kept apart on
+ * purpose. `openExternal` sends the person to their browser or mail client, and
+ * accepts only `http:`, `https:` and `mailto:` — a `javascript:`, `file:` or
+ * custom-scheme URL is a `TypeError` at the call rather than a string handed
+ * to the operating system. `openPath` runs whatever the desktop associates with
+ * a file, which for a script or an executable is the file itself, so it is for
+ * paths the application chose. `showItemInFolder` only reveals a file or
+ * directory in the file manager and runs nothing, which makes it the right one
+ * for a path that came from a tool's output or a dialog.
+ *
+ * Paths must be absolute: the desktop has no working directory to resolve a
+ * relative one against. Every argument crosses as one URL or one path — never
+ * as a command line — and none of these navigates the document.
+ *
+ * Each returns a promise that settles on a frame turn. A rejection is a
+ * `DOMException`: `NotFoundError` for a path that does not exist,
+ * `NotSupportedError` where the desktop has no handler for the URL or file,
+ * and `OperationError` where the handler was found and failed. Absent on
+ * Android, where these are `Intent`s the Activity sends.
+ */
+export interface NativeShell {
+  /** Opens an `http:`, `https:` or `mailto:` URL in the desktop's handler for it. */
+  openExternal?(url: string): Promise<void>;
+  /** Opens an absolute path in the application the desktop associates with it. */
+  openPath?(path: string): Promise<void>;
+  /** Reveals an absolute path in the file manager, selected, without running it. */
+  showItemInFolder?(path: string): Promise<void>;
+}
+
+/**
  * What a native module namespace is, whichever module it is.
  *
  * Members are whatever the running Blitsen version installed. A capability this

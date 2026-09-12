@@ -8,6 +8,7 @@ import hid from "blitsen/hid";
 import input from "blitsen/input";
 import menu from "blitsen/menu";
 import notify from "blitsen/notify";
+import shell from "blitsen/shell";
 import tray from "blitsen/tray";
 import nativeWindow from "blitsen/window";
 import type { ClipboardImage } from "blitsen/clipboard";
@@ -50,6 +51,13 @@ if (nativeWindow.monitors) {
 if (dialog.openFile) {
   void dialog.openFile({ filters: [{ name: "Text", extensions: ["txt"] }] })
     .then((chosen: string | null) => chosen);
+}
+if (shell.openExternal) {
+  void shell.openExternal("https://github.com/krazyjakee/blitsen").then((done: void) => done);
+}
+if (shell.showItemInFolder && shell.openPath) {
+  void shell.showItemInFolder("/tmp/report.html").catch((error: DOMException) => error.name);
+  void shell.openPath("/tmp/report.html");
 }
 if (tray.configure) {
   void tray.configure({

@@ -47,7 +47,8 @@
     || liveEventSources.size > 0
     || pendingResizeObservations() > 0 || audioPending()
     || waitingImages() > 0 || waitingLinks() > 0
-    || nativePending() || nativeDialogPending() || nativeTrayWorkPending()
+    || nativePending() || nativeDialogPending() || shellChannel.workPending()
+    || nativeTrayWorkPending()
     || nativeMenuWorkPending()
     || nativeNotifyWorkPending() || nativeHidWorkPending() || gamepadWorkPending()
     || call("isAnimating")
@@ -126,6 +127,7 @@
       livePorts.clear();
       liveWorkers.clear();
       dialogChannel.clear();
+      shellChannel.clear();
       // A press held across a reload would otherwise keep the old document's
       // field alive to drag a selection in, and a pointer captured by an element
       // of the old document would retarget the new document's events at it.
