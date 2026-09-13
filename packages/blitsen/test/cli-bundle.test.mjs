@@ -344,13 +344,13 @@ describe("Phase 2 link step", () => {
       const foreignTarget = process.platform === "linux" ? "win32-x64" : "linux-x64";
       const foreign = join(helpers, "foreign");
       await writeFile(foreign, executableStub(foreignTarget));
-      await expect(buildStandalone({ ...base, outfile: join(directory, "Foreign"), sidecars: [foreign] }, nativePath))
+      await expect(buildStandalone({ ...base, outfile: join(directory, "ForeignApp"), sidecars: [foreign] }, nativePath))
         .rejects.toThrow("but this build targets");
       const text = join(helpers, "script");
       await writeFile(text, "#!/bin/sh\necho hi\n");
       await expect(buildStandalone({ ...base, outfile: join(directory, "Text"), sidecars: [text] }, nativePath))
         .rejects.toThrow("not an executable for any supported platform");
-      await expect(buildStandalone({ ...base, outfile: join(directory, "Missing"),
+      await expect(buildStandalone({ ...base, outfile: join(directory, "MissingApp"),
         sidecars: [join(helpers, "missing")] }, nativePath)).rejects.toThrow("sidecar is not a file");
       await expect(buildStandalone({ ...base, outfile: join(directory, basename(core)), sidecars: [core], force: true },
         nativePath)).rejects.toThrow("same name as the exported executable");
