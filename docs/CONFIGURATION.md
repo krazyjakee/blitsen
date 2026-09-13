@@ -57,6 +57,7 @@ Only `output` is required.
 | `build` | string | Command to run before ingesting `output` |
 | `name` | string | Application name, default window title and default output filename |
 | `addons` | string array | `.node` addons to carry, with paths relative to `package.json` |
+| `sidecars` | string array | Helper executables to ship beside the export, with paths relative to `package.json`; see [Sidecar executables](PACKAGING.md#sidecar-executables) |
 | `window` | object | Native window type and creation options |
 | `tray` | object | System tray icon and context menu |
 | `menu` | object | Application menu installed at startup; needs no tray icon. Its `menu` key holding the tree is required |

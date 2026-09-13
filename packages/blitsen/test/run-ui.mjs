@@ -1,4 +1,4 @@
-import { mkdtemp, rm, mkdir, readFile, readdir } from 'node:fs/promises';
+import { copyFile, mkdtemp, rm, mkdir, readFile, readdir, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { linkBundle } from '../src/bundle.mjs';
@@ -31,6 +31,11 @@ try {
   ]);
   const output = join(scratch, process.platform === 'win32' ? 'UI.exe' : 'UI');
   await linkBundle({ runtime: join(target, 'debug', process.platform === 'win32' ? 'blitsen-runtime.exe' : 'blitsen-runtime'), output, files });
+  // A sidecar beside the export, as `blitsen build --sidecar` ships one. The
+  // JavaScript host running this script is a convenient executable that prints.
+  const helper = join(scratch, process.platform === 'win32' ? 'ui-helper.exe' : 'ui-helper');
+  if (process.platform === 'win32') await copyFile(process.execPath, helper);
+  else await symlink(process.execPath, helper);
   for (const host of ['node', process.execPath]) {
     const artifacts = join(scratch, host === 'node' ? 'node' : 'bun');
     await mkdir(artifacts);

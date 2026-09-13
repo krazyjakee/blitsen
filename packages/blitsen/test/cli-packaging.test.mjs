@@ -323,10 +323,15 @@ describe("directory CLI", () => {
       const sideLoaded = join(directory, "Pong.assets");
       await mkdir(sideLoaded);
       await writeFile(join(sideLoaded, "index.html"), "<!doctype html>");
+      const sidecar = join(directory, "pong-core");
+      await writeFile(sidecar, "helper", { mode: 0o755 });
       const result = await packageBuild({
         platform: "darwin", executable, title: "Pong Deluxe", icon,
-        version: "1.2.3", assetDirectory: sideLoaded,
+        version: "1.2.3", assetDirectory: sideLoaded, sidecars: [sidecar],
       });
+      // Sidecars are found beside the running executable, so they move in with it.
+      expect(result.sidecars).toEqual([join(directory, "Pong.app/Contents/MacOS/pong-core")]);
+      expect(await readFile(result.sidecars[0], "utf8")).toBe("helper");
       const bundle = join(directory, "Pong.app");
       expect(result).toMatchObject({
         bundle,

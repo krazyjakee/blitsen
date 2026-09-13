@@ -9,7 +9,7 @@ import { promisify } from "node:util";
 import { buildPayload, buildTrailer, linkBundle, readBundle, FORMAT_VERSION } from "../src/bundle.mjs";
 import { injectMachOPayload, machOPayloadOffset } from "../src/macho.mjs";
 import { buildStandalone } from "../src/export.mjs";
-import { compileAddon, compiler, exportedName, withStubbedExport, withTemporaryDirectory }
+import { compileAddon, compiler, executableStub, exportedName, withStubbedExport, withTemporaryDirectory }
   from "./cli-support.mjs";
 import { machoFixture } from "./fixtures/macho.mjs";
 
@@ -308,6 +308,58 @@ describe("Phase 2 link step", () => {
       const record = readBundle(await readFile(identified.outfile));
       expect(JSON.parse(record.files.get("blitsen.runtime.json").toString("utf8")).activation)
         .toEqual({ identity: "com.example.classic", entry: "com.example.classic" });
+    });
+  }, 120_000);
+
+  // Sidecars ship beside the executable, where blitsen/process finds them by
+  // name; everything that would make one unrunnable is refused before linking.
+  test("ships sidecar executables beside the export and refuses unusable ones", async () => {
+    await withStubbedExport(async ({ directory, outfile, nativePath }) => {
+      const root = await staticApp(directory, CLASSIC_APP);
+      const helpers = join(directory, "helpers");
+      await mkdir(helpers);
+      const core = join(helpers, process.platform === "win32" ? "app-core.exe" : "app-core");
+      await writeFile(core, executableStub());
+      const base = { root, width: 800, height: 600, title: "Sidecars", outfile };
+      const built = await buildStandalone({ ...base, sidecars: [core] }, nativePath);
+      const shipped = join(directory, basename(core));
+      expect(built.sidecars).toEqual([shipped]);
+      expect(await readFile(shipped)).toEqual(await readFile(core));
+      if (process.platform !== "win32") expect((await stat(shipped)).mode & 0o111).toBeGreaterThan(0);
+      // The sidecar is not part of the application bundle: it runs as its own process.
+      expect(readBundle(await readFile(built.outfile)).files.has(basename(core))).toBeFalse();
+
+      await expect(buildStandalone({ ...base, outfile: join(directory, "Again"), sidecars: [core] }, nativePath))
+        .rejects.toThrow("output already exists");
+      expect((await buildStandalone({ ...base, outfile: join(directory, "Again"), sidecars: [core], force: true },
+        nativePath)).sidecars).toEqual([shipped]);
+
+      // A sidecar already built into the output directory ships where it is.
+      const local = join(directory, process.platform === "win32" ? "local-core.exe" : "local-core");
+      await writeFile(local, executableStub());
+      const inPlace = await buildStandalone({ ...base, outfile: join(directory, "InPlace"), sidecars: [local] }, nativePath);
+      expect(inPlace.sidecars).toEqual([local]);
+      expect(await readFile(local)).toEqual(executableStub());
+
+      const foreignTarget = process.platform === "linux" ? "win32-x64" : "linux-x64";
+      const foreign = join(helpers, "foreign");
+      await writeFile(foreign, executableStub(foreignTarget));
+      await expect(buildStandalone({ ...base, outfile: join(directory, "Foreign"), sidecars: [foreign] }, nativePath))
+        .rejects.toThrow("but this build targets");
+      const text = join(helpers, "script");
+      await writeFile(text, "#!/bin/sh\necho hi\n");
+      await expect(buildStandalone({ ...base, outfile: join(directory, "Text"), sidecars: [text] }, nativePath))
+        .rejects.toThrow("not an executable for any supported platform");
+      await expect(buildStandalone({ ...base, outfile: join(directory, "Missing"),
+        sidecars: [join(helpers, "missing")] }, nativePath)).rejects.toThrow("sidecar is not a file");
+      await expect(buildStandalone({ ...base, outfile: join(directory, basename(core)), sidecars: [core], force: true },
+        nativePath)).rejects.toThrow("same name as the exported executable");
+      const twin = join(directory, "twin");
+      await mkdir(twin);
+      await writeFile(join(twin, basename(core)), executableStub());
+      await expect(buildStandalone({ ...base, outfile: join(directory, "Twins"),
+        sidecars: [core, join(twin, basename(core))], force: true }, nativePath))
+        .rejects.toThrow("two sidecars are both named");
     });
   }, 120_000);
 

@@ -579,6 +579,13 @@ old document owned, and so does the process exiting — through the job handles 
 and an exit handler on Unix, which runs for `process.exit` as well as for a window closing. Linux
 additionally asks the kernel to kill the child if this process is killed outright.
 
+**A sidecar the build shipped** is started by name instead of by `command`:
+`spawn({ sidecar: "app-core", args: ["serve"], stdin: "piped" })`. The name is the file name given
+to `blitsen build --sidecar` (`.exe` is implied on Windows); the runtime looks beside the running
+executable, then in the application directory for a directory run, and never on `PATH`. Passing
+both `command` and `sidecar` is a `TypeError`, and a sidecar that is not there rejects with
+`NotFoundError`. See [Sidecar executables](PACKAGING.md#sidecar-executables).
+
 The exit reports `code` and `signal`, and the child object remembers whether `kill` was called on
 it in `killed`, which is what tells a Windows termination from a child that exited with `1` itself.
 A terminal emulator or PTY is not part of this: a child sees a pipe, and a tool that behaves

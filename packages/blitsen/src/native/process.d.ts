@@ -6,7 +6,7 @@
 import type { NativeNamespace, NativeProcess } from "./native.js";
 
 export type {
-  ChildProcess, ExitStatus, NativeProcess, SpawnOptions, StdioMode,
+  ChildProcess, ExitStatus, NativeProcess, SpawnOptions, SpawnStdio, StdioMode,
 } from "./native.js";
 
 declare const process: NativeNamespace<NativeProcess>;

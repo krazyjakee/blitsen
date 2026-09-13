@@ -580,6 +580,10 @@ if (processModule.spawn) {
     [() => processModule.spawn({ command: "bun", env: { "A=B": "x" } }), /not an environment variable/],
     [() => processModule.spawn({ command: "bun", env: { A: 1 } }), /env.A must be a string/],
     [() => processModule.spawn({ command: "bun", stdin: "tty" }), /stdin must be "piped"/],
+    [() => processModule.spawn({ command: "bun", sidecar: "core" }), /a command or a sidecar, not both/],
+    [() => processModule.spawn({ sidecar: "../core" }), /name of a shipped executable/],
+    [() => processModule.spawn({ sidecar: "" }), /name of a shipped executable/],
+    [() => processModule.spawn({ sidecar: 7 }), /sidecar must be a string/],
   ]) assert.throws(call, refusal, "a mistaken spawn is refused where the call was made");
 
   const settle = async until => {
@@ -591,6 +595,16 @@ if (processModule.spawn) {
     }
     throw new Error("the child process story did not finish in time");
   };
+  // A sidecar nobody shipped is not looked for on PATH: it is missing, and the
+  // refusal names where it was expected.
+  let missingSidecar;
+  processModule.spawn({ sidecar: "blitsen-harness-missing-sidecar" })
+    .then(() => { missingSidecar = new Error("an unshipped sidecar started"); },
+      error => { missingSidecar = error; });
+  await settle(() => missingSidecar);
+  assert.equal(missingSidecar.name, "NotFoundError");
+  assert.match(missingSidecar.message, /blitsen-harness-missing-sidecar/);
+
   const decoder = () => new TextDecoder();
   const script = join(mkdtempSync(join(tmpdir(), "blitsen-process-")), "child.mjs");
   writeFileSync(script, `

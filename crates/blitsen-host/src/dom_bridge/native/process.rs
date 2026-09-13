@@ -3,6 +3,92 @@ use blitsen_js::{JsEngine, JsError};
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 use super::super::{argument, byte_argument, json_value};
 
+/// Where a shipped sidecar executable is looked for: beside the running
+/// executable (inside `Contents/MacOS` for a macOS bundle), then in the
+/// application directory for a directory run. The first that exists wins; when
+/// neither does, the path beside the executable is returned so the spawn reports
+/// `NotFoundError` naming where the sidecar was expected.
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+fn sidecar_path(
+    name: &str,
+    executable: Option<&std::path::Path>,
+    application_root: Option<&std::path::Path>,
+) -> Result<std::path::PathBuf, JsError> {
+    let valid = !name.is_empty()
+        && name.len() <= 255
+        && name
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphanumeric())
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'));
+    if !valid {
+        return Err(JsError::new(format!(
+            "{name:?} is not a sidecar name: use the shipped executable's file name"
+        )));
+    }
+    let file = if cfg!(windows) && !name.to_ascii_lowercase().ends_with(".exe") {
+        format!("{name}.exe")
+    } else {
+        name.to_owned()
+    };
+    let candidates: Vec<std::path::PathBuf> = executable
+        .and_then(std::path::Path::parent)
+        .into_iter()
+        .chain(application_root)
+        .map(|directory| directory.join(&file))
+        .collect();
+    Ok(candidates
+        .iter()
+        .find(|candidate| candidate.is_file())
+        .or(candidates.first())
+        .cloned()
+        .unwrap_or_else(|| file.into()))
+}
+
+#[cfg(all(test, not(any(target_os = "android", target_os = "ios"))))]
+mod sidecar_tests {
+    use super::sidecar_path;
+
+    #[test]
+    fn sidecars_resolve_beside_the_executable_then_the_application_directory() {
+        let temporary =
+            std::env::temp_dir().join(format!("blitsen-sidecar-{}", std::process::id()));
+        let (bin, app) = (temporary.join("bin"), temporary.join("app"));
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::create_dir_all(&app).unwrap();
+        let file = if cfg!(windows) {
+            "helper.exe"
+        } else {
+            "helper"
+        };
+        let executable = bin.join("app");
+        // Neither exists: the path beside the executable is named.
+        assert_eq!(
+            sidecar_path("helper", Some(&executable), Some(&app)).unwrap(),
+            bin.join(file)
+        );
+        std::fs::write(app.join(file), b"").unwrap();
+        assert_eq!(
+            sidecar_path("helper", Some(&executable), Some(&app)).unwrap(),
+            app.join(file)
+        );
+        std::fs::write(bin.join(file), b"").unwrap();
+        assert_eq!(
+            sidecar_path("helper", Some(&executable), Some(&app)).unwrap(),
+            bin.join(file)
+        );
+        for bad in ["", "../helper", "a/b", ".hidden", "x\\y", "sp ace"] {
+            assert!(
+                sidecar_path(bad, Some(&executable), None).is_err(),
+                "{bad:?}"
+            );
+        }
+        std::fs::remove_dir_all(&temporary).unwrap();
+    }
+}
+
 /// `blitsen/process` (#383): managed child processes.
 ///
 /// Every command is handed to the platform's own supervisor threads and every
@@ -22,7 +108,8 @@ pub(super) fn install<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsErr
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
     struct SpawnSpec {
-        command: String,
+        command: Option<String>,
+        sidecar: Option<String>,
         args: Vec<String>,
         cwd: Option<String>,
         env: Vec<(String, Option<String>)>,
@@ -74,8 +161,20 @@ pub(super) fn install<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsErr
             let spec: SpawnSpec =
                 serde_json::from_str(&argument(&mut engine, &call, 0, "spawn options")?)
                     .map_err(|error| JsError::new(format!("malformed spawn options: {error}")))?;
+            let program = match (spec.command, spec.sidecar) {
+                (Some(command), None) => command,
+                (None, Some(name)) => sidecar_path(
+                    &name,
+                    std::env::current_exe().ok().as_deref(),
+                    crate::app::application_root().as_deref(),
+                )?
+                .into_os_string()
+                .into_string()
+                .map_err(|_| JsError::new("the sidecar's location is not valid Unicode"))?,
+                _ => return Err(JsError::new("spawn takes a command or a sidecar, not both")),
+            };
             let request = SpawnRequest {
-                program: spec.command,
+                program,
                 args: spec.args,
                 cwd: spec.cwd.map(Into::into),
                 env: spec.env,

@@ -61,7 +61,7 @@ describe("directory CLI", () => {
     const misspelled = join(configFixtures, "misspelled");
     await expect(loadConfig(misspelled)).rejects.toThrow(
       `invalid blitsen config in ${join(misspelled, "package.json")}: `
-      + 'unknown key "outputs" (known keys: build, output, name, addons, window, tray, menu)');
+      + 'unknown key "outputs" (known keys: build, output, name, addons, sidecars, window, tray, menu)');
   });
 
   test("validates rich tray trees and records package-relative icons", async () => {

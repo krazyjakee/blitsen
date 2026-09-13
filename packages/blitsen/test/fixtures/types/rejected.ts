@@ -9,6 +9,7 @@ import hid from "blitsen/hid";
 import menu from "blitsen/menu";
 import nativeWindow from "blitsen/window";
 import notify from "blitsen/notify";
+import processModule from "blitsen/process";
 import tray from "blitsen/tray";
 
 // A capability is optional because the running version may not install it.
@@ -83,6 +84,12 @@ document.createElement("div").acquireSurface();
 surface.write(surface.byteLength);
 
 // The config is validated by its type before it is validated at run time.
+// A spawn names what it starts exactly once: a command or a shipped sidecar.
+// @ts-expect-error
+void processModule.spawn?.({ command: "gh", sidecar: "app-core" });
+// @ts-expect-error
+void processModule.spawn?.({ args: ["--version"] });
+
 import { defineConfig } from "blitsen";
 // @ts-expect-error
 defineConfig({ name: "Demo" });

@@ -45,6 +45,9 @@ describe("directory CLI", () => {
     expect(parseArgs(["build", "dist", "--addon", "native/physics.node"]).addons)
       .toEqual([join(process.cwd(), "native/physics.node")]);
     expect(() => parseArgs(["app", "--addon", "physics.node"])).toThrow("only valid with build");
+    expect(parseArgs(["build", "dist", "--sidecar", "bin/core", "--sidecar", "/opt/helper"]).sidecars)
+      .toEqual([join(process.cwd(), "bin/core"), "/opt/helper"]);
+    expect(() => parseArgs(["app", "--sidecar", "bin/core"])).toThrow("only valid with build");
     expect(parseArgs(["build", "dist", "--icon", "app.png", "--bundle-id", "com.example.pong",
       "--app-version", "1.2.3", "--sign", "codesign -s ID"]))
       .toEqual({ command: "build", directory: "dist", width: 800, height: 600, title: "Blitsen",

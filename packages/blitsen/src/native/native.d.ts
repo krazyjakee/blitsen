@@ -913,10 +913,25 @@ export interface NativeShell {
 /** How one of a child's standard streams is connected. */
 export type StdioMode = "piped" | "inherit" | "null";
 
-/** What `process.spawn` starts. */
-export interface SpawnOptions {
-  /** The executable: an absolute path, or a name looked up on `PATH`. */
-  command: string;
+/** What `process.spawn` starts: a `command`, or a `sidecar` the build shipped. */
+export type SpawnOptions = SpawnStdio & (
+  | {
+    /** The executable: an absolute path, or a name looked up on `PATH`. */
+    command: string;
+    sidecar?: never;
+  }
+  | {
+    /**
+     * The file name of an executable shipped with `blitsen build --sidecar`,
+     * found beside the running executable (or in the application directory for
+     * a directory run) rather than on `PATH`. `.exe` is implied on Windows.
+     */
+    sidecar: string;
+    command?: never;
+  });
+
+/** Everything `process.spawn` takes besides what it starts. */
+export interface SpawnStdio {
   /** Arguments, each one an `argv` element. Nothing is interpreted by a shell. */
   args?: readonly string[];
   /** Working directory, or this process's. */
