@@ -90,6 +90,13 @@ export const GROUPS: DocGroup[] = [
         blurb: "Build desktop executables and Android APKs, add metadata, sign and prepare a release.",
       },
       {
+        file: "TESTING.md",
+        slug: "testing",
+        nav: "Application testing",
+        title: "Testing an application",
+        blurb: "Drive packaged applications headlessly from Node or Bun and capture interaction failures.",
+      },
+      {
         file: "PLATFORM-SUPPORT.md",
         slug: "platform-support",
         nav: "Platform support",

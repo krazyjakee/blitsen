@@ -95,6 +95,10 @@ pub enum DocumentMode {
     Application,
     /// A test document with bridge counters and synthetic input helpers.
     TestHarness,
+    /// Application UI tests with a software surface and fake window/dialogs.
+    HeadlessApplication,
+    /// Document script checks with feature-detectably absent window/dialog APIs.
+    DocumentCheck,
 }
 
 impl DocumentMode {
@@ -118,6 +122,7 @@ pub struct InstallOptions {
 /// synthetic injectors, but still retain this private set so document loading
 /// follows the same ownership path in every mode.
 pub(crate) struct HostHooks<V> {
+    pub(crate) event_log: V,
     pub(crate) mouse: V,
     pub(crate) pointer: V,
     pub(crate) keyboard: V,
@@ -136,6 +141,7 @@ pub(crate) struct HostHooks<V> {
 impl<V> HostHooks<V> {
     fn resolve(mut property: impl FnMut(&str) -> Result<V, JsError>) -> Result<Self, JsError> {
         Ok(Self {
+            event_log: property("eventLog")?,
             mouse: property("mouse")?,
             pointer: property("pointer")?,
             keyboard: property("keyboard")?,
@@ -318,6 +324,12 @@ pub(crate) fn install_with_hooks<E: JsEngine + 'static>(
     engine.set_global("__blitsenNavigatorState", &navigator)?;
     let test_harness = engine.boolean(mode.is_test_harness());
     engine.set_global("__blitsenTestHarness", &test_harness)?;
+    let headless = engine.string(match mode {
+        DocumentMode::HeadlessApplication => "test",
+        DocumentMode::DocumentCheck => "check",
+        _ => "",
+    })?;
+    engine.set_global("__blitsenHeadlessMode", &headless)?;
     let hooks = engine.evaluate_script(BOOTSTRAP, "blitsen:dom-bootstrap")?;
     let host_hooks = HostHooks::resolve(|name| {
         let hook = engine.get_property(&hooks, name)?;
@@ -502,6 +514,16 @@ mod tests {
         crate::runtime_services::RuntimeServices<QuickJs>,
         Hooks,
     ) {
+        realm_with_mode(DocumentMode::TestHarness)
+    }
+
+    fn realm_with_mode(
+        mode: DocumentMode,
+    ) -> (
+        QuickJs,
+        crate::runtime_services::RuntimeServices<QuickJs>,
+        Hooks,
+    ) {
         let mut engine = QuickJs::new().expect("an engine");
         let services = crate::runtime_services::RuntimeServices::install(&mut engine)
             .expect("runtime services");
@@ -515,7 +537,7 @@ mod tests {
         let installed = install_with_hooks(
             &mut engine,
             crate::DomRuntime::new(dom),
-            InstallOptions::new(200, 100, 1.0, DocumentMode::TestHarness, None),
+            InstallOptions::new(200, 100, 1.0, mode, None),
         )
         .expect("the DOM bridge installs");
         (engine, services, installed.host_hooks)
@@ -526,6 +548,52 @@ mod tests {
             .evaluate_script(source, "blitsen:cached-hook-test")
             .expect("the probe evaluates");
         engine.to_number(&value).expect("the probe is numeric")
+    }
+
+    #[test]
+    fn document_checks_expose_window_and_dialog_absence() {
+        let (mut engine, _services, _) = realm_with_mode(DocumentMode::DocumentCheck);
+        engine
+            .evaluate_script(
+                r#"(() => {
+            const native = globalThis[Symbol.for('blitsen.native')];
+            if (native.window.setSize !== undefined || native.dialog.openFile !== undefined)
+                throw new Error('check capabilities must be absent');
+            if ('__blitsenInjectPointerAt' in globalThis) throw new Error('injection leaked');
+        })()"#,
+                "check-capabilities",
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn script_clicks_preactivate_cancel_restore_and_submit_on_quickjs() {
+        let (mut engine, _services, _) = realm();
+        engine
+            .evaluate_script(
+                r#"(() => {
+            document.body.innerHTML = '<form><input type="checkbox"><button>Save</button></form>';
+            const form = document.querySelector('form');
+            const box = document.querySelector('input');
+            const button = document.querySelector('button');
+            let submits = 0, seen = false, changes = 0;
+            form.addEventListener('submit', event => { event.preventDefault(); submits++; });
+            button.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+            button.addEventListener('click', () => button.click());
+            button.click();
+            if (submits !== 2) throw new Error('submission or click recursion');
+            const cancel = event => { seen = box.checked; event.preventDefault(); };
+            box.addEventListener('click', cancel);
+            box.addEventListener('change', () => changes++);
+            box.click();
+            if (!seen || box.checked || changes) throw new Error('preactivation rollback');
+            box.removeEventListener('click', cancel);
+            box.click();
+            if (!box.checked || changes !== 1) throw new Error('checkbox activation');
+        })()"#,
+                "script-click-activation",
+            )
+            .unwrap();
     }
 
     #[test]
@@ -542,7 +610,7 @@ mod tests {
             assert_eq!(hooks.animation_frame_tick, "animationFrameTick");
             assert_eq!(hooks.animation_frames_pending, "animationFramesPending");
         }
-        assert_eq!(lookups.values().copied().collect::<Vec<_>>(), vec![1; 13]);
+        assert_eq!(lookups.values().copied().collect::<Vec<_>>(), vec![1; 14]);
     }
 
     #[test]

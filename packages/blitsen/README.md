@@ -98,3 +98,6 @@ Run `blitsen --help` for every option. The source repository and issue tracker a
 
 Blitsen is independently built on [Blitz](https://github.com/DioxusLabs/blitz). It is not an
 official DioxusLabs project and is not endorsed by DioxusLabs.
+
+Application UI tests can drive a packaged export headlessly from Node or Bun with
+`blitsen/test`; see [application testing](https://github.com/krazyjakee/blitsen/blob/main/docs/TESTING.md).

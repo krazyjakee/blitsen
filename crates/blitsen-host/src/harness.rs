@@ -499,14 +499,18 @@ pub fn execute_document_harness<E: JsEngine + Clone + 'static>(
     width: u32,
     height: u32,
 ) -> Result<HarnessSnapshot, JsError> {
-    // Mirrors a shipped window exactly, including the absence of test-only
-    // injection globals, so the fixture guard against them stays meaningful.
+    // Standalone checks expose window/dialog absence. Other harness callers
+    // retain the application capability surface. Neither publishes injectors.
     let (_, document, _) = load_document_harness_with_hooks(
         engine,
         entrypoint,
         width,
         height,
-        DocumentMode::Application,
+        if crate::standalone::requested() {
+            DocumentMode::DocumentCheck
+        } else {
+            DocumentMode::Application
+        },
     )?;
     ACTIVE_DOCUMENT_HARNESS.with(|active| {
         *active.borrow_mut() = Some((Rc::clone(&document), width, height));

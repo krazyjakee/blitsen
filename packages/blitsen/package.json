@@ -85,6 +85,10 @@
     "./process": {
       "types": "./src/native/process.d.ts",
       "import": "./src/native/process.mjs"
+    },
+    "./test": {
+      "types": "./src/test.d.ts",
+      "import": "./src/test.mjs"
     }
   },
   "types": "./index.d.ts",
@@ -145,7 +149,8 @@
     "test:proxy": "bun test/run-proxy.mjs",
     "test:macos-notify": "bun test/run-macos-notify.mjs",
     "test:android": "bun test/run-android-smoke.mjs",
-    "test:android-notify": "bun test/run-android-notify.mjs"
+    "test:android-notify": "bun test/run-android-notify.mjs",
+    "test:ui": "bun test/run-ui.mjs"
   },
   "publishConfig": {
     "access": "public"

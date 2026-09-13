@@ -252,3 +252,15 @@ void defineConfig({
   },
 });
 export type { ClipboardImage };
+
+// UI tests can be driven by Node or Bun without requiring Node-specific types.
+import { launch as launchUi } from "blitsen/test";
+async function applicationUiTest() {
+  const app = await launchUi("./MyApp", { width: 1180, height: 780 });
+  await app.click({ role: "button", name: "Save repository" });
+  await app.type("hello");
+  const png: Uint8Array = await app.screenshot();
+  await app.assert(() => document.querySelector("form") !== null);
+  await app.close();
+  return png;
+}

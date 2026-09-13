@@ -1,3 +1,5 @@
+  const headlessMode = globalThis.__blitsenHeadlessMode;
+  delete globalThis.__blitsenHeadlessMode;
   const testHarness = Boolean(globalThis.__blitsenTestHarness);
   delete globalThis.__blitsenTestHarness;
   // Native window-mode authority is captured inside this bootstrap closure.

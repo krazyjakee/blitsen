@@ -303,3 +303,37 @@ fn hit_testing_subtracts_the_offsets_of_anonymous_block_boxes() {
         "the reported path ends at the DOM element, not at the anonymous box"
     );
 }
+
+#[test]
+fn hit_testing_tracks_document_scroll_and_rejects_points_outside_the_window() {
+    let mut dom = BlitzDom::from_html(
+        r#"<style>body { margin: 0 } .spacer { height: 825px }
+        button { display: block; width: 160px; height: 50px }</style>
+        <form><div class=spacer></div><button id=save>Save repository</button></form>"#,
+        DocumentConfig {
+            viewport: Some(Viewport::new(1180, 780, 1.0, ColorScheme::Light)),
+            ..Default::default()
+        },
+    );
+    let button = dom.get_element_by_id("save").unwrap().unwrap();
+    let snapshot = dom.flush_layout().unwrap();
+    let before = dom.bounding_rect(button, snapshot).unwrap();
+    assert!(before.y > 780.0);
+    assert!(
+        dom.hit_test(10.0, before.y + 10.0, snapshot)
+            .unwrap()
+            .is_none()
+    );
+    dom.document_mut()
+        .set_viewport_scroll(blitz::dom::Point { x: 0.0, y: 120.0 });
+    let snapshot = dom.flush_layout().unwrap();
+    let after = dom.bounding_rect(button, snapshot).unwrap();
+    assert!(after.y < 780.0);
+    let hit = dom
+        .hit_test(after.x + 10.0, after.y + 10.0, snapshot)
+        .unwrap()
+        .unwrap();
+    assert_eq!(hit.target, button);
+    assert!((hit.offset_y - 10.0).abs() < 0.1);
+    assert!(dom.hit_test(-1.0, 10.0, snapshot).unwrap().is_none());
+}

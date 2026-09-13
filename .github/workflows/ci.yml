@@ -288,6 +288,7 @@ jobs:
       - name: Stage the third-party notices
         run: bun run --cwd packages/blitsen notices --root blitsen-runtime --out ${{ github.workspace }}/target/release
       - run: bun run --cwd packages/blitsen test:native
+      - run: bun run --cwd packages/blitsen test:ui
       - run: bun run --cwd packages/blitsen test:m2
       # Under Xvfb on Linux, so the frame-cadence assertion (gated on DISPLAY)
       # executes instead of skipping — see the header comment above.

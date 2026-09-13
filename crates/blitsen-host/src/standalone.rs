@@ -1,11 +1,14 @@
 //! The headless self-check an exported application answers.
 //!
 //! `BLITSEN_STANDALONE_CHECK=1` boots the document, lets its asynchronous work
-//! settle, optionally runs a script and an assertion, renders a frame and says
+//! advance, optionally runs a script and an assertion, renders a frame and says
 //! so. No window opens, which is what makes it usable on a CI runner with no
 //! display.
 //!
-//! It exists on both hosts and prints the same two lines, because issue #90
+//! This is a document-script harness, not a native-input UI test. Window and
+//! dialog APIs are feature-detectably absent. Use `blitsen/test` for UI testing.
+//!
+//! It exists on both hosts and prints the same report, because issue #90
 //! turns on an exported artifact behaving identically across the swap. The
 //! Phase 1 version is generated into the Bun launcher (`export.mjs`); this is
 //! the same sequence with Blitsen's own event loop under it.
@@ -48,6 +51,9 @@ pub fn run<E: JsEngine + Clone + 'static>(
     storage: &crate::storage::LocalStorage,
     reported: &Reported<'_>,
 ) -> Result<(), JsError> {
+    eprintln!(
+        "Blitsen standalone check: document-script harness; no native input, hit testing, or window/dialog APIs. Script MouseEvent clicks run activation. Use blitsen/test for UI tests."
+    );
     let Reported {
         width,
         height,
@@ -62,7 +68,7 @@ pub fn run<E: JsEngine + Clone + 'static>(
         engine,
         files,
         net_provider,
-        LoadOptions::new(width, height, DocumentMode::Application).with_storage(storage.clone()),
+        LoadOptions::new(width, height, DocumentMode::DocumentCheck).with_storage(storage.clone()),
     )?;
     engine.evaluate_script(
         "globalThis.__blitsenDispatchLifecycleEvent('load')",

@@ -116,3 +116,45 @@ const formControls = JSON.parse(native.runBridgeHarness(
 assert.equal(formControls.nodes.find(node => node.attributes.id === "form")
   .attributes["data-form-controls"], "ok");
 
+
+// #434: the DOM dispatch algorithm owns activation, on both hosts. A native
+// compatibility click must activate exactly once through this same algorithm.
+native.runBridgeHarness(`<form id=f><button id=b><span id=s>Save</span></button>
+  <input id=c type=checkbox><input id=r1 name=g type=radio checked>
+  <input id=r2 name=g type=radio><label for=c id=l>Toggle</label>
+  <button id=d disabled>Disabled</button></form>`, `{
+  const byId = id => document.getElementById(id);
+  const check = (value, message) => { if (!value) throw new Error(message); };
+  let submits = 0, changes = 0, seen;
+  byId('f').addEventListener('submit', event => { event.preventDefault(); submits++; });
+  byId('b').dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+  check(submits === 1, 'script click submits');
+  byId('s').click();
+  check(submits === 2, 'descendant click activates button');
+  const cancel = event => event.preventDefault();
+  byId('b').addEventListener('click', cancel);
+  byId('b').click();
+  check(submits === 2, 'cancelled click does not submit');
+  byId('b').removeEventListener('click', cancel);
+  byId('b').addEventListener('click', () => byId('b').click());
+  HTMLElement.prototype.click.call(byId('b'));
+  check(submits === 3, 'click in progress guard');
+  byId('d').click();
+  check(submits === 3, 'disabled click does nothing');
+  byId('c').addEventListener('change', () => changes++);
+  const cancelBox = event => { seen = byId('c').checked; event.preventDefault(); };
+  byId('c').addEventListener('click', cancelBox);
+  byId('c').indeterminate = true;
+  byId('c').dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+  check(seen && !byId('c').checked && byId('c').indeterminate && changes === 0, 'cancelled preactivation restored');
+  byId('c').removeEventListener('click', cancelBox);
+  byId('l').click();
+  check(byId('c').checked && changes === 1, 'label forwards one click');
+  byId('r2').addEventListener('click', cancel);
+  byId('r2').click();
+  check(byId('r1').checked && !byId('r2').checked, 'cancelled radio restores group');
+  byId('c').dispatchEvent(new Event('click', { bubbles: true }));
+  check(byId('c').checked && changes === 1, 'plain Event does not activate');
+  __blitsenInjectMouseEvent('click', byId('c'), { bubbles: true, cancelable: true });
+  check(!byId('c').checked && changes === 2, 'native click activates once');
+}`);

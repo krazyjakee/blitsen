@@ -31,6 +31,12 @@ cross-compiled for every ABI asked for, with the application under assets/.
 Doctor checks built static output against the v1 compatibility profile, and
 against the blitsen/* modules the target it is grading for actually has.
 
+Testing packaged desktop applications:
+  import { launch } from "blitsen/test" for headless coordinate input and assertions.
+  BLITSEN_STANDALONE_CHECK=1 is a document-script harness: no native input,
+  hit testing or window/dialog APIs (feature-detectable absence). Scripted
+  MouseEvent clicks run activation; other synthetic input skips default actions.
+
 Options:
   --width <pixels>   Initial logical width (default: 800)
   --height <pixels>  Initial logical height (default: 600)

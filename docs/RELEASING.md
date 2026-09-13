@@ -329,6 +329,8 @@ npm publish --registry http://localhost:4873/ --access public ./packages/blitsen
 mkdir /tmp/consumer && cd /tmp/consumer && npm init -y
 npm i -D blitsen --registry http://localhost:4873/
 npx blitsen build ./app --out MyApp        # under Node, which is what npx starts
+# Document-script smoke check only; no native input or window/dialog APIs.
+# Use blitsen/test for UI interactions (see TESTING.md).
 BLITSEN_STANDALONE_CHECK=1 ./MyApp
 ```
 

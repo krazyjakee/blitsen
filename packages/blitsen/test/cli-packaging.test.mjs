@@ -149,7 +149,7 @@ describe("directory CLI", () => {
             stdout: "pipe",
             stderr: "pipe",
           });
-          expect(run.stderr.toString()).toBe("");
+          expect(run.stderr.toString()).toContain("standalone check: document-script harness; no native input");
           expect(run.exitCode).toBe(0);
         }
       });

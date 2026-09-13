@@ -322,8 +322,15 @@
     hint?.revision === treeRevision && hint.path[hint.path.length - 1] === target
       ? hint.path : null;
 
+  let observeDispatchedEvent = null;
+  const warnedCheckInputs = new Set();
   const dispatchTo = (target, event, hint = null) => {
     if (!(event instanceof Event)) throw new TypeError("dispatchEvent argument must be an Event");
+    if (headlessMode === "check" && /^(?:click|mouse|pointer|key|wheel|input|beforeinput|composition)/.test(event.type)
+      && !(event instanceof MouseEvent && event.type === "click") && !warnedCheckInputs.has(event.type)) {
+      warnedCheckInputs.add(event.type);
+      console.warn(`Blitsen document-script check: dispatchEvent(${event.type}) does not run native input default actions. Use blitsen/test.`);
+    }
     const state = stateFor(event);
     if (state.dispatching) throw new DOMException("The event is already being dispatched", "InvalidStateError");
     state.dispatching = true;
@@ -332,6 +339,8 @@
     state.immediatePropagationStopped = false;
     const path = hintedPropagationPath(target, hint) ?? propagationPath(target);
     const last = path.length - 1;
+    const activation = event instanceof MouseEvent && event.type === "click"
+      ? prepareActivation(target, event.bubbles ? path : [target]) : null;
     try {
       for (let index = 0; index < last; index++) {
         const listeners = listenerMaps.get(path[index])?.get(state.type);
@@ -354,6 +363,8 @@
     } finally {
       state.dispatching = false;
       eventInternals.finish(event);
+      observeDispatchedEvent?.(event);
+      activation?.(!state.defaultPrevented);
     }
   };
 
@@ -461,7 +472,6 @@
     // handed it straight back to the nearest focusable ancestor, or to the body
     // when there was none, one event after the application had placed it.
     if (type === "mousedown" && allowed) focusNearest(target);
-    if (type === "click" && allowed) activateControl(target);
     if (allowed) textEditingMouse(type, target, event);
     if (type === "wheel" && allowed)
       __blitsenScrollDefault(String(target[handle]), String(-event.deltaX), String(-event.deltaY));

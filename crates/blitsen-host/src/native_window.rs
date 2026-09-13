@@ -39,7 +39,10 @@ mod state_sync;
 pub(crate) mod tray;
 
 use input::{ImeTarget, PendingKeyboardInput};
-pub(crate) use input::{InputBootstrap, ModifierFlags, css_pointer_coordinates, take_queued_for};
+pub(crate) use input::{
+    InputBootstrap, ModifierFlags, call_input, css_pointer_coordinates, hit_test_document,
+    take_queued_for,
+};
 pub use renderer::NativeWindowRenderer;
 pub(crate) use renderer::native_window_renderer;
 pub use session::WindowSession;
