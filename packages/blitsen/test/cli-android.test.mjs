@@ -264,6 +264,8 @@ describe("the command line", () => {
       .toThrow("nothing beside it to side-load");
     expect(() => parseArgs(["build", "dist", "--android", "--addon", "p.node"]))
       .toThrow("--addon is not valid with --android");
+    expect(() => parseArgs(["build", "dist", "--android", "--sidecar", "bin/core"]))
+      .toThrow("--sidecar is not valid with --android");
     expect(() => parseArgs(["build", "dist", "--android", "--icon", "app.png"]))
       .toThrow("--icon is not valid with --android");
   });

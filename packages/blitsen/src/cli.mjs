@@ -48,6 +48,8 @@ Options:
                      With doctor, grade against that platform instead of this one
   --include <glob>   Keep an unreferenced output file (repeatable)
   --addon <path>     Carry a .node addon into the export (repeatable)
+  --sidecar <path>   Ship a helper executable beside the export, started with
+                     blitsen/process spawn({ sidecar: name }) (repeatable)
   --accept-errors    Export despite compatibility errors, accepting what they cost
   --assets <layout>  embedded (default) or side-loaded next to the executable
   --icon <path>      Application icon: PNG, or a platform-native .ico/.icns/.svg
@@ -94,7 +96,7 @@ const PACKAGE_OPTIONS = { "--icon": "icon", "--bundle-id": "bundleId", "--app-ve
 const ANDROID_OPTIONS = {
   "--android-package": "androidPackage", "--android-keystore": "androidKeystore",
 };
-const BUILD_OPTIONS = ["--out", "--outfile", "--name", "--target", "--include", "--addon", "--assets",
+const BUILD_OPTIONS = ["--out", "--outfile", "--name", "--target", "--include", "--addon", "--sidecar", "--assets",
   "--android-abi", ...Object.keys(ANDROID_OPTIONS), ...Object.keys(PACKAGE_OPTIONS)];
 const VALUE_OPTIONS = ["--width", "--height", "--title", ...BUILD_OPTIONS];
 // A build-only switch: doctor's own exit code must keep meaning what it says.
@@ -172,6 +174,7 @@ export function parseArgs(args) {
       // Resolved here rather than in the exporter: the path is the user's, and it
       // usually points outside the directory being ingested.
       else if (argument === "--addon") options.addons = [...options.addons ?? [], resolve(value)];
+      else if (argument === "--sidecar") options.sidecars = [...options.sidecars ?? [], resolve(value)];
       else if (argument === "--assets") {
         if (!["embedded", "side-loaded"].includes(value))
           throw new Error("--assets must be embedded or side-loaded");
@@ -266,6 +269,10 @@ function checkAndroidOptions(options) {
     throw new Error("--addon is not valid with --android: a carried .node addon is Node-API "
       + "and needs the Bun host, which does not exist on Android.");
   }
+  if (options.sidecars !== undefined) {
+    throw new Error("--sidecar is not valid with --android: an APK has no directory beside the "
+      + "application to ship an executable into, and Android does not run one from there.");
+  }
   if (options.icon !== undefined) {
     throw new Error("--icon is not valid with --android yet: an Android launcher icon is a "
       + "resource in several densities rather than one file beside the executable, and this "
@@ -322,12 +329,19 @@ async function applyConfiguration(options, output) {
   if (options.android && (config.window || config.tray || config.menu)) {
     throw new Error("window, tray and menu configuration is only available to desktop builds");
   }
+  if (options.android && config.sidecars !== undefined) {
+    checkAndroidOptions({ android: true, sidecars: config.sidecars });
+  }
   if (config.build) {
     reportStep(output, { step: "build", detail: `${config.build} (configured in ${path})` });
     await runBuildCommand(config.build, root);
   }
   options.directory = resolve(root, config.output);
   options.addons = [...config.addons?.map(addon => resolve(root, addon)) ?? [], ...options.addons ?? []];
+  if (config.sidecars || options.sidecars) {
+    options.sidecars = [...config.sidecars?.map(sidecar => resolve(root, sidecar)) ?? [],
+      ...options.sidecars ?? []];
+  }
   options.name ??= config.name;
   options.window = config.window;
   options.tray = config.tray
@@ -645,6 +659,7 @@ export async function main(args, output = console, runtime = null) {
       // announces the artifact names it too.
       if (result.runtime) output.log(`Runtime: ${describeRuntime(result.runtime)}`);
       if (result.assetDirectory) output.log(`Side-loaded assets: ${result.assetDirectory}`);
+      for (const sidecar of result.sidecars ?? []) output.log(`Sidecar: ${sidecar}`);
       // Issue #121: the line comes off only for an export that carries the
       // notices it owes, and it is the artifact that carries them — `<the
       // executable> --licenses` prints what was embedded. An export without

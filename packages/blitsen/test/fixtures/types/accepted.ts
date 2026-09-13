@@ -71,6 +71,11 @@ if (processModule.spawn) {
     stop();
   }).catch((error: DOMException) => error.name);
 }
+if (processModule.spawn) {
+  // A helper shipped with `blitsen build --sidecar`, found by name.
+  void processModule.spawn({ sidecar: "app-core", args: ["serve"], stdin: "piped" })
+    .then(child => child.closeStdin());
+}
 if (shell.openExternal) {
   void shell.openExternal("https://github.com/krazyjakee/blitsen").then((done: void) => done);
 }

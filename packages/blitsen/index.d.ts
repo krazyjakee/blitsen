@@ -167,6 +167,12 @@ export interface BlitsenConfig {
   name?: string;
   /** Native `.node` addons carried into the export, relative to this `package.json`. */
   addons?: string[];
+  /**
+   * Helper executables shipped beside the exported executable, relative to this
+   * `package.json`. Start one with `spawn({ sidecar: "<file name>" })` from
+   * `blitsen/process`.
+   */
+  sidecars?: string[];
   /** Native window creation options. */
   window?: BlitsenWindowConfig;
   /** System tray icon and context menu. */

@@ -169,6 +169,13 @@ export const CONFIG_SCHEMA = {
         + "They live outside the output directory more often than not, so ingest cannot reach "
         + "them and they have to be declared.",
     },
+    sidecars: {
+      type: "array",
+      items: { type: "string", minLength: 1 },
+      description: "Helper executables shipped beside the exported executable, relative to this "
+        + "package.json. The application starts one with blitsen/process spawn({ sidecar: name }), "
+        + "where name is its file name.",
+    },
     window: {
       type: "object",
       additionalProperties: false,

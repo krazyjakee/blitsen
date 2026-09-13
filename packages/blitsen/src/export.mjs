@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { access, copyFile, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { access, chmod, copyFile, lstat, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { gzipSync } from "node:zlib";
 import {
@@ -11,7 +11,7 @@ import { linkBundle } from "./bundle.mjs";
 import { REWRITTEN_EXTENSIONS } from "./files.mjs";
 import { frameDelay } from "./frame-pacing.mjs";
 import {
-  activationEntryPoint, defaultApplicationIdentifier, packageBuild, pngDimensions, signArtifact,
+  activationEntryPoint, defaultApplicationIdentifier, packageBuild, packagePlan, pngDimensions, signArtifact,
 } from "./packaging.mjs";
 import { describeRuntime, hostTarget, requestedHost, resolvePhase2Runtime } from "./runtime.mjs";
 
@@ -552,6 +552,64 @@ async function linkPhase1({
   }
 }
 
+// Sidecars: helper executables shipped beside the export and started by name
+// with `blitsen/process` `spawn({ sidecar })`. Checked before anything is staged
+// or linked, for the same reason the runtime is: a helper built for another
+// platform links, ships, and then fails in front of whoever runs it.
+const SIDECAR_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$/;
+async function planSidecars({ sidecars, destination, buildTarget, targetPlatform, targetArchitecture, force,
+  reserved = [] }) {
+  const planned = [];
+  // Check the target's filesystem conventions even when cross-building on Linux.
+  const caseInsensitive = [targetPlatform, process.platform].some(platform =>
+    platform === "win32" || platform === "darwin");
+  const key = path => caseInsensitive ? resolve(path).toLowerCase() : resolve(path);
+  for (const source of sidecars) {
+    const file = targetPlatform === "win32" && extname(source).toLowerCase() !== ".exe"
+      ? `${basename(source)}.exe`
+      : basename(source);
+    if (!SIDECAR_NAME.test(file)) {
+      throw new Error(`sidecar ${source} needs a plain file name (letters, digits, ".", "_" or "-")`);
+    }
+    const target = join(dirname(destination), file);
+    if (key(target) === key(destination)) {
+      throw new Error(`sidecar ${source} has the same name as the exported executable: rename one of them`);
+    }
+    if (planned.some(entry => key(entry.target) === key(target))) {
+      throw new Error(`two sidecars are both named ${file}`);
+    }
+    if (reserved.some(path => key(path) === key(target))) {
+      throw new Error(`sidecar ${source} collides with a generated build artifact: ${target}`);
+    }
+    const found = await stat(source).catch(() => null);
+    if (!found?.isFile()) throw new Error(`sidecar is not a file: ${source}`);
+    const binary = describeExecutableBinary(await readContainerHeader(source));
+    if (!binary) throw new Error(`sidecar is not an executable for any supported platform: ${source}`);
+    if (binary.platform !== targetPlatform || !binary.architectures.includes(targetArchitecture)) {
+      throw new Error(`sidecar ${source} is built for ${binary.platform}-${binary.architectures.join("/")} `
+        + `(${binary.format}), but this build targets ${buildTarget}`);
+    }
+    // A sidecar built straight into the output directory is already in place.
+    const occupied = await lstat(target).catch(() => null);
+    const inPlace = resolve(source) === resolve(target)
+      || (occupied?.isFile() && occupied.dev === found.dev && occupied.ino === found.ino);
+    if (!inPlace && !force && occupied) {
+      throw new Error(`output already exists: ${target} (pass --force to replace it)`);
+    }
+    planned.push({ source, file, target, inPlace });
+  }
+  return planned;
+}
+async function shipSidecars(planned) {
+  for (const { source, target, inPlace } of planned) {
+    if (!inPlace) {
+      await rm(target, { force: true });
+      await copyFile(source, target);
+    }
+    await chmod(target, 0o755);
+  }
+}
+
 async function writeSideLoadedAssets({ assets, sideLoaded, manifest, staging }) {
   if (assets !== "side-loaded") return;
   await rm(sideLoaded, { recursive: true, force: true });
@@ -564,7 +622,7 @@ async function writeSideLoadedAssets({ assets, sideLoaded, manifest, staging }) 
 
 async function finishStandaloneBuild({
   destination, progress, icon, bundleId, appVersion, buildPlatform, title,
-  assets, sideLoaded, force, sign, hid,
+  assets, sideLoaded, force, sign, hid, sidecars = [],
 }) {
   // bun build --compile appends .exe on Windows when the requested path has no
   // extension, so the linked artifact is not always the requested path.
@@ -582,6 +640,7 @@ async function finishStandaloneBuild({
       identifier: bundleId,
       version: appVersion,
       assetDirectory: assets === "side-loaded" ? sideLoaded : null,
+      sidecars: sidecars.map(sidecar => sidecar.target),
       force,
       hid,
     })
@@ -602,12 +661,12 @@ async function finishStandaloneBuild({
       ...(signed ? [`signed ${signed.artifact} with: ${signed.command}`] : []),
     ],
   });
-  return { executable, packaged, signed };
+  return { executable, packaged, signed, sidecars: packaged?.sidecars ?? sidecars.map(sidecar => sidecar.target) };
 }
 
 export async function buildStandalone(
   {
-    root, width, height, title, outfile, force = false, include = [], addons = [],
+    root, width, height, title, outfile, force = false, include = [], addons = [], sidecars = [],
     assets = "embedded", icon = null, bundleId = null, appVersion = null, sign = null,
     target = null, platform, window = null, tray = null, menu = null, hid = false,
     progress = () => {}, onNotice,
@@ -620,6 +679,15 @@ export async function buildStandalone(
     linkedRuntime, buildTarget, buildPlatform, nativePath, requested,
     targetPlatform, targetArchitecture, destination, assetDirectory, sideLoaded,
   } = prepared;
+  const plannedSidecars = await planSidecars(
+    { sidecars, destination, buildTarget, targetPlatform, targetArchitecture, force,
+      reserved: [
+        ...assets === "side-loaded" ? [sideLoaded] : [],
+        ...sidecars.length && (icon || bundleId || appVersion || hid)
+          ? packagePlan({ platform: buildPlatform, executable: destination, icon,
+            identifier: bundleId, hid }).artifacts : [],
+      ],
+    });
   const trayAssets = tray ? [
     { path: TRAY_BUNDLE_ICON, source: tray.icon, description: "the configured tray icon" },
     ...(tray.menuIcons ?? []).map((source, index) => ({
@@ -674,9 +742,10 @@ export async function buildStandalone(
       });
     }
     await writeSideLoadedAssets({ assets, sideLoaded, manifest, staging });
-    const { executable, packaged, signed } = await finishStandaloneBuild({
+    await shipSidecars(plannedSidecars);
+    const { executable, packaged, signed, sidecars: shipped } = await finishStandaloneBuild({
       destination, progress, icon, bundleId, appVersion, buildPlatform, title,
-      assets, sideLoaded, force, sign, hid,
+      assets, sideLoaded, force, sign, hid, sidecars: plannedSidecars,
     });
     return {
       outfile: executable,
@@ -689,6 +758,7 @@ export async function buildStandalone(
       addons: carriedAddons,
       unreferenced,
       assetDirectory: assets === "side-loaded" ? packaged?.assetDirectory ?? sideLoaded : null,
+      sidecars: shipped,
       bytes: (await stat(executable)).size,
       packaging: packaged,
       signed,

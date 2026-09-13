@@ -332,7 +332,7 @@ function hidEntitlements() {
 
 // The paths step ⑤ will write, so a collision is reported the way the linker
 // reports one rather than silently replacing an existing bundle.
-function packagePlan({ platform, executable, icon, identifier = null, hid = false }) {
+export function packagePlan({ platform, executable, icon, identifier = null, hid = false }) {
   const supported = Object.keys(ICON_FORMATS);
   if (!supported.includes(platform)) {
     throw new Error(`packaging is not supported on ${platform} (expected ${supported.join(", ")})`);
@@ -374,7 +374,7 @@ function packagePlan({ platform, executable, icon, identifier = null, hid = fals
 // as an external manifest, and the caller is told so.
 export async function packageBuild({
   platform, executable, title, icon = null, identifier = null, version = null,
-  assetDirectory = null, force = false, hid = false,
+  assetDirectory = null, sidecars = [], force = false, hid = false,
 }) {
   const plan = packagePlan({ platform, executable, icon, identifier, hid });
   const resource = icon ? await iconResource(platform, icon, plan.name) : null;
@@ -386,6 +386,7 @@ export async function packageBuild({
   const notes = [];
   const written = [];
   let assets = assetDirectory;
+  let shipped = sidecars;
 
   if (platform === "darwin") {
     const contents = join(plan.bundle, "Contents");
@@ -395,6 +396,14 @@ export async function packageBuild({
     if (assets) {
       assets = join(contents, "MacOS", basename(assets));
       await rename(assetDirectory, assets);
+    }
+    // Sidecars are found beside the running executable, which inside a bundle
+    // is Contents/MacOS; they are there before signing so the signature covers them.
+    shipped = [];
+    for (const sidecar of sidecars) {
+      const moved = join(contents, "MacOS", basename(sidecar));
+      await rename(sidecar, moved);
+      shipped.push(moved);
     }
     await writeFile(join(contents, "Info.plist"), infoPlist({
       name: title,
@@ -461,6 +470,7 @@ export async function packageBuild({
     bundle: plan.bundle,
     executable: plan.executable,
     assetDirectory: assets,
+    sidecars: shipped,
     artifacts: written,
     notes,
   };

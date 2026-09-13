@@ -9,7 +9,7 @@ import { promisify } from "node:util";
 import { buildPayload, buildTrailer, linkBundle, readBundle, FORMAT_VERSION } from "../src/bundle.mjs";
 import { injectMachOPayload, machOPayloadOffset } from "../src/macho.mjs";
 import { buildStandalone } from "../src/export.mjs";
-import { compileAddon, compiler, exportedName, withStubbedExport, withTemporaryDirectory }
+import { compileAddon, compiler, executableStub, exportedName, nativeStub, withStubbedExport, withTemporaryDirectory }
   from "./cli-support.mjs";
 import { machoFixture } from "./fixtures/macho.mjs";
 
@@ -310,6 +310,108 @@ describe("Phase 2 link step", () => {
         .toEqual({ identity: "com.example.classic", entry: "com.example.classic" });
     });
   }, 120_000);
+
+  // Sidecars ship beside the executable, where blitsen/process finds them by
+  // name; everything that would make one unrunnable is refused before linking.
+  test("ships sidecar executables beside the export and refuses unusable ones", async () => {
+    await withStubbedExport(async ({ directory, outfile, nativePath }) => {
+      const root = await staticApp(directory, CLASSIC_APP);
+      const helpers = join(directory, "helpers");
+      await mkdir(helpers);
+      const core = join(helpers, process.platform === "win32" ? "app-core.exe" : "app-core");
+      await writeFile(core, executableStub());
+      const base = { root, width: 800, height: 600, title: "Sidecars", outfile };
+      const built = await buildStandalone({ ...base, sidecars: [core] }, nativePath);
+      const shipped = join(directory, basename(core));
+      expect(built.sidecars).toEqual([shipped]);
+      expect(await readFile(shipped)).toEqual(await readFile(core));
+      if (process.platform !== "win32") expect((await stat(shipped)).mode & 0o111).toBeGreaterThan(0);
+      // The sidecar is not part of the application bundle: it runs as its own process.
+      expect(readBundle(await readFile(built.outfile)).files.has(basename(core))).toBeFalse();
+
+      await expect(buildStandalone({ ...base, outfile: join(directory, "Again"), sidecars: [core] }, nativePath))
+        .rejects.toThrow("output already exists");
+      expect((await buildStandalone({ ...base, outfile: join(directory, "Again"), sidecars: [core], force: true },
+        nativePath)).sidecars).toEqual([shipped]);
+
+      // A sidecar already built into the output directory ships where it is.
+      const local = join(directory, process.platform === "win32" ? "local-core.exe" : "local-core");
+      await writeFile(local, executableStub());
+      const inPlace = await buildStandalone({ ...base, outfile: join(directory, "InPlace"), sidecars: [local] }, nativePath);
+      expect(inPlace.sidecars).toEqual([local]);
+      expect(await readFile(local)).toEqual(executableStub());
+
+      const foreignTarget = process.platform === "linux" ? "win32-x64" : "linux-x64";
+      const foreign = join(helpers, "foreign");
+      await writeFile(foreign, executableStub(foreignTarget));
+      await expect(buildStandalone({ ...base, outfile: join(directory, "ForeignApp"), sidecars: [foreign] }, nativePath))
+        .rejects.toThrow("but this build targets");
+      const text = join(helpers, "script");
+      await writeFile(text, "#!/bin/sh\necho hi\n");
+      await expect(buildStandalone({ ...base, outfile: join(directory, "Text"), sidecars: [text] }, nativePath))
+        .rejects.toThrow("not an executable for any supported platform");
+      await expect(buildStandalone({ ...base, outfile: join(directory, "MissingApp"),
+        sidecars: [join(helpers, "missing")] }, nativePath)).rejects.toThrow("sidecar is not a file");
+      await expect(buildStandalone({ ...base, outfile: join(directory, basename(core)), sidecars: [core], force: true },
+        nativePath)).rejects.toThrow("same name as the exported executable");
+      const twin = join(directory, "twin");
+      await mkdir(twin);
+      await writeFile(join(twin, basename(core)), executableStub());
+      await expect(buildStandalone({ ...base, outfile: join(directory, "Twins"),
+        sidecars: [core, join(twin, basename(core))], force: true }, nativePath))
+        .rejects.toThrow("two sidecars are both named");
+    });
+  }, 120_000);
+
+  test("refuses sidecar collisions before replacing any build output", async () => {
+    await withTemporaryDirectory("blitsen-sidecar-collisions-", async directory => {
+      const helpers = join(directory, "helpers");
+      const twins = join(directory, "twins");
+      await mkdir(helpers);
+      await mkdir(twins);
+      for (const platform of ["linux", "darwin", "win32"]) {
+        const target = `${platform}-x64`;
+        const nativePath = join(directory, "blitsen.node");
+        await writeFile(nativePath, nativeStub(target));
+        const runtime = { path: nativePath, target, version: "0.2.5", source: "test" };
+        const outfile = join(directory, platform === "win32" ? "App.exe" : "App");
+        const original = Buffer.from("existing application");
+        await writeFile(outfile, original);
+        const base = { root: join(directory, "missing-app"), outfile, target, force: true };
+        // On case-insensitive targets a differently cased helper would overwrite the app.
+        if (platform !== "linux") {
+          const sidecar = join(helpers, platform === "win32" ? "app.EXE" : "app");
+          await writeFile(sidecar, executableStub(target));
+          await expect(buildStandalone({ ...base, sidecars: [sidecar] }, runtime))
+            .rejects.toThrow("same name as the exported executable");
+          const first = join(helpers, platform === "win32" ? "helper.exe" : "helper");
+          const second = join(twins, platform === "win32" ? "HELPER.EXE" : "HELPER");
+          await writeFile(first, executableStub(target));
+          await writeFile(second, executableStub(target));
+          await expect(buildStandalone({ ...base, sidecars: [first, second] }, runtime))
+            .rejects.toThrow("two sidecars are both named");
+        } else {
+          for (const [name, options] of [
+            ["App.assets", { assets: "side-loaded" }],
+            ["App.desktop", { appVersion: "1.0.0" }],
+          ]) {
+            const sidecar = join(helpers, name);
+            await writeFile(sidecar, executableStub(target));
+            await expect(buildStandalone({ ...base, ...options, sidecars: [sidecar] }, runtime))
+              .rejects.toThrow("collides with a generated build artifact");
+            expect(await readFile(sidecar)).toEqual(executableStub(target));
+          }
+        }
+        if (platform === "darwin") {
+          const sidecar = join(helpers, "App.app");
+          await writeFile(sidecar, executableStub(target));
+          await expect(buildStandalone({ ...base, appVersion: "1.0.0", sidecars: [sidecar] }, runtime))
+            .rejects.toThrow("collides with a generated build artifact");
+        }
+        expect(await readFile(outfile)).toEqual(original);
+      }
+    });
+  });
 
   test("rejects missing and non-PNG nested tray assets before linking", async () => {
     await withStubbedExport(async ({ directory, outfile, nativePath }) => {

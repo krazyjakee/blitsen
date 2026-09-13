@@ -8,6 +8,8 @@ try {
   await app.waitFor(() => globalThis.loaded && document.querySelector('#save'));
   await app.assert(() => globalThis.dialogResult === null);
   await app.assert(() => !('__blitsenInjectMouseEvent' in globalThis) && !('__blitsenInjectPointerAt' in globalThis));
+  await app.click({ role: 'button', name: 'Run sidecar' });
+  await app.waitFor(() => document.querySelector('#sidecar').textContent === 'sidecar 42 exit 0', { timeout: 15_000 });
   const save = { role: 'button', name: 'Save repository' };
   const field = { role: 'textbox', name: 'Local folder' };
   assert.equal((await app.query(save))[0].disabled, true);

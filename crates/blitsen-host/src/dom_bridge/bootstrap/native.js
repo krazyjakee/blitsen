@@ -1056,8 +1056,15 @@
   const normaliseSpawn = options => {
     if (options === null || typeof options !== "object")
       throw new TypeError("spawn options must be an object");
-    const { command, args = [], cwd, env, inheritEnv = true, stdin, stdout, stderr } = options;
-    if (processString(command, "the command").length === 0)
+    const { command, sidecar, args = [], cwd, env, inheritEnv = true, stdin, stdout, stderr } = options;
+    // A sidecar is an executable the build shipped beside this application
+    // (`blitsen build --sidecar`), named rather than located: the host finds it,
+    // so a packaged helper never depends on PATH or on where the export was put.
+    if (sidecar !== undefined) {
+      if (command !== undefined) throw new TypeError("spawn takes a command or a sidecar, not both");
+      if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$/.test(processString(sidecar, "the sidecar")))
+        throw new TypeError("the sidecar must be the name of a shipped executable, such as \"helper\"");
+    } else if (processString(command, "the command").length === 0)
       throw new TypeError("the command must be a non-empty executable name or path");
     if (!Array.isArray(args)) throw new TypeError("args must be an array of strings");
     const argv = args.map(arg => processString(arg, "every argument"));
@@ -1075,7 +1082,7 @@
       }
     }
     return {
-      command, args: argv, cwd: cwd ?? null, env: environment, inheritEnv: Boolean(inheritEnv),
+      command: sidecar === undefined ? command : null, sidecar: sidecar ?? null, args: argv, cwd: cwd ?? null, env: environment, inheritEnv: Boolean(inheritEnv),
       stdin: stdioMode(stdin, "stdin", "null"),
       stdout: stdioMode(stdout, "stdout", "piped"),
       stderr: stdioMode(stderr, "stderr", "piped"),

@@ -89,6 +89,7 @@ the result. Compatibility errors stop the build unless `--accept-errors` is supp
 | --- | --- |
 | `--include <glob>` | Include an otherwise-unreferenced file; repeatable |
 | `--addon <path>` | Carry a `.node` addon; repeatable |
+| `--sidecar <path>` | Ship a helper executable beside the output, started by name with `blitsen/process`; repeatable. See [Sidecar executables](PACKAGING.md#sidecar-executables) |
 | `--assets embedded` | Store assets in the executable; this is the default |
 | `--assets side-loaded` | Write assets to `<output>.assets/` beside the executable |
 | `--accept-errors` | Export despite compatibility errors |
@@ -110,7 +111,7 @@ Cross-building creates the target's files but does not provide its signing or no
 
 ### Android
 
-Android produces an APK and does not use `--target`; it also rejects `--assets`, `--addon` and —
+Android produces an APK and does not use `--target`; it also rejects `--assets`, `--addon`, `--sidecar` and —
 not yet supported for APKs — `--icon`:
 
 | Option | Meaning |

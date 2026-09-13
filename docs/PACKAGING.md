@@ -190,6 +190,39 @@ escape hatch and obtain a licensing review before distribution.
 The addon must match the target operating system and architecture. Cross-building does not compile
 or translate it.
 
+## Sidecar executables
+
+Ship a helper program with the application — a database service, a language server, a native core
+the application talks to over standard input and output — with a repeatable flag or the `sidecars`
+configuration key:
+
+```sh
+blitsen build dist --sidecar target/release/app-core
+```
+
+Each sidecar is copied beside the exported executable, keeps its file name, and is made executable.
+Windows targets append `.exe` when the file name does not already end in `.exe`. A macOS bundle carries them in
+`Contents/MacOS` before the signing hook runs, so the signature covers them; notarization still
+requires each nested executable to be signed with the hardened runtime by your own hook. The
+application starts one by name:
+
+```js
+import process from "blitsen/process";
+
+const core = await process.spawn({ sidecar: "app-core", args: ["serve"], stdin: "piped" });
+```
+
+`spawn({ sidecar })` looks beside the running executable, then in the application directory when a
+directory is being run, and never on `PATH`. A sidecar that is not there rejects with
+`NotFoundError` naming the expected location. A sidecar is supervised like any other child: its
+process tree ends when it is killed, when it exits, and when the application exits.
+
+Build refuses a sidecar that is not an executable for the build target, a name that is not a plain
+file name, two sidecars with the same name, one named like the exported executable, and an existing
+file at the destination unless `--force` is given. Cross-building does not compile or translate
+sidecars; supply one built for the target. Unlike a `.node` addon, a sidecar does not change the
+export's host: the standard runtime runs the application, and the sidecar runs as its own process.
+
 ## Build an Android APK
 
 Android is a separate artifact selected by `--android`, not a desktop target triple:
