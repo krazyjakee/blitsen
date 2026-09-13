@@ -68,7 +68,7 @@ pub(crate) enum InputBootstrap {
 }
 
 impl InputBootstrap {
-    fn hook<V>(self, hooks: &crate::dom_bridge::HostHooks<V>) -> &V {
+    pub(crate) fn hook<V>(self, hooks: &crate::dom_bridge::HostHooks<V>) -> &V {
         match self {
             Self::Keyboard => &hooks.keyboard,
             Self::Ime => &hooks.ime,
@@ -226,6 +226,32 @@ fn dom_key_code(key: PhysicalKey) -> String {
         PhysicalKey::Unidentified(_) => String::new(),
     }
 }
+/// Shared native input boundary for a window and its headless test surface.
+pub(crate) fn call_input<E: JsEngine>(
+    engine: &mut E,
+    hooks: &crate::dom_bridge::HostHooks<E::StrongRef>,
+    bootstrap: InputBootstrap,
+    arguments: &impl Serialize,
+) -> Result<bool, JsError> {
+    let arguments =
+        serde_json::to_string(arguments).map_err(|error| JsError::new(error.to_string()))?;
+    let arguments = engine.string(&arguments)?;
+    let hook = engine.retained_value(bootstrap.hook(hooks))?;
+    let result = engine.call(&hook, None, &[arguments])?;
+    engine.to_boolean(&result)
+}
+
+pub(crate) fn hit_test_document(
+    document: &std::rc::Rc<RefCell<blitsen_blitz::BlitzDom>>,
+    client_x: f64,
+    client_y: f64,
+) -> Result<Option<blitsen_dom::HitTest<NodeId>>, blitsen_dom::DomError> {
+    let snapshot = document.borrow_mut().flush_layout()?;
+    document
+        .borrow()
+        .hit_test(client_x as f32, client_y as f32, snapshot)
+}
+
 impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Rend, E> {
     /// Whether a callback error is waiting for [`WindowSession::pump`] to take it.
     pub(crate) fn has_parked_error(&self) -> bool {
@@ -251,13 +277,12 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Ren
         if let Some(error) = self.parked_error() {
             return Err(error);
         }
-        let arguments =
-            serde_json::to_string(arguments).map_err(|error| JsError::new(error.to_string()))?;
-        let mut engine = self.engine.clone();
-        let arguments = engine.string(&arguments)?;
-        let hook = engine.retained_value(bootstrap.hook(&self.host_hooks))?;
-        let result = engine.call(&hook, None, &[arguments])?;
-        engine.to_boolean(&result)
+        call_input(
+            &mut self.engine.clone(),
+            &self.host_hooks,
+            bootstrap,
+            arguments,
+        )
     }
 
     /// Snapshots the modifiers that every queued input in this turn observes.
@@ -291,10 +316,7 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Ren
         client_x: f64,
         client_y: f64,
     ) -> Result<Option<blitsen_dom::HitTest<NodeId>>, blitsen_dom::DomError> {
-        let snapshot = self.document.borrow_mut().flush_layout()?;
-        self.document
-            .borrow()
-            .hit_test(client_x as f32, client_y as f32, snapshot)
+        hit_test_document(&self.document, client_x, client_y)
     }
 
     pub(super) fn queue_keyboard_input(

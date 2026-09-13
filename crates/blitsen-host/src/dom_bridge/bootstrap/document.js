@@ -155,6 +155,7 @@
 
   const document = new Document();
   class HTMLElement {
+    click() { return clickElement.call(this); }
     static [Symbol.hasInstance](value) { return value instanceof Element; }
   }
   class HTMLIFrameElement {

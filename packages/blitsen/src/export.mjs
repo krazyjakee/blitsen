@@ -185,7 +185,10 @@ ${prelude}
 try {
   const entrypoint = join(root, "index.html");
   const engine = new native.Engine();
+  if (process.env.BLITSEN_TEST_MODE === "1")
+    throw new Error("blitsen/test requires a QuickJS export; legacy Bun exports support document-script checks only");
   if (process.env.BLITSEN_STANDALONE_CHECK === "1") {
+    console.error("Blitsen standalone check: document-script harness; no native input, hit testing, or window/dialog APIs. Script MouseEvent clicks run activation. Use blitsen/test for UI tests.");
     native.runDocumentScriptsHarness(entrypoint, ${options.width}, ${options.height});
     // Turning the loop rather than only sleeping through it: a fetch, an image
     // decode and a timer all land on the animation-frame tick, so a check that

@@ -108,3 +108,6 @@ components with their own terms; read [Licensing](docs/LICENSING.md) before dist
 
 Blitsen is an independent project built on Blitz. It is not an official DioxusLabs project and is
 not endorsed by DioxusLabs.
+
+Application UI tests can drive a packaged export headlessly from Node or Bun with
+`blitsen/test`; see [application testing](https://github.com/krazyjakee/blitsen/blob/main/docs/TESTING.md).

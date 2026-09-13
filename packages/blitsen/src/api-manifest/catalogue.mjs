@@ -10,7 +10,7 @@ import {
 export const CATALOGUE = {
   WEB_DOM: ["document", "Document", "Node", "Element", "NodeList", "DOMTokenList",
     "Attr", "NamedNodeMap",
-    "CSSStyleDeclaration", "MutationObserver", "HTMLElement", "HTMLIFrameElement", "SVGElement",
+    "CSSStyleDeclaration", "MutationObserver", "HTMLElement", "HTMLElement.click", "HTMLIFrameElement", "SVGElement",
     "Text", "Comment", "DocumentFragment", "HTMLLinkElement", "HTMLTemplateElement",
     "HTMLImageElement", ["Image", "\\bnew Image\\s*\\("],
     "HTMLImageElement.src", "HTMLImageElement.naturalWidth", "HTMLImageElement.naturalHeight",

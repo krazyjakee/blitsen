@@ -89,6 +89,27 @@
   // side's to anticipate. Android currently takes all of them — the monitor list
   // included, which looks like the survivor and is not: winit enumerates no
   // monitors there, so it would report a device with no display.
+  // Explicit UI tests use deterministic fakes, installed before application
+  // scripts. Document checks expose absence for ordinary feature detection.
+  const headlessWindowState = { fullscreen: false, decorations: true, maximized: false };
+  const headlessWindow = {
+    setSize: (width, height) => __blitsenWindowResize(String(width), String(height), String(devicePixelRatio)),
+    setFullscreen: on => { headlessWindowState.fullscreen = Boolean(on); },
+    isFullscreen: () => headlessWindowState.fullscreen,
+    setDecorations: on => { headlessWindowState.decorations = Boolean(on); },
+    isDecorated: () => headlessWindowState.decorations,
+    setMaximized: on => { headlessWindowState.maximized = Boolean(on); },
+    isMaximized: () => headlessWindowState.maximized,
+    setMinimized() {}, setAlwaysOnTop() {}, setCursor() {},
+    setCursorVisible() {}, setCursorGrab() {}, startDrag() {}, close() {},
+    monitors: () => [{ name: "Headless", x: 0, y: 0, width: innerWidth, height: innerHeight,
+      scaleFactor: devicePixelRatio, refreshRate: 60, current: true, primary: true }],
+  };
+  const headlessDialog = {
+    openFile: async () => null, openFiles: async () => null,
+    openFolder: async () => null, openFolders: async () => null,
+    saveFile: async () => null, message: async () => "cancel",
+  };
   const windowProperty = hosted("__blitsenNativeWindowSet");
   const windowReadback = hosted("__blitsenNativeWindowGet");
   const windowCommand = hosted("__blitsenNativeWindowCommand");
@@ -1122,14 +1143,14 @@
   globalThis[Symbol.for("blitsen.native")] = Object.freeze({
     app: nativeMembers(nativeApp),
     clipboard: nativeMembers(nativeClipboard),
-    window: nativeMembers(nativeWindow),
+    window: nativeMembers(headlessMode === "check" ? {} : headlessMode === "test" ? headlessWindow : nativeWindow),
     tray: nativeMembers(nativeTray),
     menu: nativeMembers(nativeMenu),
     input: nativeMembers(nativeInput),
     hid: nativeMembers(nativeHid),
     notify: nativeMembers(nativeNotify),
     os: nativeMembers(nativeOs),
-    dialog: nativeMembers(nativeDialog),
+    dialog: nativeMembers(headlessMode === "check" ? {} : headlessMode === "test" ? headlessDialog : nativeDialog),
     shell: nativeMembers(nativeShell),
     process: nativeMembers(nativeProcess),
   });

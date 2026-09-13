@@ -35,6 +35,16 @@ impl BlitzDom {
     /// then the deepest of those. Callers that want only the node it landed on
     /// — the caret read does — take it from here rather than repeat the walk.
     pub(crate) fn ranked_hit(&self, x: f32, y: f32) -> Result<Option<RankedHit>, DomError> {
+        let viewport = self.document.viewport();
+        if !x.is_finite()
+            || !y.is_finite()
+            || x < 0.0
+            || y < 0.0
+            || x >= viewport.window_size.0 as f32 / viewport.hidpi_scale
+            || y >= viewport.window_size.1 as f32 / viewport.hidpi_scale
+        {
+            return Ok(None);
+        }
         let mut best: Option<RankedHit> = None;
         for (order, node) in self
             .query_selector_all(self.document(), "*")?
@@ -85,8 +95,11 @@ impl BlitzDom {
         }
         chain.reverse();
 
-        let mut x = viewport_x;
-        let mut y = viewport_y;
+        // Painting translates the whole document by -viewport_scroll. Invert
+        // that translation before walking the layout boxes (#435).
+        let scroll = self.document.viewport_scroll();
+        let mut x = viewport_x + scroll.x as f32;
+        let mut y = viewport_y + scroll.y as f32;
         let mut stacking_path = Vec::new();
         let mut depth = 0;
         for (index, id) in chain.into_iter().enumerate() {

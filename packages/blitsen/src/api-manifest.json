@@ -80,6 +80,15 @@
       "pattern": "(?<![.\\w$])HTMLElement\\b"
     },
     {
+      "api": "HTMLElement.click",
+      "kind": "member",
+      "owner": "HTMLElement.prototype",
+      "member": "click",
+      "status": "implemented",
+      "code": "WEB_DOM",
+      "pattern": null
+    },
+    {
       "api": "HTMLIFrameElement",
       "kind": "global",
       "status": "implemented",

@@ -273,7 +273,24 @@
   // pay QuickJS's parser and compiler before this retained callback can run.
   const serializedInput = dispatch => serializedArguments =>
     dispatch(...JSON.parse(String(serializedArguments)));
+  let dispatchedEvents = [];
+  const eventLog = () => {
+    // This callback is retained only by the host, never installed on window.
+    observeDispatchedEvent = event => {
+      const target = event.target;
+      if (dispatchedEvents.length >= 1000) dispatchedEvents.shift();
+      dispatchedEvents.push({ type: event.type,
+        target: target instanceof Element ? { tag: target.localName, id: target.id,
+          handle: String(target[handle]) } : null,
+        defaultPrevented: event.defaultPrevented,
+        clientX: event.clientX, clientY: event.clientY });
+    };
+    const result = JSON.stringify(dispatchedEvents);
+    dispatchedEvents = [];
+    return result;
+  };
   return Object.freeze({
+    eventLog,
     mouse: serializedInput(dispatchMouseEvent),
     pointer: serializedInput(dispatchPointerEvent),
     keyboard: serializedInput(dispatchKeyboardEvent),

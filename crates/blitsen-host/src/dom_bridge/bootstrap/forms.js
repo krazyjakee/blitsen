@@ -44,7 +44,7 @@
   const options = select => [...select.querySelectorAll("option")];
   const isSubmitButton = element => {
     const type = (element.getAttribute("type") ?? "").toLowerCase();
-    if (elementTag(element) === "button") return type === "" || type === "submit";
+    if (elementTag(element) === "button") return element.type === "submit";
     return elementTag(element) === "input" && SUBMIT_TYPES.includes(type);
   };
   // A radio group has one member checked at a time, which is what makes it a
@@ -71,26 +71,77 @@
   // half it can cancel. See COMPATIBILITY.md for why `submit()` is absent.
   const submitForm = (form, submitter) =>
     form.dispatchEvent(new SubmitEvent("submit", { bubbles: true, cancelable: true, submitter }));
-  // The activation behaviour a control has of its own, run after the click and
-  // only when the click was not cancelled — which is what makes preventDefault
-  // on a checkbox or a submit button mean anything.
-  const activateControl = target => {
-    for (let element = target; element instanceof Element; element = element.parentNode) {
-      if (element.hasAttribute("disabled")) return;
-      if (elementTag(element) === "input" && CHECKABLE_TYPES.includes(element.type)) {
-        if (element.type === "radio" && element.checked) return;
-        setChecked(element, element.type === "radio" || !element.checked);
-        element.dispatchEvent(new Event("input", { bubbles: true }));
-        element.dispatchEvent(new Event("change", { bubbles: true }));
-        return;
+  // Activation belongs to DOM dispatch, including untrusted MouseEvent clicks.
+  // Checkables change before listeners run (React observes this state), then
+  // restore it if the click is cancelled. Choose the activation target before
+  // callbacks can remove or reparent it.
+  const controlDisabled = element => element.matches(":disabled");
+  const labelControl = label => {
+    const id = label.getAttribute("for");
+    const control = id === null
+      ? label.querySelector('button, input:not([type="hidden"]), select, textarea')
+      : document.getElementById(id);
+    return control && control.matches('button, input:not([type="hidden"]), select, textarea')
+      ? control : null;
+  };
+  const prepareActivation = (target, path) => {
+    for (let index = path.length - 1; index >= 0; index--) {
+      const element = path[index];
+      if (!(element instanceof Element)) continue;
+      const tag = elementTag(element);
+      if (tag === "button" || tag === "input") {
+        if (controlDisabled(element)) return null;
+        if (tag === "input" && CHECKABLE_TYPES.includes(element.type)) {
+          const checked = element.checked;
+          const indeterminate = element.indeterminate;
+          const group = element.type === "radio" && element.name
+            ? [...document.querySelectorAll('input[type="radio"]')].filter(other =>
+                other.name === element.name && formOwner(other) === formOwner(element))
+            : [];
+          const previous = group.find(other => other.checked);
+          setChecked(element, element.type === "radio" || !checked);
+          if (element.type === "checkbox") element.indeterminate = false;
+          return allowed => {
+            if (!allowed) {
+              setControlChecked(element, checked);
+              if (previous) setChecked(previous, true);
+              if (element.type === "checkbox") element.indeterminate = indeterminate;
+            } else if (element.type !== "radio" || !checked) {
+              element.dispatchEvent(new Event("input", { bubbles: true }));
+              element.dispatchEvent(new Event("change", { bubbles: true }));
+            }
+          };
+        }
+        return allowed => {
+          if (!allowed || controlDisabled(element)) return;
+          const form = formOwner(element);
+          if (form && isSubmitButton(element)) submitForm(form, element);
+        };
       }
-      if (isSubmitButton(element)) {
-        const form = formOwner(element);
-        if (form !== null) submitForm(form, element);
-        return;
+      if (tag === "label") {
+        // Interactive descendants own their clicks; forwarding would activate
+        // an input twice when its click bubbles back through its label.
+        if (target instanceof Element && target.closest("button, input, select, textarea, a[href]")) return null;
+        return allowed => {
+          const control = labelControl(element);
+          if (allowed && control && !controlDisabled(control)) {
+            control.focus();
+            control.click();
+          }
+        };
       }
     }
+    return null;
   };
+  const clicksInProgress = new WeakSet();
+  const clickElement = function() {
+    if (!(this instanceof Element)) throw new TypeError("Illegal invocation");
+    if (controlDisabled(this) || clicksInProgress.has(this)) return;
+    clicksInProgress.add(this);
+    try { this.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); }
+    finally { clicksInProgress.delete(this); }
+  };
+  Object.defineProperty(Element.prototype, "click", { value: clickElement, configurable: true, writable: true });
 
   // Text selection. HTML gives it to `<textarea>` and to the input types whose
   // value is one line of plain text, and to nothing else: a date or a colour

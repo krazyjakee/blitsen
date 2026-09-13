@@ -299,6 +299,20 @@ fn run(files: AppFiles, arguments: &[String]) -> Result<ExitCode, String> {
         .map_err(|error| error.to_string())?;
     engine.install_module_loader();
 
+    if blitsen_host::testing::requested() {
+        let storage = blitsen_host::storage::LocalStorage::for_application(&storage_identity)?;
+        blitsen_host::testing::run(
+            &mut engine,
+            &services,
+            &files,
+            &storage,
+            settings.width,
+            settings.height,
+        )
+        .map_err(|error| modules.remap_error(&error).to_string())?;
+        return Ok(ExitCode::SUCCESS);
+    }
+
     if blitsen_host::standalone::requested() {
         let storage = blitsen_host::storage::LocalStorage::for_application(&storage_identity)?;
         // Answering the check is the whole of this run: no window opens, and
