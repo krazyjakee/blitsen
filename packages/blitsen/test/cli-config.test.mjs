@@ -16,6 +16,24 @@ const withCanonicalDirectory = (prefix, run) =>
   withTemporaryDirectory(prefix, async created => run(await realpath(created)));
 
 describe("directory CLI", () => {
+  test("rejects configured sidecars for Android before running the build command", async () => {
+    await withCanonicalDirectory("blitsen-android-sidecar-", async directory => {
+      await writeFile(join(directory, "package.json"), JSON.stringify({ blitsen: {
+        output: "dist", sidecars: ["native/helper"], build: "this-command-must-not-run",
+      } }));
+      const cwd = process.cwd();
+      try {
+        process.chdir(directory);
+        const { output, lines } = captureConsole();
+        expect(await main(["build", "--android"], output)).toBe(1);
+        expect(lines).toHaveLength(1);
+        expect(lines[0][1]).toContain("--sidecar is not valid with --android");
+      } finally {
+        process.chdir(cwd);
+      }
+    });
+  });
+
   test("publishes the schema it validates against", async () => {
     const published = join(import.meta.dir, "../src/config.schema.json");
     expect(JSON.parse(await readFile(published, "utf8"))).toEqual(CONFIG_SCHEMA);

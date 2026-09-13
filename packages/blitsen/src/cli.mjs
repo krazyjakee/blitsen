@@ -329,6 +329,9 @@ async function applyConfiguration(options, output) {
   if (options.android && (config.window || config.tray || config.menu)) {
     throw new Error("window, tray and menu configuration is only available to desktop builds");
   }
+  if (options.android && config.sidecars !== undefined) {
+    checkAndroidOptions({ android: true, sidecars: config.sidecars });
+  }
   if (config.build) {
     reportStep(output, { step: "build", detail: `${config.build} (configured in ${path})` });
     await runBuildCommand(config.build, root);

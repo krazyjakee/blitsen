@@ -332,7 +332,7 @@ function hidEntitlements() {
 
 // The paths step ⑤ will write, so a collision is reported the way the linker
 // reports one rather than silently replacing an existing bundle.
-function packagePlan({ platform, executable, icon, identifier = null, hid = false }) {
+export function packagePlan({ platform, executable, icon, identifier = null, hid = false }) {
   const supported = Object.keys(ICON_FORMATS);
   if (!supported.includes(platform)) {
     throw new Error(`packaging is not supported on ${platform} (expected ${supported.join(", ")})`);

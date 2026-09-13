@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { access, chmod, copyFile, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { access, chmod, copyFile, lstat, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { gzipSync } from "node:zlib";
 import {
@@ -11,7 +11,7 @@ import { linkBundle } from "./bundle.mjs";
 import { REWRITTEN_EXTENSIONS } from "./files.mjs";
 import { frameDelay } from "./frame-pacing.mjs";
 import {
-  activationEntryPoint, defaultApplicationIdentifier, packageBuild, pngDimensions, signArtifact,
+  activationEntryPoint, defaultApplicationIdentifier, packageBuild, packagePlan, pngDimensions, signArtifact,
 } from "./packaging.mjs";
 import { describeRuntime, hostTarget, requestedHost, resolvePhase2Runtime } from "./runtime.mjs";
 
@@ -557,8 +557,13 @@ async function linkPhase1({
 // or linked, for the same reason the runtime is: a helper built for another
 // platform links, ships, and then fails in front of whoever runs it.
 const SIDECAR_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$/;
-async function planSidecars({ sidecars, destination, buildTarget, targetPlatform, targetArchitecture, force }) {
+async function planSidecars({ sidecars, destination, buildTarget, targetPlatform, targetArchitecture, force,
+  reserved = [] }) {
   const planned = [];
+  // Check the target's filesystem conventions even when cross-building on Linux.
+  const caseInsensitive = [targetPlatform, process.platform].some(platform =>
+    platform === "win32" || platform === "darwin");
+  const key = path => caseInsensitive ? resolve(path).toLowerCase() : resolve(path);
   for (const source of sidecars) {
     const file = targetPlatform === "win32" && extname(source).toLowerCase() !== ".exe"
       ? `${basename(source)}.exe`
@@ -566,11 +571,15 @@ async function planSidecars({ sidecars, destination, buildTarget, targetPlatform
     if (!SIDECAR_NAME.test(file)) {
       throw new Error(`sidecar ${source} needs a plain file name (letters, digits, ".", "_" or "-")`);
     }
-    if (file === basename(destination)) {
+    const target = join(dirname(destination), file);
+    if (key(target) === key(destination)) {
       throw new Error(`sidecar ${source} has the same name as the exported executable: rename one of them`);
     }
-    if (planned.some(entry => entry.file === file)) {
+    if (planned.some(entry => key(entry.target) === key(target))) {
       throw new Error(`two sidecars are both named ${file}`);
+    }
+    if (reserved.some(path => key(path) === key(target))) {
+      throw new Error(`sidecar ${source} collides with a generated build artifact: ${target}`);
     }
     const found = await stat(source).catch(() => null);
     if (!found?.isFile()) throw new Error(`sidecar is not a file: ${source}`);
@@ -580,10 +589,11 @@ async function planSidecars({ sidecars, destination, buildTarget, targetPlatform
       throw new Error(`sidecar ${source} is built for ${binary.platform}-${binary.architectures.join("/")} `
         + `(${binary.format}), but this build targets ${buildTarget}`);
     }
-    const target = join(dirname(destination), file);
     // A sidecar built straight into the output directory is already in place.
-    const inPlace = resolve(source) === resolve(target);
-    if (!inPlace && !force && await stat(target).catch(() => null)) {
+    const occupied = await lstat(target).catch(() => null);
+    const inPlace = resolve(source) === resolve(target)
+      || (occupied?.isFile() && occupied.dev === found.dev && occupied.ino === found.ino);
+    if (!inPlace && !force && occupied) {
       throw new Error(`output already exists: ${target} (pass --force to replace it)`);
     }
     planned.push({ source, file, target, inPlace });
@@ -670,7 +680,14 @@ export async function buildStandalone(
     targetPlatform, targetArchitecture, destination, assetDirectory, sideLoaded,
   } = prepared;
   const plannedSidecars = await planSidecars(
-    { sidecars, destination, buildTarget, targetPlatform, targetArchitecture, force });
+    { sidecars, destination, buildTarget, targetPlatform, targetArchitecture, force,
+      reserved: [
+        ...assets === "side-loaded" ? [sideLoaded] : [],
+        ...sidecars.length && (icon || bundleId || appVersion || hid)
+          ? packagePlan({ platform: buildPlatform, executable: destination, icon,
+            identifier: bundleId, hid }).artifacts : [],
+      ],
+    });
   const trayAssets = tray ? [
     { path: TRAY_BUNDLE_ICON, source: tray.icon, description: "the configured tray icon" },
     ...(tray.menuIcons ?? []).map((source, index) => ({

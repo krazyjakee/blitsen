@@ -39,12 +39,14 @@ fn sidecar_path(
         .chain(application_root)
         .map(|directory| directory.join(&file))
         .collect();
-    Ok(candidates
+    candidates
         .iter()
         .find(|candidate| candidate.is_file())
         .or(candidates.first())
         .cloned()
-        .unwrap_or_else(|| file.into()))
+        .ok_or_else(|| {
+            JsError::new("cannot locate a sidecar without an executable or application directory")
+        })
 }
 
 #[cfg(all(test, not(any(target_os = "android", target_os = "ios"))))]
@@ -85,6 +87,8 @@ mod sidecar_tests {
                 "{bad:?}"
             );
         }
+        // Never turn a sidecar into a bare command that the supervisor searches on PATH.
+        assert!(sidecar_path("helper", None, None).is_err());
         std::fs::remove_dir_all(&temporary).unwrap();
     }
 }
