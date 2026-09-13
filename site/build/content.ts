@@ -162,6 +162,7 @@ const INTERNAL_PAGES: DocPage[] = [
   { file: "RELEASE-NOTES-0.2.2.md", slug: "release-notes-0-2-2", nav: "0.2.2 notes", title: "0.2.2 release notes", blurb: "Release-specific notes for Blitsen 0.2.2." },
   { file: "RELEASE-NOTES-0.2.3.md", slug: "release-notes-0-2-3", nav: "0.2.3 notes", title: "0.2.3 release notes", blurb: "Release-specific notes for Blitsen 0.2.3." },
   { file: "RELEASE-NOTES-0.2.4.md", slug: "release-notes-0-2-4", nav: "0.2.4 notes", title: "0.2.4 release notes", blurb: "Release-specific notes for Blitsen 0.2.4." },
+  { file: "RELEASE-NOTES-0.2.5.md", slug: "release-notes-0-2-5", nav: "0.2.5 notes", title: "0.2.5 release notes", blurb: "Release-specific notes for Blitsen 0.2.5." },
   { file: "M0.md", slug: "m0", nav: "M0 record", title: "M0 feasibility record", blurb: "Historical milestone record." },
   { file: "M2.md", slug: "m2", nav: "M2 record", title: "M2 interactive record", blurb: "Historical milestone record." },
   { file: "M3.md", slug: "m3", nav: "M3 record", title: "M3 Pong record", blurb: "Historical milestone record." },
