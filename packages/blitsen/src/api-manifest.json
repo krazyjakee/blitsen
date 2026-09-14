@@ -2490,7 +2490,7 @@
     {
       "api": "BroadcastChannel",
       "kind": "global",
-      "status": "absent",
+      "status": "implemented",
       "code": "WEB_MESSAGING",
       "pattern": "(?<![.\\w$])BroadcastChannel\\b"
     },
@@ -2638,6 +2638,13 @@
       "pattern": "(?<![.\\w$])Intl\\b"
     },
     {
+      "api": "WebAssembly",
+      "kind": "global",
+      "status": "implemented",
+      "code": "WEB_WASM",
+      "pattern": "(?<![.\\w$])WebAssembly\\b"
+    },
+    {
       "api": "XMLHttpRequest",
       "kind": "global",
       "status": "absent",
@@ -2647,21 +2654,21 @@
     {
       "api": "ReadableStream",
       "kind": "global",
-      "status": "absent",
+      "status": "implemented",
       "code": "WEB_STREAM",
       "pattern": "(?<![.\\w$])ReadableStream\\b"
     },
     {
       "api": "WritableStream",
       "kind": "global",
-      "status": "absent",
+      "status": "implemented",
       "code": "WEB_STREAM",
       "pattern": "(?<![.\\w$])WritableStream\\b"
     },
     {
       "api": "TransformStream",
       "kind": "global",
-      "status": "absent",
+      "status": "implemented",
       "code": "WEB_STREAM",
       "pattern": "(?<![.\\w$])TransformStream\\b"
     },
@@ -2670,7 +2677,7 @@
       "kind": "member",
       "owner": "Response.prototype",
       "member": "body",
-      "status": "absent",
+      "status": "implemented",
       "code": "WEB_STREAM",
       "pattern": null
     },
@@ -2679,21 +2686,21 @@
       "kind": "member",
       "owner": "Response.prototype",
       "member": "clone",
-      "status": "absent",
+      "status": "implemented",
       "code": "WEB_STREAM",
       "pattern": null
     },
     {
       "api": "FormData",
       "kind": "global",
-      "status": "absent",
+      "status": "implemented",
       "code": "WEB_FORM",
       "pattern": "(?<![.\\w$])FormData\\b"
     },
     {
       "api": "File",
       "kind": "global",
-      "status": "absent",
+      "status": "implemented",
       "code": "WEB_FORM",
       "pattern": "\\bnew File\\s*\\("
     },
@@ -3931,7 +3938,7 @@
       "kind": "member",
       "owner": "Headers.prototype",
       "member": "getSetCookie",
-      "status": "absent",
+      "status": "implemented",
       "code": "WEB_COOKIE",
       "pattern": null
     },
@@ -3991,10 +3998,9 @@
       "pattern": "(?<![.\\w$])Notification\\b",
       "condition": {
         "platforms": [
-          "darwin",
-          "android"
+          "darwin"
         ],
-        "reason": "macOS notifications are `UNUserNotificationCenter`, which needs a bundle identity to address and to hold permission against — and answers a process that has none by aborting it rather than by failing the call, so the facade cannot be installed and left to throw. An exported `.app` carries that identity and a development run of the interpreter does not; `blitsen --dev-bundle` gives the development host one of its own rather than borrowing an installed application's. A process cannot acquire or lose a bundle identifier while it runs, so the question is settled once, as the runtime installs (#253). On Android the same question has a different subject: the facade's `click` is a body tap, and a body tap there is a `PendingIntent` addressed to an installed application identity, so a package the platform launched has one and a runtime started against a directory standing in for `assets/` does not — a `Notification` whose `onclick` could never fire would be a promise the constructor must not make (#252). `blitsen/notify` is present either way and says why a call was refused."
+        "reason": "macOS notifications are `UNUserNotificationCenter`, which needs a bundle identity to address and to hold permission against — and answers a process that has none by aborting it rather than by failing the call, so the facade cannot be installed and left to throw. An exported `.app` carries that identity and a development run of the interpreter does not; `blitsen --dev-bundle` gives the development host one of its own rather than borrowing an installed application's. A process cannot acquire or lose a bundle identifier while it runs, so the question is settled once, as the runtime installs (#253). `blitsen/notify` is present either way and says why a call was refused."
       }
     },
     {
@@ -4009,52 +4015,28 @@
       "kind": "global",
       "status": "implemented",
       "code": "WEB_GAMEPAD",
-      "pattern": "(?<![.\\w$])Gamepad\\b",
-      "condition": {
-        "platforms": [
-          "android"
-        ],
-        "reason": "The maintained controller backend supports Linux, macOS and Windows, but has no Android backend. The API is absent there rather than returning an always-empty snapshot."
-      }
+      "pattern": "(?<![.\\w$])Gamepad\\b"
     },
     {
       "api": "GamepadButton",
       "kind": "global",
       "status": "implemented",
       "code": "WEB_GAMEPAD",
-      "pattern": "(?<![.\\w$])GamepadButton\\b",
-      "condition": {
-        "platforms": [
-          "android"
-        ],
-        "reason": "This snapshot type is installed with the desktop Gamepad API and absent with it."
-      }
+      "pattern": "(?<![.\\w$])GamepadButton\\b"
     },
     {
       "api": "GamepadEvent",
       "kind": "global",
       "status": "implemented",
       "code": "WEB_GAMEPAD",
-      "pattern": "(?<![.\\w$])GamepadEvent\\b",
-      "condition": {
-        "platforms": [
-          "android"
-        ],
-        "reason": "Controller connection events require the desktop controller backend."
-      }
+      "pattern": "(?<![.\\w$])GamepadEvent\\b"
     },
     {
       "api": "GamepadHapticActuator",
       "kind": "global",
       "status": "implemented",
       "code": "WEB_GAMEPAD",
-      "pattern": "(?<![.\\w$])GamepadHapticActuator\\b",
-      "condition": {
-        "platforms": [
-          "android"
-        ],
-        "reason": "Dual-rumble is exposed only where the desktop controller backend can address it."
-      }
+      "pattern": "(?<![.\\w$])GamepadHapticActuator\\b"
     },
     {
       "api": "Navigator.getGamepads",
@@ -4063,13 +4045,7 @@
       "member": "getGamepads",
       "status": "implemented",
       "code": "WEB_GAMEPAD",
-      "pattern": null,
-      "condition": {
-        "platforms": [
-          "android"
-        ],
-        "reason": "The maintained controller backend supports Linux, macOS and Windows, but has no Android backend. The member is absent there rather than returning an always-empty array."
-      }
+      "pattern": null
     },
     {
       "api": "GamepadHapticActuator.playEffect",
@@ -4106,7 +4082,7 @@
     {
       "api": "PerformanceObserver",
       "kind": "global",
-      "status": "absent",
+      "status": "implemented",
       "code": "WEB_OBSERVER",
       "pattern": "(?<![.\\w$])PerformanceObserver\\b"
     },
@@ -4392,14 +4368,6 @@
       "pattern": "(?<![.\\w$])DOMParser\\b"
     },
     {
-      "api": "WebAssembly",
-      "kind": "global",
-      "status": "absent",
-      "origin": "engine",
-      "code": "WEB_WASM",
-      "pattern": "(?<![.\\w$])WebAssembly\\b"
-    },
-    {
       "api": "Intl.NumberFormat",
       "kind": "member",
       "owner": "Intl",
@@ -4539,63 +4507,63 @@
       "kind": "member",
       "owner": "Intl.NumberFormat.prototype",
       "member": "formatToParts",
-      "status": "absent",
+      "status": "implemented",
       "code": "WEB_INTL",
-      "pattern": "\\bIntl\\.NumberFormat\\.formatToParts\\b"
+      "pattern": null
     },
     {
       "api": "Intl.DateTimeFormat.formatToParts",
       "kind": "member",
       "owner": "Intl.DateTimeFormat.prototype",
       "member": "formatToParts",
-      "status": "absent",
+      "status": "implemented",
       "code": "WEB_INTL",
-      "pattern": "\\bIntl\\.DateTimeFormat\\.formatToParts\\b"
+      "pattern": null
     },
     {
       "api": "Intl.DateTimeFormat.formatRange",
       "kind": "member",
       "owner": "Intl.DateTimeFormat.prototype",
       "member": "formatRange",
-      "status": "absent",
+      "status": "implemented",
       "code": "WEB_INTL",
-      "pattern": "\\bIntl\\.DateTimeFormat\\.formatRange\\b"
+      "pattern": null
     },
     {
       "api": "Intl.Segmenter",
       "kind": "member",
       "owner": "Intl",
       "member": "Segmenter",
-      "status": "absent",
+      "status": "implemented",
       "code": "WEB_INTL",
-      "pattern": "\\bIntl\\.Segmenter\\b"
+      "pattern": null
     },
     {
       "api": "Intl.DisplayNames",
       "kind": "member",
       "owner": "Intl",
       "member": "DisplayNames",
-      "status": "absent",
+      "status": "implemented",
       "code": "WEB_INTL",
-      "pattern": "\\bIntl\\.DisplayNames\\b"
+      "pattern": null
     },
     {
       "api": "Intl.DurationFormat",
       "kind": "member",
       "owner": "Intl",
       "member": "DurationFormat",
-      "status": "absent",
+      "status": "implemented",
       "code": "WEB_INTL",
-      "pattern": "\\bIntl\\.DurationFormat\\b"
+      "pattern": null
     },
     {
       "api": "Intl.supportedValuesOf",
       "kind": "member",
       "owner": "Intl",
       "member": "supportedValuesOf",
-      "status": "absent",
+      "status": "implemented",
       "code": "WEB_INTL",
-      "pattern": "\\bIntl\\.supportedValuesOf\\b"
+      "pattern": null
     }
   ],
   "native": [
@@ -4961,25 +4929,13 @@
       "api": "input.vibrateGamepad",
       "module": "input",
       "member": "vibrateGamepad",
-      "status": "implemented",
-      "condition": {
-        "platforms": [
-          "android"
-        ],
-        "reason": "The controller backend has no Android implementation, so there is no discovered slot or actuator to address."
-      }
+      "status": "implemented"
     },
     {
       "api": "input.onDeviceChange",
       "module": "input",
       "member": "onDeviceChange",
-      "status": "implemented",
-      "condition": {
-        "platforms": [
-          "android"
-        ],
-        "reason": "The controller backend has no Android implementation, so there are no controller connection changes to report."
-      }
+      "status": "implemented"
     },
     {
       "api": "hid.devices",
@@ -5070,13 +5026,7 @@
       "api": "os.batteries",
       "module": "os",
       "member": "batteries",
-      "status": "implemented",
-      "condition": {
-        "platforms": [
-          "android"
-        ],
-        "reason": "Android exposes battery state through a different power service, so the desktop sysinfo-backed member is absent rather than returning an invented value."
-      }
+      "status": "implemented"
     },
     {
       "api": "os.locale",

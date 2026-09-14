@@ -17,7 +17,7 @@ describe("Node support policy", () => {
   });
 
   test("the supported floor includes import.meta.dirname", async () => {
-    const sources = await Promise.all(["runtime.mjs", "android-toolchain.mjs", "api-manifest.mjs"]
+    const sources = await Promise.all(["runtime.mjs", "api-manifest.mjs"]
       .map(file => readFile(join(packageDirectory, "src", file), "utf8")));
     expect(sources.every(source => source.includes("import.meta.dirname"))).toBeTrue();
   });

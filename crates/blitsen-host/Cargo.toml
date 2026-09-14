@@ -24,46 +24,9 @@ blitz.workspace = true
 # Both are named rather than taken through `default`, so the feature list is a
 # decision this file records instead of whatever upstream defaults to next.
 blitz-paint = { workspace = true, features = ["custom-widget", "svg"] }
-# The third-party notices an artifact carries are gzipped inside it (#121), and
-# reading them belongs to the application's files rather than to the appended
-# section: an APK carries the same file under `assets/` (#144). Already in the
-# tree behind `blitsen-runtime`, so this links no new crate.
+# Read compressed native dependency notices from application assets.
 flate2 = "1"
 futures-util = { version = "0.3", default-features = false, features = ["std", "sink"] }
-# `crypto.getRandomValues`, and nothing else. The platform generator itself
-# rather than a PRNG seeded from it: this is the entropy an application's UUIDs
-# and tokens are built on. Already in the tree behind `rand_core`, so linking it
-# directly compiles no new crate.
-getrandom = "0.4"
-# `Intl` (#237). CLDR through ICU4X, which is what a browser's own ICU build
-# reads: the placement of a currency symbol, the minor units a currency has and
-# the name of a time zone in a locale are data, and an implementation that
-# derived them would be wrong rather than approximate. Taken as the individual
-# components rather than the `icu` meta-crate so the baked data that is linked
-# is the data these formatters ask for. `icu_experimental` carries currency,
-# percent and relative-time formatting, which ICU4X has not stabilised yet and
-# which `Intl` cannot be implemented without.
-fixed_decimal = "0.7"
-icu_collator = { version = "2", features = ["compiled_data"] }
-# `unstable_jiff_0_2` is the pairing with the `jiff` version below, which is
-# what lets an instant in a named IANA zone be formatted without converting it
-# twice. The feature is semver-unstable because jiff 0.2 is; the pin is exact
-# on both sides for that reason.
-icu_datetime = { version = "2", features = ["compiled_data", "unstable_jiff_0_2"] }
-icu_decimal = { version = "2", features = ["compiled_data"] }
-icu_experimental = "0.6"
-icu_list = { version = "2", features = ["compiled_data"] }
-icu_locale_core = "2"
-icu_plurals = { version = "2", features = ["compiled_data"] }
-# The time-zone database, which is the platform's own where it has one — the
-# system `tzdb` on Unix, the concatenated one on Android — and bundled where it
-# does not. That is the difference between a zone that follows a government's
-# next daylight-saving change and one frozen at the build.
-jiff = "0.2"
-# The locale the host is configured for, which is three different questions on
-# three platforms and no dependencies in this crate.
-sys-locale = "0.3"
-writeable = "0.6"
 # The report descriptor of an opened `blitsen/hid` device (#247). A descriptor
 # is a bit-level grammar with global/local item state, delimiters and pushes,
 # and the two things Blitsen needs from it — the longest report of each kind, so
@@ -85,10 +48,7 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 parking_lot.workspace = true
 peniko = "0.6"
 png = "0.18"
-# Blitsen's own `fetch`, so the Phase 2 host swap does not change what the
-# application sees. Same version Blitz's net provider already resolves to.
-# `stream` is what `EventSource` reads a response body through (#236): a feed is
-# a body that never ends, so the one thing it cannot do is await the whole of it.
+# EventSource and application asset loading retain the shared HTTP client.
 reqwest = { version = "0.13", default-features = false, features = ["charset", "native-tls", "stream"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
@@ -98,10 +58,6 @@ sha2 = "0.11"
 # sourceMappingURL policy because those are application-loader concerns.
 sourcemap = "9.3.2"
 tokio = { version = "1.42", features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
-# `WebSocket`, the crate TECH.md §8 names. `native-tls` rather than a bundled
-# root store because `reqwest` above already resolves to it: `wss:` then trusts
-# the same platform certificates `https:` does, and no second TLS stack is built.
-tokio-tungstenite = { version = "0.30", default-features = false, features = ["connect", "native-tls"] }
 url = "2"
 # Audio (#81). A pure-Rust implementation of the Web Audio API itself rather
 # than a playback library the graph would have to be rebuilt on top of; it sits
@@ -112,21 +68,24 @@ url = "2"
 web-audio-api = "1.7"
 winit.workspace = true
 
-# An engine to drive `tests/surface_lifecycle.rs` with. QuickJS rather than
-# JavaScriptCore because it needs nothing found on the machine at runtime, and
-# because it is the engine the platforms that really do destroy a surface would
-# be hosting (#146).
+# Legacy language services and QuickJS are test-only DOM regression fixtures.
 [dev-dependencies]
+fixed_decimal = "0.7"
+icu_collator = { version = "2", features = ["compiled_data"] }
+icu_datetime = { version = "2", features = ["compiled_data", "unstable_jiff_0_2"] }
+icu_decimal = { version = "2", features = ["compiled_data"] }
+icu_experimental = "0.6"
+icu_list = { version = "2", features = ["compiled_data"] }
+icu_locale_core = "2"
+icu_plurals = { version = "2", features = ["compiled_data"] }
+jiff = "0.2"
+sys-locale = "0.3"
+writeable = "0.6"
+tokio-tungstenite = { version = "0.30", default-features = false, features = ["connect", "native-tls"] }
+getrandom = "0.4"
 blitsen-core = { path = "../blitsen-core", features = ["test-support"] }
 blitsen-quickjs = { path = "../blitsen-quickjs" }
 tempfile.workspace = true
-
-# No libtest harness: a winit event loop must be created on the main thread, and
-# libtest runs every test on one it spawned. `fn main()` is the only way to be
-# on the thread the platform requires.
-[[test]]
-name = "surface_lifecycle"
-harness = false
 
 # Desktop notifications use the native toast/notification-center APIs on
 # Windows and macOS and the freedesktop notification service on Linux.

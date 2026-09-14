@@ -1,13 +1,13 @@
 import { copyFile, mkdtemp, rm, mkdir, readFile, readdir, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { linkBundle } from '../src/bundle.mjs';
-import { buildRuntime, repository, capture } from './build-addon.mjs';
-import { cargoTargetDirectory } from '../src/android-toolchain.mjs';
+import { buildStandalone } from '../src/export.mjs';
+import { buildAddon, repository, capture } from './build-addon.mjs';
+import { cargoTargetDirectory } from '../src/cargo.mjs';
 
 // Exercise the same packaged export with both supported driver hosts. The
 // application always runs in its own runtime; the driver never owns its DOM.
-buildRuntime({ release: false });
+const addon = await buildAddon({ release: false });
 const target = await cargoTargetDirectory(repository, cmd => capture(cmd, { cwd: repository }));
 const scratch = await mkdtemp(join(tmpdir(), 'blitsen-ui-'));
 try {
@@ -30,7 +30,11 @@ try {
     ['app.js', Buffer.from(await compiled.outputs[0].text())],
   ]);
   const output = join(scratch, process.platform === 'win32' ? 'UI.exe' : 'UI');
-  await linkBundle({ runtime: join(target, 'debug', process.platform === 'win32' ? 'blitsen-runtime.exe' : 'blitsen-runtime'), output, files });
+  const app = join(scratch, 'app');
+  await mkdir(app);
+  for (const [name, bytes] of files) await Bun.write(join(app, name), bytes);
+  await buildStandalone({ root: app, width: 800, height: 600, title: 'UI', outfile: output },
+    { path: addon, target: `${process.platform}-${process.arch}`, source: 'repository' });
   // A sidecar beside the export, as `blitsen build --sidecar` ships one. The
   // JavaScript host running this script is a convenient executable that prints.
   const helper = join(scratch, process.platform === 'win32' ? 'ui-helper.exe' : 'ui-helper');

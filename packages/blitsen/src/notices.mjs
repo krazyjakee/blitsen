@@ -101,7 +101,7 @@ const digest = text => createHash("sha256").update(text).digest("hex").slice(0, 
  * string.
  */
 export async function collectNotices({
-  target = null, manifestPath = null, root = "blitsen-runtime", run,
+  target = null, manifestPath = null, root = "blitsen-node", run,
 } = {}) {
   const metadata = await cargoMetadata({ target, manifestPath, run });
   const linked = linkedPackages(metadata, root);

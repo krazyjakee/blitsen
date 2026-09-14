@@ -76,6 +76,9 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: ${{ matrix.node-version }}
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.3.14
       - run: npm --prefix packages/blitsen run test:node
 
   # Issue #123: the workspace is tested on all three platforms, not just the one
@@ -83,9 +86,7 @@ jobs:
   # result is not per-platform — and the tests run everywhere, because behaviour
   # is (the rustfmt step was missing until #278).
   #
-  # No engine library is installed on any of them: the runtime links QuickJS-ng
-  # statically, so the engine arrives with the Rust build and there is nothing
-  # for a job to go and find.
+  # Rust DOM unit tests use a test-only QuickJS oracle. Shipping apps use Bun.
   rust:
     name: Rust (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -147,7 +148,7 @@ jobs:
       # Prime the release-profile dependencies used by acceptance and release.
       # `rust-cache` omits workspace outputs, so consumers still build and test
       # Blitsen itself while avoiding another full dependency compilation.
-      - run: cargo build --release -p blitsen-node -p blitsen-runtime
+      - run: cargo build --release -p blitsen-node && bun scripts/build-bun-runtime.mjs
 
   # Issue #277: `rust-version` is a promise made to whoever builds Blitsen from
   # source. Every other Rust job in this file installs a current compiler, so
@@ -273,7 +274,7 @@ jobs:
       # not invent one. It was built after that step until the job first ran: a
       # checkout that had already built a runtime passed locally, and a clean
       # runner is the only place the order was ever load-bearing.
-      - run: cargo build --release -p blitsen-runtime
+      - run: cargo build --release -p blitsen-node && bun scripts/build-bun-runtime.mjs
       # Issue #311: both bundle writers must rewrite the same synthetic Mach-O
       # to identical bytes. The ordinary Rust and JavaScript jobs each install
       # only one toolchain; this job has both, so it owns the language boundary.
@@ -283,12 +284,13 @@ jobs:
       # Issue #121: an export embeds the notices staged beside the runtime it
       # links, and refuses to claim redistribution when they are absent. The
       # release job stages them right after the same build; CI never did, so
-      # `test:hosts` built a Phase 2 export that correctly reported itself
+      # `test:hosts` built a Bun export that correctly reported itself
       # uncleared and then failed the assertion that it should not be.
       - name: Stage the third-party notices
-        run: bun run --cwd packages/blitsen notices --root blitsen-runtime --out ${{ github.workspace }}/target/release
+        run: bun run --cwd packages/blitsen notices --root blitsen-node --out ${{ github.workspace }}/target/release
       - run: bun run --cwd packages/blitsen test:native
       - run: bun run --cwd packages/blitsen test:ui
+      - run: bun run --cwd packages/blitsen test:bun-services
       - run: bun run --cwd packages/blitsen test:m2
       # Under Xvfb on Linux, so the frame-cadence assertion (gated on DISPLAY)
       # executes instead of skipping — see the header comment above.
@@ -465,10 +467,10 @@ jobs:
             libasound2-dev libudev-dev libwebkit2gtk-4.1-dev libappindicator3-dev \
             librsvg2-dev patchelf
       - run: bun install --frozen-lockfile
-      # Before the measurement, not after it: what an export links is the Phase 2
-      # runtime, and `measure` refuses to guess at one. This built after the
+      # Before the measurement, not after it: what an export links is the Bun
+      # interpreter, and `measure` refuses to guess at one. This built after the
       # steps that need it until the job first ran and said so (#123).
-      - run: cargo build --release -p blitsen-runtime
+      - run: cargo build --release -p blitsen-node && bun scripts/build-bun-runtime.mjs
       - name: Measure the export
         run: bun run --cwd packages/blitsen measure --runs 5 --out ${{ github.workspace }}/measurements.json
         env:
@@ -477,19 +479,19 @@ jobs:
         run: bun run --cwd packages/blitsen size:gate --measurements ${{ github.workspace }}/measurements.json
       - name: Startup and idle RAM
         run: bun run --cwd packages/blitsen bench --measurements ${{ github.workspace }}/measurements.json
-      # Issue #89: recorded, never gated. The Phase 2 component breakdown moves
+      # Issue #89: recorded, never gated. The Bun runtime component breakdown moves
       # with the dependency tree, and a gate on it would fail for reasons that
       # are not regressions. The runtime it reads was built above.
-      - name: Phase 2 size breakdown
-        run: bun run --cwd packages/blitsen size:phase2 --out ${{ github.workspace }}/phase2-size.json
+      - name: Bun runtime size breakdown
+        run: bun run --cwd packages/blitsen size:runtime --out ${{ github.workspace }}/runtime-size.json
         env:
           BLITSEN_RUNTIME_PATH: ${{ github.workspace }}/target/release/${{ runner.os == 'Windows' && 'blitsen-runtime.exe' || 'blitsen-runtime' }}
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
-          name: phase2-size-${{ matrix.os }}-${{ github.sha }}
-          path: ${{ github.workspace }}/phase2-size.json
-      # Same document and same runner as the Phase 2 number above. Electron's
+          name: runtime-size-${{ matrix.os }}-${{ github.sha }}
+          path: ${{ github.workspace }}/runtime-size.json
+      # Same document and same runner as the Bun number above. Electron's
       # complete packaged directory and Tauri's runnable release executable are
       # measured rather than copied from either project's marketing page.
       - name: Install pinned Electron and Tauri comparison tools
@@ -497,7 +499,7 @@ jobs:
       - name: Measure equivalent bare Electron and Tauri applications
         run: >-
           bun run --cwd packages/blitsen size:compare --blitsen
-          ${{ github.workspace }}/phase2-size.json --out
+          ${{ github.workspace }}/runtime-size.json --out
           ${{ github.workspace }}/desktop-size-comparison.json
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
@@ -590,7 +592,7 @@ jobs:
       # The same two artifacts release.yml builds and publishes for this target,
       # in one build, so the rest of the job runs against what a user would get.
       - name: Build the runtime
-        run: cargo build --release -p blitsen-node -p blitsen-runtime
+        run: cargo build --release -p blitsen-node && bun scripts/build-bun-runtime.mjs
       # Issue #229: Intel macOS selects the CPU rasterizer before a surface is
       # created. Exercise the real window/surface lifecycle on that runner
       # before JavaScript setup, so a package-lock failure cannot hide the
@@ -609,7 +611,7 @@ jobs:
       # only ever run on Linux x86-64 (#134). An export links the runtime, so
       # the notices go beside it, exactly as the release job stages them.
       - name: Stage the third-party notices
-        run: bun run --cwd packages/blitsen notices --root blitsen-runtime --out ${{ github.workspace }}/target/release
+        run: bun run --cwd packages/blitsen notices --root blitsen-node --out ${{ github.workspace }}/target/release
       - run: bun run --cwd packages/blitsen test:standalone
       - run: cargo test -p blitsen-blitz --test conformance -- --nocapture
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -624,15 +626,15 @@ jobs:
           BLITSEN_RUNTIME_PATH: ${{ github.workspace }}/target/release/${{ matrix.executable }}
       - name: Size report
         run: bun run --cwd packages/blitsen size:gate --measurements ${{ github.workspace }}/measurements.json
-      - name: Phase 2 size breakdown (report only)
-        run: bun run --cwd packages/blitsen size:phase2 --out ${{ github.workspace }}/phase2-size.json
+      - name: Bun runtime size breakdown (report only)
+        run: bun run --cwd packages/blitsen size:runtime --out ${{ github.workspace }}/runtime-size.json
         env:
           BLITSEN_RUNTIME_PATH: ${{ github.workspace }}/target/release/${{ matrix.executable }}
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
-          name: phase2-size-${{ matrix.target }}-${{ github.sha }}
-          path: ${{ github.workspace }}/phase2-size.json
+          name: runtime-size-${{ matrix.target }}-${{ github.sha }}
+          path: ${{ github.workspace }}/runtime-size.json
           if-no-files-found: ignore
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
@@ -646,376 +648,3 @@ jobs:
   # target's artifact is, then exercise the things that change with the target
   # and nothing that does not.
   #
-  # What changes on Android is the whole bottom of the graph: two cross-compiles
-  # instead of a native build, QuickJS bindings generated rather than shipped,
-  # OpenSSL built from source under the NDK, an audio backend that is neither
-  # ALSA nor CoreAudio, and an entry point that is a `.so` the platform loads
-  # rather than a program it execs. Every one of those is a thing that can break
-  # without a single desktop job noticing. What does *not* change is product
-  # behaviour, so m2, m3b, layout conformance, determinism and the size gate
-  # stay on the targets that already run them — the same line #133 drew.
-  #
-  # ## The artifact
-  #
-  # The CLI compiles `-p blitsen-android` directly and packages it with `aapt2
-  # link`, an archive written in process, `zipalign -p` and `apksigner` (#148,
-  # #143). This job builds that artifact by running `bin/blitsen.mjs` rather
-  # than by re-implementing the steps: the point is to exercise the command a
-  # user runs.
-  #
-  # Three prerequisites were found by trying, and are fixed rather than
-  # documented: `RANLIB_<triple>` and `BINDGEN_EXTRA_CLANG_ARGS_<triple>`, which
-  # this graph needs and the packager that used to drive the compile did not set
-  # (see `apkPlan`), and a `min_sdk_version` of 26, which is where the NDK first
-  # ships the `libaaudio` that `cpal` links.
-  #
-  # ## Device evidence stays in its own tier
-  #
-  # It does not boot an emulator. The `android-notifications` tier below takes
-  # this job's APK as an artifact and is a required check in its own right. The
-  # separation keeps an AVD boot failure from masquerading as a cross-compile
-  # failure while still making both failures gate the change.
-  android:
-    name: android (smoke)
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
-        with:
-          bun-version: 1.3.14
-      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
-        with:
-          toolchain: ${{ env.RUST_VERSION }}
-          targets: aarch64-linux-android, x86_64-linux-android
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          # Android is the longest repeated compile in this workflow: two release
-          # target trees, neither shared with a desktop runner. Keep its archive
-          # separate so a desktop job cannot claim the immutable key first, and
-          # retain completed dependency builds even if a later packaging check
-          # fails. Stale superseded keys are pruned when the cache budget is
-          # maintained; registry-only caching left this job cold for every run.
-          shared-key: cargo-android
-          cache-targets: true
-          cache-on-failure: true
-          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-      # `rquickjs-sys` ships pre-generated bindings for sixteen triples and none
-      # is `*-linux-android`, so `crates/blitsen-quickjs/Cargo.toml` turns on its
-      # `bindgen` feature for that target — which makes libclang a build-time
-      # requirement Android alone has. The runner image's manifest lists Clang
-      # 16, 17 and 18 under its tools and names no libclang package at all, so
-      # this is installed rather than assumed: bindgen loads `libclang.so`, not
-      # the `clang` driver, and the two are different packages.
-      - name: Install libclang, which the Android QuickJS bindings need
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libclang-dev
-      # No Blitz system libraries here, unlike every other Linux job in this
-      # file: fontconfig, xkbcommon, wayland and X11 are the *host* platform's,
-      # and nothing in an Android cross-compile links them. If a step below ever
-      # starts wanting them, something has stopped being a cross-compile.
-      #
-      # The NDK is not installed either — the image carries one and sets
-      # ANDROID_NDK_HOME to it, which is the whole of the prerequisite
-      # `android-toolchain.mjs` refuses to provision. Asserted rather than
-      # trusted, because an image that drops it would otherwise fail much later.
-      #
-      # The rest of what `android-toolchain.mjs` refuses to provision is checked
-      # in the same breath, because the packaging step below runs the real
-      # detector and every one of these is a failure it would report an hour
-      # into the job instead of at the top of it: `aapt2`, `zipalign` and
-      # `apksigner` out of build-tools, and the JDK the last two are wrappers
-      # around. The API 33 platform is *not* checked here — the image does not
-      # carry one and the step below installs it.
-      - name: Check the Android toolchain the image carries
-        run: |
-          set -euo pipefail
-          test -n "$ANDROID_NDK_HOME" || { echo "ANDROID_NDK_HOME is unset"; exit 1; }
-          test -d "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt" \
-            || { echo "$ANDROID_NDK_HOME has no C toolchain"; exit 1; }
-          grep Pkg.Revision "$ANDROID_NDK_HOME/source.properties"
-          test -n "$ANDROID_HOME" || { echo "ANDROID_HOME is unset"; exit 1; }
-          tools=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d \
-            -printf '%f\n' | sort -V | tail -1)
-          for tool in aapt2 zipalign apksigner; do
-            test -x "$ANDROID_HOME/build-tools/$tools/$tool" \
-              || { echo "build-tools $tools has no $tool"; exit 1; }
-          done
-          # apksigner and keytool are shell wrappers around a JVM, so a missing
-          # `java` fails inside them with a message about neither.
-          java -version
-      # `cargo-ndk` is what points the cross-compile at the NDK, and it is also
-      # what #142 measured the graph against, so a failure here is comparable
-      # with the result that issue recorded. The CLI runs it too — this step
-      # exists so that a broken graph fails before the packaging step, where the
-      # same failure would be reported as a build that produced no `.so`.
-      - name: Install cargo-ndk
-        run: cargo install cargo-ndk --locked
-      # Both default ABIs, in one invocation, because that is what one APK
-      # carries (#148's decision 2) and because arm64 alone would leave the
-      # emulator ABI unbuilt — which is precisely the one an emulator tier needs.
-      - name: Cross-compile the Android entry point for both default ABIs
-        run: cargo ndk -t arm64-v8a -t x86_64 -P 26 build --release -p blitsen-android
-      # The shipped build above takes Android's CPU/softbuffer path. Keep the
-      # Vello/wgpu path compiling for deliberate physical-device qualification;
-      # it is an opt-in experiment, not an automatic runtime fallback (#151).
-      - name: The Android GPU qualification build still type-checks
-        run: >-
-          cargo ndk -t x86_64 -P 26 check --release -p blitsen-android
-          --features android-vello-gpu
-      # A `.so` that links and does not export `android_main` is a crash inside
-      # `dlopen` with nothing to read, so the symbol is checked rather than
-      # assumed — it is the entire contract between the platform and this crate.
-      # The ELF machine is checked too: a build that silently produced two copies
-      # of the same architecture would satisfy every other assertion here.
-      - name: The artifacts are what Android would load
-        run: |
-          set -euo pipefail
-          nm="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm"
-          readelf="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
-          for pair in "aarch64-linux-android:AArch64" "x86_64-linux-android:X86-64"; do
-            triple="${pair%%:*}"
-            machine="${pair##*:}"
-            so="target/$triple/release/libblitsen_android.so"
-            test -f "$so" || { echo "$so was not built"; exit 1; }
-            header="$("$readelf" -h "$so")"
-            symbols="$("$nm" --dynamic --defined-only "$so")"
-            grep -q "$machine" <<< "$header" \
-              || { echo "$so is not $machine"; "$readelf" -h "$so"; exit 1; }
-            grep -qw android_main <<< "$symbols" \
-              || { echo "$so exports no android_main, so NativeActivity cannot start it"; exit 1; }
-            echo "$so: $machine, exports android_main, $(stat -c%s "$so") bytes"
-          done
-      # Issue #121: an artifact carries the notices it owes, and Android has no
-      # platform package to take them from — `blitsen build --android` reads
-      # `BLITSEN_NOTICES_PATH` and reports the APK uncleared for redistribution
-      # when it is unset. Nothing had ever resolved that graph for an Android
-      # triple, and the generator exits non-zero when a package's terms cannot
-      # be honoured, so this is a real gate on a real dependency set. What it
-      # produces is then put in the APK below, which is the only way to find out
-      # that the two halves of #121 agree on a filename.
-      - run: bun install --frozen-lockfile
-      - name: The notices an Android artifact owes resolve
-        run: |
-          bun run --cwd packages/blitsen notices --target android-arm64 \
-            --root blitsen-android --out ${{ runner.temp }}/android-notices
-      # The one thing the image does not carry. `aapt2 link -I` needs the
-      # `android.jar` of `TARGET_SDK`, which is 33, and the runner image
-      # installs platforms from 34 upwards — so this is a verified absence
-      # rather than a precaution, and it is the only Android component this
-      # workflow downloads. The licence is already accepted in the image, which
-      # installed its own platforms with the same tool.
-      - name: Install the API 33 platform aapt2 links against
-        run: |
-          set -euo pipefail
-          sdkmanager=$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager
-          test -x "$sdkmanager" || { echo "no sdkmanager at $sdkmanager"; exit 1; }
-          # `< /dev/null` rather than `yes |`: the licence is already accepted,
-          # so a prompt means it is not, and the answer to that is to fail in a
-          # minute rather than to hang until the job's timeout.
-          "$sdkmanager" --install "platforms;android-33" < /dev/null
-          test -f "$ANDROID_HOME/platforms/android-33/android.jar" \
-            || { echo "android-33 installed but has no android.jar"; exit 1; }
-      # P5c's artifact, built by the command a user runs rather than by a
-      # re-implementation of its steps. `bin/blitsen.mjs` runs the real
-      # detector, the real `apkPlan` and the real archive writer, so this is the
-      # first thing in CI that would notice a manifest aapt2 refuses, a build
-      # tool that moved, or an entry the packager stopped storing.
-      #
-      # The application is `test/bare-app.mjs`, which is the same document P1
-      # and P1b are measured against — one bare application across the whole
-      # repository, so nothing here quietly measures a different one.
-      #
-      # Both default ABIs, because that is what one APK carries (#148's decision
-      # 2) and the cross-compile above already built both, so the CLI's own
-      # `cargo ndk` is a cache hit rather than a second build.
-      - name: Package an APK with the CLI
-        env:
-          BLITSEN_NOTICES_PATH: ${{ runner.temp }}/android-notices/NOTICES.txt
-          APP: ${{ runner.temp }}/bare-app
-        run: |
-          set -euo pipefail
-          bun -e 'import { BARE_APP } from "./packages/blitsen/test/bare-app.mjs";
-                  await Bun.write(process.env.APP + "/index.html", BARE_APP);'
-          bun packages/blitsen/bin/blitsen.mjs build "$APP" \
-            --android --outfile ${{ runner.temp }}/Bare.apk
-      # Read back rather than trusted, for the reason the `.so` above is: the
-      # build printing "packaged" proves it reached the end of its own steps and
-      # nothing else. Every entry the packager writes must be stored (#144), or
-      # the assets are not read in place and `extractNativeLibs="false"` is a
-      # lie; META-INF is apksigner's and is deflated by the JAR signer, which is
-      # why the check is on what the build wrote rather than on the whole file.
-      - name: The APK is an archive Android would install
-        run: |
-          python3 - ${{ runner.temp }}/Bare.apk <<'PY'
-          import sys, zipfile
-          apk = zipfile.ZipFile(sys.argv[1])
-          entries = {info.filename: info for info in apk.infolist()}
-          for want in ("AndroidManifest.xml",
-                       "lib/arm64-v8a/libblitsen_android.so",
-                       "lib/x86_64/libblitsen_android.so",
-                       "assets/blitsen/index.html",
-                       "assets/blitsen/blitsen.assets.json",
-                       "assets/blitsen/blitsen.notices.txt"):
-              if want not in entries:
-                  raise SystemExit(f"{want} is not in the APK: {sorted(entries)}")
-              if entries[want].compress_type != zipfile.ZIP_STORED:
-                  raise SystemExit(f"{want} is deflated, which #144 forbids")
-          print(f"{len(entries)} entries, {sum(i.file_size for i in entries.values())} bytes")
-          PY
-          tools=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d \
-            -printf '%f\n' | sort -V | tail -1)
-          "$ANDROID_HOME/build-tools/$tools/apksigner" \
-            verify --print-certs ${{ runner.temp }}/Bare.apk
-      # Issue #254's fixture, packaged by the same command for the same reason: the
-      # emulator job below has to install the artifact a user would get, manifest and
-      # all, or the `POST_NOTIFICATIONS` it asserts on is not the one the packager
-      # writes. It is a second application rather than the bare one because the bare
-      # one calls nothing — this document drives `blitsen/notify` and reports what it
-      # observed back through the notification shade, which `android-notify-app.mjs`
-      # records is the only channel out of an APK.
-      #
-      # A second `blitsen build` and not a second compile: `cargo ndk` has already
-      # built both ABIs above, so this is `aapt2 link`, the archive writer and
-      # `apksigner`. The application ID is given rather than derived, because the
-      # harness has to be told which package to install, clear and grant.
-      - name: Package the notification fixture the emulator job installs
-        env:
-          BLITSEN_NOTICES_PATH: ${{ runner.temp }}/android-notices/NOTICES.txt
-          APP: ${{ runner.temp }}/notify-app
-        run: |
-          set -euo pipefail
-          bun -e 'import { NOTIFY_APP } from "./packages/blitsen/test/android-notify-app.mjs";
-                  await Bun.write(process.env.APP + "/index.html", NOTIFY_APP);'
-          bun packages/blitsen/bin/blitsen.mjs build "$APP" \
-            --android --android-package com.blitsen.notifyfixture \
-            --outfile ${{ runner.temp }}/Notify.apk
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: android-notify-apk-${{ github.sha }}
-          path: ${{ runner.temp }}/Notify.apk
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        if: always()
-        with:
-          name: android-notices-${{ github.sha }}
-          path: ${{ runner.temp }}/android-notices
-          if-no-files-found: ignore
-
-  # Issue #254: the first Blitsen artifact this repository has ever run on an
-  # Android device in CI, and it runs it for the one native API whose behaviour is
-  # a system service rather than a pixel.
-  #
-  # ## Why this is a separate job
-  #
-  # #245 landed Android notifications against a checkout with no emulator, so the
-  # evidence for them was that the JNI signatures type-check and the manifest
-  # contains a permission string. Neither can say what `checkSelfPermission`
-  # returns, whether `blitsen.default` is the channel the shade files a
-  # notification under, or whether `notify` with a reused ID replaces rather than
-  # adds. That needs a device, a device needs a boot, and a boot is the flakiest
-  # thing in this file — so it is quarantined here, where a failure is read as
-  # "the notification tier" and not as "the Android cross-compile broke".
-  #
-  # `needs: android` for the APK rather than for the gate: the artifact this
-  # installs is the one the job above packaged with the CLI, which is the whole
-  # point of asserting against it. Building a second one here would be a second
-  # cross-compile of the engine for a fixture that differs from the first by one
-  # HTML file.
-  #
-  # ## The matrix is the API 33 split and nothing else
-  #
-  # 32 and 33 are not two versions of one test. Below 33, `POST_NOTIFICATIONS` is
-  # not a runtime permission and the host reports `granted` without asking the
-  # platform anything, so what 32 proves is that delivery works with no prompt
-  # anywhere in it. At 33 the whole permission state machine exists, and the
-  # harness runs three launches over one install: deny at the dialog, relaunch to
-  # read the denial back out of the SharedPreferences #245 writes, then a clean
-  # install granted at the dialog. Both use `google_apis`, which is the only
-  # published system image for 32 and the rootable one for 33.
-  #
-  # ## What is recorded, because an emulator failure is only ever read afterwards
-  #
-  # The harness writes a logcat, the raw `dumpsys notification` it asserted
-  # against, the `dumpsys package` permission state, the timeline of shade readings
-  # it polled, and the `uiautomator` hierarchy of any screen it could not find the
-  # dialog on. All of it is uploaded on failure *and* on success, because a run
-  # that passes for the wrong reason is diagnosed from the same files.
-  #
-  # Android's default CPU renderer does not create a wgpu device, so the API
-  # 32/33 lavapipe adapter's zero storage-buffer limit no longer prevents the
-  # fixture reaching application code (#151). This is consequently a required
-  # check: a boot, launch, renderer or notification failure fails the workflow.
-  android-notifications:
-    name: android (notifications, API ${{ matrix.api-level }})
-    needs: android
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    strategy:
-      fail-fast: false
-      matrix:
-        api-level: [32, 33]
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
-        with:
-          bun-version: 1.3.14
-      - run: bun install --frozen-lockfile
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: android-notify-apk-${{ github.sha }}
-          path: ${{ runner.temp }}/apk
-      # Without KVM the emulator interprets, which `android-emulator-runner`'s own
-      # README warns "might not work at all" on newer API levels. The device node
-      # exists on the standard runners; what is missing is a mode the runner's user
-      # can open it with, which is the rule this adds. If a future image drops
-      # `/dev/kvm` entirely this step still succeeds and the boot below is what
-      # reports it — so the emulator's own log is where that answer comes from.
-      - name: Let the runner's user open /dev/kvm
-        run: |
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
-            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-          sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm
-      # `reactivecircus/android-emulator-runner` rather than `avdmanager` and
-      # `adb wait-for-device` by hand: it owns the AVD creation, the boot wait and
-      # the teardown, and every one of those is a thing this repository would
-      # otherwise get wrong once and then maintain.
-      #
-      # Keep lavapipe rather than the SwiftShader mode #139 measured killing the
-      # emulator. The default Blitsen renderer no longer asks it for a wgpu
-      # device—it presents CPU pixels through ANativeWindow—but the emulator's
-      # own compositor still needs a graphics backend. `-no-window` and
-      # `-no-boot-anim` because nothing here reads pixels, and
-      # `disable-animations` because `uiautomator dump` refuses while a window is
-      # still moving and the permission dialog is a window that moves.
-      - name: Notification coverage on a booted emulator
-        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
-        with:
-          api-level: ${{ matrix.api-level }}
-          target: google_apis
-          arch: x86_64
-          # No AVD snapshot cache: #243 had to bring this repository's cache usage
-          # back inside its quota, and a per-API-level system image is the largest
-          # entry anything here would add. A cold AVD creation costs a couple of
-          # minutes on a job that is already waiting for a boot.
-          disable-animations: true
-          emulator-options: >-
-            -no-window -gpu lavapipe -noaudio -no-boot-anim -no-snapshot-save
-            -camera-back none -camera-front none
-          # One line per command, and the harness invocation is not wrapped.
-          # The action hands this block to `sh -c`, and a trailing backslash does
-          # not survive that trip: the first run reached the emulator, read its
-          # fingerprint, and then called the harness with a lone `"\\"` for an
-          # argument, which printed the usage text and failed the job while
-          # everything it was meant to test still worked.
-          script: |
-            adb devices -l
-            adb shell getprop ro.build.fingerprint
-            bun run --cwd packages/blitsen test:android-notify -- --apk ${{ runner.temp }}/apk/Notify.apk --package com.blitsen.notifyfixture --out ${{ runner.temp }}/android-notify
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        if: always()
-        with:
-          name: android-notify-${{ matrix.api-level }}-${{ github.sha }}
-          path: ${{ runner.temp }}/android-notify
-          if-no-files-found: ignore

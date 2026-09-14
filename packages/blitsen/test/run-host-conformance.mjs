@@ -14,12 +14,12 @@ import { tmpdir } from "node:os";
 import { basename, join, relative } from "node:path";
 
 import { buildAddon, repository } from "./build-addon.mjs";
-import { resolvePhase2Runtime } from "../src/runtime.mjs";
+import { resolveInterpreter } from "../src/runtime.mjs";
 
 const CLI = join(repository, "packages/blitsen/bin/blitsen.mjs");
 const HOSTS = [
-  { host: "bun", label: "Phase 1 (Bun)" },
-  { host: "blitsen", label: "Blitsen runtime (QuickJS-ng)" },
+  { host: "bun", label: "Explicit Bun" },
+  { host: "", label: "Default Bun" },
 ];
 
 // Everything in the CLI's output that is allowed to differ between two runs of
@@ -278,7 +278,7 @@ async function compareGoldens() {
   const golden = JSON.parse(await readFile(goldenPath, "utf8"));
   const tracePath = join(import.meta.dir, "replay/pong.trace.json");
   const trace = JSON.parse(await readFile(tracePath, "utf8"));
-  const runtime = await resolvePhase2Runtime();
+  const runtime = await resolveInterpreter();
   const run = Bun.spawnSync({
     cmd: [runtime.path, "--replay", join(repository, trace.application, "index.html"), tracePath],
     cwd: repository,
@@ -323,8 +323,8 @@ try {
     "the two hosts produced a different artifact layout");
   assert.match(phase2.redistribution, /^Third-party notices: embedded/,
     `the Phase 2 export did not carry its notices: ${phase2.redistribution}`);
-  assert.match(phase1.redistribution, /not cleared for redistribution/,
-    `the Phase 1 export claimed notices it does not carry: ${phase1.redistribution}`);
+  assert.equal(phase1.redistribution, phase2.redistribution,
+    "explicit and default Bun exports carry the same notices");
   assert.equal(phase2.unbuiltCode, phase1.unbuiltCode,
     "the CLI accepted or refused a source tree differently");
   assert.equal(phase2.unbuiltError, phase1.unbuiltError,
@@ -380,9 +380,6 @@ try {
     assert.equal(platform.utf16, true, `${result.host} did not decode UTF-16LE`);
   }
 
-  const saved = phase1.bytes - phase2.bytes;
-  const ratio = (phase1.bytes / phase2.bytes).toFixed(2);
-  assert.ok(saved > 0, `the Phase 2 export is not smaller: ${phase2.bytes} vs ${phase1.bytes}`);
   const goldens = await compareGoldens();
   console.log(`Host conformance passed: identical CLI output, config handling, artifact layout `
     + `and standalone check.`);
@@ -390,8 +387,7 @@ try {
     + `${goldens.streams.join("/")} digests identical to the Phase 1 recording`
     + `${goldens.portable ? "" : " (layout and pixels not comparable on this rasterizer)"}.`);
   console.log(`  ${HOSTS[0].label}: ${phase1.bytes.toLocaleString()} bytes`);
-  console.log(`  ${HOSTS[1].label}: ${phase2.bytes.toLocaleString()} bytes `
-    + `(${ratio}× smaller, ${saved.toLocaleString()} bytes saved)`);
+  console.log(`  ${HOSTS[1].label}: ${phase2.bytes.toLocaleString()} bytes`);
 } finally {
   for (const result of results) await rm(result.directory, { recursive: true, force: true });
 }

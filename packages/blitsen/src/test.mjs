@@ -3,7 +3,7 @@ import { createInterface } from "node:readline";
 import { mkdir, writeFile } from "node:fs/promises";
 import { resolve, join } from "node:path";
 
-/** Launch a QuickJS packaged export (or a runtime with args: [directory]). */
+/** Launch a Bun packaged export (or a runtime with args: [directory]). */
 export async function launch(exportPath, options = {}) {
   const timeout = options.timeout ?? 10_000;
   const child = spawn(resolve(exportPath), options.args ?? [], {
@@ -42,7 +42,7 @@ export async function launch(exportPath, options = {}) {
     else entry.resolve(message.result);
   });
   const startupTimer = setTimeout(() => readyReject(new Error(
-    `Application test launch timed out. Use a QuickJS export built with application UI test support.\n${stderr}`)), timeout);
+    `Application test launch timed out. Use a Bun export built with application UI test support.\n${stderr}`)), timeout);
   let viewport;
   try { viewport = await ready; }
   catch (error) { child.kill(); await exit; throw error; }

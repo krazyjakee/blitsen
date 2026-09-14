@@ -12,13 +12,14 @@
   "homepage": "https://github.com/krazyjakee/blitsen#readme",
   "bugs": "https://github.com/krazyjakee/blitsen/issues",
   "engines": {
-    "node": ">=20.11.0"
+    "node": ">=20.11.0",
+    "bun": ">=1.3.14"
   },
   "keywords": [
     "desktop",
     "html",
     "css",
-    "quickjs",
+    "bun",
     "blitz"
   ],
   "bin": {
@@ -127,8 +128,7 @@
     "size:compare": "bun test/run-size-comparison.mjs",
     "size:baseline": "bun test/run-size-gate.mjs --update",
     "size:gate": "bun test/run-size-gate.mjs",
-    "size:phase2": "bun test/run-phase2-size.mjs",
-    "size:android": "bun test/run-android-size.mjs",
+    "size:runtime": "bun test/run-runtime-size.mjs",
     "test": "bun test",
     "test:node": "node test/run-node-package-smoke.mjs",
     "test:determinism": "bun test/run-determinism.mjs",
@@ -148,11 +148,13 @@
     "test:licensing": "bun test/run-redistribution.mjs",
     "test:proxy": "bun test/run-proxy.mjs",
     "test:macos-notify": "bun test/run-macos-notify.mjs",
-    "test:android": "bun test/run-android-smoke.mjs",
-    "test:android-notify": "bun test/run-android-notify.mjs",
-    "test:ui": "bun test/run-ui.mjs"
+    "test:ui": "bun test/run-ui.mjs",
+    "test:bun-services": "bun test/run-bun-services.mjs"
   },
   "publishConfig": {
     "access": "public"
+  },
+  "dependencies": {
+    "@types/bun": "1.3.14"
   }
 }

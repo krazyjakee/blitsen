@@ -137,12 +137,12 @@ addEventListener("load", () =&gt; {
 
 <section class="band">
   <p class="section-index" aria-hidden="true">05 / Distribute</p>
-  <h2>Build for desktop or Android</h2>
+  <h2>Build for Windows, macOS and Linux</h2>
   <p class="band-lede">
     Desktop exports embed reachable assets in one executable by default. Add
     platform metadata, connect your signing command, or cross-build for any of
-    the six published desktop targets. Android output is an APK built from a
-    source checkout.
+    the six desktop targets. Every export includes Bun and the native renderer.
+    Mobile support is deferred.
   </p>
   <p class="band-note">
     <a href="${BASE}/docs/packaging/">Packaging and release checklist →</a>

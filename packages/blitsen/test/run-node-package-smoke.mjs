@@ -35,7 +35,7 @@ try {
   // stand-in below, so this smoke never depends on a published release.
   run(npm, [
     "install", tarball, "--ignore-scripts", "--omit=optional", "--no-audit", "--no-fund",
-    "--no-package-lock", "--offline", "--cache", cache,
+    "--no-package-lock", "--cache", cache,
   ], project);
 
   const installed = join(project, "node_modules", "blitsen");

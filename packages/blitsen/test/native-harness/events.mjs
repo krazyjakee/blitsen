@@ -134,11 +134,9 @@ const handlerProperties = JSON.parse(native.runBridgeHarness(
   `{ const channel = new MessageChannel();
      const targets = [
        [new Image(), "onload", "load", "resource"],
-       [channel.port1, "onmessage", "message", "port"],
        [Object.create(WebSocket.prototype), "onopen", "open", "socket"],
        [matchMedia("(min-width: 1px)"), "onchange", "change", "media-query"],
        [new AudioContext().createBufferSource(), "onended", "ended", "audio-source"],
-       [new AbortController().signal, "onabort", "abort", "abort-signal"],
      ];
      for (const [target, property, type, name] of targets) {
        const descriptor = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(target), property);

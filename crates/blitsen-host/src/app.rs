@@ -498,6 +498,7 @@ impl LoadOptions {
 }
 
 thread_local! {
+    static APPLICATION_FETCH_ROOT: RefCell<Option<String>> = const { RefCell::new(None) };
     static APPLICATION_ROOT: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
 }
 
@@ -511,6 +512,11 @@ thread_local! {
 /// no path at all.
 pub fn application_root() -> Option<PathBuf> {
     APPLICATION_ROOT.with(|root| root.borrow().clone())
+}
+
+/// File or development-server base used by Bun's fetch adapter.
+pub fn application_fetch_root() -> Option<String> {
+    APPLICATION_FETCH_ROOT.with(|root| root.borrow().clone())
 }
 
 /// Parses the entrypoint, validates its assets and runs its scripts.
@@ -552,6 +558,20 @@ pub(crate) fn load_window_document<E: JsEngine + Clone + 'static>(
             AppFiles::Bundle { .. } | AppFiles::Server { .. } | AppFiles::Assets { .. } => None,
         };
     });
+    APPLICATION_FETCH_ROOT.with(|current| {
+        *current.borrow_mut() = match files {
+            AppFiles::Directory { root, .. } => url::Url::from_directory_path(root)
+                .ok()
+                .map(|url| url.to_string()),
+            AppFiles::Server { server, .. } => Some(server.origin().to_string()),
+            _ => None,
+        };
+    });
+    #[cfg(not(test))]
+    {
+        let modules = Rc::new(crate::modules::ModuleRegistry::new(files.source()));
+        modules.install(engine)?;
+    }
     let source = files.entrypoint_source()?;
     let viewport =
         viewport.unwrap_or_else(|| Viewport::new(width, height, 1.0, ColorScheme::Light));

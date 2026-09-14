@@ -6,7 +6,7 @@ packaging behavior of the current release; it is not legal advice.
 
 ## Default desktop exports
 
-The standard runtime statically links QuickJS-ng (MIT), Blitz and its Rust dependency tree. Your
+The standard runtime includes Bun/JavaScriptCore and the Blitz native addon. Your
 HTML, CSS and JavaScript remain application payload rather than part of that native link.
 
 Every dependency's terms still apply. In particular:
@@ -41,30 +41,19 @@ On Windows:
 Retain the embedded notices and any source offer when redistributing the artifact. If the command
 reports that no notices were embedded, do not assume the export is cleared for distribution.
 
-## Exports carrying a `.node` addon
+## Bun and JavaScriptCore
 
-A `.node` addon selects the Bun-based host because the standard runtime does not implement
-Node-API. That host contains Bun and JavaScriptCore and therefore has additional license and
-relinking obligations, including LGPL-family requirements.
+Every desktop export now includes Bun. Bun's source is MIT-licensed and it links components with
+other terms, including JavaScriptCore under LGPL-family terms. The pinned upstream inventory is
+carried in `BUN-LICENSE.md` and printed by `--licenses` alongside the native addon notices.
 
-The default Blitsen notice flow does not automate that complete obligation set. Before distributing
-an addon-based export, arrange an independent licensing review and supply all required notices,
-source offers, relink material and terms. The addon's own license and linked dependencies must also
-be handled.
+That inventory and the Cargo notice audit do not certify the whole exported application for
+redistribution. Distributors must retain the required license texts, covered source and relinking
+materials for their exact Bun version, application and addons. See
+[Bun's license documentation](https://bun.sh/docs/project/license) and the corresponding tagged
+Bun source. Application assets and third-party Node-API addons retain their own obligations.
 
-## Android APKs
-
-Android currently builds from a source checkout rather than a published platform package, so there
-is no package-provided notice file to copy. Generate and audit the Android runtime's `NOTICES.txt`,
-then provide it through `BLITSEN_NOTICES_PATH` when building:
-
-```sh
-BLITSEN_NOTICES_PATH=/path/to/NOTICES.txt \
-  blitsen build dist --android --out MyApp.apk
-```
-
-Without an audited notice file, the build reports that the APK is not cleared for redistribution.
-Signing an APK does not satisfy licensing requirements by itself.
+Android APK packaging is no longer supported.
 
 ## Distribution checklist
 

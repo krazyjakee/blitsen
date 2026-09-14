@@ -122,7 +122,11 @@ describe("release reproducibility", () => {
             builtin pwd "$@"
           fi
         }
-        export -f cargo pwd
+        bun() {
+          if [[ "$1" = scripts/build-bun-runtime.mjs ]]; then return 0; fi
+          command bun "$@"
+        }
+        export -f cargo pwd bun
         OSTYPE=msys CARGO_TARGET_DIR="$fixture_target" \
           RUSTFLAGS='--cfg inherited' bash "$1" win32-x64
       `, "release-build-test", script,

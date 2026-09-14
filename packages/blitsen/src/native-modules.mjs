@@ -31,18 +31,7 @@ import { NATIVE_MODULES } from "./native/module.mjs";
 
 /// The platforms a target's native surface is decided by. A target is
 /// `<platform>-<arch>`; the architecture never changes which modules exist.
-export const NATIVE_PLATFORMS = ["linux", "darwin", "win32", "android"];
-
-/// The Android targets `doctor` grades against, in this package's own
-/// `<platform>-<arch>` vocabulary rather than the NDK's — `android-arm64` is the
-/// ABI Android calls `arm64-v8a` and ships, `android-x64` is `x86_64` and is the
-/// emulator one (PRODUCT.md P5c).
-///
-/// Not in `TARGETS`, and that is the point rather than an omission: `TARGETS` is
-/// the six platform packages an install resolves, and Android is a cross-compiled
-/// APK that is not one of them (#148). Grading names the ABI without resolving
-/// a desktop runtime package; the Android build links the source checkout.
-export const ANDROID_TARGETS = ["android-arm64", "android-x64"];
+export const NATIVE_PLATFORMS = ["linux", "darwin", "win32"];
 
 export const platformOf = target => String(target).split("-")[0];
 
@@ -63,30 +52,12 @@ const ABSENT = {
   linux: ["menu"],
   darwin: [],
   win32: [],
-  android: ["app", "clipboard", "dialog", "window", "tray", "menu", "shell", "process"],
 };
 
 // Why, per platform, in the words of the module that made the call. Keyed
 // `<platform>.<module>` so a module absent on two platforms for two different
 // reasons says both.
 const REASONS = {
-  "android.app": "The directories are the Activity's `filesDir` and `cacheDir`, which only the "
-    + "Activity can name; Android sets none of the XDG variables, so resolving them would answer "
-    + "a path nothing can write to. `relaunch` has no executable to spawn inside an APK, and "
-    + "single-instance ownership is the platform's own — a second launch is an Intent delivered "
-    + "to the process already running, not a command line to hand over.",
-  "android.clipboard": "`arboard` has no Android backend and does not compile there. The service "
-    + "it would wrap, `ClipboardManager`, refuses a read outright unless the application holds "
-    + "focus, and these readers report an empty clipboard as `null` — so a refusal and an empty "
-    + "clipboard would be indistinguishable. It needs a module shaped for that, over JNI.",
-  "android.dialog": "There is no XDG desktop portal on Android. The system's own choosers are "
-    + "Intents answered by another activity, which is a different shape from a call that resolves.",
-  "android.window": "winit accepts every setter on Android and discards it, then answers the "
-    + "getter as though the request had never been made: `setDecorations(false)` is followed by "
-    + "`isDecorated()` saying true, on a platform with no decorations. The monitor list goes too, "
-    + "and it is the one worth naming because it looks like the survivor — winit enumerates no "
-    + "monitors there, so `monitors()` would report a device with no display. Immersive mode and "
-    + "orientation are the real capabilities here and are not these under another name.",
   "linux.menu": "A Linux menu bar is a widget inside the window, and the only backend the menu "
     + "crate has for one is a gtk::MenuBar packed into a gtk::Window — Blitsen windows are winit's, "
     + "and the renderer owns the whole client area, so there is nowhere to pack it and no GTK main "
@@ -96,21 +67,6 @@ const REASONS = {
     + "under another name: it belongs to a status item the application may never show. What would "
     + "change this is a menu bar Blitsen renders itself, which is a different feature — an "
     + "in-document menu is DOM, not a native one.",
-  "android.menu": "Android has no application menu bar. Its equivalents are the app bar's overflow "
-    + "menu and the navigation drawer, which are views inside the activity's own layout rather "
-    + "than a menu the platform owns, and neither has this shape.",
-  "android.tray": "Android has no desktop notification area or status-item menu. Its persistent "
-    + "status UI is a notification, which belongs to blitsen/notify and carries its own runtime "
-    + "permission and channel semantics rather than pretending to be a tray icon.",
-  "android.shell": "Opening a URL or a file on Android is an Intent the Activity sends, answered "
-    + "by the system's chooser rather than by a handler this process spawns, and there is no file "
-    + "manager to reveal an item in. It needs a module shaped for Intents, over JNI, rather than "
-    + "these three desktop operations answering with something else.",
-  "android.process": "An Android application has no developer tools to run: there is no `gh` or "
-    + "`claude` on the device, an app process may not execute what is not in its own APK, and a "
-    + "process it did start would be killed with it by the platform's own lifecycle. The "
-    + "supervisor this module is — process groups, exit cleanup, piped streams on a frame turn — "
-    + "answers a desktop question.",
 };
 
 /// The `blitsen/*` modules that do not exist on `target`, each with its reason.

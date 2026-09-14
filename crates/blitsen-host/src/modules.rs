@@ -451,6 +451,16 @@ impl ModuleRegistry {
             }),
         )?;
 
+        let diagnostics = Rc::clone(self);
+        engine.define_global_function(
+            "__blitsenModuleRemap",
+            Box::new(move |call| {
+                let mut engine = E::from_value(&call.this);
+                let diagnostic = argument(&mut engine, &call, 0, "diagnostic")?;
+                engine.string(&diagnostics.remap_diagnostic(&diagnostic))
+            }),
+        )?;
+
         let cache = Rc::clone(self);
         engine.define_global_function(
             "__blitsenModuleReset",
@@ -458,7 +468,10 @@ impl ModuleRegistry {
                 cache.reset();
                 Ok(call.this)
             }),
-        )
+        )?;
+        #[cfg(not(test))]
+        engine.evaluate_script(include_str!("modules/bun.js"), "blitsen:bun-module-loader")?;
+        Ok(())
     }
 }
 

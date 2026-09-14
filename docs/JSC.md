@@ -1,5 +1,11 @@
 # Phase 2 JavaScriptCore acquisition
 
+> **Runtime migration:** [BUN-MIGRATION.md](BUN-MIGRATION.md) supersedes the QuickJS/Phase 2 and
+> mobile decisions recorded below. Shipping desktop applications and workers now use Bun;
+> Android and iOS are deferred. Earlier measurements and engine-selection rationale below are
+> historical records, not the current runtime contract.
+
+
 > **Superseded on 2026-08-13 by [`spikes/s8`](../spikes/s8/README.md).** Blitsen hosts QuickJS-ng,
 > statically linked, under the MIT licence. The reasoning below is kept because it is still the
 > record of *why* JavaScriptCore was chosen and what it cost — and because the constraint that

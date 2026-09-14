@@ -19,6 +19,11 @@ try {
     outfile,
   }, addon);
   assert.equal(result.assets, 3);
+  // Keep platform font configuration and system library overrides while PATH
+  // remains empty: no installed Bun/Node executable can satisfy this check.
+  const systemEnvironment = Object.fromEntries(
+    ["FONTCONFIG_FILE", "FONTCONFIG_PATH", "LD_LIBRARY_PATH", "SystemRoot"]
+      .filter(name => process.env[name]).map(name => [name, process.env[name]]));
   const storageEnvironment = process.platform === "win32"
     ? { APPDATA: join(testDirectory, "app-data"), LOCALAPPDATA: join(testDirectory, "local-data") }
     : process.platform === "darwin"
@@ -27,7 +32,7 @@ try {
   const check = Bun.spawnSync({
     cmd: [outfile],
     cwd: testDirectory,
-    env: { ...storageEnvironment, BLITSEN_STANDALONE_CHECK: "1",
+    env: { ...systemEnvironment, ...storageEnvironment, BLITSEN_STANDALONE_CHECK: "1",
       BLITSEN_STANDALONE_CHECK_SCRIPT:
         `localStorage.setItem("survives", "yes"); sessionStorage.setItem("realm", "first")`,
       PATH: "" },
@@ -40,7 +45,7 @@ try {
   const reopened = Bun.spawnSync({
     cmd: [outfile],
     cwd: testDirectory,
-    env: { ...storageEnvironment, BLITSEN_STANDALONE_CHECK: "1",
+    env: { ...systemEnvironment, ...storageEnvironment, BLITSEN_STANDALONE_CHECK: "1",
       BLITSEN_STANDALONE_CHECK_ASSERT:
         `if (localStorage.getItem("survives") !== "yes"
           || sessionStorage.getItem("realm") !== null) throw new Error("storage lifetime")`,
@@ -68,7 +73,7 @@ try {
   const sideCheck = Bun.spawnSync({
     cmd: [sideLoaded.outfile],
     cwd: repository,
-    env: { ...storageEnvironment, BLITSEN_STANDALONE_CHECK: "1", PATH: "" },
+    env: { ...systemEnvironment, ...storageEnvironment, BLITSEN_STANDALONE_CHECK: "1", PATH: "" },
     stdout: "pipe",
     stderr: "pipe",
   });

@@ -1,5 +1,9 @@
 # Troubleshooting
 
+> Desktop runtime: Bun. Android and iOS are deferred. See [BUN-MIGRATION.md](BUN-MIGRATION.md)
+> for the current architecture and changes from the historical QuickJS runtime.
+
+
 Start with the exact command that fails and keep the first Blitsen error. The CLI names the build
 stage and exits non-zero instead of continuing with a partial artifact.
 

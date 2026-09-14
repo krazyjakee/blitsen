@@ -103,28 +103,16 @@ release flag.
 | --- | --- |
 | `--target <triple>` | Build for another supported desktop target and cache its runtime |
 | `--icon <path>` | PNG or a platform-native `.ico`, `.icns` or `.svg` |
-| `--bundle-id <id>` | Application identity: the macOS bundle identifier, the Windows AppUserModelID and toast registration, the Linux desktop and D-Bus identity, and the per-application storage identity; also supplies the Android package ID if one is not set. Defaults to `com.blitsen.<title>` |
-| `--app-version <version>` | Version recorded in platform metadata; no version is written unless given (Android defaults to `0.1.0`) |
+| `--bundle-id <id>` | Application identity: the macOS bundle identifier, the Windows AppUserModelID and toast registration, the Linux desktop and D-Bus identity, and the per-application storage identity. Defaults to `com.blitsen.<title>` |
+| `--app-version <version>` | Version recorded in platform metadata; no version is written unless given |
 | `--sign <command>` | Run a signing command with the packaged artifact as its only argument |
 
 Cross-building creates the target's files but does not provide its signing or notarization tools.
 
-### Android
+### Mobile
 
-Android produces an APK and does not use `--target`; it also rejects `--assets`, `--addon`, `--sidecar` and —
-not yet supported for APKs — `--icon`:
-
-| Option | Meaning |
-| --- | --- |
-| `--android` | Build an APK instead of a desktop artifact |
-| `--android-abi <abi>` | Include `arm64-v8a`, `x86_64` or `armeabi-v7a`; repeatable |
-| `--android-package <id>` | Android application ID |
-| `--android-keystore <path>` | Sign with a release keystore |
-| `--android-debug` | Use an unoptimized, debuggable native build |
-
-Without `--android-abi`, Blitsen includes `arm64-v8a` and `x86_64`. Without a release keystore, it
-uses the standard Android debug key. See [Build an Android APK](PACKAGING.md#build-an-android-apk)
-for toolchain and credential variables.
+Android and iOS are deferred until supported Bun ports exist. `--android`, `--android-*`, and
+mobile `--target` values are rejected. Desktop targets all use Bun.
 
 ## General options
 
@@ -144,12 +132,8 @@ feature is.
 | `BLITSEN_CACHE_DIR` | Override Blitsen's cache directory: fetched cross-target runtimes and the `--dev-bundle` development `.app` |
 | `BLITSEN_NATIVE_PATH` | Override the development runtime addon |
 | `BLITSEN_RUNTIME_PATH` | Override the executable runtime used for ordinary desktop exports |
-| `BLITSEN_ANDROID_CRATE` | Path to the `blitsen-android` crate |
-| `BLITSEN_ANDROID_KEYSTORE_PASSWORD` | Android keystore password |
-| `BLITSEN_ANDROID_KEY_ALIAS` | Key alias when a keystore contains more than one key |
-| `BLITSEN_ANDROID_KEY_PASSWORD` | Key password when it differs from the store password |
-| `BLITSEN_NOTICES_PATH` | Audited third-party notices to embed. On desktop it replaces the `NOTICES.txt` beside the linked runtime; on Android it is the only source |
-| `BLITSEN_HOST` | Force the export host — `bun` or `blitsen` — instead of letting the exporter choose. A regression escape hatch; see [Migration](MIGRATION.md) |
+| `BLITSEN_NOTICES_PATH` | Audited third-party notices to embed. On desktop it replaces the `NOTICES.txt` beside the linked runtime |
+| `BLITSEN_HOST` | Optional legacy environment setting. Only `bun` is accepted; leave it unset. |
 
 Runtime overrides are unversioned and must match the requested operating system and architecture;
 a `file:` URL is accepted as well as a path. Blitsen validates them before use and reports that

@@ -8,11 +8,13 @@ desktop executable.
 
 ## Prerequisites
 
-You need Node.js 20.11.0 or newer and a package manager to install and run the CLI. The minimum is
-where Node added the `import.meta.dirname` API used by Blitsen's runtime and Android toolchain
-resolution. Installing `blitsen` downloads a prebuilt runtime for the current desktop platform; it
-does not compile Rust or run a post-install build. Package managers warn about older Node releases
-from the package's `engines.node` requirement before the CLI can fail at runtime.
+Install **Bun 1.3.14 or newer** for development and building. The npm CLI entrypoint forwards to
+Bun on PATH. Node.js 20.11.0 or newer can install the package and run external `blitsen/test`
+drivers. Exported applications include Bun and do not require Node or Bun to be installed.
+
+The platform package supplies a prebuilt native addon; installation does not compile Rust.
+Application code can import `node:fs/promises`, `bun:sqlite` and other Bun-supported builtins.
+Keep those imports external in browser-oriented bundlers; see [Bun migration](BUN-MIGRATION.md).
 
 Blitsen accepts static web output with an `index.html`. If your project uses TypeScript, JSX, Vue,
 Svelte or bare npm imports, keep using its existing build tool. Blitsen consumes the directory that

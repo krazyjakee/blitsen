@@ -9,7 +9,7 @@
 // lookup, the captured `Bun.spawnSync`, and the demo launcher.
 import { copyFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { cargoTargetDirectory } from "../src/android-toolchain.mjs";
+import { cargoTargetDirectory } from "../src/cargo.mjs";
 import { CARGO_LIBRARIES } from "../src/runtime.mjs";
 
 export const repository = resolve(import.meta.dir, "../../..");
@@ -56,19 +56,24 @@ export async function buildAddon({ purpose, release = false, features = [], into
 }
 
 /**
- * Builds the Phase 2 runtime an acceptance run is about to drive.
+ * Builds the Bun interpreter an acceptance run is about to drive.
  *
  * The addon has `buildAddon` for the same reason: a runner that silently used
  * the last build is a runner that can pass against code nobody is running.
  */
 export function buildRuntime({ release = true } = {}) {
   const build = Bun.spawnSync({
-    cmd: ["cargo", "build", ...(release ? ["--release"] : []), "-p", "blitsen-runtime"],
+    cmd: ["cargo", "build", ...(release ? ["--release"] : []), "-p", "blitsen-node"],
     cwd: repository,
     stdout: "inherit",
     stderr: "inherit",
   });
   if (build.exitCode !== 0) process.exit(build.exitCode);
+  const compile = Bun.spawnSync({
+    cmd: [process.execPath, "scripts/build-bun-runtime.mjs", ...(release ? [] : ["--debug"])],
+    cwd: repository, stdout: "inherit", stderr: "inherit",
+  });
+  if (compile.exitCode !== 0) process.exit(compile.exitCode);
 }
 
 /**

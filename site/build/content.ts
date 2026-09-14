@@ -87,7 +87,7 @@ export const GROUPS: DocGroup[] = [
         slug: "packaging",
         nav: "Packaging",
         title: "Packaging and distribution",
-        blurb: "Build desktop executables and Android APKs, add metadata, sign and prepare a release.",
+        blurb: "Build desktop executables, add metadata, sign and prepare a release.",
       },
       {
         file: "TESTING.md",
@@ -101,7 +101,7 @@ export const GROUPS: DocGroup[] = [
         slug: "platform-support",
         nav: "Platform support",
         title: "Platform support",
-        blurb: "Desktop targets, operating-system requirements, Android status and important limitations.",
+        blurb: "Desktop targets, operating-system requirements, mobile deferral and important limitations.",
       },
       {
         file: "LICENSING.md",
@@ -146,6 +146,7 @@ export const GROUPS: DocGroup[] = [
 // historical decisions and milestone records rather than instructions for using
 // the current product.
 const INTERNAL_PAGES: DocPage[] = [
+  { file: "BUN-MIGRATION.md", slug: "bun-migration", nav: "Bun migration", title: "Bun runtime migration", blurb: "One desktop runtime, native capabilities, and mobile deferral." },
   { file: "PRODUCT.md", slug: "product", nav: "Product specification", title: "Product specification", blurb: "Contributor product specification." },
   { file: "TECH.md", slug: "tech", nav: "Technical specification", title: "Technical specification", blurb: "Contributor architecture specification." },
   { file: "MODULES.md", slug: "modules", nav: "Module resolution record", title: "Module resolution in the shipped binary", blurb: "Internal module-resolution design record." },

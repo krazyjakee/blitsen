@@ -1,7 +1,6 @@
 # Platform support
 
-Blitsen publishes desktop runtimes for Linux, macOS and Windows on x64 and arm64. Android APK
-output exists as a source-checkout workflow and is not installed as a seventh desktop runtime.
+Blitsen uses Bun on Linux, macOS and Windows, on x64 and arm64. Android and iOS are deferred.
 
 Blitsen is pre-alpha. Platform support means that a runtime is produced, not that every application
 or operating-system integration behaves identically. Test the exported artifact on each target.
@@ -52,8 +51,7 @@ a Windows toast carries that ID as its own tag, which is what an update replaces
 removes from the screen and from notification history. Individual notification-server policies
 still decide how a submitted notification is presented.
 
-`blitsen/hid` is available on every desktop target, and on Android over a different backend (see
-"Android").
+`blitsen/hid` is available on every desktop target, using the platform-native backend.
 
 ## Linux requirements
 
@@ -78,7 +76,7 @@ substitute.
 
 ## Application menu
 
-`blitsen/menu` is present on macOS and Windows and feature-detectably absent on Linux and Android.
+`blitsen/menu` is present on macOS and Windows and feature-detectably absent on Linux.
 
 - **macOS** installs the NSApp main menu. The required application, edit and window roles are always
   present: Blitsen supplies a standard submenu for each role the application did not claim.
@@ -94,18 +92,14 @@ substitute.
   needs an X11 window id, so it answers nothing on Wayland and would give the same application a
   menu on KDE and none on GNOME. The tray menu is not this under another name: it belongs to a
   status item the application may never show.
-- **Android** has no application menu bar. Its equivalents — the app bar's overflow menu and the
-  navigation drawer — are views inside the activity's own layout rather than a menu the platform
-  owns.
 
 ## Notifications
 
 The standard Web `Notification` facade is installed on Linux, on Windows, on any macOS process
 carrying a bundle identity—an exported application, or a development run inside `blitsen
---dev-bundle`—and on any Android package the platform launched, where a body tap has an application
-identity to be addressed back to. It is absent in an unbundled macOS development host and in an
-Android runtime started against a directory standing in for `assets/`. The native `blitsen/notify`
-module is available on every desktop target and Android, and exposes its platform limits directly.
+--dev-bundle`. It is absent in an unbundled macOS development host.
+The native `blitsen/notify` module is available on every desktop target and exposes
+its platform limits directly.
 
 A notification outlives the process that showed it, so activating one belonging to a stopped
 application is a launch rather than an event. Blitsen delivers that launch context once, on the
@@ -138,12 +132,6 @@ produce it differs, and only the parts named here exist:
   in the native request identifier, and Blitsen's delegate records body, named-action and dismissal
   responses even when the request was submitted by the previous process. A replacement uses a new
   generation so a late response cannot consume the replacement's live record.
-- **Android** — body, action and delete `PendingIntent`s target a private receiver in the minimal
-  `classes.dex`. It persists the activation before body/actions launch the platform
-  `NativeActivity` with a clean Intent; swipe dismissal does not open it. The exported launcher
-  never reads activation extras, so another application cannot forge an event by explicitly
-  starting it. The inbox reaches the current session on its next frame or a later launch, and
-  nonces deduplicate repeated delivery.
 
 Where a platform, distribution or installer uses a command-line envelope, the entry point is
 `--notification-activation <envelope>` on the application's own command line; both hosts read it,
@@ -192,55 +180,12 @@ image stripped of Start Menu entries, such as a CI runner or a Server Core insta
 to read: `permission()` and `requestPermission()` reject there, naming the missing identity, rather
 than reporting a state nobody chose.
 
-## Android
+## Mobile
 
-Android output is an APK built from a Blitsen source checkout. It supports `arm64-v8a` and `x86_64`
-by default; `armeabi-v7a` can be requested but has not been run by this project. Android supports
-the focus-scoped `input.snapshot` member and `blitsen/notify`. Gamepad globals,
-`navigator.getGamepads`, `input.onDeviceChange` and `input.vibrateGamepad` are absent: `gilrs` has no
-Android backend, and an always-empty registry would make feature detection lie. Notifications use Android's stable
-`blitsen.default` channel; API 33+ requests `POST_NOTIFICATIONS`, while API 26–32 reports permission
-as granted. Submission, same-session replacement, close, body taps, action buttons and swipe
-dismissal are implemented through the packaged activation bridge. Its manifest, dex build and
-persisted handoff are covered deterministically, and permission state, channel, delivery, same-ID
-replacement, timeout expiry and `close` are verified on booted API 32 and 33 emulators in CI.
-Body/action tap activation, swipe dismissal and stopped-process delivery have not yet run on an
-emulator or device, because nothing taps or swipes in an unattended run. The standard Web `Notification` global appears
-only where that lifecycle contract is present. Android does not support Blitsen's app, clipboard,
-dialog, window, tray, menu, shell or process native modules in this release.
+Android and iOS are not supported. The Android runtime crate, APK tooling and mobile CI have been
+removed. Mobile can return after supported Bun ports exist and native integration is qualified;
+Blitsen will not keep a second JavaScript runtime for mobile.
 
-Android rasterises native windows on the CPU and presents the finished buffer through
-`ANativeWindow`. This is the shipping default rather than an adapter probe: the API 32/33 CI
-emulator's lavapipe adapter cannot satisfy classic Vello's wgpu device request, and physical Mali
-and Adreno coverage is not broad enough to make that GPU path a safe default. Source builds retain
-`blitsen-android`'s `android-vello-gpu` feature solely to qualify named physical devices; applications cannot
-switch renderer at run time.
-
-`blitsen/hid` is present and reaches USB HID devices through `UsbManager`. Enumeration needs no
-permission and lists the HID interfaces of every attached USB device; `open()` raises Android's
-per-device permission dialog and the promise it returned stays unsettled until that dialog is
-answered, resolving on a grant and rejecting with `NotAllowedError` on a dismissal — which can be
-asked again. A grant belongs to one device and Android revokes it when that device is unplugged.
-Two differences from desktop are worth planning for: `usagePage` and `usage` are `0` in the
-enumeration, because a HID report descriptor cannot be read before permission is granted, so filter
-by `vendorId` and `productId` there and read the usages after `open()`; and a boot keyboard or
-mouse interface is refused before it can be opened, exactly as the desktop collections are.
-
-**This HID path has never been executed.** It type-checks for `aarch64-linux-android` and its logic
-is covered by tests on the host, but no report has been exchanged with a real device. The default
-renderer no longer asks the CI AVD for the Vulkan capability that blocked application startup, but
-an emulator has no USB host controller to attach a HID device to, so the HID acceptance evidence
-still needs physical hardware.
-`blitsen/os` is available, and `os.batteries` is the one member of it that is not: the library
-behind that reading has no Android backend, and the platform's own answer is `BatteryManager` over
-JNI with its own semantics. The input snapshot reports the touch position and a primary button for
-the finger that is down; raw pointer movement and wheel deltas stay zero because Android produces
-neither, and keys held by physical code exclude the soft keyboard, whose input arrives as DOM
-composition and `input` events rather than in that snapshot.
-
-The output is an APK for direct installation, not an Android App Bundle. It cannot be used to
-create a new Google Play listing that requires AAB upload. See [Build an Android
-APK](PACKAGING.md#build-an-android-apk) for prerequisites and signing.
 
 ## Important runtime limitations
 
@@ -258,10 +203,7 @@ APK](PACKAGING.md#build-an-android-apk) for prerequisites and signing.
 - Font fallback uses installed system fonts plus application-provided `@font-face` files; no
   universal fallback is bundled. Ship author fonts for stable coverage and metrics. Platform
   emoji, colour fonts and ZWJ sequences still need target-specific verification.
-- WebAssembly is absent from the standard shipped JavaScript engine. `Intl` is not: the formatters
-  are the runtime's own, over CLDR and the platform's time-zone database, and are the same on every
-  target — the database is the system's on Unix, Android's concatenated `tzdata` there, and bundled
-  on Windows.
+- Bun provides WebAssembly and its full `Intl` implementation on supported desktop targets.
 - `localStorage` persists synchronously under the platform application-data directory;
   `sessionStorage` resets with its JavaScript realm.
 - The runtime is not a browser sandbox and must not run untrusted third-party pages.

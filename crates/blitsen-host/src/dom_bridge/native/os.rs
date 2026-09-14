@@ -2,7 +2,9 @@ use blitsen_js::{JsEngine, JsError};
 use blitsen_platform::os;
 use serde_json::json;
 
-use super::super::{intl, json_value};
+#[cfg(test)]
+use super::super::intl;
+use super::super::json_value;
 #[cfg(not(target_os = "android"))]
 use super::failed;
 
@@ -53,11 +55,13 @@ pub(super) fn install<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsErr
         "__blitsenNativeOsLocale",
         Box::new(move |call| {
             let mut engine = E::from_value(&call.this);
-            let locale = json!({
-                "language": intl::default_locale().to_string(),
-                "timeZone": intl::default_time_zone(),
-            });
-            json_value(&mut engine, &locale)
+            #[cfg(test)]
+            {
+                let locale = json!({"language": intl::default_locale().to_string(), "timeZone": intl::default_time_zone()});
+                json_value(&mut engine, &locale)
+            }
+            #[cfg(not(test))]
+            engine.evaluate_script("(() => { const options = Intl.DateTimeFormat().resolvedOptions(); return JSON.stringify({ language: options.locale, timeZone: options.timeZone }); })()", "blitsen:os-locale")
         }),
     )?;
 

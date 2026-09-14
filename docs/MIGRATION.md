@@ -1,5 +1,9 @@
 # Migrating to the Phase 2 runtime
 
+> Desktop runtime: Bun. Android and iOS are deferred. See [BUN-MIGRATION.md](BUN-MIGRATION.md)
+> for the current architecture and changes from the historical QuickJS runtime.
+
+
 **Nothing changes. Your application gets smaller.**
 
 That is the whole note, and it is the point. Blitsen used to run your application inside Bun and
@@ -47,7 +51,7 @@ It stays for exactly as long as it does something the exporter cannot decide for
 - **The Node surface does not come back either way.** The new runtime implements no `process`,
   `node:fs` or `node:os`, by decision. Code that reaches for them runs on the Bun host today and
   will stop when it goes, so `BLITSEN_HOST=bun` is not a way to depend on them —
-  [`COMPATIBILITY.md`](COMPATIBILITY.md#node-compatibility-in-the-shipped-runtime) has what the
+  [`COMPATIBILITY.md`](COMPATIBILITY.md#node-and-bun-apis-in-the-shipped-runtime) has what the
   shipped runtime does provide.
 
 ## What does not change

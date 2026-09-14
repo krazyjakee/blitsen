@@ -2,13 +2,10 @@ import { spawn } from "node:child_process";
 import { access, realpath } from "node:fs/promises";
 import { constants, watch as watchFs } from "node:fs";
 import { extname, join, normalize, resolve } from "node:path";
-import { ANDROID_ABIS, androidNotices, buildAndroid, DEFAULT_ABIS } from "./android.mjs";
-import { ASSET_ROOT } from "./android-assets.mjs";
 import { loadConfig, recordTrayConfiguration, runBuildCommand } from "./config.mjs";
 import { doctorApplication, formatDiagnostic } from "./doctor.mjs";
 import { buildStandalone } from "./export.mjs";
 import { frameDelay } from "./frame-pacing.mjs";
-import { ANDROID_TARGETS } from "./native-modules.mjs";
 import { developmentBundle, developmentIdentifier, signArtifact } from "./packaging.mjs";
 import { describeRuntime, hostTarget, openRuntime, packageVersion, resolveRuntime,
   runtimeCacheDir, TARGETS } from "./runtime.mjs";
@@ -26,8 +23,7 @@ With no directory, running and building do the same thing to find one: read the
 its output directory — or, where there is no config, the directory you are
 standing in.
 Build creates a single-file executable: Blitsen's own runtime with the
-application appended to it. With --android it creates a signed APK instead,
-cross-compiled for every ABI asked for, with the application under assets/.
+application and native addon embedded with the Bun runtime.
 Doctor checks built static output against the v1 compatibility profile, and
 against the blitsen/* modules the target it is grading for actually has.
 
@@ -66,45 +62,18 @@ Options:
   --json             Emit the doctor report as JSON
   -h, --help         Show help
   -v, --version      Show version
-
-Android (build only; an APK is a cross-compile, not a runtime an install
-resolves, so it is a flag rather than a --target value):
-  --android              Build an APK instead of a desktop executable
-  --android-abi <abi>    ABI to include, repeatable (default: ${DEFAULT_ABIS.join(", ")};
-                         also ${Object.keys(ANDROID_ABIS).filter(abi => !DEFAULT_ABIS.includes(abi)).join(", ")})
-  --android-package <id> Application ID (default: com.blitsen.<name>)
-  --android-keystore <p> Sign with this keystore; its password is read from
-                         BLITSEN_ANDROID_KEYSTORE_PASSWORD, never from a flag.
-                         BLITSEN_ANDROID_KEY_ALIAS and
-                         BLITSEN_ANDROID_KEY_PASSWORD name the key inside it
-                         when the store holds more than one. Without a keystore
-                         the APK is signed with the Android debug key:
-                         installable, not distributable
-  --android-debug        Build the debug profile — unoptimised Rust, and a
-                         manifest marked debuggable. Every entry in the APK is
-                         stored uncompressed on both profiles`;
+`;
 
 // The resolver owns it now, because the version pin is checked there; still on this
 // module's surface, which is where callers ask for it.
 export { packageVersion };
 
 const PACKAGE_OPTIONS = { "--icon": "icon", "--bundle-id": "bundleId", "--app-version": "appVersion", "--sign": "sign" };
-// The Android artifact's own options (#148). Separate from PACKAGE_OPTIONS
-// because they describe a different artifact rather than more metadata on the
-// same one: an application ID is not a CFBundleIdentifier under another name —
-// it is the key an install is tracked by and cannot be changed after release.
-const ANDROID_OPTIONS = {
-  "--android-package": "androidPackage", "--android-keystore": "androidKeystore",
-};
 const BUILD_OPTIONS = ["--out", "--outfile", "--name", "--target", "--include", "--addon", "--sidecar", "--assets",
-  "--android-abi", ...Object.keys(ANDROID_OPTIONS), ...Object.keys(PACKAGE_OPTIONS)];
+  ...Object.keys(PACKAGE_OPTIONS)];
 const VALUE_OPTIONS = ["--width", "--height", "--title", ...BUILD_OPTIONS];
 // A build-only switch: doctor's own exit code must keep meaning what it says.
-const BUILD_FLAGS = ["--accept-errors", "--android", "--android-debug"];
-// Everything that only means something once --android has been asked for. Named
-// so that `--android-abi x86_64` without `--android` is refused rather than
-// silently building a desktop executable that ignored it.
-const ANDROID_ONLY = ["--android-abi", "--android-debug", ...Object.keys(ANDROID_OPTIONS)];
+const BUILD_FLAGS = ["--accept-errors"];
 // The one build option doctor also takes, because doctor grades against a
 // target rather than for one: which `blitsen/*` modules exist is a property of the
 // platform, and asking about a platform is not the same as claiming to build for
@@ -113,22 +82,16 @@ const DOCTOR_OPTIONS = ["--target"];
 // The two packaging options a run also takes, and only inside a development
 // bundle (#253): which identity that bundle carries, and how it is signed. The
 // pairing is checked after the loop rather than at the flag, because
-// `--dev-bundle` may be typed after either of them — the same reason the
-// Android options are checked there.
+// `--dev-bundle` may be typed after either of them.
 const DEV_BUNDLE_OPTIONS = { "--bundle-id": "bundleId", "--sign": "sign" };
 // TECH.md §11: one binary package per target (src/runtime.mjs). A cross-target
 // build links that target's runtime, fetched on demand (#72), and compiles the
 // launcher for that target's Bun. What it cannot do is sign or notarise for a
 // platform it is not running on — see the note in the build path.
 //
-// Doctor accepts more than build does, and deliberately: it reads files and
-// links nothing, so it can answer for Android, which has no runtime package to
-// resolve and is not a P5b row at all (PRODUCT.md P5c, #148). Building for one
-// is a different claim and is still refused.
-function checkTarget(value, command) {
-  const allowed = command === "doctor" ? [...TARGETS, ...ANDROID_TARGETS] : TARGETS;
-  if (!allowed.includes(value)) {
-    throw new Error(`unknown --target ${value} (expected one of: ${allowed.join(", ")})`);
+function checkTarget(value) {
+  if (!TARGETS.includes(value)) {
+    throw new Error(`unknown --target ${value} (expected one of: ${TARGETS.join(", ")})`);
   }
 }
 
@@ -143,6 +106,10 @@ export function parseArgs(args) {
   const options = { command, directory: null, width: 800, height: 600, title: "Blitsen" };
   for (let index = command === "run" ? 0 : 1; index < args.length; index += 1) {
     const argument = args[index];
+    if (argument === "--android" || argument.startsWith("--android-")) {
+      throw new Error("Mobile support is deferred until Bun supports Android and iOS; "
+        + "Blitsen currently builds for Windows, macOS and Linux.");
+    }
     if (VALUE_OPTIONS.includes(argument)) {
       const value = args[++index];
       if (value === undefined) throw new Error(`${argument} requires a value`);
@@ -155,19 +122,11 @@ export function parseArgs(args) {
           + `${DOCTOR_OPTIONS.includes(argument) ? " or doctor" : ""}`);
       }
       if (PACKAGE_OPTIONS[argument]) options[PACKAGE_OPTIONS[argument]] = value;
-      else if (ANDROID_OPTIONS[argument]) options[ANDROID_OPTIONS[argument]] = value;
-      else if (argument === "--android-abi") {
-        if (!Object.keys(ANDROID_ABIS).includes(value)) {
-          throw new Error(`unknown --android-abi ${value} `
-            + `(expected one of: ${Object.keys(ANDROID_ABIS).join(", ")})`);
-        }
-        options.androidAbis = [...options.androidAbis ?? [], value];
-      }
       else if (argument === "--title") options.title = value;
       else if (argument === "--name") options.name = value;
       else if (argument === "--out" || argument === "--outfile") options.outfile = value;
       else if (argument === "--target") {
-        checkTarget(value, command);
+        checkTarget(value);
         options.target = value;
       }
       else if (argument === "--include") options.include = [...options.include ?? [], value];
@@ -191,9 +150,7 @@ export function parseArgs(args) {
       options.force = true;
     } else if (BUILD_FLAGS.includes(argument)) {
       if (command !== "build") throw new Error(`${argument} is only valid with build`);
-      if (argument === "--android") options.android = true;
-      else if (argument === "--android-debug") options.androidDebug = true;
-      else options.acceptErrors = true;
+      options.acceptErrors = true;
     } else if (argument === "--dev-bundle") {
       if (command !== "run") throw new Error("--dev-bundle is only valid with run: a build "
         + "already produces a bundle, and --bundle-id and --sign describe that one");
@@ -220,14 +177,13 @@ export function parseArgs(args) {
     throw new Error("missing application directory");
   }
   applyName(options);
-  checkAndroidOptions(options);
   checkDevBundleOptions(options);
   return options;
 }
 
 // A run may name an identity and a signing command, but only for the artifact
 // `--dev-bundle` produces. Without it there is no artifact, so accepting them
-// silently would be the same failure `checkAndroidOptions` guards against: the
+// silently would leave a misleading invocation: the
 // flag was typed, the run started, and nothing was identified or signed.
 function checkDevBundleOptions(options) {
   if (options.command !== "run" || options.devBundle) return;
@@ -236,54 +192,6 @@ function checkDevBundleOptions(options) {
       throw new Error(`${flag} needs --dev-bundle when running: a run outside a development `
         + "bundle produces no artifact to identify or sign");
     }
-  }
-}
-
-// What `--android` is compatible with, checked once rather than at each flag —
-// the incompatibilities are between options, and a check written per flag reads
-// as five unrelated rules instead of one decision.
-//
-// Every refusal here is a case where the desktop option describes a thing an
-// APK does not have, so accepting it and ignoring it would be the failure mode
-// `docs/PRODUCT.md` §7 exists to prevent: the flag was typed, the build
-// succeeded, and the artifact does not do what was asked.
-const ANDROID_FIELDS = { androidAbis: "--android-abi", androidDebug: "--android-debug",
-  androidPackage: "--android-package", androidKeystore: "--android-keystore" };
-function checkAndroidOptions(options) {
-  if (!options.android) {
-    for (const [field, flag] of Object.entries(ANDROID_FIELDS)) {
-      if (options[field] !== undefined) throw new Error(`${flag} needs --android`);
-    }
-    return;
-  }
-  if (options.target !== undefined) {
-    throw new Error("--target and --android name different artifacts: --target picks one of "
-      + "the six desktop runtimes to link, and an APK links none of them and carries several "
-      + "architectures at once. Choose the ABIs with --android-abi.");
-  }
-  if (options.assets !== undefined) {
-    throw new Error("--assets is not valid with --android: an APK's files live in assets/ "
-      + "inside the signed archive, and there is nothing beside it to side-load from.");
-  }
-  if (options.addons !== undefined) {
-    throw new Error("--addon is not valid with --android: a carried .node addon is Node-API "
-      + "and needs the Bun host, which does not exist on Android.");
-  }
-  if (options.sidecars !== undefined) {
-    throw new Error("--sidecar is not valid with --android: an APK has no directory beside the "
-      + "application to ship an executable into, and Android does not run one from there.");
-  }
-  if (options.icon !== undefined) {
-    throw new Error("--icon is not valid with --android yet: an Android launcher icon is a "
-      + "resource in several densities rather than one file beside the executable, and this "
-      + "build generates no resource directory.");
-  }
-  // The two names are the same thing under two platforms' vocabularies — the
-  // application's reverse-DNS identity — so one given without the other is
-  // taken as meant. `--android-package` still wins where both are present,
-  // because it is the more specific of the two.
-  if (options.androidPackage === undefined && options.bundleId !== undefined) {
-    options.androidPackage = options.bundleId;
   }
 }
 
@@ -326,12 +234,7 @@ async function applyConfiguration(options, output) {
     throw new Error("missing application directory: pass one, or add an index.html here, "
       + `or add a "blitsen" config to ${location}`);
   }
-  if (options.android && (config.window || config.tray || config.menu)) {
-    throw new Error("window, tray and menu configuration is only available to desktop builds");
-  }
-  if (options.android && config.sidecars !== undefined) {
-    checkAndroidOptions({ android: true, sidecars: config.sidecars });
-  }
+
   if (config.build) {
     reportStep(output, { step: "build", detail: `${config.build} (configured in ${path})` });
     await runBuildCommand(config.build, root);
@@ -452,107 +355,6 @@ async function targetRuntime(target, output) {
   return { resolved, build: options => buildStandalone(options, resolved) };
 }
 
-// The Android artifact, reported the way a desktop one is.
-//
-// A separate function rather than another branch inside `main` because almost
-// nothing is shared past step ②: there is no linked runtime to name, no host to
-// choose, no side-loaded directory, and the three lines that follow the artifact
-// are about signing and distribution rather than about a runtime version.
-async function buildAndroidArtifact(options, application, output) {
-  const notices = await androidNotices();
-  const result = await buildAndroid({
-    root: application.root,
-    name: options.name ?? options.title,
-    outfile: options.outfile,
-    abis: options.androidAbis,
-    applicationId: options.androidPackage ?? null,
-    appVersion: options.appVersion ?? "0.1.0",
-    keystore: options.androidKeystore ?? null,
-    keystorePassword: process.env.BLITSEN_ANDROID_KEYSTORE_PASSWORD ?? null,
-    // The two the keystore's own password does not cover: a store holding more
-    // than one key, and a key whose password differs from the store's. Both in
-    // the environment for the reason the keystore password is (android.mjs
-    // decision 3), and both optional because neither is true of a keystore made
-    // for one application.
-    keyAlias: process.env.BLITSEN_ANDROID_KEY_ALIAS ?? null,
-    keyPassword: process.env.BLITSEN_ANDROID_KEY_PASSWORD ?? null,
-    release: !options.androidDebug,
-    include: options.include ?? [],
-    force: options.force ?? false,
-    extra: notices === null ? new Map() : new Map([[notices.file, notices.contents]]),
-    progress: event => reportStep(output, event),
-    output,
-  });
-  const signed = options.sign
-    ? await signArtifact({ command: options.sign, artifact: result.outfile })
-    : null;
-  if (signed) output.log(`Signed ${signed.artifact} with: ${signed.command}`);
-  output.log(`Built ${result.outfile} (${result.assets} assets, ${result.bytes} bytes)`);
-  output.log(`Android: ${result.applicationId} ${options.appVersion ?? "0.1.0"} `
-    + `(versionCode ${result.versionCode}), ABIs ${result.abis.join(", ")}`);
-  if (notices) {
-    output.log(`Third-party notices: packaged, ${notices.bytes} bytes `
-      + `(assets/${ASSET_ROOT}/${notices.file})`);
-  } else {
-    output.log("This APK is not cleared for redistribution: it carries no third-party notices, "
-      + "and Android has no platform package to take them from — set BLITSEN_NOTICES_PATH "
-      + "(docs/LICENSING.md).");
-  }
-  return 0;
-}
-
-// The bundle the current process is already running inside. The child is handed
-// the same command line, `--dev-bundle` included, so something has to stop it
-// building a bundle around a bundle; this is what says which side of the
-// re-execution a process is on.
-const DEV_BUNDLE = "BLITSEN_DEV_BUNDLE";
-
-// Issue #253: macOS gates `UNUserNotificationCenter` on an application identity
-// — a bundle identifier and a signature — and a development run is an
-// interpreter executing a script, which has neither. The exported `.app` is the
-// only Blitsen artifact that qualifies, so a developer could not exercise
-// notification submission before shipping.
-//
-// So the development host is given an identity of its own: the same Info.plist
-// writer an export uses, wrapped around a copy of this interpreter, ad-hoc
-// signed, and then re-executed with the command line unchanged so the run
-// continues inside it. Nothing is impersonated — the identifier belongs to
-// Blitsen's development namespace, distinct from the exported application's, and
-// `--bundle-id` lets a developer name their own instead.
-async function runInsideDevelopmentBundle(options, output) {
-  if (process.platform !== "darwin") {
-    throw new Error("--dev-bundle is a macOS option: macOS is the only desktop platform that "
-      + "ties notification permission and delivery to a bundle identifier, and the other two "
-      + "hosts submit notifications from an ordinary executable");
-  }
-  // Only the name is taken from the configuration here, and the build command it
-  // may also carry is deliberately not run: the child reads the same file and
-  // owns every other step.
-  const { config } = await loadConfig();
-  const name = options.name ?? config?.name ?? options.title;
-  const { bundle, executable, identifier, rebuilt } = await developmentBundle({
-    directory: join(runtimeCacheDir(), "development"),
-    name,
-    identifier: options.bundleId ?? developmentIdentifier(name),
-    launcher: process.execPath,
-    version: await packageVersion(),
-    ...options.sign === undefined ? {} : { sign: options.sign },
-  });
-  output.log(`${rebuilt ? "Built" : "Reused"} development bundle ${bundle} (${identifier}). `
-    + "That identity is the development host's, not the application you export: macOS records "
-    + "notification permission per identifier, so the two are granted and revoked separately.");
-  // The same argument vector, under the bundle's own copy of this interpreter.
-  // `process.argv` rather than the parsed options, because what has to be
-  // reproduced is the command line the developer typed.
-  const child = spawn(executable, process.argv.slice(1), {
-    stdio: "inherit",
-    env: { ...process.env, [DEV_BUNDLE]: bundle },
-  });
-  return await new Promise((resolve, reject) => {
-    child.on("error", reject);
-    child.on("exit", code => resolve(code ?? 1));
-  });
-}
 
 export async function main(args, output = console, runtime = null) {
   try {
@@ -576,7 +378,7 @@ export async function main(args, output = console, runtime = null) {
     // and nothing to append an application to. It cross-compiles instead, and
     // what has to exist before the user's build command runs is the NDK rather
     // than an addon — checked in the same place and for the same reason.
-    if (options.command === "build" && !options.android) {
+    if (options.command === "build") {
       // Checked before anything runs: the user's build command must not be spent
       // on an export that cannot link. For a cross-target build that includes
       // fetching the target's runtime, so a target that cannot be built for
@@ -591,9 +393,6 @@ export async function main(args, output = console, runtime = null) {
     // A run that found its application differently from the build beside it is a
     // run that proves nothing about what ships.
     if (options.directory === null) await applyConfiguration(options, output);
-    if (options.android && (options.window || options.tray || options.menu)) {
-      throw new Error("window, tray and menu configuration is only available to desktop builds");
-    }
     const application = await resolveApplication(options.directory);
     // Proxy mode is a way to *run* an application, and neither of the other two
     // commands has anything to read: `doctor` grades files on disk and `build`
@@ -624,7 +423,7 @@ export async function main(args, output = console, runtime = null) {
       // Android row #147 landed. Grading per ABI would print the same findings
       // twice under different names.
       const report = await doctorApplication(application.root,
-        { target: options.android ? "android-arm64" : options.target });
+        { target: options.target });
       reportStep(output, {
         step: "scan",
         detail: `${report.files} files, ${report.errors} errors, ${report.warnings} warnings`,
@@ -640,7 +439,6 @@ export async function main(args, output = console, runtime = null) {
           + "run 'blitsen doctor' for the full report, "
           + "or --accept-errors to export anyway with the reported behaviour missing");
       }
-      if (options.android) return await buildAndroidArtifact(options, application, output);
       // Steps ③–⑤ report themselves as they run: only the exporter knows when
       // each one finished, and a long link should not look like a hang.
       const result = await active.build({

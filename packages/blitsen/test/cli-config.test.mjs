@@ -27,7 +27,7 @@ describe("directory CLI", () => {
         const { output, lines } = captureConsole();
         expect(await main(["build", "--android"], output)).toBe(1);
         expect(lines).toHaveLength(1);
-        expect(lines[0][1]).toContain("--sidecar is not valid with --android");
+        expect(lines[0][1]).toContain("Mobile support is deferred");
       } finally {
         process.chdir(cwd);
       }

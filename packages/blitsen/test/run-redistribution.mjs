@@ -19,14 +19,14 @@ import { dirname, join } from "node:path";
 import { buildAddon, capture, repository } from "./build-addon.mjs";
 import { RUST_TARGETS } from "./generate-notices.mjs";
 import { auditNotices, collectNotices, writeNotices } from "../src/notices.mjs";
-import { hostTarget, packageVersion, resolvePhase2Runtime, TARGETS } from "../src/runtime.mjs";
+import { hostTarget, packageVersion, resolveInterpreter, TARGETS } from "../src/runtime.mjs";
 
 const CLI = join(repository, "packages/blitsen/bin/blitsen.mjs");
 
 const run = (command, args) => capture([command, ...args], { cwd: repository });
 
 const addon = await buildAddon({ purpose: "the redistribution gate", release: true });
-const runtime = await resolvePhase2Runtime();
+const runtime = await resolveInterpreter();
 // The gate links a platform package, and the notices table also has Android
 // rows that no platform package carries — so the host has to be a desktop one.
 const target = hostTarget();
@@ -50,7 +50,7 @@ try {
   // rather than read from the file the build embedded — otherwise the test
   // would be comparing the notices with themselves.
   const collected = await collectNotices({
-    target: RUST_TARGETS[target], root: "blitsen-runtime", run,
+    target: RUST_TARGETS[target], root: "blitsen-node", run,
   });
   const problems = auditNotices(collected);
   assert.deepEqual(problems, [],
@@ -106,7 +106,7 @@ try {
 
   // The two the licensing document names: the engine, and the most demanding
   // term in the tree.
-  assert.match(printed.text, /quickjs/i, "the JavaScript engine is not named in the notices");
+  assert.match(printed.text, /JavaScriptCore/i, "the JavaScript engine is not named in the notices");
   assert.match(printed.text, /\bstylo\b/i, "Stylo is not named in the notices");
   const mpl = collected.packages.filter(entry => /MPL-2\.0/i.test(entry.license ?? ""));
   assert.ok(mpl.length > 0, "no MPL-2.0 package resolved, which cannot be right for this tree");

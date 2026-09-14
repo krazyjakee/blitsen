@@ -25,9 +25,9 @@ try {
 }
 ```
 
-The application runs in its own QuickJS process, including when the test driver
+The application runs in its own Bun process, including when the test driver
 is Bun. Use the executable inside a macOS `.app`, or the exported `.exe` on
-Windows. Legacy Bun-hosted exports are not supported by this driver. During
+Windows. During
 runtime development, `launch(runtimePath, { args: [builtDirectory] })` runs a
 built directory through the same path. CI runs the packaged React acceptance
 fixture with both drivers on Linux, macOS and Windows (`bun run --cwd
@@ -93,7 +93,7 @@ set isolated data directories in `env` when a test needs separate state.
 ## Document-script checks
 
 `BLITSEN_STANDALONE_CHECK=1 ./MyApp` remains a lightweight document-script harness
-on both QuickJS and legacy Bun exports. It loads scripts, advances asynchronous
+on Bun exports. It loads scripts, advances asynchronous
 work, optionally evaluates `BLITSEN_STANDALONE_CHECK_SCRIPT` and
 `BLITSEN_STANDALONE_CHECK_ASSERT`, and renders a frame. It does **not** prove a
 native click, hit testing, focus, or scroll-dependent interaction. CLI help and

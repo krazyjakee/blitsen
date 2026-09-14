@@ -113,8 +113,8 @@ async function measureComparison(blitsenRecord) {
       versions: { blitsen: "checkout", electron: "43.4.1", tauriCli: "2.11.4", tauri: "2.11.5" },
       frameworks: {
         blitsen: {
-          installedBytes: blitsenRecord.phase2.bytes,
-          compressedBytes: blitsenRecord.phase2.gzip,
+          installedBytes: blitsenRecord.runtime.bytes,
+          compressedBytes: blitsenRecord.runtime.gzip,
           files: 1,
         },
         electron: await footprint(electron),
@@ -123,7 +123,7 @@ async function measureComparison(blitsenRecord) {
       caveats: {
         electron: "The packaged directory includes Chromium and Electron.",
         tauri: "The executable relies on the operating system WebView; those shared system bytes are excluded.",
-        blitsen: "The executable includes Blitsen's renderer and QuickJS-ng.",
+        blitsen: "The executable includes Blitsen's renderer and Bun/JavaScriptCore.",
       },
     };
   } finally {
@@ -134,7 +134,7 @@ async function measureComparison(blitsenRecord) {
 if (import.meta.main) {
   const input = argument("blitsen");
   const outFile = argument("out");
-  if (!input) throw new Error("size:compare requires --blitsen <phase2-size.json>");
+  if (!input) throw new Error("size:compare requires --blitsen <runtime-size.json>");
   const record = await measureComparison(JSON.parse(await readFile(input, "utf8")));
   const serialized = `${JSON.stringify(record, null, 2)}\n`;
   if (outFile === null) process.stdout.write(serialized);

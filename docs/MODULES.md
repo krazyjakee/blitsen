@@ -1,5 +1,11 @@
 # Module resolution in the shipped binary
 
+> **Runtime migration:** [BUN-MIGRATION.md](BUN-MIGRATION.md) supersedes the QuickJS/Phase 2 and
+> mobile decisions recorded below. Shipping desktop applications and workers now use Bun;
+> Android and iOS are deferred. Earlier measurements and engine-selection rationale below are
+> historical records, not the current runtime contract.
+
+
 **Decision date:** 2026-08-13
 **Decision:** a runtime resolver over the application's own files, addressed by an internal
 `blitsen://app/` origin, with linking done by the engine's module loader.

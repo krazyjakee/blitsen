@@ -4,7 +4,7 @@ import { loadApiManifest } from "./api-manifest.mjs";
 import { HTML_EXTENSIONS, SCANNABLE_EXTENSIONS, walkFiles } from "./files.mjs";
 import { absentNativeModules, platformOf } from "./native-modules.mjs";
 import { HID_ACCESS } from "./packaging.mjs";
-import { hostTarget } from "./runtime.mjs";
+import { hostTarget, TARGETS } from "./runtime.mjs";
 
 // Every rule below comes from the generated manifest, so `doctor` and the
 // runtime cannot describe the same API differently. See COMPATIBILITY.md.
@@ -172,6 +172,7 @@ async function collectScannableFiles(root) {
  * for, so the modules graded are the ones that will actually be there.
  */
 export async function doctorApplication(root, { target = hostTarget() } = {}) {
+  if (!TARGETS.includes(target)) throw new Error(`unsupported desktop target: ${target}`);
   const files = await collectScannableFiles(root);
   const shipped = await collectShippedPaths(root);
   const { javascript, css, html } = await compatibility();

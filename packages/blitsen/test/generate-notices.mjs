@@ -22,23 +22,7 @@ export const RUST_TARGETS = {
   "darwin-arm64": "aarch64-apple-darwin",
   "win32-x64": "x86_64-pc-windows-msvc",
   "win32-arm64": "aarch64-pc-windows-msvc",
-  // Not npm platform packages, and deliberately not in `TARGETS` — #148's
-  // decision 1 is that Android is not a seventh row in TECH.md §11. They are
-  // here because an APK owes the same notices any other artifact does (#121)
-  // and has nowhere else to get them: there is no platform package to carry
-  // them, so `blitsen build --android` reads `BLITSEN_NOTICES_PATH` and says
-  // the artifact is not cleared for redistribution when it is unset. This is
-  // what sets it. The names are `doctor --target`'s, which already grades an
-  // application against Android (#147), so the vocabulary is one thing.
-  "android-arm64": "aarch64-linux-android",
-  "android-x64": "x86_64-linux-android",
 };
-
-/// The roots whose notices are not a runtime's. `blitsen-node` is the addon a
-/// carrying export links into Bun and goes in a subdirectory beside the
-/// runtime's; `blitsen-android` is the whole artifact on its platform, so its
-/// notices are the top-level ones there.
-const ADDON_ROOTS = ["blitsen-node"];
 
 const run = (command, args) => capture([command, ...args], { cwd: repository });
 
@@ -50,18 +34,14 @@ if (import.meta.main) {
     console.error(`unknown --target ${target} (expected one of: ${Object.keys(RUST_TARGETS).join(", ")})`);
     process.exit(1);
   }
-  // Two roots, because there are two hosts and they link different trees: an
-  // export links the runtime, and an export carrying a `.node` addon links the
-  // addon into Bun instead. The runtime's notices are the ones a default export
-  // carries; the addon's are collected so the audit can see both.
-  const roots = argument("root") ? [argument("root")] : ["blitsen-runtime", "blitsen-node"];
+  const roots = argument("root") ? [argument("root")] : ["blitsen-node"];
   const out = argument("out", join(repository, "packages/platforms", target));
   await mkdir(out, { recursive: true });
   const version = await packageVersion();
 
   for (const root of roots) {
     const collected = await collectNotices({ target: RUST_TARGETS[target], root, run });
-    const directory = ADDON_ROOTS.includes(root) ? join(out, "addon") : out;
+    const directory = out;
     await mkdir(directory, { recursive: true });
     const written = await writeNotices(directory, collected, { version });
     console.log(`${root}: ${written.packages} packages -> ${written.text}`);

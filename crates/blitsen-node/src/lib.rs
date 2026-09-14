@@ -7,7 +7,6 @@
 
 mod engine;
 mod exports;
-mod workers;
 
 use std::cell::RefCell;
 

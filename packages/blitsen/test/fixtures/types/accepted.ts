@@ -269,3 +269,12 @@ async function applicationUiTest() {
   await app.close();
   return png;
 }
+
+// Runtime builtins are typed in application code, including worker/database work.
+import { Database } from "bun:sqlite";
+import { readFile } from "node:fs/promises";
+const runtimeDatabase = new Database(":memory:");
+const runtimeRows = runtimeDatabase.query<{ value: number }, []>("select 1 as value").all();
+void runtimeRows;
+void readFile("settings.json", "utf8");
+runtimeDatabase.close();

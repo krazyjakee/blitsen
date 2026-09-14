@@ -1,7 +1,6 @@
 [workspace]
 members = [
     "crates/blitsen",
-    "crates/blitsen-android",
     "crates/blitsen-blitz",
     "crates/blitsen-core",
     "crates/blitsen-dom",
@@ -10,7 +9,6 @@ members = [
     "crates/blitsen-node",
     "crates/blitsen-platform",
     "crates/blitsen-quickjs",
-    "crates/blitsen-runtime",
 ]
 exclude = ["spikes/*"]
 resolver = "2"
