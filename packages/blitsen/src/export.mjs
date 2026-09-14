@@ -264,7 +264,7 @@ try {
       }),
       activation: {
         ...(startupActivation ?? {}),
-        launchedBy: notificationActivation(process.argv),
+        launchedBy: notificationActivation(process.argv) ?? undefined,
       },
     });
     const frameLimit = Number(process.env.BLITSEN_STANDALONE_FRAMES || 0);

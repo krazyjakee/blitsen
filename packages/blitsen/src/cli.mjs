@@ -356,6 +356,59 @@ async function targetRuntime(target, output) {
 }
 
 
+// The bundle the current process is already running inside. The child is handed
+// the same command line, `--dev-bundle` included, so something has to stop it
+// building a bundle around a bundle; this is what says which side of the
+// re-execution a process is on.
+const DEV_BUNDLE = "BLITSEN_DEV_BUNDLE";
+
+// Issue #253: macOS gates `UNUserNotificationCenter` on an application identity
+// — a bundle identifier and a signature — and a development run is an
+// interpreter executing a script, which has neither. The exported `.app` is the
+// only Blitsen artifact that qualifies, so a developer could not exercise
+// notification submission before shipping.
+//
+// So the development host is given an identity of its own: the same Info.plist
+// writer an export uses, wrapped around a copy of this interpreter, ad-hoc
+// signed, and then re-executed with the command line unchanged so the run
+// continues inside it. Nothing is impersonated — the identifier belongs to
+// Blitsen's development namespace, distinct from the exported application's, and
+// `--bundle-id` lets a developer name their own instead.
+async function runInsideDevelopmentBundle(options, output) {
+  if (process.platform !== "darwin") {
+    throw new Error("--dev-bundle is a macOS option: macOS is the only desktop platform that "
+      + "ties notification permission and delivery to a bundle identifier, and the other two "
+      + "hosts submit notifications from an ordinary executable");
+  }
+  // Only the name is taken from the configuration here, and the build command it
+  // may also carry is deliberately not run: the child reads the same file and
+  // owns every other step.
+  const { config } = await loadConfig();
+  const name = options.name ?? config?.name ?? options.title;
+  const { bundle, executable, identifier, rebuilt } = await developmentBundle({
+    directory: join(runtimeCacheDir(), "development"),
+    name,
+    identifier: options.bundleId ?? developmentIdentifier(name),
+    launcher: process.execPath,
+    version: await packageVersion(),
+    ...options.sign === undefined ? {} : { sign: options.sign },
+  });
+  output.log(`${rebuilt ? "Built" : "Reused"} development bundle ${bundle} (${identifier}). `
+    + "That identity is the development host's, not the application you export: macOS records "
+    + "notification permission per identifier, so the two are granted and revoked separately.");
+  // The same argument vector, under the bundle's own copy of this interpreter.
+  // `process.argv` rather than the parsed options, because what has to be
+  // reproduced is the command line the developer typed.
+  const child = spawn(executable, process.argv.slice(1), {
+    stdio: "inherit",
+    env: { ...process.env, [DEV_BUNDLE]: bundle },
+  });
+  return await new Promise((resolve, reject) => {
+    child.on("error", reject);
+    child.on("exit", code => resolve(code ?? 1));
+  });
+}
+
 export async function main(args, output = console, runtime = null) {
   try {
     let active = runtime;
