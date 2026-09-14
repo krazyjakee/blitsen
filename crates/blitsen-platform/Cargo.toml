@@ -31,7 +31,7 @@ arboard = { version = "3.6", features = ["wayland-data-control"] }
 # Resolve XDG, macOS Library and Windows known-folder locations through one
 # platform-aware implementation rather than interpreting environment variables
 # in the application bridge.
-dirs = "6"
+dirs = "7"
 # One byte-stream API over filesystem Unix sockets and Windows named pipes. The
 # application still owns framing, serialization, queueing and ownership; this
 # crate only replaces the two platform transports.
