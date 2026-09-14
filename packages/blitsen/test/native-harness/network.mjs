@@ -44,6 +44,17 @@ try {
   assert.equal(networkResult.body, "firstsecond");
   assert.equal(networkResult.abort, "AbortError");
 
+  // stop() cancels current document work without poisoning later requests.
+  fetch(origin + "/wait").catch(error => networkResult.stopped = error.name);
+  const stoppedResources = __blitsenDomCallCount("stopLoading");
+  window.stop();
+  assert.equal(__blitsenDomCallCount("stopLoading"), stoppedResources + 1,
+    "stop also reaches the renderer's subresource loader");
+  fetch(origin).then(response => response.json()).then(value => networkResult.afterStop = value);
+  await settle(() => networkResult.stopped && networkResult.afterStop);
+  assert.equal(networkResult.stopped, "AbortError");
+  assert.equal(networkResult.afterStop.method, "GET");
+
   native.runBridgeHarness("<p></p>", `fetch(${JSON.stringify(origin + "/wait")})
     .then(() => networkResult.late = true, error => networkResult.closed = error.name);`);
   globalThis.__blitsenDisposeContext();

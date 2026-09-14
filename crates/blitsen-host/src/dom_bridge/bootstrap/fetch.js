@@ -30,4 +30,5 @@
   const stop = () => {
     documentFetchController.abort();
     documentFetchController = new host.AbortController();
+    call("stopLoading");
   };
