@@ -151,7 +151,7 @@ x11rb = { version = "0.14.0", default-features = false }
 # application menu as well (#249). One crate builds a menu for both surfaces,
 # which is why the menu bar and the macOS main menu cost no new dependency:
 # `tray-icon` already links `muda`, and these are the same authors' pair.
-tray-icon = { version = "0.24.2", default-features = false }
+tray-icon = { version = "0.25.0", default-features = false }
 
 # `TranslateAcceleratorW`, and nothing else. A win32 menu bar delivers its own
 # clicks through the window subclass `muda` installs, but an accelerator only
