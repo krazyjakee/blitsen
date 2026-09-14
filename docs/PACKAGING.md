@@ -1,5 +1,8 @@
 # Packaging and distribution
 
+All desktop exports compile a Bun launcher with the native addon. Building requires Bun 1.3.14
+or newer; running the exported executable does not require a separately installed runtime.
+
 `blitsen build` checks static output, collects reachable assets, links the target runtime and adds
 platform packaging. The default desktop result embeds the application in one executable.
 
@@ -84,7 +87,6 @@ what each platform's notification service reads:
 | Linux | `<id>.desktop` with `DBusActivatable=true`, plus `<id>.service` | The runtime owns `<id>` on the session bus, registers that host identity with the portal and exports `org.freedesktop.Application` |
 | macOS | The `.app`'s `CFBundleIdentifier` and notification alert style | The response-capturing `UNUserNotificationCenter` delegate |
 | Windows | `<name>.exe.notification-register.ps1` with the AppUserModelID and deterministic `LocalServer32` activator class | The same AppUserModelID/COM mapping is refreshed for the executable's current path, and its class factory is registered |
-| Android | — | The application ID the package was installed as, read from the Activity |
 
 The Linux files are installer inputs: install the desktop entry under
 `$XDG_DATA_HOME/applications` (or `/usr/share/applications`) and the service under
@@ -96,8 +98,7 @@ prerequisite instead of silently submitting a notification that cannot launch th
 The Windows PowerShell file is an installer input: run it only after the executable is in its final
 location. It resolves the executable beside the script rather than embedding the cross-build host's
 path. Startup writes the same per-user mapping so a portable build can establish or refresh its
-own current path; cross-compilation cannot write the eventual user's registry hive. Android's
-application identity is likewise available only at startup from the installed Activity.
+own current path; cross-compilation cannot write the eventual user's registry hive.
 
 Where a platform, distribution or installer uses a command-line launch context, it does so as
 `--notification-activation <envelope>` on the application's own command line. Linux portal actions
@@ -223,52 +224,10 @@ file at the destination unless `--force` is given. Cross-building does not compi
 sidecars; supply one built for the target. Unlike a `.node` addon, a sidecar does not change the
 export's host: the standard runtime runs the application, and the sidecar runs as its own process.
 
-## Build an Android APK
+## Mobile
 
-Android is a separate artifact selected by `--android`, not a desktop target triple:
-
-```sh
-blitsen build dist --android --android-abi arm64-v8a --out MyApp.apk
-```
-
-The current Android entry crate is not published. Run from a Blitsen source checkout or point the
-CLI at one:
-
-```sh
-BLITSEN_ANDROID_CRATE=/path/to/blitsen/crates/blitsen-android \
-  blitsen build dist --android --out MyApp.apk
-```
-
-The build machine needs:
-
-- Rust targets for the requested Android ABIs and `cargo-ndk`
-- Android SDK API 33, an NDK and build-tools containing `aapt2`, `d8`, `zipalign` and `apksigner`
-- `libclang` for generated QuickJS bindings
-- A JDK whose `javac` is on `PATH`, plus `keytool` for the generated debug signing key
-
-Without an ABI option, the APK contains `arm64-v8a` and `x86_64`. Add `--android-debug` for an
-unoptimized native build whose manifest is marked debuggable.
-
-Without `--android-keystore`, Blitsen uses the standard debug key. That APK is installable but not
-distributable. Supply release credentials without putting passwords on the command line:
-
-```sh
-BLITSEN_ANDROID_KEYSTORE_PASSWORD='...' \
-  blitsen build dist \
-  --android \
-  --android-abi arm64-v8a \
-  --android-package com.example.myapp \
-  --android-keystore /path/to/release.jks \
-  --app-version 1.2.3 \
-  --out MyApp.apk
-```
-
-`BLITSEN_ANDROID_KEY_ALIAS` selects one key in a multi-key store.
-`BLITSEN_ANDROID_KEY_PASSWORD` supplies a distinct key password.
-
-Android has no published platform package from which to copy audited notices. Set
-`BLITSEN_NOTICES_PATH` to the generated, audited `NOTICES.txt` for the Android crate before
-redistribution. Without it the build reports that the APK is not cleared for distribution.
+Android APK generation has been withdrawn. Android and iOS will be reconsidered when Bun has
+supported ports and Blitsen can qualify the same runtime architecture on them.
 
 ## Third-party notices
 

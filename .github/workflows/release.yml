@@ -154,7 +154,7 @@ jobs:
             libx11-dev libxcursor-dev libxi-dev libxrandr-dev \
             libasound2-dev libudev-dev
 
-      # Two artifacts, one ABI: the addon `blitsen run` loads, and the Phase 2
+      # Two artifacts, one ABI: the addon `blitsen run` loads, and the Bun
       # executable an export links into (#88). They are built together and
       # published together because a package carrying one without the other
       # fails at whichever command needs the missing half.
@@ -300,7 +300,7 @@ jobs:
       - name: Stage the third-party notices
         run: bun run --cwd packages/blitsen notices --target ${{ matrix.target }}
 
-      # Both are native code Blitsen ships, so both get signed — and the Phase 2
+      # Both are native code Blitsen ships, so both get signed — and the Bun
       # executable is the one a user's machine launches by name, which is
       # exactly what an OS gatekeeper checks. Both steps are no-ops without
       # their secret, and say so.

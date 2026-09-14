@@ -1,5 +1,9 @@
 # Releasing
 
+> Desktop runtime: Bun. Android and iOS are deferred. See [BUN-MIGRATION.md](BUN-MIGRATION.md)
+> for the current architecture and changes from the historical QuickJS runtime.
+
+
 Six prebuilt runtimes and one JavaScript package, published together. This is what
 `.github/workflows/release.yml` does, what it deliberately does not do, and what has to exist
 before it can do any of it. One artifact sits deliberately outside the workflow: the `blitsen`

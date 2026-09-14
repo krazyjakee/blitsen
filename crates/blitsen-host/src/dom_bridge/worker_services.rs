@@ -1,11 +1,16 @@
 //! Language and platform services shared by document and worker realms.
 
+#[cfg(test)]
 use blitsen_js::{JsEngine, JsError, TypedArray, TypedArrayKind};
 use serde_json::{Value, json};
 
-use super::{argument, fetch, intl, json_value, web_url};
+#[cfg(test)]
+use super::argument;
+#[cfg(test)]
+use super::{fetch, intl, json_value, web_url};
 
 /// Installs the services available in a worker's global scope.
+#[cfg(test)]
 pub fn install_worker_services<E: JsEngine + 'static>(
     engine: &mut E,
     reader: Option<crate::app::AppReader>,
@@ -70,6 +75,7 @@ pub(super) fn navigator_state() -> Value {
 /// `TextEncoder` and `TextDecoder` are Web IDL, not ECMAScript: relying on the
 /// host's would make the request and response bodies change shape under the
 /// Phase 2 engine.
+#[cfg(test)]
 pub(super) fn install_text_codec<E: JsEngine + 'static>(engine: &mut E) -> Result<(), JsError> {
     engine.define_global_function(
         "__blitsenUtf8Encode",

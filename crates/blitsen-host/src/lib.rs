@@ -22,12 +22,15 @@ pub mod dom_bridge;
 mod drag_drop;
 pub mod frame_loop;
 pub mod harness;
+#[cfg(test)]
 pub mod messaging;
 pub mod modules;
 pub mod native_window;
 mod pointer_input;
+#[cfg(test)]
 pub mod ports;
 pub mod replay;
+#[cfg(test)]
 pub mod runtime_services;
 mod source_maps;
 pub mod standalone;
@@ -37,6 +40,7 @@ pub mod testing;
 mod x11_scale;
 // Surface loss and recreation: what a window that can be taken away needs (#146).
 pub mod surface_lifecycle;
+#[cfg(test)]
 pub mod worker;
 
 use std::cell::RefCell;

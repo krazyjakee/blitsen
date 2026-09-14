@@ -1,5 +1,9 @@
 # Configuration
 
+> Desktop runtime: Bun. Android and iOS are deferred. See [BUN-MIGRATION.md](BUN-MIGRATION.md)
+> for the current architecture and changes from the historical QuickJS runtime.
+
+
 Blitsen reads configuration from the `blitsen` key of the nearest `package.json`. There is no
 separate configuration file.
 

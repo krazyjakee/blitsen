@@ -453,16 +453,6 @@ name = "blitsen"
 version = "0.0.1"
 
 [[package]]
-name = "blitsen-android"
-version = "0.0.0"
-dependencies = [
- "android-activity",
- "blitsen-host",
- "blitsen-runtime",
- "ndk-sys",
-]
-
-[[package]]
 name = "blitsen-blitz"
 version = "0.0.0"
 dependencies = [
@@ -585,7 +575,6 @@ dependencies = [
  "blitsen-dom",
  "blitsen-host",
  "blitsen-js",
- "blitsen-quickjs",
  "blitz",
  "napi",
  "napi-build",
@@ -624,20 +613,6 @@ version = "0.0.0"
 dependencies = [
  "blitsen-js",
  "rquickjs",
-]
-
-[[package]]
-name = "blitsen-runtime"
-version = "0.0.0"
-dependencies = [
- "blitsen-core",
- "blitsen-host",
- "blitsen-js",
- "blitsen-quickjs",
- "libc",
- "serde",
- "serde_json",
- "tempfile",
 ]
 
 [[package]]

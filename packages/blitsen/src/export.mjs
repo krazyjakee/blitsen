@@ -1,3 +1,4 @@
+import { applicationTestLoop } from "./application-test-loop.mjs";
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { access, chmod, copyFile, lstat, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
@@ -7,13 +8,12 @@ import {
   planIngest, rewriteRootRelativeReferences,
 } from "./application-ingest.mjs";
 import { describeExecutableBinary, describeNativeBinary, readContainerHeader } from "./binary.mjs";
-import { linkBundle } from "./bundle.mjs";
 import { REWRITTEN_EXTENSIONS } from "./files.mjs";
 import { frameDelay } from "./frame-pacing.mjs";
 import {
   activationEntryPoint, defaultApplicationIdentifier, packageBuild, packagePlan, pngDimensions, signArtifact,
 } from "./packaging.mjs";
-import { describeRuntime, hostTarget, requestedHost, resolvePhase2Runtime } from "./runtime.mjs";
+import { describeRuntime, hostTarget, requestedHost } from "./runtime.mjs";
 
 export { describeExecutableBinary, describeNativeBinary } from "./binary.mjs";
 export {
@@ -119,10 +119,8 @@ export function runtimeRecord(runtime) {
 /**
  * The activation envelope a platform entry point started this process with (#252).
  *
- * One option, read the same way by both hosts: the Phase 2 runtime parses it in
- * `blitsen-runtime`, and the generated Phase 1 launcher inlines this function so
- * an export that links Bun does not read its command line differently from one
- * that does not. `null` is the ordinary launch, which carries no envelope.
+ * Shared by development and compiled Bun launchers. `null` is an ordinary
+ * launch without a notification activation envelope.
  */
 export function notificationActivation(argv) {
   const index = argv.indexOf("--notification-activation");
@@ -138,7 +136,11 @@ export function launcherSource(assets, options) {
   const manifest = assets.map((asset, index) =>
     `{ path: ${JSON.stringify(asset.path)}, hash: ${JSON.stringify(asset.hash)}`
     + `${embedded ? `, source: asset${index}` : ""} }`).join(",\n  ");
-  const prelude = embedded
+  const prelude = options.directory
+    ? `const argument = process.argv[2] ?? ".";
+const root = /^https?:/.test(argument) ? argument : resolve(argument);
+const cleanup = () => {};`
+    : embedded
     ? `const root = await mkdtemp(join(tmpdir(), "blitsen-app-"));
 const cleanup = () => rm(root, { recursive: true, force: true });
 for (const asset of assets) {
@@ -160,13 +162,15 @@ for (const asset of assets) {
   return `import addonPath from "./blitsen.node" with { type: "file" };
 import { createRequire } from "node:module";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 ${imports}
 
 ${frameDelay.toString()}
 
 ${notificationActivation.toString()}
+
+${applicationTestLoop.toString()}
 
 // Issue #73: an export names the runtime it was built against, in the binary and at
 // run time. Parsed from one string so the record survives bundling as a contiguous
@@ -180,21 +184,42 @@ const assets = [
 const startupTray = ${trayOptions};
 const startupMenu = ${menuOptions};
 const startupActivation = ${activationOptions};
+if (process.argv.includes("--version")) {
+  console.log(${JSON.stringify('blitsen-runtime ')} + ${JSON.stringify(options.version ?? options.runtime.version ?? 'checkout')});
+  process.exit(0);
+}
+if (process.argv.includes("--engine-report")) {
+  console.log(JSON.stringify({ engine: "bun", version: Bun.version,
+    absentGlobals: ["WebAssembly"].filter(name => !(name in globalThis)) }));
+  process.exit(0);
+}
+if (process.argv.includes("--licenses")) {
+  console.log(${JSON.stringify(options.notices ?? 'Native dependency notices are unavailable for this checkout build.')});
+  console.log(${JSON.stringify(options.bunNotices ?? '')});
+  if (!${Boolean(options.notices)}) {
+    console.error("This export is not cleared for redistribution: native dependency notices are unavailable.");
+    process.exit(1);
+  }
+  process.exit(0);
+}
 const native = createRequire(import.meta.url)(addonPath);
+if (${Boolean(options.directory)} && process.argv[2] === "--replay") {
+  console.log(native.replayDocumentFrames(process.argv[3], await Bun.file(process.argv[4]).text()));
+  process.exit(0);
+}
 ${prelude}
 try {
-  const entrypoint = join(root, "index.html");
+  const entrypoint = /^https?:/.test(root) ? root : join(root, "index.html");
   const engine = new native.Engine();
-  if (process.env.BLITSEN_TEST_MODE === "1")
-    throw new Error("blitsen/test requires a QuickJS export; legacy Bun exports support document-script checks only");
-  if (process.env.BLITSEN_STANDALONE_CHECK === "1") {
+  if (process.env.BLITSEN_TEST_MODE === "1") {
+    await applicationTestLoop(native, entrypoint, ${JSON.stringify(options.storageIdentity ?? null)}, ${options.width}, ${options.height});
+  } else if (process.env.BLITSEN_STANDALONE_CHECK === "1") {
     console.error("Blitsen standalone check: document-script harness; no native input, hit testing, or window/dialog APIs. Script MouseEvent clicks run activation. Use blitsen/test for UI tests.");
-    native.runDocumentScriptsHarness(entrypoint, ${options.width}, ${options.height});
+    native.runDocumentScriptsHarness(entrypoint, ${options.width}, ${options.height}, ${JSON.stringify(options.storageIdentity ?? null)});
     // Turning the loop rather than only sleeping through it: a fetch, an image
     // decode and a timer all land on the animation-frame tick, so a check that
     // slept would report on an application whose asynchronous work had not
-    // happened. The Phase 2 check settles the same way, which is what lets the
-    // two be compared line for line (issue #90).
+    // happened. The directory interpreter uses this same loop.
     const settle = async () => {
       const deadline = performance.now()
         + Number(process.env.BLITSEN_STANDALONE_CHECK_DELAY || 50);
@@ -219,7 +244,7 @@ try {
       root,
       entrypoint,
       directory: root,
-      storageIdentity: options.storageIdentity,
+      storageIdentity: ${JSON.stringify(options.storageIdentity)},
       width: ${options.width},
       height: ${options.height},
       title: ${JSON.stringify(options.title)},
@@ -239,7 +264,7 @@ try {
       }),
       activation: {
         ...(startupActivation ?? {}),
-        launchedBy: notificationActivation(process.argv),
+        launchedBy: notificationActivation(process.argv) ?? undefined,
       },
     });
     const frameLimit = Number(process.env.BLITSEN_STANDALONE_FRAMES || 0);
@@ -259,6 +284,9 @@ try {
     }
   }
 } catch (error) {
+  if (error?.stack && typeof globalThis.__blitsenModuleRemap === "function") {
+    console.error(globalThis.__blitsenModuleRemap(error.stack));
+  } else if (process.env.BLITSEN_DEBUG) console.error(error.stack);
   // What the runtime prints for the same failure: one line, named, on stderr.
   // Letting it escape instead gave a Bun stack trace through the generated
   // launcher, which is this file's business rather than the user's — and made
@@ -269,6 +297,7 @@ try {
 } finally {
   await cleanup();
 }
+process.exit(0);
 `;
 }
 
@@ -300,6 +329,7 @@ async function embeddedNotices(runtimePath) {
   return {
     path,
     bytes: text.length,
+    text: text.toString(),
     // Deterministic: two builds of the same notices produce the same bytes, so
     // an export stays reproducible (#71).
     gzip: gzipSync(text, { level: 9, mtime: 0 }),
@@ -432,16 +462,6 @@ async function stageApplication({ plan, carried, staging, buildTarget }) {
   };
 }
 
-function selectStandaloneHost(requested, carriedAddons) {
-  const host = requested ?? (carriedAddons.length > 0 ? "bun" : "blitsen");
-  if (host === "blitsen" && carriedAddons.length > 0) {
-    throw new Error(`BLITSEN_HOST=blitsen cannot load a carried native addon `
-      + `(${summarize(carriedAddons)}): the Phase 2 host has no Node-API. `
-      + "Drop the addon, or leave BLITSEN_HOST unset and the export links the host that can.");
-  }
-  return host;
-}
-
 function reportCollection(progress, { manifest, assets, unreferenced, carriedAddons }) {
   progress({
     step: "collect",
@@ -462,83 +482,25 @@ function reportCollection(progress, { manifest, assets, unreferenced, carriedAdd
   });
 }
 
-async function linkPhase2({
-  buildTarget, targetPlatform, targetArchitecture, onNotice, manifest, staging,
-  linkedRuntime, width, height, title, window, tray, menu, activation, storageIdentity, assets,
-  destination,
-}) {
-  // After the checks above, deliberately: `fetch` is on the same terms as the
-  // addon's own resolution (#72) — a build for this host never reaches the
-  // network, and a cross-target one has no other way to obtain that target's
-  // runtime — and a build that is already going to be refused should be
-  // refused before it downloads anything.
-  const phase2Runtime = await resolvePhase2Runtime({
-    target: buildTarget, fetch: buildTarget !== hostTarget(),
-    ...(onNotice ? { onNotice } : {}),
-  });
-  // The same check the addon gets above, on the artifact the export is
-  // literally made of: a Phase 2 export is this executable with the
-  // application appended, so a runtime for the wrong platform is not a dlopen
-  // failure later — it is the whole product, built for the wrong machine and
-  // named as though it were not. `BLITSEN_RUNTIME_PATH` reaches here ahead of
-  // everything, including under `--target`.
-  const linked = describeExecutableBinary(await readContainerHeader(phase2Runtime.path));
-  if (!linked) {
-    throw new Error("the linked Phase 2 runtime is not an executable for any supported "
-      + `platform: ${phase2Runtime.path}`);
-  }
-  if (linked.platform !== targetPlatform
-    || !linked.architectures.includes(targetArchitecture)) {
-    throw new Error("the linked Phase 2 runtime is built for "
-      + `${linked.platform}-${linked.architectures.join("/")} (${linked.format}), `
-      + `but this build targets ${buildTarget}: ${phase2Runtime.path}`
-      + (phase2Runtime.source === "environment"
-        ? " — BLITSEN_RUNTIME_PATH names it, and it outranks the target's own runtime"
-        : ""));
-  }
-
-  // Phase 2 step ④: the application is appended to Blitsen's own runtime as a
-  // binary section (TECH.md §10, issue #88). No launcher and no Bun.
-  const files = new Map();
-  for (const entry of manifest) {
-    files.set(entry.path, await readFile(join(staging, "app", ...entry.path.split("/"))));
-  }
-  // Issue #73: an export names the runtime it was built against, in the binary
-  // and at run time — the same record the Phase 1 launcher carries, minus the
-  // linking path, which is machine-local.
-  const { path: _linkedPath, ...stamp } = linkedRuntime;
-  files.set("blitsen.runtime.json", Buffer.from(
-    `${JSON.stringify({ width, height, title, window, tray, menu, activation,
-      storageIdentity,
-      layout: assets, runtime: stamp })}\n`));
-  // Issue #121: the notices the artifact owes travel inside it. They are copied
-  // from the runtime package because a user's machine has no toolchain to
-  // derive them.
-  const notices = await embeddedNotices(phase2Runtime.path);
-  if (notices !== null) files.set(NOTICES_BUNDLE_FILE, notices.gzip);
-  await linkBundle({ runtime: phase2Runtime.path, output: destination, files });
-  return notices;
-}
-
-async function linkPhase1({
+async function linkBun({
   nativePath, staging, manifest, width, height, title, window, tray, menu, activation,
   storageIdentity, assets, assetDirectory, linkedRuntime, destination, buildTarget,
 }) {
   await copyFile(nativePath, join(staging, "blitsen.node"));
+  const notices = await embeddedNotices(nativePath);
   const launcher = join(staging, "launcher.mjs");
   await writeFile(launcher, launcherSource(manifest, {
     width, height, title, window, tray, menu, activation, storageIdentity, layout: assets,
     assetDirectory,
     runtime: linkedRuntime,
+    notices: notices?.text ?? null,
+    bunNotices: await readFile(join(import.meta.dirname, "BUN-LICENSE.md"), "utf8"),
   }));
   // The Bun host is the one thing here that only Bun can build: `Bun.build`
   // links the launcher into that target's Bun. The CLI otherwise runs anywhere
   // Node does, and an export that needs this path says which half is missing.
   if (globalThis.Bun === undefined) {
-    throw new Error("this export links the Bun host, which only Bun can build: "
-      + "run the same command with `bun` on PATH, or remove the .node addon that "
-      + "asked for it — an application without one links Blitsen's own runtime, "
-      + "which needs nothing but this package");
+    throw new Error("Blitsen builds require Bun 1.3.14 or newer. Run this command with bun on PATH.");
   }
   const result = await Bun.build({
     entrypoints: [launcher],
@@ -550,6 +512,7 @@ async function linkPhase1({
     const detail = result.logs.map(log => String(log)).join("\n");
     throw new Error(`standalone compilation failed${detail ? `:\n${detail}` : ""}`);
   }
+  return notices;
 }
 
 // Sidecars: helper executables shipped beside the export and started by name
@@ -715,32 +678,12 @@ export async function buildStandalone(
   try {
     const { manifest, carriedAddons } = await stageApplication(
       { plan, carried, staging, buildTarget });
-    // The host, now that the application is known. Small by default, and one
-    // thing overrides that — a capability rather than a preference: a `.node`
-    // addon is Node-API, and `createRequire` is Bun's, so the Phase 2 host has
-    // no way to load one (TECH.md §12). That export links Phase 1 and pays a
-    // copy of Bun for it, because a smaller executable that cannot run the
-    // application is not smaller.
-    //
-    // Module scripts do not affect the choice: the shipped runtime links
-    // QuickJS-ng statically with its stock module loader (docs/JSC.md).
-    const host = selectStandaloneHost(requested, carriedAddons);
+    const host = "bun";
     reportCollection(progress, { manifest, assets, unreferenced, carriedAddons });
-    let notices = null;
-    if (host === "blitsen") {
-      notices = await linkPhase2({
-        buildTarget, targetPlatform, targetArchitecture, onNotice, manifest, staging,
-        linkedRuntime, width, height, title, window, tray: runtimeTray, menu, activation,
-        storageIdentity,
-        assets, destination,
-      });
-    } else {
-      await linkPhase1({
-        nativePath, staging, manifest, width, height, title, window, tray: runtimeTray, menu,
-        activation, storageIdentity, assets, assetDirectory,
-        linkedRuntime, destination, buildTarget,
-      });
-    }
+    const notices = await linkBun({
+      nativePath, staging, manifest, width, height, title, window, tray: runtimeTray, menu,
+      activation, storageIdentity, assets, assetDirectory, linkedRuntime, destination, buildTarget,
+    });
     await writeSideLoadedAssets({ assets, sideLoaded, manifest, staging });
     await shipSidecars(plannedSidecars);
     const { executable, packaged, signed, sidecars: shipped } = await finishStandaloneBuild({

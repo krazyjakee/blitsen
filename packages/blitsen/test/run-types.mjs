@@ -49,7 +49,7 @@ const output = result => `${result.stdout}${result.stderr}`.trim();
 
 console.log(`installing typescript@${options.typescript}`);
 const install = run(["npm", "install", "--no-audit", "--no-fund", "--silent",
-  `typescript@${options.typescript}`]);
+  `typescript@${options.typescript}`, "@types/bun@1.3.14"]);
 if (install.code !== 0) throw new Error(`could not install typescript:\n${output(install)}`);
 
 // After the install, not before it: npm prunes anything in `node_modules` that

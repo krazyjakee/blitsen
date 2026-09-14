@@ -1,3 +1,4 @@
+import bunSurface from "./bun-surface.json" with { type: "json" };
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -16,7 +17,7 @@ export const SOURCE_NAME = "crates/blitsen-host/src/dom_bridge.rs";
 // there rather than restating it keeps the manifest describing the same script
 // the runtime actually runs, and turns a renamed fragment into a loud failure.
 export async function readBootstrapScript() {
-  const rust = await readFile(RUNTIME_SOURCE, "utf8");
+  const rust = (await readFile(RUNTIME_SOURCE, "utf8")).split("const LEGACY_TEST_BOOTSTRAP:")[0];
   const fragments = [...rust.matchAll(/include_str!\("(dom_bridge\/bootstrap\/[^"]+)"\)/g)]
     .map(([, path]) => join(import.meta.dirname, RUNTIME_SOURCE_ROOT + path));
   if (fragments.length === 0)
@@ -285,6 +286,14 @@ export function extractRuntimeSurface(source) {
   ];
 
   const { classes, instances } = runtimeClassesAndInstances(structure);
+  // Bun owns these classes. The pinned snapshot is checked against the actual
+  // Bun process by the native surface harness; no duplicate JS classes exist.
+  if (script.includes('Symbol.for("blitsen.bun.primitives")')) {
+    for (const [name, members] of Object.entries(bunSurface)) {
+      if (!classes.has(name)) classes.set(name, { members: new Set(members) });
+      globals.add(name);
+    }
+  }
   const native = new Map(Object.keys(NATIVE).map(module =>
     [module, new Set(objectKeys(structure, `const native${capitalized(module)} = {`))]));
   return { globals: [...globals].filter(name => !name.startsWith("__blitsen")), classes, instances,

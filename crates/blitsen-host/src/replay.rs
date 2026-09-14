@@ -236,6 +236,7 @@ pub fn replay<E: JsEngine + Clone + 'static>(
         width,
         height,
         crate::dom_bridge::DocumentMode::TestHarness,
+        None,
     )?;
     let trace = Rc::new(trace);
     let mut frame_loop = FrameLoop::new_with_hooks(

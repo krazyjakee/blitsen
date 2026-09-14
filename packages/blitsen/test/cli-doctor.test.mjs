@@ -5,12 +5,12 @@ import { buildManifest, generateApiManifest, loadApiManifest, readBootstrapScrip
 import { main, parseArgs } from "../src/cli.mjs";
 import { doctorApplication } from "../src/doctor.mjs";
 import { checkNativeModuleTable } from "../src/native-modules.mjs";
-import { resolvePhase2Runtime } from "../src/runtime.mjs";
+import { resolveInterpreter } from "../src/runtime.mjs";
 import { captureConsole, withTemporaryDirectory } from "./cli-support.mjs";
 
 // Resolved once at the top so the absence of a built runtime reads as a skip in
 // the report rather than a silent pass (the cli-runtime.test.mjs precedent).
-const phase2Runtime = await resolvePhase2Runtime().catch(() => null);
+const phase2Runtime = await resolveInterpreter().catch(() => null);
 const phase2RuntimeBuilt = phase2Runtime !== null
   && await Bun.file(phase2Runtime.path).exists();
 
@@ -114,7 +114,7 @@ describe("directory CLI", () => {
       ].join("\n"));
       const codes = (await doctorApplication(directory)).diagnostics
         .map(diagnostic => `${diagnostic.severity}:${diagnostic.code}`);
-      expect(codes).toEqual(["error:WEB_FETCH", "warning:WEB_NAVIGATION", "warning:WEB_STREAM"]);
+      expect(codes).toEqual(["error:WEB_FETCH", "warning:WEB_NAVIGATION"]);
     });
   });
 
@@ -196,7 +196,7 @@ describe("directory CLI", () => {
     // both halves of it are checked against the bootstrap instead: the API has
     // to be installed, and the runtime has to be able to withdraw it again.
     expect(buildManifest(source).apis.find(entry => entry.api === "Notification").condition)
-      .toMatchObject({ platforms: ["darwin", "android"] });
+      .toMatchObject({ platforms: ["darwin"] });
     expect(() => buildManifest(source
       .replace("if (!Notification) try { delete globalThis.Notification; } catch {}", "")))
       .toThrow("Notification is declared conditional and the bootstrap installs it");
@@ -274,29 +274,8 @@ describe("directory CLI", () => {
       expect(await reported("linux-x64")).toEqual([]);
       expect(await reported("win32-x64")).toEqual([]);
       expect(await reported("darwin-arm64")).toEqual([]);
-      // Sorted by position in the file, which is why `app` — the dynamic import
-      // after the direct imports — comes last rather than first. notify is
-      // deliberately absent from the findings: Android implements that module.
-      expect(await reported("android-arm64")).toEqual([
-        "blitsen/clipboard does not exist on android.",
-        "blitsen/dialog does not exist on android.",
-        "blitsen/app does not exist on android.",
-      ]);
-
-      // The reason travels with the finding: a user who is told a module is
-      // missing and not told why has nothing to decide with.
-      const android = (await doctorApplication(directory, { target: "android-arm64" }))
-        .diagnostics.find(entry => entry.code === "NATIVE_MODULE_ABSENT");
-      expect(android.severity).toBe("warning");
-      expect(android.guidance).toContain("`arboard` has no Android backend");
-      expect(android.guidance).toContain("holds focus");
-
-      // Absent modules are warnings, so an Android grading still exits 0 — the
-      // application degrades rather than failing to render.
-      const { lines, output } = captureConsole();
-      expect(await main(["doctor", directory, "--target", "android-arm64"], output)).toBe(0);
-      expect(lines.some(([, line]) => line.includes("NATIVE_MODULE_ABSENT")
-        && line.includes("blitsen/clipboard does not exist on android"))).toBeTrue();
+      await expect(doctorApplication(directory, { target: "android-arm64" }))
+        .rejects.toThrow("unsupported desktop target");
     });
   });
 
@@ -325,21 +304,15 @@ describe("directory CLI", () => {
       expect((await reported("darwin-arm64"))[0].guidance)
         .toContain("com.apple.security.device.usb");
       expect((await reported("win32-x64"))[0].guidance).toContain("HID class driver");
-      const android = await reported("android-arm64");
-      expect(android).toHaveLength(1);
-      expect(android[0].guidance).toContain("one device at a time");
-      // No install step to wait for, so the sentence the other three end with
-      // must not be there: nothing is pending before the application ships.
-      expect(android[0].guidance).not.toContain("Until it does");
-      expect((await doctorApplication(directory, { target: "android-arm64" }))
-        .diagnostics.map(entry => entry.code)).not.toContain("NATIVE_MODULE_ABSENT");
+      await expect(reported("android-arm64")).rejects.toThrow("unsupported desktop target");
     });
   });
 
   // Grading for a platform is not claiming to build for one: Android has no
   // runtime package to resolve and `blitsen build` still refuses it (#148).
   test("grades for a target it cannot build for, and refuses to build for it", () => {
-    expect(parseArgs(["doctor", "dist", "--target", "android-arm64"]).target).toBe("android-arm64");
+    expect(() => parseArgs(["doctor", "dist", "--target", "android-arm64"]))
+      .toThrow("unknown --target android-arm64");
     expect(parseArgs(["doctor", "dist"]).target).toBeUndefined();
     expect(() => parseArgs(["build", "dist", "--target", "android-arm64"]))
       .toThrow("unknown --target android-arm64");

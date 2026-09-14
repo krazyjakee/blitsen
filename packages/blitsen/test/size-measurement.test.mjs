@@ -4,24 +4,24 @@ import { gzipSync } from "node:zlib";
 import { join } from "node:path";
 
 import { BARE_APP } from "./bare-app.mjs";
-import { pinnedPhase2Runtime } from "./measurement-runtime.mjs";
+import { pinnedInterpreter } from "./measurement-runtime.mjs";
 import { withTemporaryDirectory } from "./cli-support.mjs";
 import { comparisonFixture, comparisonSummary, footprint } from "./run-size-comparison.mjs";
-import { phase2SizeSummary } from "./size-reports.mjs";
+import { runtimeSizeSummary } from "./size-reports.mjs";
 
 describe("size evidence", () => {
   test("refuses to measure whichever installed runtime happens to resolve", async () => {
-    await expect(pinnedPhase2Runtime({ env: {}, resolve: () => {
+    await expect(pinnedInterpreter({ env: {}, resolve: () => {
       throw new Error("resolution should not run");
     } })).rejects.toThrow("requires BLITSEN_RUNTIME_PATH");
 
-    const runtime = await pinnedPhase2Runtime({
+    const runtime = await pinnedInterpreter({
       env: { BLITSEN_RUNTIME_PATH: "/checkout/blitsen-runtime" },
       resolve: async ({ env }) => ({ path: env.BLITSEN_RUNTIME_PATH, source: "environment" }),
     });
     expect(runtime.path).toBe("/checkout/blitsen-runtime");
 
-    await expect(pinnedPhase2Runtime({
+    await expect(pinnedInterpreter({
       env: { BLITSEN_RUNTIME_PATH: "/checkout/blitsen-runtime" },
       resolve: async () => ({ path: "/published/blitsen-runtime", source: "package" }),
     })).rejects.toThrow("resolved from package");
@@ -58,14 +58,13 @@ describe("size evidence", () => {
     expect(tauri).toContain('tauri = { version = "=2.11.5", features = [] }');
   });
 
-  test("publishes readable Phase 2 and framework summaries", () => {
+  test("publishes readable Bun and framework summaries", () => {
     const phase2 = {
-      platform: "linux-x64", commit: "abc123", ratio: 2,
-      phase1: { bytes: 20_000_000, gzip: 10_000_000 },
-      phase2: { bytes: 10_000_000, gzip: 5_000_000 },
-      components: { runtimeExecutable: 9_999_000, appPayload: 1_000 },
+      platform: "linux-x64", commit: "abc123", bun: "1.3.14",
+      runtime: { bytes: 10_000_000, gzip: 5_000_000 },
+      components: { nativeAddon: 9_999_000, appPayload: 1_000 },
     };
-    expect(phase2SizeSummary(phase2)).toContain("runtime pinned by `BLITSEN_RUNTIME_PATH`");
+    expect(runtimeSizeSummary(phase2)).toContain("Bun 1.3.14");
     expect(comparisonSummary({ platform: "linux-x64", frameworks: {
       blitsen: { installedBytes: 10_000_000, compressedBytes: 5_000_000, files: 1 },
       electron: { installedBytes: 100_000_000, compressedBytes: 50_000_000, files: 10 },
@@ -75,9 +74,9 @@ describe("size evidence", () => {
 
   test("CI records Phase 2 on six targets and comparisons on the primary three", async () => {
     const workflow = await readFile(join(import.meta.dir, "../../../.github/workflows/ci.yml"), "utf8");
-    expect(workflow.match(/name: Phase 2 size breakdown/g)?.length).toBe(2);
+    expect(workflow.match(/name: Bun runtime size breakdown/g)?.length).toBe(2);
     expect(workflow).toContain("Measure equivalent bare Electron and Tauri applications");
     expect(workflow).toContain("desktop-size-comparison-${{ matrix.os }}-${{ github.sha }}");
-    expect(workflow).toContain("phase2-size-${{ matrix.target }}-${{ github.sha }}");
+    expect(workflow).toContain("runtime-size-${{ matrix.target }}-${{ github.sha }}");
   });
 });

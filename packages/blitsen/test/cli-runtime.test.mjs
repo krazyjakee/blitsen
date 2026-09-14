@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { main } from "../src/cli.mjs";
 import { buildStandalone, runtimeRecord } from "../src/export.mjs";
-import { describeRuntime, hostTarget, openRuntime, phase2Binary, resolvePhase2Runtime, resolveRuntime, TARGETS }
+import { describeRuntime, hostTarget, openRuntime, interpreterBinary, resolveInterpreter, resolveRuntime, TARGETS }
   from "../src/runtime.mjs";
 import { viteBase, engineBuilt, executableStub, nativeStub, platformPackages, cliVersion, withPlatformPackages, withStubbedExport, captureConsole } from "./cli-support.mjs";
 
@@ -100,7 +100,7 @@ describe("runtime resolution", () => {
         for (const target of ["linux-x64", "darwin-arm64"]) {
           for (const [resolve, binary] of [
             [resolveRuntime, "blitsen.node"],
-            [resolvePhase2Runtime, phase2Binary(target)],
+            [resolveInterpreter, interpreterBinary(target)],
           ]) {
             expect(await resolve({ target, version: cliVersion, env: {}, require })).toEqual({
               path: join(directory, "node_modules/@blitsen", target, binary),
@@ -134,7 +134,7 @@ describe("runtime resolution", () => {
     await withPlatformPackages(
       { "linux-x64": { version: "0.0.9", phase2: true } },
       async ({ require }) => {
-        for (const resolve of [resolveRuntime, resolvePhase2Runtime]) {
+        for (const resolve of [resolveRuntime, resolveInterpreter]) {
           await expect(resolve({
             target: "linux-x64", version: "1.2.3", env: {}, require,
           })).rejects.toThrow("runtime version mismatch: blitsen 1.2.3 requires "
@@ -151,7 +151,7 @@ describe("runtime resolution", () => {
       await mkdir(cached, { recursive: true });
       for (const [resolve, binary] of [
         [resolveRuntime, "blitsen.node"],
-        [resolvePhase2Runtime, phase2Binary(target)],
+        [resolveInterpreter, interpreterBinary(target)],
       ]) {
         const path = join(cached, binary);
         await writeFile(path, "cached runtime");
@@ -169,10 +169,10 @@ describe("runtime resolution", () => {
       async ({ directory, require }) => {
         const cacheDir = join(directory, "cache");
         const cached = join(cacheDir, "runtimes", cliVersion, target);
-        const path = join(cached, phase2Binary(target));
+        const path = join(cached, interpreterBinary(target));
         await mkdir(cached, { recursive: true });
         await writeFile(path, "cached Phase 2 runtime");
-        expect(await resolvePhase2Runtime({
+        expect(await resolveInterpreter({
           target, version: cliVersion, env: {}, require, fetch: true, cacheDir,
         })).toEqual({ path, target, version: cliVersion, package: `@blitsen/${target}`,
           source: "cache" });
@@ -256,7 +256,7 @@ describe("runtime resolution", () => {
       const runtime = join(directory, "blitsen-runtime");
       await writeFile(runtime, executableStub("linux-arm64"));
       const notices = [];
-      expect(await resolvePhase2Runtime({
+      expect(await resolveInterpreter({
         target: "linux-arm64", version: cliVersion, require,
         env: { BLITSEN_RUNTIME_PATH: runtime },
         onNotice: notice => notices.push(notice),
@@ -265,12 +265,12 @@ describe("runtime resolution", () => {
       expect(notices).toEqual([`blitsen: BLITSEN_RUNTIME_PATH overrides package/cache `
         + `resolution for linux-arm64 with an unversioned binary: ${runtime}`]);
 
-      await expect(resolvePhase2Runtime({
+      await expect(resolveInterpreter({
         target: "win32-x64", version: cliVersion, require,
         env: { BLITSEN_RUNTIME_PATH: runtime }, onNotice: () => {},
-      })).rejects.toThrow("the linked Phase 2 runtime is built for linux-arm64 (ELF), "
+      })).rejects.toThrow("the linked Bun interpreter is built for linux-arm64 (ELF), "
         + "but runtime resolution requested win32-x64");
-      await expect(resolvePhase2Runtime({
+      await expect(resolveInterpreter({
         target: "win32-x64", version: cliVersion, require,
         env: { BLITSEN_RUNTIME_PATH: runtime }, onNotice: () => {},
       })).rejects.toThrow("Unset BLITSEN_RUNTIME_PATH, or point it at a win32-x64 binary");

@@ -23,6 +23,7 @@ use crate::engine::{check, raw};
 use crate::{NodeApiEngine, NodeStrongRef, NodeWeakRef, napi_error};
 
 thread_local! {
+    static TEST_SESSION: RefCell<Option<blitsen_host::testing::TestSession<NodeApiEngine>>> = const { RefCell::new(None) };
     static RETAINED_SMOKE_CALLBACK: RefCell<Option<NodeStrongRef>> = const { RefCell::new(None) };
 }
 
@@ -115,12 +116,14 @@ pub fn run_document_scripts_harness(
     entrypoint: String,
     width: Option<u32>,
     height: Option<u32>,
+    storage_identity: Option<String>,
 ) -> napi::Result<String> {
     let snapshot = harness::execute_document_harness(
         engine(env),
         Path::new(&entrypoint),
         width.unwrap_or(800),
         height.unwrap_or(600),
+        storage_identity.as_deref(),
     )
     .map_err(napi_error)?;
     json(&snapshot)
@@ -673,4 +676,64 @@ mod tests {
         );
         assert_ne!(string_failure.reason, module_failure.reason);
     }
+}
+
+/// Opens the explicit headless application test session. Bun owns its event loop.
+#[napi]
+pub fn start_application_test(
+    env: Env,
+    entrypoint: String,
+    identity: Option<String>,
+    width: u32,
+    height: u32,
+) -> napi::Result<String> {
+    TEST_SESSION.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        if slot.is_some() { return Err(failure("an application test session is already open")); }
+        let files = blitsen_host::app::AppFiles::directory(entrypoint).map_err(napi_error)?;
+        let storage = blitsen_host::storage::LocalStorage::for_application(&identity.unwrap_or_else(|| files.storage_identity())).map_err(failure)?;
+        let session = blitsen_host::testing::TestSession::new(&mut engine(env), &files, &storage, width, height).map_err(napi_error)?;
+        let ready = json(&serde_json::json!({"ready":true,"width":session.width,"height":session.height,"devicePixelRatio":1}))?;
+        *slot = Some(session);
+        Ok(ready)
+    })
+}
+
+/// Executes one synchronous test command and returns control to Bun.
+#[napi]
+pub fn application_test_command(env: Env, request: String) -> napi::Result<String> {
+    let request = serde_json::from_str(&request).map_err(failure)?;
+    TEST_SESSION.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        let session = slot
+            .as_mut()
+            .ok_or_else(|| failure("no application test session is open"))?;
+        json(
+            &session
+                .command(&mut engine(env), &request)
+                .map_err(napi_error)?,
+        )
+    })
+}
+
+/// Delivers native completions and an animation frame between Bun loop turns.
+#[napi]
+pub fn tick_application_test(env: Env) -> napi::Result<()> {
+    TEST_SESSION.with(|slot| {
+        if let Some(session) = slot.borrow().as_ref() {
+            session.turn(&mut engine(env)).map_err(napi_error)?;
+        }
+        Ok(())
+    })
+}
+
+/// Releases the document before the launcher closes its command pipe.
+#[napi]
+pub fn close_application_test(env: Env) -> napi::Result<()> {
+    TEST_SESSION.with(|slot| {
+        if let Some(session) = slot.borrow_mut().take() {
+            session.close(&mut engine(env)).map_err(napi_error)?;
+        }
+        Ok(())
+    })
 }

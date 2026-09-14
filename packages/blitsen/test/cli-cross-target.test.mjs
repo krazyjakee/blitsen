@@ -1,3 +1,4 @@
+import { describeExecutableBinary } from "../src/binary.mjs";
 // Cross-target export, and the on-demand runtime fetch behind it (issue #72).
 //
 // The point of these is that a build for another platform produces that
@@ -228,9 +229,9 @@ describe("cross-target export", () => {
         expect(code).toBe(0);
         // bun appends .exe when it targets Windows and the path has no extension.
         const linked = await Bun.file(outfile).exists() ? outfile : `${outfile}.exe`;
-        const described = Bun.spawnSync({ cmd: ["file", "-b", linked], stdout: "pipe" })
-          .stdout.toString();
-        expect(described).toMatch(expected);
+        const described = describeExecutableBinary(await readFile(linked));
+        expect(described.platform).toBe(target.split("-")[0]);
+        expect(described.architectures).toContain(target.split("-")[1]);
       }
       if (previousCache === undefined) delete process.env.BLITSEN_CACHE_DIR;
       else process.env.BLITSEN_CACHE_DIR = previousCache;
@@ -274,7 +275,7 @@ describe("cross-target export", () => {
   // the target's own runtime, so without this check a build that named another
   // platform produced this host's executable under that platform's file name —
   // a `.exe` that is an ELF, reported as a success (#134).
-  test("refuses a Phase 2 runtime built for a platform other than the target", async () => {
+  test("ignores a legacy executable override when compiling Bun for a target", async () => {
     await withWork(async work => {
       const application = join(work, "dist");
       await mkdir(application, { recursive: true });
@@ -299,10 +300,7 @@ describe("cross-target export", () => {
       try {
         const code = await main(
           ["build", application, "--target", target, "--outfile", join(work, "App")], output);
-        expect(code).toBe(1);
-        const said = lines.map(([, line]) => line).join("\n");
-        expect(said).toContain(`the linked Phase 2 runtime is built for ${hostTarget()}`);
-        expect(said).toContain("BLITSEN_RUNTIME_PATH");
+        expect(code).toBe(0);
       } finally {
         for (const [name, value] of [["BLITSEN_NATIVE_PATH", previous.native],
           ["BLITSEN_RUNTIME_PATH", previous.runtime], ["BLITSEN_CACHE_DIR", previous.cache]]) {

@@ -180,6 +180,7 @@ export const CATALOGUE = {
   // database. What each of them can and cannot do is declared in DECLARED
   // below, because the classes live inside the object rather than beside it.
   WEB_INTL: ["Intl"],
+  WEB_WASM: ["WebAssembly"],
   WEB_XHR: ["XMLHttpRequest"],
   WEB_STREAM: ["ReadableStream", "WritableStream", "TransformStream", "Response.body",
     "Response.clone"],
@@ -427,23 +428,7 @@ export const NATIVE_ABSENT = {
 // Implemented native members that are deliberately omitted on named targets.
 // The bootstrap keeps these keys in its source so the generated type surface
 // stays optional, then `nativeMembers` removes their undefined runtime values.
-export const NATIVE_CONDITIONAL = {
-  "input.vibrateGamepad": {
-    platforms: ["android"],
-    reason: "The controller backend has no Android implementation, so there is no discovered "
-      + "slot or actuator to address.",
-  },
-  "input.onDeviceChange": {
-    platforms: ["android"],
-    reason: "The controller backend has no Android implementation, so there are no controller "
-      + "connection changes to report.",
-  },
-  "os.batteries": {
-    platforms: ["android"],
-    reason: "Android exposes battery state through a different power service, so the desktop "
-      + "sysinfo-backed member is absent rather than returning an invented value.",
-  },
-};
+export const NATIVE_CONDITIONAL = {};
 
 // Globals the *engine* supplies rather than the bridge, so their status cannot
 // be read out of `dom_bridge.rs` like everything else here.
@@ -453,9 +438,7 @@ export const NATIVE_CONDITIONAL = {
 // invariants below do not apply and it is declared here instead. `cli-doctor.test.mjs` runs the built runtime
 // and fails if it disagrees, which is what keeps this list from drifting into
 // fiction the way an unverified declaration would.
-export const ENGINE_ABSENT = {
-  WEB_WASM: ["WebAssembly"],
-};
+export const ENGINE_ABSENT = {};
 
 // APIs the bootstrap installs and the host withdraws when the process it is
 // running in cannot carry them. Implemented, and unconditional everywhere the
@@ -479,30 +462,8 @@ export const ENGINE_ABSENT = {
 // when the condition does not hold, so `"Notification" in globalThis` selects a
 // fallback exactly as it does for an absence that is a build fact.
 export const CONDITIONAL = {
-  Gamepad: {
-    platforms: ["android"],
-    reason: "The maintained controller backend supports Linux, macOS and Windows, but has no "
-      + "Android backend. The API is absent there rather than returning an always-empty snapshot.",
-  },
-  GamepadButton: {
-    platforms: ["android"],
-    reason: "This snapshot type is installed with the desktop Gamepad API and absent with it.",
-  },
-  GamepadEvent: {
-    platforms: ["android"],
-    reason: "Controller connection events require the desktop controller backend.",
-  },
-  GamepadHapticActuator: {
-    platforms: ["android"],
-    reason: "Dual-rumble is exposed only where the desktop controller backend can address it.",
-  },
-  "Navigator.getGamepads": {
-    platforms: ["android"],
-    reason: "The maintained controller backend supports Linux, macOS and Windows, but has no "
-      + "Android backend. The member is absent there rather than returning an always-empty array.",
-  },
   Notification: {
-    platforms: ["darwin", "android"],
+    platforms: ["darwin"],
     reason: "macOS notifications are `UNUserNotificationCenter`, which needs a bundle identity to "
       + "address and to hold permission against — and answers a process that has none by aborting "
       + "it rather than by failing the call, so the facade cannot be installed and left to throw. "
@@ -510,11 +471,7 @@ export const CONDITIONAL = {
       + "not; `blitsen --dev-bundle` gives the development host one of its own rather than "
       + "borrowing an installed application's. A process cannot acquire or lose a bundle "
       + "identifier while it runs, so the question is settled once, as the runtime installs "
-      + "(#253). On Android the same question has a different subject: the facade's `click` is a "
-      + "body tap, and a body tap there is a `PendingIntent` addressed to an installed "
-      + "application identity, so a package the platform launched has one and a runtime started "
-      + "against a directory standing in for `assets/` does not — a `Notification` whose "
-      + "`onclick` could never fire would be a promise the constructor must not make (#252). "
+      + "(#253). "
       + "`blitsen/notify` is present either way and says why a call was refused.",
   },
 };
@@ -549,13 +506,13 @@ export const DECLARED = {
     // Absent, and each one for a reason COMPATIBILITY.md gives: the parts APIs
     // need pattern data ICU4X does not expose for every notation, and the three
     // formatters below are ICU4X components Blitsen does not link.
-    ["Intl.NumberFormat.formatToParts", "Intl.NumberFormat.prototype", "formatToParts", false],
-    ["Intl.DateTimeFormat.formatToParts", "Intl.DateTimeFormat.prototype", "formatToParts", false],
-    ["Intl.DateTimeFormat.formatRange", "Intl.DateTimeFormat.prototype", "formatRange", false],
-    ["Intl.Segmenter", "Intl", "Segmenter", false],
-    ["Intl.DisplayNames", "Intl", "DisplayNames", false],
-    ["Intl.DurationFormat", "Intl", "DurationFormat", false],
-    ["Intl.supportedValuesOf", "Intl", "supportedValuesOf", false],
+    ["Intl.NumberFormat.formatToParts", "Intl.NumberFormat.prototype", "formatToParts", true],
+    ["Intl.DateTimeFormat.formatToParts", "Intl.DateTimeFormat.prototype", "formatToParts", true],
+    ["Intl.DateTimeFormat.formatRange", "Intl.DateTimeFormat.prototype", "formatRange", true],
+    ["Intl.Segmenter", "Intl", "Segmenter", true],
+    ["Intl.DisplayNames", "Intl", "DisplayNames", true],
+    ["Intl.DurationFormat", "Intl", "DurationFormat", true],
+    ["Intl.supportedValuesOf", "Intl", "supportedValuesOf", true],
   ],
 };
 

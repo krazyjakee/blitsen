@@ -197,7 +197,7 @@ pub(crate) fn execute_window_scripts_from<E: JsEngine + 'static>(
               const reloadRoot = __BLITSEN_RELOAD_ROOT__;
               globalThis.__blitsenModuleReset?.(reloadRoot);
               const builtin = globalThis.process?.getBuiltinModule;
-              if (!builtin) return;
+              if (!builtin || reloadRoot.startsWith("blitsen:")) return;
               const reloadRequire = builtin.call(globalThis.process, "module")
                 .createRequire(reloadRoot + "/index.html");
               for (const cached of Object.keys(reloadRequire.cache ?? {})) {
@@ -498,6 +498,7 @@ pub fn execute_document_harness<E: JsEngine + Clone + 'static>(
     entrypoint: &Path,
     width: u32,
     height: u32,
+    storage_identity: Option<&str>,
 ) -> Result<HarnessSnapshot, JsError> {
     // Standalone checks expose window/dialog absence. Other harness callers
     // retain the application capability surface. Neither publishes injectors.
@@ -511,6 +512,7 @@ pub fn execute_document_harness<E: JsEngine + Clone + 'static>(
         } else {
             DocumentMode::Application
         },
+        storage_identity,
     )?;
     ACTIVE_DOCUMENT_HARNESS.with(|active| {
         *active.borrow_mut() = Some((Rc::clone(&document), width, height));
@@ -541,17 +543,24 @@ pub(crate) fn load_document_harness_with_hooks<E: JsEngine + Clone + 'static>(
     width: u32,
     height: u32,
     mode: DocumentMode,
+    storage_identity: Option<&str>,
 ) -> Result<LoadedHarness<E>, JsError> {
-    let files = crate::app::AppFiles::directory(entrypoint)?;
+    let text = entrypoint.to_string_lossy();
+    let files = if text.starts_with("http://") || text.starts_with("https://") {
+        crate::app::AppFiles::server(&text)?
+    } else {
+        crate::app::AppFiles::directory(entrypoint)?
+    };
     let net_provider = files
         .net_provider()
         .unwrap_or_else(|| Arc::new(LocalResources) as Arc<dyn NetProvider>);
-    let loaded = crate::app::load_window_document(
-        &mut engine,
-        &files,
-        net_provider,
-        crate::app::LoadOptions::new(width, height, mode),
-    )?;
+    let mut options = crate::app::LoadOptions::new(width, height, mode);
+    if let Some(identity) = storage_identity {
+        let storage = crate::storage::LocalStorage::for_application(identity)
+            .map_err(|error| JsError::new(error.to_string()))?;
+        options = options.with_storage(storage);
+    }
+    let loaded = crate::app::load_window_document(&mut engine, &files, net_provider, options)?;
     engine.evaluate_script(
         "globalThis.__blitsenDispatchLifecycleEvent('load')",
         "blitsen:load",
@@ -576,6 +585,7 @@ pub fn execute_document_animation_harness<E: JsEngine + Clone + 'static>(
         width,
         height,
         DocumentMode::TestHarness,
+        None,
     )?;
     engine.evaluate_script(setup_script, "document-animation-setup.js")?;
 

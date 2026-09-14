@@ -53,7 +53,7 @@ append_rustflag() {
 append_rustflag "--remap-path-prefix=${source_root}=/src/blitsen"
 append_rustflag "--remap-path-prefix=${target_root}=/build/blitsen"
 
-# QuickJS-ng and a few platform dependencies compile C/C++ through the `cc`
+# Some native dependencies compile C/C++ through the `cc`
 # crate. rustc's remap does not reach their __FILE__ strings, so give the pinned
 # native compiler the equivalent mapping as well.
 case "$target" in
@@ -101,4 +101,6 @@ esac
 export SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH:-$(git show -s --format=%ct HEAD)}
 export CARGO_ENCODED_RUSTFLAGS=$encoded_rustflags
 
-cargo build --locked --release -p blitsen-node -p blitsen-runtime
+cargo build --locked --release -p blitsen-node
+
+bun scripts/build-bun-runtime.mjs

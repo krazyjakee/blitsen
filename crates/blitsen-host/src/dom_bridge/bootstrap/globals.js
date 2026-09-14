@@ -80,7 +80,7 @@
     postMessage: windowPostMessage,
     CSS, DOMParser,
     scrollTo, scrollBy, scroll: scrollTo,
-    Headers, Request, Response, Blob, AbortController, AbortSignal, fetch, stop, WebSocket,
+    Headers, Request, Response, Blob, File, FormData, AbortController, AbortSignal, fetch, stop, WebSocket,
     EventSource, Notification,
     AudioContext, AudioNode, AudioParam, AudioBuffer, AudioBufferSourceNode, AudioDestinationNode,
     GainNode, StereoPannerNode, Audio, HTMLAudioElement,
@@ -121,10 +121,17 @@
       drawnCanvases.clear();
       canvasPaintPending = false;
       pendingImages.clear();
+      disposed = true;
+      hostCompletions.length = 0;
+      documentFetchController.abort();
+      for (const { reject } of inflightFetches.values()) {
+        reject(new DOMException("Document closed", "AbortError"));
+      }
       inflightFetches.clear();
+      for (const socket of liveSockets) socket.close();
+      for (const worker of [...liveWorkers]) worker.terminate();
       liveSockets.clear();
       liveEventSources.clear();
-      livePorts.clear();
       liveWorkers.clear();
       dialogChannel.clear();
       shellChannel.clear();
@@ -143,13 +150,10 @@
       secondInstanceHandler = null;
       notifyChannel.clear();
       notifyListeners.clear();
-      __blitsenFetchDispose();
-      __blitsenSocketDispose();
       __blitsenEventSourceDispose();
       // Ends the worker threads this document started. A reload that left them
       // running would leave the new document's messages arriving at the old
       // document's workers.
-      __blitsenMessagingDispose();
       __blitsenAudioDispose();
       historyEntries = [{ url: documentUrl, state: null }];
       historyIndex = 0;
@@ -215,10 +219,6 @@
   };
   if (testHarness) globals.__blitsenInjectPointerAt = injectPointerAt;
   Object.assign(globalThis, globals);
-  if (!gamepadInstalled) try { delete globalThis.Gamepad; } catch {}
-  if (!gamepadInstalled) try { delete globalThis.GamepadButton; } catch {}
-  if (!gamepadInstalled) try { delete globalThis.GamepadEvent; } catch {}
-  if (!gamepadInstalled) try { delete globalThis.GamepadHapticActuator; } catch {}
   globalThis.window = globalThis;
   // `self` is the global under the name code shares with a worker, which is why
   // library configuration is written through it — `self.MonacoEnvironment` is
@@ -236,7 +236,7 @@
   // `Intl` is a language global rather than a document one, so its three
   // prototype methods are installed over the engine's locale-blind versions at
   // the same moment the object itself appears.
-  installIntlPrototypes();
+
 
   // Absent, not stubbed: an unimplemented API must not exist, so feature
   // detection selects a fallback. The Phase 1 host supplies several of these
@@ -245,17 +245,17 @@
   // refuses to generate a manifest that describes any other API as absent.
   for (const key of ["requestIdleCallback", "cancelIdleCallback", "indexedDB",
     "SharedWorker", "ServiceWorker", "ServiceWorkerContainer",
-    "BroadcastChannel",
+
     "XMLHttpRequest",
-    "ReadableStream", "WritableStream", "TransformStream",
-    "FormData", "File", "FileReader",
+
+      "FileReader",
     "OffscreenCanvas", "ImageBitmap", "createImageBitmap", "OffscreenCanvasRenderingContext2D",
     "WebGLRenderingContext", "WebGL2RenderingContext", "GPUCanvasContext", "RTCPeerConnection",
     "webkitAudioContext", "HTMLMediaElement",
     "alert", "confirm", "prompt", "print",
     "open", "close", "navigation",
     "cookieStore", "screen", "caches",
-    "IntersectionObserver", "PerformanceObserver",
+    "IntersectionObserver",
     "CSSStyleRule", "CSSKeyframesRule", "CSSKeyframeRule", "CSSMediaRule",
     // Custom elements stay absent by decision rather than by omission. Upgrading
     // an element after it is parsed, running the lifecycle callbacks and

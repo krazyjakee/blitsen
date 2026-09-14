@@ -12,6 +12,14 @@ describe("directory CLI", () => {
     expect(lines[0][1]).toContain("Usage: blitsen [directory|url]");
   });
 
+  test.skipIf(process.platform === "darwin" || Boolean(process.env.BLITSEN_DEV_BUNDLE))(
+    "dispatches development bundles to the platform check", async () => {
+      const { lines, output } = captureConsole();
+      expect(await main(["dist", "--dev-bundle"], output)).toBe(1);
+      expect(lines.map(([, message]) => message).join("\n"))
+        .toContain("--dev-bundle is a macOS option");
+    });
+
   test("documents every public option and the run-only development bundle flags", async () => {
     const reference = await readFile(join(import.meta.dir, "../../../docs/CLI.md"), "utf8");
     const publicOptions = new Set(HELP.match(/--[a-z][a-z-]*/g));

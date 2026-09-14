@@ -8,7 +8,7 @@ import { promisify } from "node:util";
 
 import { buildPayload, buildTrailer, linkBundle, readBundle, FORMAT_VERSION } from "../src/bundle.mjs";
 import { injectMachOPayload, machOPayloadOffset } from "../src/macho.mjs";
-import { buildStandalone } from "../src/export.mjs";
+import { buildStandalone, launcherSource } from "../src/export.mjs";
 import { compileAddon, compiler, executableStub, exportedName, nativeStub, withStubbedExport, withTemporaryDirectory }
   from "./cli-support.mjs";
 import { machoFixture } from "./fixtures/macho.mjs";
@@ -59,7 +59,7 @@ function expectAdHocSignature(executable, command) {
 // Issue #88: the format has two implementations — this package writes it, and
 // the shipped runtime reads it. Nothing keeps them honest except a test that
 // exercises both against the same bytes, so that is what these are.
-describe("Phase 2 link step", () => {
+describe("Bun exports and legacy bundle format", () => {
   const application = new Map([
     ["index.html", Buffer.from("<!doctype html><body><main id=x>waiting</main>")],
     ["assets/app.js", Buffer.from("document.querySelector('#x').textContent = 'linked'")],
@@ -236,7 +236,7 @@ describe("Phase 2 link step", () => {
     return root;
   }
 
-  test("links the small host for an application any engine can run", async () => {
+  test("links Bun for an application any engine can run", async () => {
     await withStubbedExport(async ({ directory, outfile, nativePath }) => {
       const trayIcon = Buffer.from(
         "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgQIAffRr7QAAAABJRU5ErkJggg==",
@@ -271,24 +271,16 @@ describe("Phase 2 link step", () => {
       const built = await buildStandalone(
         { root, width: 800, height: 600, title: "Classic", outfile, window, tray, menu },
         nativePath);
-      expect(built.host).toBe("blitsen");
-      // Linked by appending to the runtime, so the artifact carries the bundle.
-      const bundle = readBundle(await readFile(built.outfile));
-      expect(bundle).not.toBeNull();
-      expect(bundle.files.get("blitsen.tray.png")).toEqual(trayIcon);
-      expect(bundle.files.get("blitsen.tray-menu.0.png")).toEqual(trayIcon);
-      expect(bundle.files.get("blitsen.tray-menu.1.png")).toEqual(trayIcon);
-      const runtime = JSON.parse(bundle.files.get("blitsen.runtime.json").toString("utf8"));
-      expect(runtime.window).toEqual(window);
-      expect(runtime.tray).toEqual({
-        ...tray,
-        icon: "blitsen.tray.png",
-        menuIcons: ["blitsen.tray-menu.0.png", "blitsen.tray-menu.1.png"],
+      expect(built.host).toBe("bun");
+      expect(built.manifest.map(asset => asset.path)).toEqual(expect.arrayContaining([
+        "blitsen.tray.png", "blitsen.tray-menu.0.png", "blitsen.tray-menu.1.png",
+      ]));
+      const source = launcherSource(built.manifest, {
+        width: 800, height: 600, title: "Classic", window, tray, menu,
+        runtime: { path: nativePath }, layout: "embedded",
       });
-      expect(runtime.menu).toEqual(menu);
-      // No `--bundle-id`, so nothing registered an identity for this artifact
-      // and there is none for a notification activation to be addressed to.
-      expect(runtime.activation).toBeNull();
+      expect(source).toContain(JSON.stringify(window));
+      expect(source).toContain(JSON.stringify(menu));
       const side = await buildStandalone({
         root, width: 800, height: 600, title: "Classic", outfile: join(directory, "Side"),
         window, tray, assets: "side-loaded",
@@ -305,9 +297,7 @@ describe("Phase 2 link step", () => {
         root, width: 800, height: 600, title: "Classic", outfile: join(directory, "Identified"),
         bundleId: "com.example.classic", platform: "linux",
       }, nativePath);
-      const record = readBundle(await readFile(identified.outfile));
-      expect(JSON.parse(record.files.get("blitsen.runtime.json").toString("utf8")).activation)
-        .toEqual({ identity: "com.example.classic", entry: "com.example.classic" });
+      expect((await readFile(identified.outfile)).includes(Buffer.from("com.example.classic"))).toBeTrue();
     });
   }, 120_000);
 
@@ -327,7 +317,7 @@ describe("Phase 2 link step", () => {
       expect(await readFile(shipped)).toEqual(await readFile(core));
       if (process.platform !== "win32") expect((await stat(shipped)).mode & 0o111).toBeGreaterThan(0);
       // The sidecar is not part of the application bundle: it runs as its own process.
-      expect(readBundle(await readFile(built.outfile)).files.has(basename(core))).toBeFalse();
+      expect(built.manifest.some(asset => asset.path === basename(core))).toBeFalse();
 
       await expect(buildStandalone({ ...base, outfile: join(directory, "Again"), sidecars: [core] }, nativePath))
         .rejects.toThrow("output already exists");
@@ -436,12 +426,15 @@ describe("Phase 2 link step", () => {
   test("cleans deterministic staging when linking fails after collection", async () => {
     await withStubbedExport(async ({ directory, outfile, nativePath, runtimePath }) => {
       const root = await staticApp(directory, CLASSIC_APP);
-      await writeFile(runtimePath, "not an executable\n");
+      const originalBuild = Bun.build;
       const events = [];
-      await expect(buildStandalone({
-        root, width: 800, height: 600, title: "Broken", outfile,
-        progress: event => events.push(event),
-      }, nativePath)).rejects.toThrow("BLITSEN_RUNTIME_PATH does not name a supported executable");
+      Bun.build = async () => ({ success: false, logs: ["injected compilation failure"] });
+      try {
+        await expect(buildStandalone({
+          root, width: 800, height: 600, title: "Broken", outfile,
+          progress: event => events.push(event),
+        }, nativePath)).rejects.toThrow("injected compilation failure");
+      } finally { Bun.build = originalBuild; }
 
       const destination = exportedName(outfile);
       const staging = join(directory, `.${basename(destination)}.blitsen-build`);
@@ -455,13 +448,13 @@ describe("Phase 2 link step", () => {
   // host selection, because the shipped runtime links QuickJS-ng statically with
   // its stock module loader (docs/JSC.md) — on any target, including the
   // cross-target builds nothing here can run.
-  test("links the small host for a module application on the shipping engine", async () => {
+  test("links Bun for a module application on the shipping engine", async () => {
     await withStubbedExport(async ({ directory, outfile, nativePath }) => {
       const root = await staticApp(directory, MODULE_APP, { "app.js": "export const x = 1;\n" });
       const built = await buildStandalone(
         { root, width: 800, height: 600, title: "Module", outfile }, nativePath);
-      expect(built.host).toBe("blitsen");
-      expect(readBundle(await readFile(built.outfile))).not.toBeNull();
+      expect(built.host).toBe("bun");
+      expect(readBundle(await readFile(built.outfile))).toBeNull();
     });
   }, 120_000);
 
@@ -500,7 +493,7 @@ describe("Phase 2 link step", () => {
       try {
         await expect(buildStandalone(
           { root, width: 800, height: 600, title: "Base", outfile, addons: [addon] }, nativePath))
-          .rejects.toThrow("BLITSEN_HOST=blitsen cannot load a carried native addon");
+          .rejects.toThrow("Remove BLITSEN_HOST=blitsen");
       } finally {
         if (previous === undefined) delete process.env.BLITSEN_HOST;
         else process.env.BLITSEN_HOST = previous;

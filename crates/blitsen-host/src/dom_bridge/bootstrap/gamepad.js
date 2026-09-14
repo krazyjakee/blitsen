@@ -106,4 +106,3 @@
   // Android and unrecognised targets compile no controller backend. Keep the
   // member genuinely absent there so feature detection does not mistake an
   // always-empty array for controller support.
-  if (!gamepadInstalled) try { delete Navigator.prototype.getGamepads; } catch {}

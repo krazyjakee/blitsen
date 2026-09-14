@@ -1,5 +1,11 @@
 # Blitsen — Technical Specification
 
+> **Runtime migration:** [BUN-MIGRATION.md](BUN-MIGRATION.md) supersedes the QuickJS/Phase 2 and
+> mobile decisions recorded below. Shipping desktop applications and workers now use Bun;
+> Android and iOS are deferred. Earlier measurements and engine-selection rationale below are
+> historical records, not the current runtime contract.
+
+
 **Status:** Living contributor specification; updated with the code
 **Companion document:** `PRODUCT.md` (what and why; this document is how)
 

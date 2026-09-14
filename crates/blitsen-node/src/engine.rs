@@ -149,10 +149,6 @@ pub struct NodeApiEngine {
 impl NodeApiEngine {
     /// Creates an engine view for the current addon environment.
     pub fn new(env: Env) -> Self {
-        // Every entry point into this addon comes through here, which makes it
-        // the one place a worker launcher can be registered before any document
-        // could construct a `Worker`. Registration is idempotent.
-        blitsen_host::worker::register_launcher(Box::new(crate::workers::Workers));
         Self { env }
     }
 
@@ -599,11 +595,18 @@ impl JsEngine for NodeApiEngine {
     }
 
     fn evaluate_module(&mut self, source: &str, identifier: &str) -> Result<Self::Value, JsError> {
-        // A module is named by its application URL on both hosts (#126), and
-        // this host's module loader is Bun's, which resolves one module's import
-        // of the next against the filesystem. So the URL is turned back into the
-        // path behind it before the loader sees it; an application with no path
-        // behind it — a bundle — never reaches this host, which cannot run one.
+        // Served graphs use the application's HTTP-backed registry; local
+        // graphs use Bun's filesystem loader, including builtins and packages.
+        if blitsen_host::app::application_root().is_none() && identifier.starts_with(APP_ORIGIN) {
+            let inline = identifier.contains('#');
+            let identifier = serde_json::to_string(identifier)
+                .map_err(|error| JsError::new(error.to_string()))?;
+            let source =
+                serde_json::to_string(source).map_err(|error| JsError::new(error.to_string()))?;
+            return self.evaluate_script(&format!(
+                "if ({inline}) globalThis[Symbol.for('blitsen.bun.modules')].inline.set({identifier}, {source}); process.getBuiltinModule('module').createRequire(process.cwd() + '/blitsen-runtime.js')({identifier})"
+            ), "blitsen:served-module");
+        }
         let on_disk = application_path(identifier);
         let path = on_disk.as_deref().unwrap_or_else(|| Path::new(identifier));
         let loader_base = if path.is_absolute() {

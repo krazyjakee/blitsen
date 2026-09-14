@@ -44,7 +44,7 @@ lists individual globals, classes and members.
 | Storage | synchronous durable `localStorage` and realm-scoped `sessionStorage` |
 | Canvas | `<canvas>` with a broad 2D context: paths, text, images, gradients, patterns, compositing, `getImageData` and `toDataURL` |
 | Gamepads | Per-frame `navigator.getGamepads()` snapshots and connection events on Linux, macOS and Windows, with standard mapping and dual-rumble where the device reports it |
-| Notifications | Standard `Notification` construction, permission, close, and lifecycle events on Linux, Windows, eligible packaged macOS apps and launched Android packages; see platform limits below |
+| Notifications | Standard `Notification` construction, permission, close, and lifecycle events on Linux, Windows, eligible packaged macOS apps; see platform limits below |
 
 ## Important absences
 
@@ -54,10 +54,10 @@ lists individual globals, classes and members.
 | Canvas shadows and `ctx.filter` | Absent, so a feature test selects a fallback; both need a blur the renderer has none of |
 | Advanced canvas text controls | `letterSpacing`, `wordSpacing`, `fontKerning`, `fontStretch`, `fontVariantCaps` and `textRendering` are absent |
 | `OffscreenCanvas` and `ImageBitmap` | Absent; a `<canvas>` that is never in the document draws, reads back and encodes |
-| WebAssembly | Absent from the standard shipped JavaScript engine |
+| WebAssembly | Provided by Bun |
 | XHR | Use `fetch` |
 | Streams | Responses are buffered; streaming body APIs are absent |
-| FormData, File and FileReader | Absent; use supported request bodies or native file paths |
+| FileReader | Absent; Bun supplies `File`, `FormData` and streaming bodies |
 | Form reset and constraint validation | `HTMLFormElement.reset()` and `submit()`, reset controls, `validity`, `checkValidity`, `labels` and file inputs are absent; submit with `requestSubmit()` and validate in application code |
 | `DataTransfer.files` and `.items` | Absent; a drop reports absolute filesystem paths in `dataTransfer.paths` |
 | Starting a drag | `draggable`, `dragstart`, `dragend` and dragging out to the desktop are absent; dropping *into* the window works |
@@ -143,11 +143,9 @@ resolution, or refresh-rate selector, so choosing an exclusive mode would be arb
 reconfigure the display. Use the native window API for application-controlled window state, but it
 also intentionally exposes borderless rather than exclusive fullscreen.
 
-Linux and Android reject pointer-lock requests with `NotSupportedError` and dispatch
+Linux rejects pointer-lock requests with `NotSupportedError` and dispatch
 `pointerlockerror`; the method's presence is therefore not a platform-support test. Pinned winit
-cannot provide `Locked` cursor grab on X11, and Android has no desktop cursor to lock. Android's
-activity surface already uses platform-managed fullscreen/immersive policy, so
-`document.fullscreenEnabled` is false there and requests reject with `NotSupportedError`. Physical
+cannot provide `Locked` cursor grab on X11. Physical
 multi-monitor placement and compositor-specific grab behavior still need acceptance on the
 supported backends; a refused cursor grab rejects rather than pretending the lock succeeded. DOM
 modes temporarily override `blitsen/window` fullscreen,
@@ -174,9 +172,7 @@ support; otherwise it is `null`. `playEffect()` supports only `"dual-rumble"`, w
 `[0, 1]` and a duration/start delay of at most 60 seconds. Motor availability and strength remain
 device and driver properties. Delay and duration are quantized by the backend's 50 ms force-
 feedback clock; the returned promise settles from its completion event, and a replacement settles
-the preceding effect as `"preempted"`. Android has no backend in the maintained controller library, so the
-Gamepad globals and `Navigator.getGamepads` are absent there—feature-detect the member rather than
-interpreting an empty array as platform support.
+the preceding effect as `"preempted"`.
 
 ## Notifications
 
@@ -187,9 +183,7 @@ vibration, renotify, silent delivery, and per-action icons throw `NotSupportedEr
 being silently accepted.
 
 The global exists on Linux, on Windows, in macOS application bundles with the identity required by
-`UNUserNotificationCenter`, and in an Android package the platform launched—there a body tap is a
-`PendingIntent` addressed to an installed application identity, so a package has one and a runtime
-started against a directory standing in for `assets/` does not. It is absent in an unbundled macOS
+`UNUserNotificationCenter`. It is absent in an unbundled macOS
 development host. Windows reports the notifier's own setting, so
 `Notification.permission` is `"granted"` or `"denied"` there and `requestPermission()` reads rather
 than prompts. Test
@@ -203,22 +197,8 @@ object, because the object it would belong to was created by a session that has 
 
 ## Internationalisation
 
-`Intl` is implemented natively over CLDR, so every operation below is the locale's own data rather
-than an approximation of it, and there is no locale list to declare — the whole of CLDR ships.
-
-| Implemented | Absent |
-| --- | --- |
-| `Intl.NumberFormat`: decimal, percent, currency (minor units from the currency), compact notation | `formatToParts` and `formatRange`, on every formatter |
-| `Intl.DateTimeFormat`, including **named IANA `timeZone` values** and their daylight-saving history | `Intl.Segmenter` |
-| `Intl.RelativeTimeFormat`, `Intl.PluralRules`, `Intl.Collator`, `Intl.ListFormat` | `Intl.DisplayNames`, `Intl.DurationFormat`, `Intl.supportedValuesOf` |
-| `toLocaleString`, `toLocaleDateString`, `toLocaleTimeString` and `localeCompare`, over those formatters | — |
-
-Two operations have no fallback an application can write for itself, and are the reason this is
-native rather than documented away: **converting an instant into a named time zone**, which needs
-the zone's history of offsets, and **formatting a currency**, which needs the placement and minor
-units CLDR gives that code in that locale. `os.locale()` reports the tag and zone the session is
-configured for. The details and the deviations are in
-[COMPATIBILITY.md](COMPATIBILITY.md#intl).
+Bun supplies full `Intl`, including range/parts formatting, `Segmenter`, `DisplayNames` and
+`DurationFormat`. Blitsen uses the same implementation in documents and workers.
 
 ## Renderer differences
 

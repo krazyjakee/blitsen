@@ -3,15 +3,16 @@
 > Write an app in HTML, CSS and TypeScript. Ship a native executable. No browser included.
 
 Blitsen runs built HTML, CSS and JavaScript in a native window using
-[Blitz](https://github.com/DioxusLabs/blitz) and an embedded JavaScript engine. It does not ship
-Chromium or use the operating system WebView.
+[Blitz](https://github.com/DioxusLabs/blitz) and Bun/JavaScriptCore. It does not ship
+Chromium or use the operating system WebView. Windows, macOS and Linux use the same Bun runtime,
+including workers. Android and iOS are deferred; see [the runtime migration](docs/BUN-MIGRATION.md).
 
 > **Pre-alpha:** Blitsen implements a deliberate subset of the web platform. Check your built
 > application with `blitsen doctor`, test on every platform you ship, and expect breaking changes.
 
 ## Quick start
 
-Install the Blitsen CLI:
+Install [Bun 1.3.14 or newer](https://bun.sh/docs/installation), then the Blitsen CLI:
 
 ```sh
 npm install -g blitsen
@@ -77,8 +78,7 @@ npm install -D --save-exact blitsen
   same-origin policy or permission prompt.
 - Local application UI, not arbitrary third-party websites.
 
-Desktop runtimes are published for Linux, macOS and Windows on x64 and arm64. Android APK output is
-available from a source checkout and requires the Android/Rust toolchain. See
+Desktop runtimes are published for Linux, macOS and Windows on x64 and arm64. Mobile support is deferred until supported Bun ports exist. See
 [platform support](docs/PLATFORM-SUPPORT.md) before distributing an application.
 
 ## Documentation

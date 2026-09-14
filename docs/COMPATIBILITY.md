@@ -7,7 +7,7 @@ renderer can support consistently enough to make an adoption claim.
 The tier this profile publishes is [PRODUCT.md §7](PRODUCT.md#7-scope-by-tier)'s v1 — the v0
 architecture surface plus `fetch`, `WebSocket`, images, web fonts, audio playback and the
 `blitsen/{app,window,dialog,clipboard}` modules. `window.create` is deliberately absent
-until the decided isolated-context host model is implemented. What is *not* v1 is stated as plainly:
+until the [decided isolated-context host model](TECH.md#multi-window-contexts-isolated-on-one-ui-thread) is implemented. What is *not* v1 is stated as plainly:
 WebGL and
 WebGPU are absent, accessibility is absent, and text controls provide editing, selection and a
 native preedit/commit path, but not the full advanced editing surface or verified input-language
@@ -15,22 +15,12 @@ coverage — see [What v1 is not](#what-v1-is-not).
 
 ## Window renderer by platform
 
-Blitsen uses the GPU Vello renderer on Windows, Linux and Apple Silicon macOS. Intel macOS and
-Android use Vello's CPU rasterizer and present its finished pixel buffer through a software
-window backend. Both are automatic safety defaults. Vello/Metal compute work can wedge the
-display GPU on Intel/Radeon Macs and reset WindowServer
-([#229](https://github.com/krazyjakee/blitsen/issues/229)); on the API 32/33 Android CI AVD,
-lavapipe reports no usable storage buffer and Vello's 256 MiB device request panics before the
-application starts ([#151](https://github.com/krazyjakee/blitsen/issues/151)). Adapter or
-device-loss recovery is too late in both cases, because renderer construction is what fails.
-
-The selected renderer and reason are written to stderr when a window opens. The CPU fallback
-needs no app configuration and has no GPU override on Intel macOS. Android keeps an explicit
-qualification-only build path: building `blitsen-android` with `--features android-vello-gpu`
-selects Vello/wgpu. That path is for measuring named physical
-Mali and Adreno devices, not an end-user switch or a supported fallback. CPU rendering may use
-more CPU than the GPU path and can be substantially slower at high pixel densities, during
-resize, and on pages that repaint frequently.
+Blitsen uses GPU Vello rendering on Windows, Linux and Apple Silicon macOS. Intel macOS
+uses Vello's CPU rasterizer with a software window backend because Metal compute work can
+reset WindowServer on affected Intel/Radeon Macs ([#229](https://github.com/krazyjakee/blitsen/issues/229)).
+The renderer and reason are logged when a window opens. CPU rendering can use more CPU and
+be slower at high pixel densities, during resize and on frequently repainting pages.
+Android and iOS are deferred; see [Bun migration](BUN-MIGRATION.md).
 
 Run the check against build output, not source:
 
@@ -62,7 +52,7 @@ JavaScript comes from the [generated manifest](#capability-tiers) below.
 | Scrolling | `window.scrollTo`/`scrollBy`/`scroll`, `scrollX`/`scrollY`/`pageXOffset`/`pageYOffset`, `element.scrollTop`/`scrollLeft`, `scrollIntoView` |
 | Parsing | `innerHTML`, `outerHTML`, `insertAdjacentHTML`, `insertAdjacentElement`, and `DOMParser` for `text/html` into a fragment |
 | Scheduling | `requestAnimationFrame`, timers and microtasks |
-| Networking | `fetch`, `Headers`, `Request`, `Response`, `Blob`, `AbortController` over `http`/`https`, with buffered bodies |
+| Networking | `fetch`, `Headers`, `Request`, `Response`, `Blob`, `AbortController` over `http`/`https`, with streaming bodies |
 | Audio | Web Audio — a context, gain, stereo panning and buffer sources over decoded files — and `<audio>`/`new Audio()` for whole-file playback |
 | Routing | In-memory `history` and `location`, `popstate` and `hashchange` |
 | CSS | Static block, flex and grid layout; bounded absolute positioning; spacing, borders, backgrounds, colors and system typography |
@@ -224,105 +214,15 @@ the same way the export does.
 
 ## Networking
 
-`fetch`, `Headers`, `Request`, `Response`, `Blob`, `AbortController` and `AbortSignal` are
-Blitsen's own, backed by `reqwest`. They are not the host's: the Phase 1 Bun globals are replaced
-so that the Phase 2 engine swap changes nothing an application can observe.
+Bun supplies HTTP(S), `Headers`, `Request`, `Response`, `Blob`, `File`, `FormData`, abort signals,
+and streaming bodies. The document's `fetch` adapter resolves relative application URLs and queues
+response/error delivery until the next native frame. Body streams continue on Bun's event loop.
+`stop()` and document disposal abort the document's requests, including active response bodies.
+`new Request(...)` follows Bun and requires an absolute URL; use `new URL(path, import.meta.url)`.
 
-**There is no same-origin policy and no CORS, and this is deliberate.** An exported application
-is trusted native software that happens to be written in HTML, not a document downloaded from a
-site, so there is no origin to protect it from and no server to ask for permission. A request
-goes where the application sends it. `mode`, `credentials`, `integrity` and `referrerPolicy`
-describe a policy Blitsen does not have; they are not exposed on `Request` and passing them to
-`fetch` changes nothing.
-
-Requests run on a worker pool, never on the thread that owns the DOM. **Results land at one
-defined point in the frame turn** — the start of the animation-frame stage, before any
-`requestAnimationFrame` callback of that turn — so a response can never arrive in the middle of
-one. The promise reactions themselves run at the microtask checkpoint that ends the turn, which
-means a handler that mutates the DOM is painted by the following frame.
-
-**`fetch` reads the files the application shipped.** A URL that resolves to a file inside the
-application is answered from that file, out of the same source the renderer already reads images
-and fonts from and the module resolver already reads scripts from — the export directory while one
-is being run, and the section appended to the executable once it is exported. It is what makes the
-idiomatic spelling work:
-
-```js
-const response = await fetch(new URL("./sounds/blip.wav", import.meta.url).href);
-const buffer = await context.decodeAudioData(await response.arrayBuffer());
-```
-
-Without it an application could not read a file it shipped **at all**: `fetch` was http(s) only,
-the shipped runtime implements no `node:fs`, and `blitsen/app` answers with directories rather than
-contents. `decodeAudioData` therefore had no reachable source, and neither did a bundled `.json`
-or `.wasm`.
-
-Three consequences worth stating:
-
-- **A path the application does not ship is a 404**, with a readable empty body — the web's own
-  answer, so a caller that checks `response.ok` and falls back keeps working. Catching a typo is
-  `doctor`'s job, and it does it at build time: a literal path at a `fetch` call site is resolved
-  against the output, and reported as an error only when nothing there answers it. Two spellings
-  are read — `fetch("./data.json")` and `fetch(new URL("./data.json", import.meta.url))`, the
-  second resolved against the file it was written in, because that is what `import.meta.url`
-  means. **The rule is literal-only**: a URL assembled from a variable or a template has nothing
-  to resolve, and `doctor`'s silence about one is not a statement that it will arrive.
-- **A URL outside the application is refused**, `file:` included. An application reading its own
-  files is a different thing from one reading the disk; the second is what the `blitsen/*` modules
-  and a native addon are for, and it is deliberately not what a web API does.
-- **Both spellings of the same file agree.** `file:///…/blip.wav` while a directory is being run
-  and `blitsen://app/blip.wav` inside an export name the same bytes, which is the property that
-  keeps the two shapes from diverging.
-
-**Streaming bodies are not implemented, and will not be in v1.** `fetch` buffers a whole
-response. `Response.prototype.body`, `ReadableStream` and `Response.clone` are *absent*, not
-null-valued, so `if (response.body)` selects a buffered fallback correctly. The reason is
-coherence rather than difficulty: WHATWG streams are a large surface Blitsen does not otherwise
-provide, and exposing the host's would reintroduce exactly the Phase 1/Phase 2 divergence this
-API exists to remove. A per-chunk delivery path also has no defined place in the frame turn
-above, which is the contract the rest of the runtime is built on. Revisit when an application
-needs a download progress bar or a long-lived response, not before.
-
-| You wrote | What happens |
-| --- | --- |
-| `fetch("https://api…")` | Runs off-thread; resolves at the next frame turn. |
-| `fetch("./data.json")`, `fetch("/data.json")` | Reads the file the application shipped. See below. |
-| `fetch("/api/data")` | Fails: the export ships no `api/data` and there is no server behind the document address. `doctor` reports it as an error at build time. |
-| `new Request(…)`, `new Headers(…)`, `new Response(…)` | Full subset above, including `AbortSignal`. |
-| `response.text/json/arrayBuffer/blob()` | Supported; a body is readable once. |
-| `response.body`, `response.clone()`, `FormData` bodies | Absent. |
-| `window.stop()` | Aborts the load in progress; see below. |
-
-**`window.stop()` aborts loading, and only loading.** Every outstanding `fetch` rejects with an
-`AbortError` — the rejection its own `AbortSignal` would have produced — and every subresource the
-renderer is still waiting on is cancelled *and settled*, never merely abandoned: a request left
-pending would block painting for the life of the document, which is the opposite of what a caller
-asking to stop loading wants. Timers and animation frames keep running, as they do in a browser;
-they are the application's own work, not the document's load. There is no parser half either — a
-Blitsen document is parsed whole before any of its scripts run. A request made afterwards loads
-normally, because `stop()` ends the load in progress rather than the document's ability to load.
-With nothing in flight it does nothing observable, which is not the same as being a function that
-does nothing: both halves run and find nothing to abort.
-
-### WebSocket
-
-`WebSocket` is Blitsen's own, backed by `tokio-tungstenite`, and is the streaming path this
-runtime does have. The constructor, `url`, `readyState` and its four constants, `protocol`,
-`extensions`, `bufferedAmount`, `binaryType`, `send` and `close` are all present, as are the
-`open`, `message`, `error` and `close` events; a close carries its code, reason and `wasClean`.
-
-Text and binary frames both work. `binaryType` is `"blob"` by default and `"arraybuffer"` when
-asked, and the choice is made once at the boundary rather than by converting afterwards. `send`
-accepts a string, a `Blob`, an `ArrayBuffer` or a typed array, and throws `InvalidStateError`
-before the socket is open — which is the one thing about a socket that is not a queued no-op.
-
-`wss://` uses the platform certificate store, through the same `native-tls` backend `fetch`
-resolves to, so a certificate the desktop trusts is one the socket trusts.
-
-The connection runs off the thread that owns the DOM, and **frames land at the same defined point
-in the frame turn that `fetch` results do**. An open socket keeps the host turning, for the same
-reason an in-flight request does: its landing point is that turn, so a loop that idled would never
-deliver. A non-`ws:`/`wss:` address is refused with a `SyntaxError` at construction.
+`WebSocket` uses Bun's transport and buffering. Blitsen retains only document lifetime and event
+handoff. Set `binaryType` explicitly when the application needs `blob` or `arraybuffer`; Bun's
+default and protocol details follow the pinned Bun version.
 
 ### Server-sent events
 
@@ -345,82 +245,19 @@ addresses are accepted; anything else is a `SyntaxError` at construction.
 
 ## Workers and messaging
 
-A `Worker` is a whole JavaScript engine on a thread of its own, and **nothing is shared with the
-document but messages**. That is not a restriction Blitsen adds: the DOM is not thread-safe and no
-host's values are shareable across threads, which is the same reason the web specifies workers
-this way.
+`Worker` runs Bun on its own thread. Use module workers and file URLs relative to `import.meta.url`.
+The document facade resolves the entrypoint, queues messages for a native frame, and terminates
+workers on document disposal. Worker globals and nested workers are Bun's; there is no DOM in a
+worker and no Blitsen `importScripts` implementation.
 
-**A worker loads its script out of the application**, through the same resolver the document's
-modules go through, so `new Worker(new URL("./work.js", import.meta.url), { type: "module" })`
-names the same file whether the application is a directory being run or a section inside an
-exported executable. `import` works inside a worker and resolves against the worker's own URL. A
-script the application does not ship is refused at the constructor, naming it, rather than
-becoming an `error` event a turn later.
+Bun owns `MessageChannel`, `MessagePort`, `structuredClone`, transfer lists, shared buffers and
+worker scheduling. Port events follow Bun's event loop. Clone support, errors and prototypes follow
+Bun instead of the former serialized Rust protocol. Transfer data buffers rather than DOM wrappers.
+Bun's Worker termination API is experimental; it is not a substitute for process containment.
 
-**What a worker's global scope has:** `self`, `name`, `location`, `navigator`, `postMessage`, `close`,
-`onmessage`/`onmessageerror`, `addEventListener`, `Event`, `EventTarget`, `MessageEvent`,
-`ErrorEvent`, `reportError`, the timers, `queueMicrotask`, `console`, `Intl`,
-`performance`, `fetch` and the request/response classes, `MessageChannel`, `MessagePort`,
-`structuredClone`, `DOMException`, and `Worker` itself — a worker may start a worker.
-
-**What it does not have:** any DOM at all — no `document`, no `window`, no `localStorage`, no
-`requestAnimationFrame` — and no `WebSocket` and no `importScripts`. A classic
-worker (`type: "classic"`, the default) therefore has no way to load a second file; use a module
-worker, which is what every bundler emits anyway.
-
-### Delivery lands in the frame turn
-
-A message from a worker is delivered at the **start of the animation-frame stage**, the same
-point `fetch` completions and socket frames land at, so it can never arrive part-way through a
-callback. The cost is stated plainly: a reply's latency is bounded by the frame, not by the thread
-that sent it — around 16 ms at 60 Hz. A worker that answers a thousand messages a second will be
-paced by the document's frame rate, so batch them. Inside a worker the same messages are delivered
-at the top of its own turn, which is not frame-paced. A live worker keeps the host turning, for
-the same reason an open socket does.
-
-### What survives a message
-
-Structured clone, not JSON. Cycles and shared references are preserved, so an object that refers
-to itself arrives referring to itself, and two `Uint8Array`s over one `ArrayBuffer` arrive as two
-views over one buffer. `Map`, `Set`, `Date`, `RegExp`, `Error` and its subclasses, `BigInt`,
-typed arrays and `DataView`, boxed primitives, array holes and `-0` all cross unchanged.
-
-Refused with a `DataCloneError`, rather than silently flattened: functions, symbols, DOM nodes,
-and anything else whose prototype the other side could not rebuild. **`SharedArrayBuffer` is
-refused too** — the engine defines it, because it is an ECMAScript global, but each worker has a
-heap of its own and there is no shared memory between them. `Atomics` on a buffer that cannot
-cross is not useful, and a copy pretending to be shared memory would be worse than a refusal.
-
-### Transfer moves rather than copies
-
-`postMessage(value, [buffer])` detaches the `ArrayBuffer` here and delivers it whole there;
-reading the buffer afterwards finds it zero-length, as the specification requires. A transfer list
-is emptied by a *successful* send, so a message that could not be serialized leaves the sender
-still holding everything it was about to give away.
-
-A `MessagePort` may be transferred the same way, including to a worker, and **its queued messages
-travel with it**: a message sent just before the port was handed over arrives where the port went.
-A transferred port arrives stopped, so the receiving side's `onmessage` — or `start()` — decides
-when its queue begins moving. Ports named in the transfer list arrive as `event.ports` whether or
-not they also appear in the message body.
-
-### Ending a worker
-
-`terminate()` stops the worker even if it is inside a loop that never yields: the engine's
-interrupt handler sees the same flag the worker's event loop does. Whatever the worker had queued
-for this side is dropped. Reloading a document ends every worker it started.
-
-An exception nothing in a worker caught — including one thrown while its module was evaluating —
-is reported to the `Worker` object as an `error` event carrying the message, as well as to this
-process's stderr. The worker keeps running, as a browser's does.
-
-`window.postMessage(message)` also works, and means the same-window one: the message is serialized
-at the call, delivered as a later task, and `targetOrigin` is accepted and ignored, because there
-is one origin behind an application. The current release still has one document. A future second
-native window will have an [isolated context](TECH.md#multi-window-contexts-isolated-on-one-ui-thread)
-on the same UI thread, and will communicate only through explicitly transferred `MessagePort`
-endpoints — `window.postMessage` will not become a cross-window shortcut. `SharedWorker`,
-`ServiceWorker` and `BroadcastChannel` remain absent; there is no implicit application-wide bus.
+Use `bun:sqlite` transactions in workers for blocking database work and `node:fs/promises` for
+filesystem operations. `blitsen/process` remains the desktop sidecar API; ordinary Bun subprocesses
+do not implement the strong containment and crash-recovery contract in issue #441.
 
 ## Audio
 
@@ -1068,10 +905,6 @@ reason that store is writable on those two events. `paste` arrives with the clip
 HTML already read into a read-only store, and inserts the plain text into the focused editable
 control unless the listener cancels it (`inputType: "insertFromPaste"`).
 
-The events are absent where the platform clipboard is — Android, which has no `arboard` backend
-(see the native module matrix). `ClipboardEvent`, `DragEvent` and `DataTransfer` are still
-constructible there.
-
 **A file dragged in from the desktop** is delivered as `dragenter`, `dragover`, `dragleave` and
 `drop` at the element under the pointer, with the same HTML rule browsers apply: the `drop` is
 dispatched only where the preceding `dragover` was cancelled, because cancelling it is how an
@@ -1218,40 +1051,10 @@ chart that rewrites its paths every frame pays a parse every frame. For per-fram
 
 ## Intl
 
-`Intl` is implemented (issue #237), natively, over CLDR through ICU4X and the platform's own
-time-zone database. It is not the engine's: QuickJS-ng ships no ICU, and the formatters are the
-bridge's, which is why they are in this document rather than in a note about the engine.
-
-| Implemented | Absent |
-| --- | --- |
-| `Intl.NumberFormat` — decimal, percent, currency and compact notation | `formatToParts` and `formatRange`, on every formatter |
-| `Intl.DateTimeFormat` — `dateStyle`/`timeStyle`, the component options, `hour12`/`hourCycle`, and named IANA `timeZone` values | `Intl.Segmenter` |
-| `Intl.RelativeTimeFormat`, `Intl.PluralRules`, `Intl.Collator`, `Intl.ListFormat` | `Intl.DisplayNames`, `Intl.DurationFormat`, `Intl.supportedValuesOf` |
-| `Number.prototype.toLocaleString`, `Date.prototype.toLocale*String`, `String.prototype.localeCompare`, all three over the formatters above | — |
-| `Intl.getCanonicalLocales`, and `supportedLocalesOf` on each formatter | — |
-
-Every CLDR locale is carried; there is no locale list to declare and nothing to configure. That is
-a measured decision rather than a generous one — the whole of the data these formatters use is
-about 3 MB of the export, which is less than a per-application slice of it would be worth in
-build machinery. See [PRODUCT.md](PRODUCT.md) for what it did to the size budget.
-
-Three things are worth knowing before you rely on the details:
-
-- **A currency's fraction digits are the currency's.** `style: "currency"` formats to the minor
-  units CLDR gives the code — two for `USD`, none for `JPY`, three for `KWD` — and
-  `minimumFractionDigits`/`maximumFractionDigits` do not override that. `resolvedOptions()` reports
-  the digits that were actually used, so the disagreement is detectable rather than silent.
-- **`resolvedOptions()` reports what was honoured**, not what was asked for. An option this
-  implementation does not act on is absent from the result rather than echoed back, because an
-  echoed option is indistinguishable from an implemented one.
-- **A time zone that is not in the database is refused**, with the name in the message, rather than
-  silently becoming UTC. `Intl.DateTimeFormat().resolvedOptions().timeZone` and `os.locale()` both
-  report the zone the host is actually in.
-
-Values cross the native boundary as decimal text rather than as doubles, so what is rounded to a
-currency's minor units is the number the application meant. Formatters are shared by their resolved
-options: constructing the same `Intl.NumberFormat` inside a render loop is a lookup after the first
-one.
+The runtime preserves Bun/JavaScriptCore's full `Intl`, including parts/range formatting,
+`Segmenter`, `DisplayNames`, `DurationFormat` and `supportedValuesOf`. Locale data and formatting
+follow the pinned Bun release. `blitsen/os.locale()` reads the same default formatter options.
+Blitsen no longer ships its ICU4X formatter implementation.
 
 ## Storage
 
@@ -1287,7 +1090,7 @@ Everything else `navigator` normally carries is capability rather than identity 
 calling something that cannot work. `screen` and `caches` are absent for the same reason. The
 standard `Notification` global is backed by `blitsen/notify` where the platform can also implement
 its lifecycle and `close()` contract: Linux, Windows and identified macOS application bundles. It
-stays absent on Android and in an unbundled macOS development host rather than exposing a
+stays absent in an unbundled macOS development host rather than exposing a
 constructor with missing lifecycle behavior.
 
 The user-agent string names Blitsen (`Blitsen/<version> (Linux x86_64)`) instead of impersonating a
@@ -1380,9 +1183,8 @@ thing this profile refuses. What the runtime still refuses is a GPU context — 
 ## Capability tiers
 
 **An unimplemented API is absent — the property does not exist — so feature detection works.**
-Never a stub that resolves to nothing, and never a silent no-op. That includes the ones the
-Phase 1 Bun host supplies itself: they are deleted while the runtime installs, because an API
-that works today and vanishes at the Phase 2 engine swap is worse than one that was never there.
+Blitsen's DOM and rendering surface follows the manifest. Bun supplies its own standard
+APIs without the previous QuickJS compatibility restrictions.
 
 The tables below are **generated from the runtime source**. The surface is installed by
 `crates/blitsen-host/src/dom_bridge.rs`, and `packages/blitsen/src/api-manifest.mjs` reads that
@@ -1399,16 +1201,10 @@ Nothing changes for the application — the API is absent when the condition doe
 same feature detection selects the same fallback — but two runs of one build can answer
 differently, which is why it is a table rather than a column.
 
-Blitsen makes no claim either way about the JavaScript host's own utilities — `URL`,
-`URLSearchParams`, `TextEncoder`, `crypto`, `structuredClone`, `performance`, `queueMicrotask`,
-`DOMException`, `console` — so they are not listed; the host below the DOM supplies them, which
-under Phase 1 is Bun and under Phase 2 is `crates/blitsen-host/src/runtime_services/bootstrap.js`.
-Two of them are narrower there than in a browser, because the missing part is a real absence
-rather than a stub: `crypto` has `getRandomValues` and `randomUUID` and no `subtle`, and
-`TextDecoder` decodes the UTF encodings and throws `RangeError` for the legacy single-byte labels.
-`test:hosts` asserts the rest of that surface behaves identically on both hosts. Renderer capability (`CSS_*`, `HTML_*`) is not generated
-either: no JavaScript declaration describes it, and it is evidenced by the S6 spike and the
-determinism gate instead.
+Bun supplies `URL`, `TextEncoder`, `crypto` (including `subtle`), `structuredClone`,
+`performance`, `queueMicrotask`, `DOMException` and `console`. The pinned Bun surface is
+checked alongside Blitsen's own declarations. Renderer capabilities (`CSS_*`, `HTML_*`)
+are evidenced by renderer tests rather than JavaScript declarations.
 
 <!-- generated: api-manifest -->
 
@@ -1427,33 +1223,28 @@ determinism gate instead.
 | WEB_VIEWPORT | `BlitsenViewElement`, `BlitsenViewSurface` | — |
 | WEB_STORAGE | `Storage`, `localStorage`, `sessionStorage` | `indexedDB` |
 | WEB_WORKER | `Worker`, `Worker.postMessage`, `Worker.terminate` | `SharedWorker`, `ServiceWorker`, `ServiceWorkerContainer` |
-| WEB_MESSAGING | `MessageChannel`, `MessagePort`, `structuredClone`, `postMessage`, `MessagePort.postMessage`, `MessagePort.start`, `MessagePort.close` | `BroadcastChannel` |
+| WEB_MESSAGING | `MessageChannel`, `MessagePort`, `structuredClone`, `postMessage`, `MessagePort.postMessage`, `MessagePort.start`, `MessagePort.close`, `BroadcastChannel` | — |
 | WEB_SOCKET | `WebSocket`, `MessageEvent`, `CloseEvent`, `EventSource`, `WebSocket.url`, `WebSocket.readyState`, `WebSocket.protocol`, `WebSocket.extensions`, `WebSocket.bufferedAmount`, `WebSocket.binaryType`, `WebSocket.send`, `WebSocket.close`, `EventSource.url`, `EventSource.readyState`, `EventSource.withCredentials`, `EventSource.close` | — |
-| WEB_INTL | `Intl`, `Intl.NumberFormat`, `Intl.DateTimeFormat`, `Intl.RelativeTimeFormat`, `Intl.PluralRules`, `Intl.Collator`, `Intl.ListFormat`, `Intl.getCanonicalLocales`, `Intl.NumberFormat.format`, `Intl.NumberFormat.resolvedOptions`, `Intl.DateTimeFormat.format`, `Intl.DateTimeFormat.resolvedOptions`, `Intl.Collator.compare`, `Intl.PluralRules.select`, `Intl.ListFormat.format`, `Intl.RelativeTimeFormat.format` | `Intl.NumberFormat.formatToParts`, `Intl.DateTimeFormat.formatToParts`, `Intl.DateTimeFormat.formatRange`, `Intl.Segmenter`, `Intl.DisplayNames`, `Intl.DurationFormat`, `Intl.supportedValuesOf` |
+| WEB_INTL | `Intl`, `Intl.NumberFormat`, `Intl.DateTimeFormat`, `Intl.RelativeTimeFormat`, `Intl.PluralRules`, `Intl.Collator`, `Intl.ListFormat`, `Intl.getCanonicalLocales`, `Intl.NumberFormat.format`, `Intl.NumberFormat.resolvedOptions`, `Intl.DateTimeFormat.format`, `Intl.DateTimeFormat.resolvedOptions`, `Intl.Collator.compare`, `Intl.PluralRules.select`, `Intl.ListFormat.format`, `Intl.RelativeTimeFormat.format`, `Intl.NumberFormat.formatToParts`, `Intl.DateTimeFormat.formatToParts`, `Intl.DateTimeFormat.formatRange`, `Intl.Segmenter`, `Intl.DisplayNames`, `Intl.DurationFormat`, `Intl.supportedValuesOf` | — |
+| WEB_WASM | `WebAssembly` | — |
 | WEB_XHR | — | `XMLHttpRequest` |
-| WEB_STREAM | — | `ReadableStream`, `WritableStream`, `TransformStream`, `Response.body`, `Response.clone` |
-| WEB_FORM | — | `FormData`, `File`, `FileReader` |
+| WEB_STREAM | `ReadableStream`, `WritableStream`, `TransformStream`, `Response.body`, `Response.clone` | — |
+| WEB_FORM | `FormData`, `File` | `FileReader` |
 | WEB_CANVAS | `HTMLCanvasElement`, `CanvasRenderingContext2D`, `ImageData`, `Path2D`, `CanvasGradient`, `CanvasPattern`, `TextMetrics`, `DOMMatrix`, `HTMLCanvasElement.width`, `HTMLCanvasElement.height`, `HTMLCanvasElement.getContext`, `HTMLCanvasElement.toDataURL`, `HTMLCanvasElement.toBlob`, `CanvasRenderingContext2D.canvas`, `CanvasRenderingContext2D.save`, `CanvasRenderingContext2D.restore`, `CanvasRenderingContext2D.reset`, `CanvasRenderingContext2D.scale`, `CanvasRenderingContext2D.rotate`, `CanvasRenderingContext2D.translate`, `CanvasRenderingContext2D.transform`, `CanvasRenderingContext2D.setTransform`, `CanvasRenderingContext2D.resetTransform`, `CanvasRenderingContext2D.getTransform`, `CanvasRenderingContext2D.globalAlpha`, `CanvasRenderingContext2D.globalCompositeOperation`, `CanvasRenderingContext2D.fillStyle`, `CanvasRenderingContext2D.strokeStyle`, `CanvasRenderingContext2D.lineWidth`, `CanvasRenderingContext2D.lineCap`, `CanvasRenderingContext2D.lineJoin`, `CanvasRenderingContext2D.miterLimit`, `CanvasRenderingContext2D.setLineDash`, `CanvasRenderingContext2D.getLineDash`, `CanvasRenderingContext2D.lineDashOffset`, `CanvasRenderingContext2D.font`, `CanvasRenderingContext2D.textAlign`, `CanvasRenderingContext2D.textBaseline`, `CanvasRenderingContext2D.direction`, `CanvasRenderingContext2D.imageSmoothingEnabled`, `CanvasRenderingContext2D.imageSmoothingQuality`, `CanvasRenderingContext2D.beginPath`, `CanvasRenderingContext2D.closePath`, `CanvasRenderingContext2D.moveTo`, `CanvasRenderingContext2D.lineTo`, `CanvasRenderingContext2D.quadraticCurveTo`, `CanvasRenderingContext2D.bezierCurveTo`, `CanvasRenderingContext2D.arc`, `CanvasRenderingContext2D.arcTo`, `CanvasRenderingContext2D.ellipse`, `CanvasRenderingContext2D.rect`, `CanvasRenderingContext2D.roundRect`, `CanvasRenderingContext2D.fill`, `CanvasRenderingContext2D.stroke`, `CanvasRenderingContext2D.clip`, `CanvasRenderingContext2D.isPointInPath`, `CanvasRenderingContext2D.isPointInStroke`, `CanvasRenderingContext2D.fillRect`, `CanvasRenderingContext2D.strokeRect`, `CanvasRenderingContext2D.clearRect`, `CanvasRenderingContext2D.fillText`, `CanvasRenderingContext2D.strokeText`, `CanvasRenderingContext2D.measureText`, `CanvasRenderingContext2D.drawImage`, `CanvasRenderingContext2D.createLinearGradient`, `CanvasRenderingContext2D.createRadialGradient`, `CanvasRenderingContext2D.createConicGradient`, `CanvasRenderingContext2D.createPattern`, `CanvasRenderingContext2D.createImageData`, `CanvasRenderingContext2D.getImageData`, `CanvasRenderingContext2D.putImageData`, `Path2D.moveTo`, `Path2D.lineTo`, `Path2D.bezierCurveTo`, `Path2D.quadraticCurveTo`, `Path2D.arc`, `Path2D.arcTo`, `Path2D.ellipse`, `Path2D.rect`, `Path2D.roundRect`, `Path2D.closePath`, `Path2D.addPath`, `CanvasGradient.addColorStop`, `CanvasPattern.setTransform` | `OffscreenCanvas`, `OffscreenCanvasRenderingContext2D`, `ImageBitmap`, `createImageBitmap`, `HTMLCanvasElement.captureStream`, `HTMLCanvasElement.transferControlToOffscreen`, `CanvasRenderingContext2D.shadowBlur`, `CanvasRenderingContext2D.shadowColor`, `CanvasRenderingContext2D.shadowOffsetX`, `CanvasRenderingContext2D.shadowOffsetY`, `CanvasRenderingContext2D.filter`, `CanvasRenderingContext2D.letterSpacing`, `CanvasRenderingContext2D.wordSpacing`, `CanvasRenderingContext2D.fontKerning`, `CanvasRenderingContext2D.getContextAttributes`, `CanvasRenderingContext2D.drawFocusIfNeeded` |
 | WEB_GPU | — | `WebGLRenderingContext`, `WebGL2RenderingContext`, `GPUCanvasContext`, `RTCPeerConnection` |
 | WEB_MEDIA | `Audio`, `AudioContext`, `AudioNode`, `AudioParam`, `AudioBuffer`, `AudioBufferSourceNode`, `AudioDestinationNode`, `GainNode`, `StereoPannerNode`, `HTMLAudioElement`, `AudioContext.decodeAudioData`, `AudioContext.createGain`, `AudioContext.createStereoPanner`, `AudioContext.createBufferSource`, `AudioContext.destination`, `AudioContext.currentTime`, `AudioContext.sampleRate`, `AudioContext.resume`, `AudioContext.suspend`, `AudioContext.close` | `webkitAudioContext`, `HTMLMediaElement` |
 | WEB_DIALOG | — | `alert`, `confirm`, `prompt`, `print` |
 | WEB_NAVIGATION | `stop` | `open`, `close`, `navigation`, `document.write`, `document.writeln`, `document.open`, `document.close`, `location.assign`, `location.replace`, `location.reload`, `location.ancestorOrigins` |
-| WEB_COOKIE | — | `document.cookie`, `cookieStore`, `Headers.getSetCookie` |
+| WEB_COOKIE | `Headers.getSetCookie` | `document.cookie`, `cookieStore` |
 | WEB_DEVICE | `Navigator`, `navigator`, `navigator.userAgent`, `navigator.platform`, `navigator.language`, `Notification` | `screen`, `caches` |
 | WEB_GAMEPAD | `Gamepad`, `GamepadButton`, `GamepadEvent`, `GamepadHapticActuator`, `Navigator.getGamepads`, `GamepadHapticActuator.playEffect`, `GamepadHapticActuator.reset` | — |
-| WEB_OBSERVER | `ResizeObserver` | `IntersectionObserver`, `PerformanceObserver` |
+| WEB_OBSERVER | `ResizeObserver`, `PerformanceObserver` | `IntersectionObserver` |
 | WEB_STYLE | `getComputedStyle`, `matchMedia`, `MediaQueryList`, `MediaQueryListEvent`, `CSS`, `CSSStyleSheet`, `StyleSheetList`, `CSSRule`, `CSSRuleList`, `HTMLStyleElement`, `document.styleSheets`, `HTMLStyleElement.sheet`, `HTMLLinkElement.sheet`, `CSSStyleSheet.cssRules`, `CSSStyleSheet.insertRule`, `CSSStyleSheet.deleteRule`, `CSSStyleSheet.ownerNode`, `CSSStyleSheet.href`, `CSSStyleSheet.title`, `CSSRule.cssText`, `CSSRule.parentStyleSheet` | `CSSStyleRule`, `CSSKeyframesRule`, `CSSKeyframeRule`, `CSSMediaRule`, `document.adoptedStyleSheets`, `CSSStyleSheet.disabled`, `CSSStyleSheet.replaceSync`, `CSSStyleSheet.replace`, `CSSRule.style`, `CSSRule.selectorText`, `CSSRule.type` |
 | WEB_COMPONENTS | `DOMParser` | `customElements`, `ShadowRoot` |
-| WEB_WASM | — | `WebAssembly` |
 
 | Conditional API | Platform | Installed when |
 | --- | --- | --- |
-| `Notification` | darwin, android | macOS notifications are `UNUserNotificationCenter`, which needs a bundle identity to address and to hold permission against — and answers a process that has none by aborting it rather than by failing the call, so the facade cannot be installed and left to throw. An exported `.app` carries that identity and a development run of the interpreter does not; `blitsen --dev-bundle` gives the development host one of its own rather than borrowing an installed application's. A process cannot acquire or lose a bundle identifier while it runs, so the question is settled once, as the runtime installs (#253). On Android the same question has a different subject: the facade's `click` is a body tap, and a body tap there is a `PendingIntent` addressed to an installed application identity, so a package the platform launched has one and a runtime started against a directory standing in for `assets/` does not — a `Notification` whose `onclick` could never fire would be a promise the constructor must not make (#252). `blitsen/notify` is present either way and says why a call was refused. |
-| `Gamepad` | android | The maintained controller backend supports Linux, macOS and Windows, but has no Android backend. The API is absent there rather than returning an always-empty snapshot. |
-| `GamepadButton` | android | This snapshot type is installed with the desktop Gamepad API and absent with it. |
-| `GamepadEvent` | android | Controller connection events require the desktop controller backend. |
-| `GamepadHapticActuator` | android | Dual-rumble is exposed only where the desktop controller backend can address it. |
-| `Navigator.getGamepads` | android | The maintained controller backend supports Linux, macOS and Windows, but has no Android backend. The member is absent there rather than returning an always-empty array. |
+| `Notification` | darwin | macOS notifications are `UNUserNotificationCenter`, which needs a bundle identity to address and to hold permission against — and answers a process that has none by aborting it rather than by failing the call, so the facade cannot be installed and left to throw. An exported `.app` carries that identity and a development run of the interpreter does not; `blitsen --dev-bundle` gives the development host one of its own rather than borrowing an installed application's. A process cannot acquire or lose a bundle identifier while it runs, so the question is settled once, as the runtime installs (#253). `blitsen/notify` is present either way and says why a call was refused. |
 
 | Diagnostic | Severity | Reported as |
 | --- | --- | --- |
@@ -1466,10 +1257,7 @@ determinism gate instead.
 | `WEB_URL` | warning | Object URLs are not implemented; URL and URLSearchParams are. |
 | `WEB_STORAGE` | warning | IndexedDB is not implemented. |
 | `WEB_WORKER` | warning | Shared and service workers are not implemented; dedicated Worker is. |
-| `WEB_MESSAGING` | warning | BroadcastChannel is not implemented; MessageChannel and Worker are. |
-| `WEB_INTL` | warning | This part of Intl is not implemented; the formatters are. |
 | `WEB_XHR` | warning | XMLHttpRequest is not implemented. |
-| `WEB_STREAM` | warning | Streaming bodies are not implemented; a response is buffered whole. |
 | `WEB_FORM` | warning | Multipart form bodies and file objects are not implemented. |
 | `WEB_CANVAS` | warning | This canvas API is not implemented; the 2D context is. |
 | `WEB_GPU` | warning | WebGL, WebGPU and WebRTC are not implemented. |
@@ -1481,7 +1269,6 @@ determinism gate instead.
 | `WEB_OBSERVER` | warning | This observer is not implemented; only ResizeObserver is. |
 | `WEB_STYLE` | warning | This part of CSSOM is not implemented; a sheet's rules are its source text. |
 | `WEB_COMPONENTS` | warning | Custom elements and shadow DOM are not implemented; DOMParser is. |
-| `WEB_WASM` | warning | WebAssembly is not implemented by the JavaScript engine Blitsen hosts. |
 | `CSS_TRANSITION` | warning | A property named by `transition` keeps its pre-stylesheet value (Blitz bug 689). |
 | `CSS_FIXED` | warning | Fixed and sticky boxes resolve against the root box, not the viewport (Blitz bug 690). |
 | `CSS_EFFECT` | warning | This paint effect is ignored rather than applied. |
@@ -1527,33 +1314,17 @@ if (app.requestSingleInstanceLock && !app.requestSingleInstanceLock("My App", re
 
 The tables are generated from the same runtime source as the tiers above, by the same reader.
 
-### Node compatibility in the shipped runtime
+### Node and Bun APIs in the shipped runtime
 
-Phase 1 ran inside Bun, so `process`, `node:os` and `node:fs` came free with the host. **The Phase 2
-runtime implements none of them, and this is a decision rather than a gap** (issue #87).
+Development runs, workers, tests and desktop exports use Bun. `Bun`, `process`, `node:*` and
+`bun:*` imports are available with Bun's compatibility limits. Prefer those builtins to new
+Blitsen wrappers for files, SQLite, compression, cryptography and subprocesses. Native windows,
+rendering, input, menus and desktop integration remain Blitsen's responsibility.
 
-Blitsen hosts its own JavaScript engine and supplies only what the DOM and the application actually
-rely on: timers, a microtask checkpoint, `performance`, `console`, `reportError`, `DOMException`,
-`crypto`, `TextEncoder`/`TextDecoder`, and the web surface in the tables above. Implementing Node's module surface on top of that would
-mean reimplementing a large, under-specified API with no conformance corpus, to serve applications
-whose input is by definition browser-targeted static output — and every megabyte of it would ship
-in every export, which is what Phase 2 exists to stop.
-
-What replaces it:
-
-| Phase 1 | Phase 2 |
-| --- | --- |
-| `process.argv` | the invocation passed to `requestSingleInstanceLock`'s second-instance callback, or the platform's own launch arguments |
-| `process.exit` | closing the window |
-| `node:os` facts | `blitsen/os` |
-| `node:fs` under the app directory | no generic replacement; `blitsen/app` only locates platform directories, and bundled files are available through application URLs |
-| `import("node:anything")` | refused at resolution, naming the alternative |
-
-That refusal is the point of listing this here rather than in a release note: an import of a
-builtin fails with a message that says the runtime implements no `node:fs` and points at
-`blitsen/*`, so the absence is detectable and attributable rather than a blank window
-(structural constraint 4). A carried Node-API addon selects the Phase 1 host explicitly; the
-default runtime does not regain Node builtins through these modules.
+Application files are still collected from built output. Keep Node/Bun builtin imports external
+when using Vite/Rollup, or use Bun's bundler with `target: "bun"`. Bundle third-party package code
+or explicitly include its runtime files. Document modules currently load synchronously through
+Bun's `require` support; top-level `await` belongs in an async startup function or a worker.
 
 ### TypeScript
 
@@ -1631,20 +1402,9 @@ lib. The capability tiers above are the list, and `blitsen doctor` is the check.
 | Native module | Platform where absent | Why |
 | --- | --- | --- |
 | `blitsen/menu` | linux | A Linux menu bar is a widget inside the window, and the only backend the menu crate has for one is a gtk::MenuBar packed into a gtk::Window — Blitsen windows are winit's, and the renderer owns the whole client area, so there is nowhere to pack it and no GTK main loop to run it. The desktop-level alternative is the D-Bus global menu, which only some desktops implement, needs an X11 window id and so answers nothing on Wayland, and would leave the same application with a menu on KDE and none on GNOME. The tray menu is not this under another name: it belongs to a status item the application may never show. What would change this is a menu bar Blitsen renders itself, which is a different feature — an in-document menu is DOM, not a native one. |
-| `blitsen/app` | android | The directories are the Activity's `filesDir` and `cacheDir`, which only the Activity can name; Android sets none of the XDG variables, so resolving them would answer a path nothing can write to. `relaunch` has no executable to spawn inside an APK, and single-instance ownership is the platform's own — a second launch is an Intent delivered to the process already running, not a command line to hand over. |
-| `blitsen/clipboard` | android | `arboard` has no Android backend and does not compile there. The service it would wrap, `ClipboardManager`, refuses a read outright unless the application holds focus, and these readers report an empty clipboard as `null` — so a refusal and an empty clipboard would be indistinguishable. It needs a module shaped for that, over JNI. |
-| `blitsen/dialog` | android | There is no XDG desktop portal on Android. The system's own choosers are Intents answered by another activity, which is a different shape from a call that resolves. |
-| `blitsen/window` | android | winit accepts every setter on Android and discards it, then answers the getter as though the request had never been made: `setDecorations(false)` is followed by `isDecorated()` saying true, on a platform with no decorations. The monitor list goes too, and it is the one worth naming because it looks like the survivor — winit enumerates no monitors there, so `monitors()` would report a device with no display. Immersive mode and orientation are the real capabilities here and are not these under another name. |
-| `blitsen/tray` | android | Android has no desktop notification area or status-item menu. Its persistent status UI is a notification, which belongs to blitsen/notify and carries its own runtime permission and channel semantics rather than pretending to be a tray icon. |
-| `blitsen/menu` | android | Android has no application menu bar. Its equivalents are the app bar's overflow menu and the navigation drawer, which are views inside the activity's own layout rather than a menu the platform owns, and neither has this shape. |
-| `blitsen/shell` | android | Opening a URL or a file on Android is an Intent the Activity sends, answered by the system's chooser rather than by a handler this process spawns, and there is no file manager to reveal an item in. It needs a module shaped for Intents, over JNI, rather than these three desktop operations answering with something else. |
-| `blitsen/process` | android | An Android application has no developer tools to run: there is no `gh` or `claude` on the device, an app process may not execute what is not in its own APK, and a process it did start would be killed with it by the platform's own lifecycle. The supervisor this module is — process groups, exit cleanup, piped streams on a frame turn — answers a desktop question. |
 
 | Conditional native member | Platform where absent | Why |
 | --- | --- | --- |
-| `input.vibrateGamepad` | android | The controller backend has no Android implementation, so there is no discovered slot or actuator to address. |
-| `input.onDeviceChange` | android | The controller backend has no Android implementation, so there are no controller connection changes to report. |
-| `os.batteries` | android | Android exposes battery state through a different power service, so the desktop sysinfo-backed member is absent rather than returning an invented value. |
 
 <!-- /generated -->
 
@@ -1660,5 +1420,5 @@ Where a member exists, it means the same thing everywhere. What differs is under
 | `clipboard.*` | On X11 and Wayland the process that copied is the one that serves the selection, so **what an exported Blitsen application copies disappears when it exits**, unless the desktop runs a clipboard manager that takes a copy. macOS and Windows hand the data to the system and it survives. `writeHtml` also stores the plain text an application that cannot read HTML will paste instead. Images cross as 8-bit RGBA, `{ width, height, data }`, and are carried as PNG on Linux, `CF_DIB` on Windows and an `NSImage` on macOS — a decoded image is not guaranteed to be byte-identical to the one that was copied. A read finds `null` where the clipboard holds nothing in that flavour; a clipboard the session does not offer at all — a headless process — throws instead, because that is an environment refusing rather than an empty clipboard. |
 | `window.*` | Operates on the window the run already opened, and is available from the `load` event onwards — document scripts run before the window exists, and a call before then says so rather than doing nothing. `setAlwaysOnTop` reaches the X11 window manager and Windows and macOS; **Wayland has no protocol for stacking a window above others, so the call is accepted and has no effect there**. `setCursorGrab("locked")` is X11-unsupported and `"confined"` is macOS-unsupported; both throw naming the platform rather than silently degrading. `setSize` asks, it does not assert: the size that arrives is whatever the window manager granted, and it is reported by the `resize` event and `innerWidth`/`innerHeight` like any other resize. |
 | `dialog.*` | Available on Linux, macOS and Windows. Every dialog is modal to the application window and needs one, so these are available from the `load` event onwards like `window.*`. Each returns a **Promise**, and the frame loop keeps turning while the dialog is up — `requestAnimationFrame` still fires, the window still paints, and the answer is delivered on a frame turn alongside `fetch` completions rather than part-way through one. macOS uses asynchronous window-modal panels, Windows performs the blocking COM operation away from the window thread, and Linux uses the XDG desktop portal with a `zenity` fallback. A dismissed file dialog answers `null`. Paths are real filesystem paths, not `File` objects. |
-| `hid.*` | Refuses more than any platform does: the Generic Desktop keyboard, keypad, mouse and pointer collections cannot be opened anywhere, and neither can a device carrying one alongside the collection an application wants. On Linux that is the load-bearing case — one hidraw node exposes every collection of the physical device, so the refusal covers the node; Windows and macOS give each top-level collection its own handle, where the same rule refuses only the protected one. Windows additionally reserves some system collections itself, which reports as `NotAllowedError` rather than as a missing device. macOS opens with shared IOHID access, so Blitsen never seizes a device other software is using, and a sandboxed build needs `com.apple.security.device.usb` in its signature. Linux needs an installed udev rule; `blitsen build` writes the template and `blitsen doctor` says so, and neither ever installs one. Device ids are opaque and last only for the process. Reports are read on a per-device native worker and enter JavaScript only on a frame turn, in order. Android is the same module over `UsbManager` and differs in two visible ways: `open()` raises the system's per-device permission dialog and does not settle until it is answered — resolving on a grant, rejecting `NotAllowedError` on a dismissal that may be asked again — and the enumeration reports `usagePage` and `usage` as `0`, because a report descriptor cannot be read before permission is granted; select by `vendorId`/`productId` there. A grant belongs to one device and Android revokes it when that device is unplugged. That path has not yet been exercised on hardware. |
-| `notify.*` | IDs live for one application session and stop addressing a notification after its click, action, dismissal, expiry or close event. Linux has no per-application permission state and therefore reports `"granted"`; development runs use the freedesktop live-process backend, while installed identities use the notification portal and a D-Bus-activatable service so body/actions can start a stopped app. The portal supports replacement and explicit close but exposes neither timeout nor dismissal/expiry callbacks; packaged Linux accepts installed icon-theme names but rejects absolute image paths because those require a sealed descriptor. Modern macOS reports and requests real authorization, and requires the signed `.app` identity Apple associates it with; it uses that app's icon and rejects a per-notification icon. Windows carries the session ID as the toast's own tag, so update replaces that toast in place and close removes it from the screen and from notification history; permission is the notifier's own setting, so it is `"granted"` or `"denied"` and `requestPermission()` reads rather than prompts. Android creates a stable default channel, handles API 33 permission, and supports show/update/close, body taps, action buttons and swipe dismissal; immutable PendingIntents target a private receiver in a minimal dex, which persists trusted activation data before launching the platform `NativeActivity` with a clean Intent, while delete Intents persist dismissal without opening the Activity. Every completion and lifecycle event enters JavaScript on a frame turn, never from the platform callback thread. A click on a notification whose process has exited arrives as an `activation` event, delivered once on the first frame turn and never replayed; which platforms can start a stopped application to produce one is PLATFORM-SUPPORT.md. |
+| `hid.*` | Refuses more than any platform does: the Generic Desktop keyboard, keypad, mouse and pointer collections cannot be opened anywhere, and neither can a device carrying one alongside the collection an application wants. On Linux that is the load-bearing case — one hidraw node exposes every collection of the physical device, so the refusal covers the node; Windows and macOS give each top-level collection its own handle, where the same rule refuses only the protected one. Windows additionally reserves some system collections itself, which reports as `NotAllowedError` rather than as a missing device. macOS opens with shared IOHID access, so Blitsen never seizes a device other software is using, and a sandboxed build needs `com.apple.security.device.usb` in its signature. Linux needs an installed udev rule; `blitsen build` writes the template and `blitsen doctor` says so, and neither ever installs one. Device ids are opaque and last only for the process. Reports are read on a per-device native worker and enter JavaScript only on a frame turn, in order. |
+| `notify.*` | IDs live for one application session and stop addressing a notification after its click, action, dismissal, expiry or close event. Linux has no per-application permission state and therefore reports `"granted"`; development runs use the freedesktop live-process backend, while installed identities use the notification portal and a D-Bus-activatable service so body/actions can start a stopped app. The portal supports replacement and explicit close but exposes neither timeout nor dismissal/expiry callbacks; packaged Linux accepts installed icon-theme names but rejects absolute image paths because those require a sealed descriptor. Modern macOS reports and requests real authorization, and requires the signed `.app` identity Apple associates it with; it uses that app's icon and rejects a per-notification icon. Windows carries the session ID as the toast's own tag, so update replaces that toast in place and close removes it from the screen and from notification history; permission is the notifier's own setting, so it is `"granted"` or `"denied"` and `requestPermission()` reads rather than prompts. Every completion and lifecycle event enters JavaScript on a frame turn, never from the platform callback thread. A click on a notification whose process has exited arrives as an `activation` event, delivered once on the first frame turn and never replayed; which platforms can start a stopped application to produce one is PLATFORM-SUPPORT.md. |

@@ -19,10 +19,12 @@ mod audio;
 mod canvas;
 mod command_channel;
 mod event_source;
+#[cfg(test)]
 mod fetch;
 pub(crate) mod gamepad;
 pub(crate) mod hid;
 pub(crate) mod input;
+#[cfg(test)]
 mod intl;
 // Compiled where there is an application menu to queue requests for — see
 // `native_window/menu.rs` — and in the test build everywhere, because the
@@ -39,23 +41,29 @@ pub(crate) mod tray;
 pub(crate) mod net_pool;
 mod ops;
 mod storage;
+#[cfg(test)]
 mod web_socket;
 mod web_url;
 pub mod window;
 mod window_modes;
 mod worker_services;
 
+#[cfg(test)]
+use worker_services::install_text_codec;
+#[cfg(test)]
 pub use worker_services::install_worker_services;
-use worker_services::{install_text_codec, navigator_state};
+use worker_services::navigator_state;
 
 // The DOM runtime the application sees, evaluated into the context before any
 // document script runs. It is a single closure so the objects can share the
 // bridge handle and their wrapper tables privately, which is why the source is
 // spliced together here rather than loaded as modules: the fragments below are
 // consecutive slices of one scope and are only valid in this order.
+#[cfg(not(test))]
 const BOOTSTRAP: &str = concat!(
     "\n(() => {\n",
     include_str!("dom_bridge/bootstrap/members.js"),
+    include_str!("dom_bridge/bootstrap/bun.js"),
     include_str!("dom_bridge/bootstrap/prelude.js"),
     include_str!("dom_bridge/bootstrap/events.js"),
     include_str!("dom_bridge/bootstrap/event_target.js"),
@@ -73,18 +81,51 @@ const BOOTSTRAP: &str = concat!(
     include_str!("dom_bridge/bootstrap/fetch.js"),
     include_str!("dom_bridge/bootstrap/web_socket.js"),
     include_str!("dom_bridge/bootstrap/event_source.js"),
-    include_str!("dom_bridge/bootstrap/intl.js"),
-    include_str!("dom_bridge/bootstrap/clone.js"),
     include_str!("dom_bridge/bootstrap/messaging.js"),
     include_str!("dom_bridge/bootstrap/audio.js"),
     include_str!("dom_bridge/bootstrap/history.js"),
-    include_str!("dom_bridge/bootstrap/url.js"),
     include_str!("dom_bridge/bootstrap/storage.js"),
     include_str!("dom_bridge/bootstrap/command_channel.js"),
     include_str!("dom_bridge/bootstrap/gamepad.js"),
     include_str!("dom_bridge/bootstrap/native.js"),
     include_str!("dom_bridge/bootstrap/transfer.js"),
     include_str!("dom_bridge/bootstrap/globals.js"),
+    "})();\n",
+);
+
+#[cfg(test)]
+const LEGACY_TEST_BOOTSTRAP: &str = concat!(
+    "\n(() => {\n",
+    include_str!("dom_bridge/bootstrap/members.js"),
+    include_str!("dom_bridge/test_support/prelude.js"),
+    include_str!("dom_bridge/bootstrap/events.js"),
+    include_str!("dom_bridge/bootstrap/event_target.js"),
+    include_str!("dom_bridge/bootstrap/node.js"),
+    include_str!("dom_bridge/bootstrap/element.js"),
+    include_str!("dom_bridge/bootstrap/cssom.js"),
+    include_str!("dom_bridge/bootstrap/forms.js"),
+    include_str!("dom_bridge/bootstrap/canvas.js"),
+    include_str!("dom_bridge/bootstrap/canvas_context.js"),
+    include_str!("dom_bridge/bootstrap/canvas_element.js"),
+    include_str!("dom_bridge/bootstrap/text_editing.js"),
+    include_str!("dom_bridge/bootstrap/document.js"),
+    include_str!("dom_bridge/bootstrap/window_modes.js"),
+    include_str!("dom_bridge/bootstrap/range.js"),
+    include_str!("dom_bridge/test_support/fetch.js"),
+    include_str!("dom_bridge/test_support/web_socket.js"),
+    include_str!("dom_bridge/bootstrap/event_source.js"),
+    include_str!("dom_bridge/test_support/intl.js"),
+    include_str!("dom_bridge/test_support/clone.js"),
+    include_str!("dom_bridge/test_support/messaging.js"),
+    include_str!("dom_bridge/bootstrap/audio.js"),
+    include_str!("dom_bridge/bootstrap/history.js"),
+    include_str!("dom_bridge/test_support/url.js"),
+    include_str!("dom_bridge/bootstrap/storage.js"),
+    include_str!("dom_bridge/bootstrap/command_channel.js"),
+    include_str!("dom_bridge/bootstrap/gamepad.js"),
+    include_str!("dom_bridge/bootstrap/native.js"),
+    include_str!("dom_bridge/bootstrap/transfer.js"),
+    include_str!("dom_bridge/test_support/globals.js"),
     "})();\n",
 );
 
@@ -304,13 +345,17 @@ pub(crate) fn install_with_hooks<E: JsEngine + 'static>(
         }),
     )?;
     canvas::install(engine, runtime.clone())?;
+    #[cfg(test)]
     install_text_codec(engine)?;
-    fetch::install(engine, reader.clone())?;
-    install_messaging(engine, reader.clone())?;
+    #[cfg(test)]
+    {
+        fetch::install(engine, reader.clone())?;
+        web_socket::install(engine)?;
+        intl::install(engine)?;
+        install_messaging(engine, reader.clone())?;
+    }
     audio::install(engine, reader)?;
-    web_socket::install(engine)?;
     event_source::install(engine)?;
-    intl::install(engine)?;
     storage::install(engine, storage)?;
     gamepad::install(engine)?;
     window_modes::install(engine, mode.is_test_harness())?;
@@ -330,7 +375,14 @@ pub(crate) fn install_with_hooks<E: JsEngine + 'static>(
         _ => "",
     })?;
     engine.set_global("__blitsenHeadlessMode", &headless)?;
-    let hooks = engine.evaluate_script(BOOTSTRAP, "blitsen:dom-bootstrap")?;
+    let root = crate::app::application_fetch_root().unwrap_or_default();
+    let root = engine.string(&root)?;
+    engine.set_global("__blitsenRuntimeRoot", &root)?;
+    #[cfg(test)]
+    let bootstrap = LEGACY_TEST_BOOTSTRAP;
+    #[cfg(not(test))]
+    let bootstrap = BOOTSTRAP;
+    let hooks = engine.evaluate_script(bootstrap, "blitsen:dom-bootstrap")?;
     let host_hooks = HostHooks::resolve(|name| {
         let hook = engine.get_property(&hooks, name)?;
         engine.retain(&hook)
@@ -423,6 +475,7 @@ pub(crate) fn install_with_hooks<E: JsEngine + 'static>(
 /// script out of the same application the document did, so a context with no
 /// files behind it — the bare bridge harness — can hold ports and channels but
 /// has no script to start a worker from, and says so at the constructor.
+#[cfg(test)]
 fn install_messaging<E: JsEngine + 'static>(
     engine: &mut E,
     reader: Option<crate::app::AppReader>,

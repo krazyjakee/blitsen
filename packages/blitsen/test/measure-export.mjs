@@ -6,7 +6,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildStandalone } from "../src/export.mjs";
 import { argument, buildAddon, repository } from "./build-addon.mjs";
-import { pinnedPhase2Runtime } from "./measurement-runtime.mjs";
 
 export { repository } from "./build-addon.mjs";
 
@@ -127,11 +126,12 @@ export async function measureExport({ runs = 5, windowed = false } = {}) {
   // Resolve before building anything. Without this explicit pin an installed
   // @blitsen platform package can outrank target/release and make a local run
   // silently weigh the previous published runtime (#89).
-  const measuredRuntime = await pinnedPhase2Runtime();
+  let measuredRuntime;
 
   const directory = await mkdtemp(join(tmpdir(), "blitsen-measure-"));
   try {
     const addon = await buildAddon({ purpose: "measurement target", release: true, into: directory });
+    measuredRuntime = { path: addon, source: "build", bun: Bun.version };
     const root = join(repository, "examples/pong");
     const result = await buildStandalone({
       root, width: 720, height: 520, title: "Blitsen Pong", outfile: join(directory, "pong"),
@@ -162,10 +162,8 @@ export async function measureExport({ runs = 5, windowed = false } = {}) {
     // is a different artifact per host: Blitsen's own runtime executable on
     // Phase 2, a copy of Bun plus an embedded addon on Phase 1. Measured from
     // the linked file rather than assumed, so the breakdown adds up either way.
-    const hostRuntimeBytes = result.host === "blitsen"
-      ? (await stat(measuredRuntime.path)).size
-      : (await stat(floorExecutable)).size;
-    const nativeAddonBytes = result.host === "blitsen" ? 0 : (await stat(addon)).size;
+    const hostRuntimeBytes = (await stat(floorExecutable)).size;
+    const nativeAddonBytes = (await stat(addon)).size;
 
     // Keep benchmark runs hermetic without blanking the absolute platform data
     // directory durable localStorage now requires. In particular, macOS uses

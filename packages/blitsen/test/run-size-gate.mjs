@@ -80,7 +80,7 @@ if (!previous) {
 }
 
 const failures = [];
-if (previous) {
+if (previous && previous.host === record.host) {
   for (const [label, key] of [["installed", "installedBytes"], ["gzip level 9", "compressedBytes"]]) {
     const current = record.size[key];
     if (current === null || previous[key] === null) continue;

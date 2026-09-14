@@ -7,10 +7,10 @@
   // platform in a mode that disagrees with the DOM's state machine.
   const hostWindowMode = globalThis.__blitsenWindowMode;
   if (!testHarness) delete globalThis.__blitsenWindowMode;
-  const hostSetTimeout = globalThis.setTimeout.bind(globalThis);
-  const hostClearTimeout = globalThis.clearTimeout.bind(globalThis);
-  const hostSetInterval = globalThis.setInterval.bind(globalThis);
-  const hostClearInterval = globalThis.clearInterval.bind(globalThis);
+  const hostSetTimeout = host.setTimeout;
+  const hostClearTimeout = host.clearTimeout;
+  const hostSetInterval = host.setInterval;
+  const hostClearInterval = host.clearInterval;
   const contextTimeouts = new Set();
   const contextIntervals = new Set();
   const setTimeout = (callback, delay = 0, ...args) => {

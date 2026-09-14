@@ -12,7 +12,7 @@ import { strict as assert } from "node:assert";
 import { join } from "node:path";
 
 import { buildAddon, buildRuntime, repository } from "./build-addon.mjs";
-import { resolvePhase2Runtime } from "../src/runtime.mjs";
+import { resolveInterpreter } from "../src/runtime.mjs";
 
 const CLI = join(repository, "packages/blitsen/bin/blitsen.mjs");
 
@@ -22,6 +22,7 @@ const DOCUMENT = `<!doctype html><html>
 <head><link rel="stylesheet" href="/src/style.css"></head>
 <body><main id="out">waiting</main>
 <script type="module" src="/src/main.js"></script>
+<script type="module">import { greeting } from "./src/greeting.js?v=2"; globalThis.__proxyInline = greeting;</script>
 </body></html>`;
 
 // A module graph with a query string in it, because a dev server answers
@@ -124,7 +125,7 @@ function devServer(port = 0) {
 }
 
 buildRuntime();
-const runtime = await resolvePhase2Runtime();
+const runtime = await resolveInterpreter();
 // The addon stands in for an installed platform package, exactly as every other
 // acceptance script drives the CLI.
 const addon = await buildAddon({ purpose: "proxy mode", release: true });
@@ -174,6 +175,7 @@ try {
   const report = await runtimeAgainst(origin, {
     assert: `console.log("proxy " + JSON.stringify({
       ...globalThis.__proxy,
+      inline: globalThis.__proxyInline,
       text: document.getElementById("out").textContent,
       color: getComputedStyle(document.getElementById("out")).color,
       readyState: globalThis.__proxySocket.readyState,
@@ -185,6 +187,7 @@ try {
   const line = report.stdout.split("\n").find(text => text.startsWith("proxy "));
   assert.ok(line, `no probe in the output:\n${report.stdout}\n${report.stderr}`);
   const probe = JSON.parse(line.slice("proxy ".length));
+  assert.equal(probe.inline, "served over http", "inline module imports resolve against the served document");
   assert.equal(probe.greeting, "served over http",
     "the module graph did not come from the server");
   assert.equal(probe.text, "served over http", "the document did not render what it imported");
