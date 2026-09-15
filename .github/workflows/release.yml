@@ -398,6 +398,10 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun test packages/blitsen
         env:
+          # Bun 1.3.14 moves downloaded cross-compilers into its cache. Keep
+          # both on the checkout drive: Windows x64 checks out on D: while
+          # the default user cache is on C:, and the move fails across drives.
+          BUN_INSTALL_CACHE_DIR: ${{ runner.temp }}/bun-cache
           BLITSEN_NATIVE_PATH: ${{ github.workspace }}/packages/platforms/${{ matrix.target }}/blitsen.node
           BLITSEN_RUNTIME_PATH: ${{ github.workspace }}/packages/platforms/${{ matrix.target }}/${{ matrix.executable }}
 
