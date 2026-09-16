@@ -18,6 +18,7 @@ await import("./native-harness/transfer.mjs");
 await import("./native-harness/dom.mjs");
 await import("./native-harness/read-back-and-scrolling.mjs");
 await import("./native-harness/ranges.mjs");
+await import("./native-harness/selection.mjs");
 const { styled } = await import("./native-harness/style.mjs");
 await import("./native-harness/layout-and-images.mjs");
 await import("./native-harness/canvas.mjs");

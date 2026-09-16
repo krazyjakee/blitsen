@@ -24,6 +24,12 @@
   // must not accidentally turn the same visible preedit into committed text.
   let resetTextHistory = () => {};
   let textCompositionOwns = () => false;
+  // Document text selection, assigned once `text_editing.js` has the caret and
+  // clipboard helpers it is built from. Declared here, before that fragment,
+  // because the mouse and keyboard dispatchers in `events.js` call them.
+  let documentSelectionMouse = () => {};
+  let selectDocumentContents = () => false;
+  let disposeDocumentSelection = () => {};
   const setControlValue = (element, value) => {
     const previous = controlValue(element);
     if (previous === value && textCompositionOwns(element)) return;

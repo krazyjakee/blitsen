@@ -58,7 +58,7 @@ JavaScript comes from the [generated manifest](#capability-tiers) below.
 | Pointer lock and fullscreen | Windows/macOS pointer lock with relative `movementX`/`movementY` (`unadjustedMovement` is rejected); root-element borderless fullscreen on every desktop; standard state, promises and events — see [Pointer lock and fullscreen](WEB-APIS.md#pointer-lock-and-fullscreen) |
 | Style read-back | `getComputedStyle`, `matchMedia`/`MediaQueryList`, `ResizeObserver`, `CSS.escape`/`CSS.supports` |
 | Geometry and text | `getBoundingClientRect`, `getClientRects`, the offset/client/scroll box properties, `clientTop`/`clientLeft`, `offsetParent`, `innerText`, `compareDocumentPosition`, `elementFromPoint` |
-| Ranges and selection | `Range` and `document.createRange` for boundary points, text and geometry — `getClientRects` over a run of characters — `caretRangeFromPoint`/`caretPositionFromPoint`, and a `Selection` a script sets and reads; supported text controls also expose a user-placeable caret and drag selection, but generic document selection remains script-driven and the tree-editing range methods are absent |
+| Ranges and selection | `Range` and `document.createRange` for boundary points, text and geometry — `getClientRects` over a run of characters — `caretRangeFromPoint`/`caretPositionFromPoint`, and a `Selection` the user makes by dragging (double/triple-click and Shift+click included) or a script sets, honouring `user-select`, firing `selectionchange` and copied by `Ctrl/Cmd+C`; no highlight is painted behind it and the tree-editing range methods are absent |
 | Scrolling | `window.scrollTo`/`scrollBy`/`scroll`, `scrollX`/`scrollY`/`pageXOffset`/`pageYOffset`, `element.scrollTop`/`scrollLeft`, `scrollIntoView` |
 | Parsing | `innerHTML`, `outerHTML`, `insertAdjacentHTML`, `insertAdjacentElement`, and `DOMParser` for `text/html` into a fragment |
 | Scheduling | `requestAnimationFrame`, timers and microtasks |
@@ -780,11 +780,21 @@ and is what an editor reads to know which end is being dragged. `getRangeAt(0)` 
 in tree order rather than the live range a browser gives, and `selectionchange` is dispatched on
 `document` in a later task, so a run of changes announces itself once, settled.
 
-Two things the selection is not. **Nothing paints it**: this is the selection a script sets and
-reads, and the renderer draws no highlight behind it. And **the user cannot make one**: dragging
-across text does not move it, because text selection is a shell behaviour and the shell here has
-none. A widget that maintains its own visible selection — which is what every editor does — works;
-one that expects the platform to select text for it does not.
+**The user makes it.** Dragging across text moves the selection, a double-click takes the word and
+a triple-click the block, and Shift+click extends it; `user-select` decides where a drag may start
+and how far it reaches, with `none` refusing (a button's label, a drag handle, a rail), `all`
+taking the element whole, and `text`/`auto` selecting character by character. `Ctrl/Cmd+A` with
+focus outside a text control selects the document's content. And it is **the real selection**:
+`getSelection()` returns what the user selected, a run of changes announces itself once through
+`selectionchange`, and a `copy` — `Ctrl/Cmd+C` with focus outside a control — writes it through the
+same clipboard path an application observes or overrides. So a widget that maintains its own visible
+selection, which is what every editor does, is driven by the user's pointer rather than only by a
+script.
+
+The one thing the selection still is not is **painted**: the renderer draws no highlight behind it,
+so seeing a selection is the application's to draw. Also still absent is autoscroll when a drag
+reaches a scroll container's edge, and a pointer route to Cut/Copy/Paste — there is no built-in
+context menu in this runtime (below), so those stay the keyboard's.
 
 **Nothing edits through a range.** `deleteContents`, `extractContents`, `cloneContents`,
 `insertNode` and `surroundContents` are absent, and absent rather than half-built: each one splits

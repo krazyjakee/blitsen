@@ -136,6 +136,7 @@
       // field alive to drag a selection in, and a pointer captured by an element
       // of the old document would retarget the new document's events at it.
       caretDragControl = null;
+      disposeDocumentSelection();
       disposePointerState();
       // A drag held across a reload would deliver its drop to an element of the
       // document that is gone.

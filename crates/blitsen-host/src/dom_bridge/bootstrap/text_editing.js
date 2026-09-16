@@ -343,3 +343,173 @@
       else caretFromMouse(caretDragControl, event, true);
     } else if (type === "mouseup") caretDragControl = null;
   };
+
+  // Selecting text in ordinary document content — the selection a browser makes
+  // when you drag across a paragraph, and the one Ctrl/Cmd+C copies. It is the
+  // real `getSelection()`: dragging moves it, `selectionchange` announces it and
+  // the copy path reads it, so an application observes or overrides the user's
+  // selection exactly as it does a scripted one. The one thing it still is not
+  // is painted — no highlight is drawn behind it (COMPATIBILITY.md).
+  //
+  // `user-select` decides where a selection may start and how far it reaches:
+  // `none` refuses (a button's label, a drag handle, a rail), `all` takes the
+  // element whole, and `text`/`auto` select character by character. The point
+  // crosses to the renderer through `caretPositionFromPoint`, the same laid-out
+  // text read the caret in a field uses, so the character a selection reaches is
+  // the one under the pointer rather than an estimate from a coordinate.
+  const userSelectOf = node => {
+    const element = node?.nodeType === 1 ? node : node?.parentElement;
+    if (!(element instanceof Element)) return "auto";
+    const value = getComputedStyle(element).getPropertyValue("user-select");
+    return value === "" ? "auto" : value;
+  };
+
+  // The block box a point sits in, for the triple-click that takes a paragraph.
+  const blockAncestorOf = node => {
+    let element = node?.nodeType === 1 ? node : node?.parentElement;
+    while (element instanceof Element && element !== document.body) {
+      const display = getComputedStyle(element).getPropertyValue("display");
+      if (/^(block|list-item|flex|grid|table|flow-root)/.test(display)) return element;
+      element = element.parentElement;
+    }
+    return element instanceof Element ? element : null;
+  };
+
+  const isWordCharacter = character => /[\p{L}\p{N}_]/u.test(character);
+  // The run of word characters around an offset, or the single character the
+  // point landed on when it is not on a word. This is what a double-click takes.
+  const wordBounds = (text, offset) => {
+    const at = offset < text.length ? offset : offset - 1;
+    if (at < 0) return [offset, offset];
+    if (!isWordCharacter(text[at])) return [at, at + 1];
+    let start = at;
+    let end = at + 1;
+    while (start > 0 && isWordCharacter(text[start - 1])) start -= 1;
+    while (end < text.length && isWordCharacter(text[end])) end += 1;
+    return [start, end];
+  };
+
+  // Whether a document-selection drag is under way, so a move without the button
+  // held does not keep extending a selection the release already ended. Reset on
+  // a document reload from the dispose path in globals.js.
+  let documentSelecting = false;
+  // The last press, so two close together in time and place read as a double or
+  // triple click — counted here because a synthesized `MouseEvent` carries no
+  // `detail` and the platform reports each press on its own.
+  let lastDocumentPress = { time: 0, x: 0, y: 0, count: 0 };
+
+  const caretAt = event => document.caretPositionFromPoint(event.clientX, event.clientY);
+
+  // Starts or extends the document selection at the point, honouring
+  // `user-select`. Extending keeps the anchor, which is what a drag and a
+  // Shift+click both are; starting collapses onto the point first.
+  const placeDocumentSelection = (event, extend) => {
+    const caret = caretAt(event);
+    if (caret === null) return false;
+    const selection = getSelection();
+    if (extend && selection.anchorNode !== null) {
+      // A drag does not reach into a `user-select: none` run: the focus stays
+      // where it was until the pointer is back over selectable text.
+      if (userSelectOf(caret.offsetNode) === "none") return true;
+      selection.extend(caret.offsetNode, caret.offset);
+      return true;
+    }
+    const select = userSelectOf(caret.offsetNode);
+    if (select === "none") return false;
+    if (select === "all") {
+      const element = caret.offsetNode.nodeType === 1
+        ? caret.offsetNode : caret.offsetNode.parentElement;
+      if (!(element instanceof Element)) return false;
+      selection.selectAllChildren(element);
+      // A `user-select: all` element is one unit: a drag from inside it does not
+      // grow character by character, so the press is the whole of the gesture.
+      return false;
+    }
+    selection.collapse(caret.offsetNode, caret.offset);
+    return true;
+  };
+
+  const pressCount = event => {
+    const near = Math.abs(event.clientX - lastDocumentPress.x) <= 3
+      && Math.abs(event.clientY - lastDocumentPress.y) <= 3;
+    const count = near && event.timeStamp - lastDocumentPress.time <= 500
+      ? lastDocumentPress.count + 1 : 1;
+    lastDocumentPress = { time: event.timeStamp, x: event.clientX, y: event.clientY, count };
+    return count;
+  };
+
+  // A double-click takes the word under the point; a word is a run of letters,
+  // digits and underscores, and anything else is the single character clicked.
+  const selectWordAt = event => {
+    const caret = caretAt(event);
+    if (caret === null || caret.offsetNode.nodeType !== 3) return false;
+    if (userSelectOf(caret.offsetNode) === "none") return false;
+    const [start, end] = wordBounds(caret.offsetNode.textContent, caret.offset);
+    getSelection().setBaseAndExtent(caret.offsetNode, start, caret.offsetNode, end);
+    return false;
+  };
+
+  // A triple-click takes the block the point is in — the paragraph, list item or
+  // heading, the nearest ancestor that lays its contents out on their own line.
+  const selectBlockAt = event => {
+    const caret = caretAt(event);
+    if (caret === null) return false;
+    const block = blockAncestorOf(caret.offsetNode);
+    if (block === null || userSelectOf(block) === "none") return false;
+    getSelection().selectAllChildren(block);
+    return false;
+  };
+
+  // Ctrl/Cmd+A with focus outside a text control, which selects the document's
+  // selectable content the way a browser does: the body, or the document element
+  // when there is no body. `user-select: none` subtrees are still part of the
+  // range — Select All takes everything, and only what is painted or copied
+  // needs to respect the property.
+  selectDocumentContents = () => {
+    const root = document.body ?? document.documentElement;
+    if (!(root instanceof Element)) return false;
+    getSelection().selectAllChildren(root);
+    return true;
+  };
+
+  // The document selection's response to the mouse, run after listeners for the
+  // reason `textEditingMouse` is: focus, pointer capture and an application's own
+  // `mousedown` handling all come first, and a cancelled press never reaches
+  // here. Nothing is prevented or captured — a selection must not break the click
+  // on a button whose label it declined to select.
+  documentSelectionMouse = (type, target, event) => {
+    if (type === "mousedown") {
+      if (event.button !== 0) return;
+      // A press inside a text control is that control's own drag; the document
+      // selection collapses, as it does in a browser when you click into a field.
+      if (textControl(target) !== null) {
+        getSelection().removeAllRanges();
+        documentSelecting = false;
+        return;
+      }
+      if (event.shiftKey) {
+        documentSelecting = placeDocumentSelection(event, true);
+        return;
+      }
+      const clicks = pressCount(event);
+      if (clicks >= 3) { documentSelecting = selectBlockAt(event); return; }
+      if (clicks === 2) { documentSelecting = selectWordAt(event); return; }
+      // A fresh press collapses whatever was selected, which is how clicking
+      // elsewhere clears a selection, then begins one where `user-select` allows.
+      getSelection().removeAllRanges();
+      documentSelecting = placeDocumentSelection(event, false);
+    } else if (type === "mousemove") {
+      if (!documentSelecting) return;
+      // The button came up somewhere this window did not hear, so the drag is over.
+      if ((event.buttons & 1) === 0) { documentSelecting = false; return; }
+      placeDocumentSelection(event, true);
+    } else if (type === "mouseup") {
+      documentSelecting = false;
+    }
+  };
+
+  // Clears an in-progress drag for a document being replaced by a reload.
+  disposeDocumentSelection = () => {
+    documentSelecting = false;
+    lastDocumentPress = { time: 0, x: 0, y: 0, count: 0 };
+  };
