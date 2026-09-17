@@ -1,6 +1,6 @@
 {
   "name": "blitsen",
-  "version": "0.2.7",
+  "version": "0.2.8",
   "description": "Native runtime CLI and types for Blitsen",
   "type": "module",
   "license": "MIT OR Apache-2.0",
@@ -94,12 +94,12 @@
   },
   "types": "./index.d.ts",
   "optionalDependencies": {
-    "@blitsen/darwin-arm64": "0.2.7",
-    "@blitsen/darwin-x64": "0.2.7",
-    "@blitsen/linux-arm64": "0.2.7",
-    "@blitsen/linux-x64": "0.2.7",
-    "@blitsen/win32-arm64": "0.2.7",
-    "@blitsen/win32-x64": "0.2.7"
+    "@blitsen/darwin-arm64": "0.2.8",
+    "@blitsen/darwin-x64": "0.2.8",
+    "@blitsen/linux-arm64": "0.2.8",
+    "@blitsen/linux-x64": "0.2.8",
+    "@blitsen/win32-arm64": "0.2.8",
+    "@blitsen/win32-x64": "0.2.8"
   },
   "files": [
     "LICENSE",
