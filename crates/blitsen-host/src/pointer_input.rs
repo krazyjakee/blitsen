@@ -244,6 +244,8 @@ pub(crate) fn identity_of_source(source: &PointerSource) -> Option<PointerIdenti
         // reporting it as a mouse is what `PointerKind` itself does with the
         // Wayland and X11 devices it cannot identify.
         PointerSource::Unknown => Some(PointerIdentity::mouse()),
+        // A source winit adds later is treated as the unclassified one above.
+        _ => Some(PointerIdentity::mouse()),
     }
 }
 
@@ -266,6 +268,7 @@ pub(crate) fn identity_of_button(
         // A button with no name has no DOM number either. Dropping it is what
         // this match did with every non-mouse source before touch was accepted.
         ButtonSource::Unknown(_) => None,
+        _ => None,
     }
 }
 
@@ -275,6 +278,7 @@ pub(crate) fn contact_of_kind(kind: PointerKind) -> PointerContact {
         PointerKind::Touch(finger_id) => PointerContact::Finger(finger_id.into_raw()),
         PointerKind::TabletTool(kind) => PointerContact::Tool(kind),
         PointerKind::Mouse | PointerKind::Unknown => PointerContact::Mouse,
+        _ => PointerContact::Mouse,
     }
 }
 
@@ -346,13 +350,17 @@ pub(crate) enum PointerAction {
 }
 
 /// Normalizes winit's two wheel units into the pixel-mode DOM contract.
-fn wheel_delta_in_css_pixels(delta: &MouseScrollDelta) -> (f64, f64) {
+///
+/// `None` for a unit winit adds later: scrolling by a guessed distance would be
+/// worse than not scrolling.
+fn wheel_delta_in_css_pixels(delta: &MouseScrollDelta) -> Option<(f64, f64)> {
     match delta {
-        MouseScrollDelta::LineDelta(x, y) => (
+        MouseScrollDelta::LineDelta(x, y) => Some((
             -f64::from(*x) * WHEEL_CSS_PIXELS_PER_LINE,
             -f64::from(*y) * WHEEL_CSS_PIXELS_PER_LINE,
-        ),
-        MouseScrollDelta::PixelDelta(position) => (-position.x, -position.y),
+        )),
+        MouseScrollDelta::PixelDelta(position) => Some((-position.x, -position.y)),
+        _ => None,
     }
 }
 
@@ -413,7 +421,9 @@ pub(crate) fn classify_pointer_event(
             )
         }
         WindowEvent::MouseWheel { delta, .. } => {
-            let (delta_x, delta_y) = wheel_delta_in_css_pixels(delta);
+            let Some((delta_x, delta_y)) = wheel_delta_in_css_pixels(delta) else {
+                return PointerAction::Ignore;
+            };
             PointerAction::Queue(PendingPointerInput::Wheel { delta_x, delta_y }, None)
         }
         WindowEvent::ModifiersChanged(modifiers) => PointerAction::Modifiers(modifiers.state()),
@@ -480,6 +490,7 @@ mod tests {
     fn touch_press(finger: usize, primary: bool, state: ElementState) -> WindowEvent {
         WindowEvent::PointerButton {
             device_id: None,
+            is_macos_activation_click: false,
             state,
             position: PhysicalPosition::new(12.0, 34.0),
             primary,

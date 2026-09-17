@@ -163,6 +163,8 @@ pub(crate) fn observe(event: &WindowEvent, scale: f64) {
         WindowEvent::MouseWheel { delta, .. } => match delta {
             MouseScrollDelta::LineDelta(x, y) => wheel_lines(f64::from(*x), f64::from(*y)),
             MouseScrollDelta::PixelDelta(position) => wheel_pixels(position.x, position.y),
+            // A unit winit adds later has no conversion here yet.
+            _ => {}
         },
         _ => {}
     }
@@ -289,6 +291,7 @@ mod tests {
     fn mouse_button(button: MouseButton, state: ElementState, x: f64, y: f64) -> WindowEvent {
         WindowEvent::PointerButton {
             device_id: None,
+            is_macos_activation_click: false,
             state,
             position: PhysicalPosition::new(x, y),
             primary: true,
@@ -328,6 +331,7 @@ mod tests {
     fn touch_button(finger: usize, primary: bool, x: f64, y: f64, pressed: bool) -> WindowEvent {
         WindowEvent::PointerButton {
             device_id: None,
+            is_macos_activation_click: false,
             state: if pressed {
                 ElementState::Pressed
             } else {

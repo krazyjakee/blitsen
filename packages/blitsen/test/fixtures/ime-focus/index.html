@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>IME focus</title>
+  </head>
+  <body>
+    <input id="first">
+    <input id="second">
+    <textarea id="third"></textarea>
+    <button id="plain">Not editable</button>
+    <script type="module">
+      // Every transition the native IME reconciliation distinguishes: editable to
+      // editable, editable to non-editable, nothing focused, and editable again.
+      const steps = [
+        () => document.querySelector("#first").focus(),
+        () => document.querySelector("#second").focus(),
+        () => document.querySelector("#third").focus(),
+        () => document.querySelector("#plain").focus(),
+        () => document.activeElement?.blur(),
+        () => document.querySelector("#first").focus(),
+      ];
+      // A few frames apart, so the host reconciles IME after each step rather
+      // than once for the last one.
+      const settle = frames => new Promise(resolve => {
+        const tick = () => frames-- > 0 ? requestAnimationFrame(tick) : resolve();
+        tick();
+      });
+      // Inside a function: a document module cannot await at its top level.
+      async function walkFocus() {
+        await settle(10);
+        for (const step of steps) {
+          step();
+          await settle(5);
+        }
+        console.log("ime focus transitions survived");
+        process.exit(0);
+      }
+      walkFocus();
+    </script>
+  </body>
+</html>

@@ -206,7 +206,7 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> ApplicationHandler
         let queued_pointer_input =
             !suppress_absolute_pointer && self.queue_pointer_input(window_id, &event);
         let queued_keyboard_input = self.queue_keyboard_input(window_id, &event);
-        let queued_drag_input = self.queue_drag_input(window_id, &event);
+        let queued_drag_input = self.queue_drag_input(event_loop, window_id, &event);
         // Blitz has its own editor-side keyboard and IME handlers, but they know
         // nothing about this runtime's DOM events. Letting the same event
         // continue there would mutate the shared editor before `keydown` or

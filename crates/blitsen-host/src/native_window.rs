@@ -86,14 +86,9 @@ pub struct WindowApplication<Rend: anyrender::WindowRenderer, E: JsEngine + Clon
     /// the last candidate-window area sent with it.
     pub(crate) ime_targets: HashMap<WindowId, ImeTarget>,
     pub(crate) pending_drag_input: Vec<(WindowId, PendingDrag)>,
-    /// The files the drag currently over this application announced itself with.
-    ///
-    /// winit names them when the drag enters and again when it is released, and
-    /// not on the moves in between, so the session's list is held here for the
-    /// events that would otherwise carry none. Each queued event takes a share
-    /// of it rather than reading it back at dispatch, so a drag that ends and a
-    /// second that begins inside one turn cannot report each other's files.
-    pub(crate) drag_paths: std::rc::Rc<[std::path::PathBuf]>,
+    /// The file drag currently over this application, until the document has
+    /// been told how it ended.
+    pub(crate) drag_session: Option<crate::drag_drop::DragSession>,
     /// The last surface size winit reported, and the last one acted on.
     ///
     /// A drag reports a new size far faster than a size can be applied: every

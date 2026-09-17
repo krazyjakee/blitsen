@@ -309,6 +309,7 @@ mod tests {
         let touch = queued(
             &WindowEvent::PointerButton {
                 device_id: None,
+                is_macos_activation_click: false,
                 state: ElementState::Pressed,
                 position: PhysicalPosition::new(0.0, 0.0),
                 primary: true,
@@ -361,6 +362,7 @@ mod tests {
         let input = queued(
             &WindowEvent::PointerButton {
                 device_id: None,
+                is_macos_activation_click: false,
                 state: ElementState::Pressed,
                 position: PhysicalPosition::new(0.0, 0.0),
                 primary: true,

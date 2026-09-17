@@ -46,13 +46,13 @@ base64 = { version = "0.23", default-features = false, features = ["alloc"] }
 # its AccessKit platform adapter by default, so every direct user inherits this
 # one explicit feature decision instead. `net` and `tracing` are the other two
 # upstream defaults and remain part of the runtime.
-blitz = { git = "https://github.com/DioxusLabs/blitz", rev = "111ed2f7224e49cd3177ef3cb5990efc279d3e73", default-features = false, features = ["net", "tracing"] }
+blitz = { git = "https://github.com/DioxusLabs/blitz", rev = "a980f3188c06498b5cb53fda9c752e3ed5ca801e", default-features = false, features = ["net", "tracing"] }
 # The same pinned revision as `blitz` above, spelled once. These two are named
 # directly by crates only to enable features the meta-crate leaves off —
 # system-fonts, woff, file-input, custom-widget, svg — via unification; each use
 # site keeps its own feature list and the rationale beside it.
-blitz-dom = { git = "https://github.com/DioxusLabs/blitz", rev = "111ed2f7224e49cd3177ef3cb5990efc279d3e73", default-features = false }
-blitz-paint = { git = "https://github.com/DioxusLabs/blitz", rev = "111ed2f7224e49cd3177ef3cb5990efc279d3e73", default-features = false }
+blitz-dom = { git = "https://github.com/DioxusLabs/blitz", rev = "a980f3188c06498b5cb53fda9c752e3ed5ca801e", default-features = false }
+blitz-paint = { git = "https://github.com/DioxusLabs/blitz", rev = "a980f3188c06498b5cb53fda9c752e3ed5ca801e", default-features = false }
 parking_lot = "0.12.5"
 # Featureless on purpose: `blitsen-node` uses serde without `derive`
 # deliberately, so the workspace entry must not force it on; every other user
@@ -63,7 +63,7 @@ tempfile = "3"
 # Exact because a pre-release makes no compatibility promise between betas:
 # both hosts must resolve to the same revision, spelled once here, until
 # winit 0.31 stabilises.
-winit = "=0.31.0-beta.2"
+winit = "=0.31.0-beta.3"
 
 [workspace.lints.rust]
 missing_docs = "warn"
