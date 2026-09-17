@@ -125,24 +125,36 @@ impl BlitzDom {
     /// is then found by `select :checked` the way a browser finds it. Blitz
     /// paints this flag only on an `<input>`, so an option gains no appearance
     /// from carrying it.
+    ///
+    /// Blitz matches `:checked` against the element state its setter keeps
+    /// beside the flag, and restyles a state change only from a snapshot taken
+    /// before it: writing the flag alone would leave both selectors and styles
+    /// describing the old state.
     pub(crate) fn write_checked_state(&mut self, node: NodeId, checked: bool) -> bool {
         let selectable = self.is_tag(node, "option");
-        let Some(element) = self
+        let Some(has_flag) = self
             .document
-            .get_node_mut(node)
-            .and_then(|node| node.element_data_mut())
+            .get_node(node)
+            .and_then(|node| node.element_data())
+            .map(|element| element.checkbox_input_checked().is_some())
         else {
             return false;
         };
-        if let Some(state) = element.checkbox_input_checked_mut() {
-            *state = checked;
-            return true;
+        if !has_flag && !selectable {
+            return false;
         }
-        if selectable {
-            element.special_data = SpecialElementData::CheckboxInput(checked);
-            return true;
+        self.document.snapshot_node_state_only(node);
+        let Some(node) = self.document.get_node_mut(node) else {
+            return false;
+        };
+        if let Some(element) = node.element_data_mut() {
+            if !has_flag {
+                element.special_data = SpecialElementData::CheckboxInput(checked);
+            }
+            element.set_checkbox_input_checked(checked);
         }
-        false
+        node.mark_ancestors_dirty();
+        true
     }
 
     /// Whether a subtree holds a control [`Self::settle_form_controls`] settles.

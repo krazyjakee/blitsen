@@ -174,6 +174,59 @@ impl BlitzDom {
         Ok(())
     }
 
+    /// Moves each parsed template's contents back under its element.
+    ///
+    /// Blitz parses a `<template>`'s children into a detached contents node
+    /// that the element points at, and nothing else in the backend knows that
+    /// node exists: children, serialization and cloning all walk the element.
+    /// `HTMLTemplateElement.content` moves the element's own children into the
+    /// fragment it returns, so this is where they have to be. The element is
+    /// `display: none`, so the children are never laid out or painted.
+    ///
+    /// `html` is the source just parsed under `root`; a source that names no
+    /// template leaves nothing to move and is not walked.
+    pub(crate) fn adopt_template_contents(&mut self, root: NodeId, html: &str) {
+        if !html
+            .as_bytes()
+            .windows(b"<template".len())
+            .any(|window| window.eq_ignore_ascii_case(b"<template"))
+        {
+            return;
+        }
+        let mut pending = vec![root];
+        while let Some(node) = pending.pop() {
+            let Some(current) = self.document.get_node(node) else {
+                continue;
+            };
+            pending.extend(current.children.iter().copied());
+            let Some(contents) = current
+                .element_data()
+                .and_then(|element| element.template_contents)
+            else {
+                continue;
+            };
+            let children = self
+                .document
+                .get_node(contents)
+                .map(|contents| contents.children.to_vec())
+                .unwrap_or_default();
+            if let Some(element) = self
+                .document
+                .get_node_mut(node)
+                .and_then(|node| node.element_data_mut())
+            {
+                element.template_contents = None;
+            }
+            let mut mutator = self.document.mutate();
+            mutator.append_children(node, &children);
+            mutator.remove_and_drop_node(contents);
+            drop(mutator);
+            // A template inside a template is parsed into the inner one's
+            // contents node, so the moved children are walked in their turn.
+            pending.extend(children);
+        }
+    }
+
     pub(crate) fn check_no_cycle(&self, parent: NodeId, child: NodeId) -> Result<(), DomError> {
         let mut current = Some(parent);
         while let Some(node) = current {

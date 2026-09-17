@@ -39,6 +39,8 @@ const formControls = JSON.parse(native.runBridgeHarness(
      box.checked = false;
      expect([box.checked, box.hasAttribute("checked"), box.defaultChecked], [false, true, true],
        "checkedness and the checked attribute diverge");
+     expect(byId("form").querySelector("#box:checked"), null,
+       ":checked follows checkedness rather than the attribute");
      box.removeAttribute("checked");
      expect([box.checked, box.defaultChecked], [false, false], "removing the default leaves the state");
      box.setAttribute("checked", "");

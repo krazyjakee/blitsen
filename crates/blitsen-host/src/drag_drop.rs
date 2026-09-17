@@ -313,8 +313,10 @@ fn local_paths(uris: &[String]) -> Vec<PathBuf> {
     uris.iter()
         .filter_map(|uri| match Url::parse(uri) {
             Ok(url) if url.scheme() == "file" => file_url_path(&url),
-            Ok(_) => None,
-            Err(_) => Some(PathBuf::from(uri)).filter(|path| path.is_absolute()),
+            // Not only an unparsable entry: a Windows drive path parses as a
+            // URL whose scheme is the drive letter. A web URL is never an
+            // absolute path, so it still falls out here.
+            _ => Some(PathBuf::from(uri)).filter(|path| path.is_absolute()),
         })
         .collect()
 }
@@ -672,7 +674,7 @@ mod tests {
             [over(6.0, 9.0)],
             "moves held for the files coalesce like queued ones"
         );
-        assert_eq!(&*paths, [path.clone()]);
+        assert_eq!(&*paths, std::slice::from_ref(&path));
         let moved = DragSignal::Moved {
             id: ID,
             position: at(7.0, 9.0),

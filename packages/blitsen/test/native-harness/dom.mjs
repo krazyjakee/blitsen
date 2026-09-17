@@ -124,6 +124,12 @@ const domSurface = JSON.parse(native.runBridgeHarness(
        "template contents belong to the fragment, not to the element");
      expect(content.childNodes.length === 3 && content.querySelector("td").textContent === "cell",
        "a template parses children an ordinary element would discard");
+     const host = document.createElement("div");
+     host.innerHTML = '<template><tr><td>set</td></tr><template><b>inner</b></template></template>';
+     const assigned = host.firstChild.content;
+     expect(assigned.childNodes.length === 2 && assigned.querySelector("td").textContent === "set" &&
+       assigned.lastChild.content.firstChild.textContent === "inner",
+       "a template assigned through innerHTML keeps its contents, nested templates included");
      const clone = content.cloneNode(true);
      const cloned = clone.querySelector(".cloned");
      expect(clone !== content && cloned !== content.querySelector(".cloned") &&
