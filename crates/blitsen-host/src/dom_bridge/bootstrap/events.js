@@ -473,6 +473,7 @@
     // when there was none, one event after the application had placed it.
     if (type === "mousedown" && allowed) focusNearest(target);
     if (allowed) textEditingMouse(type, target, event);
+    if (allowed) documentSelectionMouse(type, target, event);
     if (type === "wheel" && allowed)
       __blitsenScrollDefault(String(target[handle]), String(-event.deltaX), String(-event.deltaY));
     return allowed;
@@ -638,6 +639,13 @@
     // must not page the document down behind it, and Home must not leave the
     // caret behind at the top of it.
     if (type === "keydown" && allowed && textEditingKeydown(event, target)) return allowed;
+    // Select All outside a text control selects the document's content, matching
+    // a browser. The text controls' own Ctrl/Cmd+A is handled above, in
+    // `textEditingKeydown`, and only a key it did not take reaches this.
+    if (type === "keydown" && allowed && !event.altKey && !event.shiftKey
+        && (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "a"
+        && textControl(target) === null && selectDocumentContents())
+      return allowed;
     if (type === "keydown" && allowed && target instanceof Node && !event.ctrlKey && !event.altKey && !event.metaKey) {
       const page = Math.max(1, innerHeight * 0.9);
       const delta = {
