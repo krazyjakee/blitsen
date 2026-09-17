@@ -117,7 +117,7 @@ impl BlitzDom {
                 let layout = node.final_layout();
                 x = x - layout.location.x + node.scroll_offset().x as f32;
                 y = y - layout.location.y + node.scroll_offset().y as f32;
-                if let Some(transform) = *node.transform() {
+                if let Some(transform) = node.transform().as_deref() {
                     let point = transform.inverse() * Point::new(f64::from(x), f64::from(y));
                     x = point.x as f32;
                     y = point.y as f32;

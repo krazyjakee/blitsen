@@ -331,6 +331,13 @@ jobs:
       - name: macOS notification identity
         if: runner.os == 'macOS'
         run: bun run --cwd packages/blitsen test:macos-notify
+      # The headless UI driver replaces the window, so moving focus between text
+      # controls only reaches winit's IME state in a real one. winit-appkit
+      # 0.31.0-beta.2 could not disable IME, and every macOS application exited
+      # on its second focused input.
+      - name: macOS IME focus transitions
+        if: runner.os == 'macOS'
+        run: bun run --cwd packages/blitsen test:native-ime
 
   # Frame determinism (issue #48). Replays one committed input trace twice, in
   # separate processes, and compares the digest sequences with each other and
@@ -616,6 +623,10 @@ jobs:
       - name: Stage the third-party notices
         run: bun run --cwd packages/blitsen notices --root blitsen-node --out ${{ github.workspace }}/target/release
       - run: bun run --cwd packages/blitsen test:standalone
+      # The softbuffer fallback window is the one Intel Macs actually open.
+      - name: macOS IME focus transitions
+        if: matrix.target == 'darwin-x64'
+        run: bun run --cwd packages/blitsen test:native-ime
       - run: cargo test -p blitsen-blitz --test conformance -- --nocapture
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: failure()

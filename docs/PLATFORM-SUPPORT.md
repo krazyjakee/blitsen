@@ -65,7 +65,7 @@ runtime, so a successful install does not imply that such an environment can ope
 Linux dialogs use the XDG desktop portal and fall back to `zenity` when no portal is running.
 `setAlwaysOnTop` has no effect on Wayland because that protocol does not expose the operation. Cursor grab modes also vary; the
 runtime throws when a requested mode is unavailable. Pointer lock is currently exposed on Windows
-and macOS only: pinned winit 0.31.0-beta.2 reports `Locked` cursor grab as unsupported on X11, and Blitsen
+and macOS only: pinned winit 0.31.0-beta.3 reports `Locked` cursor grab as unsupported on X11, and Blitsen
 does not claim a Linux API that can fail on a common backend.
 
 On Linux a hidraw node is owned by udev, so a packaged application reaches an intended device only

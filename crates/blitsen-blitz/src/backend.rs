@@ -505,6 +505,7 @@ impl DomBackend for BlitzDom {
             .mutate()
             .create_element(Self::qual_name(&name), vec![]);
         self.document.mutate().set_inner_html(temporary, html);
+        self.adopt_template_contents(temporary, html);
         let children = self.node(temporary)?.children.clone().to_vec();
         for child in &children {
             self.document.mutate().remove_node(*child);
@@ -531,6 +532,7 @@ impl DomBackend for BlitzDom {
         self.ensure_element(node)?;
         self.detach_children(node)?;
         self.document.mutate().set_inner_html(node, html);
+        self.adopt_template_contents(node, html);
         self.note_structure_change(node, Some(node));
         self.mutate(Some(node), Some(node));
         Ok(())

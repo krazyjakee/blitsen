@@ -6,7 +6,7 @@ import { native } from "./addon.mjs";
 //
 // The drag half runs through `__blitsenInjectDragEvent`, which is the same
 // `dispatchDragEvent` entry point `drain_drag_input` calls with a winit
-// `DragEntered`/`DragMoved`/`DragDropped`/`DragLeft` — so the DOM sequence
+// `DragEntered`/`DragPosition`/`DragDropped`/`DragLeft` — so the DOM sequence
 // asserted below is the shipping one. What the host does before that point,
 // including turning a `PathBuf` into a path and a `file:` URL, is covered in
 // Rust by `drag_drop`'s own tests.

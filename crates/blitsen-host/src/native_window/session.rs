@@ -251,7 +251,7 @@ impl<E: JsEngine + Clone + 'static> WindowSession<E> {
             pending_keyboard_input: Vec::new(),
             ime_targets: HashMap::new(),
             pending_drag_input: Vec::new(),
-            drag_paths: std::rc::Rc::from([]),
+            drag_session: None,
             pending_resize: HashMap::new(),
             applied_resize: HashMap::new(),
             pointer_positions: HashMap::new(),
@@ -365,7 +365,7 @@ impl<E: JsEngine + Clone + 'static> WindowSession<E> {
         application.pending_locked_pointer_movement.clear();
         application.pending_keyboard_input.clear();
         application.pending_drag_input.clear();
-        application.drag_paths = std::rc::Rc::from([]);
+        application.drag_session = None;
         application.pointer_positions.clear();
         application.cursor_resolved_from.clear();
         application.applied_cursor.clear();

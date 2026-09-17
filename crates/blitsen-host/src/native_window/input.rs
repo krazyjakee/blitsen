@@ -101,8 +101,10 @@ struct ImeEventInit {
     after_bytes: Option<usize>,
 }
 
-fn ime_call(event: Ime) -> (&'static str, ImeEventInit) {
-    match event {
+/// The bootstrap call for one IME event, or `None` for a kind winit adds later
+/// and the document has no composition event for.
+fn ime_call(event: Ime) -> Option<(&'static str, ImeEventInit)> {
+    Some(match event {
         Ime::Enabled => ("enabled", ImeEventInit::default()),
         Ime::Disabled => ("disabled", ImeEventInit::default()),
         Ime::Preedit(data, cursor) => {
@@ -135,7 +137,8 @@ fn ime_call(event: Ime) -> (&'static str, ImeEventInit) {
                 ..Default::default()
             },
         ),
-    }
+        _ => return None,
+    })
 }
 
 fn ime_request_data(area: Rect) -> ImeRequestData {
@@ -357,7 +360,9 @@ impl<Rend: anyrender::WindowRenderer, E: JsEngine + Clone> WindowApplication<Ren
     }
 
     fn dispatch_ime_event(&self, event: Ime) -> Result<bool, JsError> {
-        let (kind, init) = ime_call(event);
+        let Some((kind, init)) = ime_call(event) else {
+            return Ok(false);
+        };
         self.call_input_bootstrap(InputBootstrap::Ime, &(kind, init))
     }
 
@@ -597,7 +602,8 @@ mod tests {
 
     #[test]
     fn ime_initializer_preserves_utf8_cursor_offsets_and_typed_shape() {
-        let (kind, init) = ime_call(Ime::Preedit("中".into(), Some((0, 3))));
+        let (kind, init) = ime_call(Ime::Preedit("中".into(), Some((0, 3))))
+            .expect("preedit is a composition event");
         assert_eq!(
             serde_json::to_value((kind, init)).unwrap(),
             serde_json::json!([

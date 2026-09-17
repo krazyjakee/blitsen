@@ -148,6 +148,7 @@
     "test:licensing": "bun test/run-redistribution.mjs",
     "test:proxy": "bun test/run-proxy.mjs",
     "test:macos-notify": "bun test/run-macos-notify.mjs",
+    "test:native-ime": "bun test/run-native-ime.mjs",
     "test:ui": "bun test/run-ui.mjs",
     "test:bun-services": "bun test/run-bun-services.mjs"
   },

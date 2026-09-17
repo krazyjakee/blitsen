@@ -133,6 +133,8 @@ impl BlitzDom {
         dom.resources = log;
         dom.media = media;
         dom.base_url = base_url;
+        let root = dom.document.root_node().id;
+        dom.adopt_template_contents(root, html);
         dom.normalize_pointer_events();
         dom
     }
