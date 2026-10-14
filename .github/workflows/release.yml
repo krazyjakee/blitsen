@@ -415,7 +415,7 @@ jobs:
       # whose manifests declare notices they do not carry — and `blitsen build`
       # reads `NOTICES.txt` from beside the installed runtime, so every export a
       # user made would have silently shipped none (#121).
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: runtime-${{ matrix.target }}
           path: |
@@ -603,7 +603,7 @@ jobs:
           (cd "$assets" && sha256sum -- *.tgz > SHA256SUMS)
 
       - name: Upload GitHub release assets for inspection
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-assets-${{ steps.release_version.outputs.version }}
           path: |
